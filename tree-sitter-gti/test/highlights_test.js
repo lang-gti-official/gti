@@ -689,6 +689,11 @@ requireCapture(nestedOwnerRow, "NestedOwnerHighlight", "type.definition");
 requireCapture(nestedChildRow, "NestedChildHighlight", "type.definition");
 requireCapture(nestedTypeRow, "NestedChildHighlight", "type");
 
+const protectedRow = fixtureLines.findIndex((line) =>
+  line.includes("class ProtectedHighlight"),
+);
+requireCapture(protectedRow, "protected", "keyword.modifier");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

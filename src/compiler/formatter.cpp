@@ -143,7 +143,8 @@ public:
       case Kind::String:
         if (lexeme.kind == Kind::Word && next != nullptr &&
             next->kind == Kind::Colon &&
-            (lexeme.text == "public" || lexeme.text == "private")) {
+            (lexeme.text == "public" || lexeme.text == "private" ||
+             lexeme.text == "protected")) {
           state.appendAccessModifier(lexeme.text);
           break;
         }
@@ -351,7 +352,8 @@ public:
           break;
         }
         if ((previous != nullptr && previous->kind == Kind::Word &&
-             (previous->text == "public" || previous->text == "private")) ||
+             (previous->text == "public" || previous->text == "private" ||
+              previous->text == "protected")) ||
             isSwitchLabelColon(lexemes, index)) {
           state.append(":");
           state.newline();
@@ -950,9 +952,11 @@ private:
     for (std::size_t start = 0; start < significant.size(); ++start) {
       if (start != 0) {
         const Lexeme &previous = lexemes[significant[start - 1]];
-        const bool access = previous.kind == Kind::Colon && start >= 2 &&
-                            (lexemes[significant[start - 2]].text == "public" ||
-                             lexemes[significant[start - 2]].text == "private");
+        const bool access =
+            previous.kind == Kind::Colon && start >= 2 &&
+            (lexemes[significant[start - 2]].text == "public" ||
+             lexemes[significant[start - 2]].text == "private" ||
+             lexemes[significant[start - 2]].text == "protected");
         if (previous.kind != Kind::LeftBrace &&
             previous.kind != Kind::RightBrace &&
             previous.kind != Kind::Semicolon && !access) {

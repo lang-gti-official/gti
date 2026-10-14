@@ -3794,8 +3794,7 @@ public:
         --indentation;
       }
       writeIndent();
-      output << (access == AccessModifier::Private ? "private:\n"
-                                                   : "public:\n");
+      output << accessModifierSpelling(access) << ":\n";
       ++indentation;
     };
     emitAccess(AccessModifier::Private);
@@ -4142,8 +4141,7 @@ public:
           --indentation;
         }
         writeIndent();
-        output << (access == AccessModifier::Private ? "private:\n"
-                                                     : "public:\n");
+        output << accessModifierSpelling(access) << ":\n";
         ++indentation;
         continue;
       }
@@ -4181,7 +4179,7 @@ public:
         // Verified GTI construction uses lifetime-slot helpers outside this
         // native class. Semantic access remains authoritative; C++ access
         // must not reject an already-authorized constructor in those helpers.
-        if (access == AccessModifier::Private) {
+        if (access != AccessModifier::Public) {
           writeIndent();
           output << "public:\n";
         }
@@ -4191,9 +4189,9 @@ public:
           emitLoweredConcreteConstructorDeclaration(
               *member, *constructor, classRow, *concreteInstance);
         }
-        if (access == AccessModifier::Private) {
+        if (access != AccessModifier::Public) {
           writeIndent();
-          output << "private:\n";
+          output << accessModifierSpelling(access) << ":\n";
         }
       } else if (const auto *destructor =
                      std::get_if<LoweredDestructorDeclaration>(

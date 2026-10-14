@@ -5264,7 +5264,9 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
       return true;
     const ConstructorInfo *constructor = defaultConstructor(*fieldOwner);
     if (constructor != nullptr) {
-      return constructor->access == AccessModifier::Public &&
+      return (constructor->access == AccessModifier::Public ||
+              (baseSubobject &&
+               constructor->access == AccessModifier::Protected)) &&
              resolveDefaultConstruction(fieldType, baseSubobject) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(fieldType, visiting));
@@ -5339,7 +5341,7 @@ auto SemanticVisitor::Impl::baseHasAccessibleDefaultConstructor(
   const ClassInfo &owner = classInfo(base.type.classId);
   if (const ConstructorInfo *declared = defaultConstructor(owner)) {
     if (declared->requiresUnsafe ||
-        (declared->access != AccessModifier::Public && owner.id != derived)) {
+        (declared->access == AccessModifier::Private && owner.id != derived)) {
       return false;
     }
     return !requestsStructuralDefaultConstruction(*declared) ||
@@ -5461,11 +5463,12 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     diagnostics.emplace_back(std::move(diagnostic));
   }
   if (selected.constructor != nullptr &&
-      selected.constructor->access != AccessModifier::Public &&
-      !isWithinClass(baseOwner.id)) {
+      !canAccessMember(selected.constructor->access, baseOwner.id)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2007", DiagnosticPhase::Semantics, location,
-        "Constructor of base '" + typeSpelling(baseType) + "' is private.");
+        "Constructor of base '" + typeSpelling(baseType) + "' is " +
+            std::string(accessModifierSpelling(selected.constructor->access)) +
+            ".");
     diagnostic.related.push_back(
         {tokenSpan(selected.constructor->declaration->name()),
          "Constructor declared here."});
@@ -8091,9 +8094,9 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
     }
     if (const auto *specifier = stmtAs<AccessSpecifierDecl>(statement.get())) {
       if (owner.kind == ClassKind::Union &&
-          specifier->modifier() == AccessModifier::Private) {
+          specifier->modifier() != AccessModifier::Public) {
         report(specifier->keyword(),
-               "Union fields are public; a union cannot declare a private "
+               "Union fields are public; a union cannot declare a non-public "
                "section.",
                "GTI-S2066");
         access = AccessModifier::Public;
@@ -8359,7 +8362,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
         diagnostics.emplace_back(std::move(diagnostic));
         continue;
       }
-      if (access == AccessModifier::Private) {
+      if (access != AccessModifier::Public) {
         report(destructor->tilde(),
                "Destructors must be public in the current ownership layer.",
                "GTI-S2021");

@@ -57,6 +57,9 @@ an accepted attribute spelling. `const` is a
 keyword for the implemented raw-pointer pointee/slot qualifiers; its presence
 does not introduce general C++ cv-qualified values or declarators.
 
+`protected` is a member-access keyword alongside `public` and `private`.
+Access sections use a trailing colon; inheritance still requires `public`.
+
 `sizeof` and `alignof` are reserved word operators. They cannot be used as
 identifiers and are accepted only in the parenthesized type forms
 `sizeof(type)` and `alignof(type)`. They do not introduce expression-operand

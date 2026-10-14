@@ -435,7 +435,7 @@ class-key              = "class" | "struct" | "interface" | "union" ;
 
 base-clause            = ":" base-specifier { "," base-specifier } ;
 
-base-specifier         = [ "public" | "private" ] base-type ;
+base-specifier         = [ "public" | "protected" | "private" ] base-type ;
 
 class-member           = conditional-class-members
                        | nested-class-declaration
@@ -488,7 +488,7 @@ grouped-field-declaration
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
 
-access-specifier       = ( "public" | "private" ) ":" ;
+access-specifier       = ( "public" | "protected" | "private" ) ":" ;
 
 (* A `mut { ... }` member is admitted only in a complete class or struct. Each
    direct grouped field has exactly the semantics of the same declaration with

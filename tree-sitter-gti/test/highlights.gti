@@ -322,3 +322,5 @@ struct NestedOwnerHighlight {
   NestedOwnerHighlight() {}
 };
 NestedOwnerHighlight::NestedChildHighlight nested_type_highlight;
+
+class ProtectedHighlight { protected: int state; };
