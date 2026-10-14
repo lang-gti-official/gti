@@ -99,13 +99,10 @@ endif()
 set(GTI_BUILD_STDLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/stdlib")
 set(GTI_BUILD_RUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
 set(GTI_BUILD_RUNTIME_LIBRARY_PATH "$<TARGET_FILE:gti_runtime>")
-set(GTI_BUILD_VENDOR_INCLUDE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include")
 if(GTI_RELEASE_BUILD)
   set(GTI_BUILD_STDLIB_ROOT "")
   set(GTI_BUILD_RUNTIME_INCLUDE_DIR "")
   set(GTI_BUILD_RUNTIME_LIBRARY_PATH "")
-  set(GTI_BUILD_VENDOR_INCLUDE_DIR "")
 endif()
 
 # LLVM is a required compiler implementation dependency. GTI_BUNDLE_LLVM only
@@ -558,7 +555,6 @@ target_compile_definitions(
     GTI_BUILD_RUNTIME_INCLUDE_DIR="${GTI_BUILD_RUNTIME_INCLUDE_DIR}"
     GTI_BUILD_RUNTIME_LIBRARY_PATH="${GTI_BUILD_RUNTIME_LIBRARY_PATH}"
     GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>"
-    GTI_BUILD_VENDOR_INCLUDE_DIR="${GTI_BUILD_VENDOR_INCLUDE_DIR}"
 )
 
 add_library(
@@ -733,9 +729,6 @@ install(DIRECTORY "include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         COMPONENT gti_toolchain)
 install(DIRECTORY "runtime/include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         COMPONENT gti_toolchain)
-install(DIRECTORY "vendor/expected_lite/include/nonstd"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-        COMPONENT gti_toolchain)
 install(FILES "stdlib/prelude.gti" "stdlib/std.gti"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain)
@@ -748,10 +741,6 @@ install(DIRECTORY "stdlib/modules"
         COMPONENT gti_toolchain
         FILES_MATCHING PATTERN "*.gti")
 install(FILES "VERSION" DESTINATION "${CMAKE_INSTALL_DATADIR}/gti"
-        COMPONENT gti_toolchain)
-install(FILES "vendor/expected_lite/LICENSE.txt"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
-        RENAME "expected-lite-LICENSE.txt"
         COMPONENT gti_toolchain)
 install(FILES "vendor/tomlplusplus/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"

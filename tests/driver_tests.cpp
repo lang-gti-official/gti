@@ -1004,8 +1004,7 @@ void testNativeCCompilerFailure() {
               lang::CppStandard::Cpp23),
           {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
            .runtimeInclude = include,
-           .runtimeLibrary = temporary.root() / "libgti_runtime.a",
-           .vendorInclude = include},
+           .runtimeLibrary = temporary.root() / "libgti_runtime.a"},
           generated, temporary.root() / "program", "unused-c++",
           std::move(inputs), false, false, false, std::nullopt,
           (temporary.root() / "missing-c-compiler").string()));
@@ -1094,8 +1093,7 @@ void testNativeCppCompilerFailure() {
               lang::CppStandard::Cpp23),
           {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
            .runtimeInclude = include,
-           .runtimeLibrary = temporary.root() / "libgti_runtime.a",
-           .vendorInclude = include},
+           .runtimeLibrary = temporary.root() / "libgti_runtime.a"},
           generated, temporary.root() / "program",
           (temporary.root() / "missing-cpp-compiler").string(),
           std::move(inputs), false, false, false));
@@ -1153,8 +1151,7 @@ void testOrderedExecutableBuildCommand() {
               lang::CppStandard::Cpp23),
           {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
            .runtimeInclude = include,
-           .runtimeLibrary = temporary.root() / "libgti_runtime.a",
-           .vendorInclude = include},
+           .runtimeLibrary = temporary.root() / "libgti_runtime.a"},
           temporary.root() / "generated.cpp", temporary.root() / "program",
           (temporary.root() / "missing-native-compiler").string(),
           std::move(inputs), false, false, false, std::nullopt,
@@ -1463,7 +1460,6 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
       .standardLibrary = discoveredToolchain.standardLibrary,
       .runtimeInclude = localRuntimeInclude,
       .runtimeLibrary = localRuntimeLibrary,
-      .vendorInclude = discoveredToolchain.vendorInclude,
   };
   const lang::driver::ManagedOutputPolicy managed{
       .trustedRoot = project,
@@ -2629,7 +2625,6 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
       .standardLibrary = discovered.standardLibrary,
       .runtimeInclude = runtimeInclude,
       .runtimeLibrary = runtimeLibrary,
-      .vendorInclude = discovered.vendorInclude,
   };
   lang::driver::NativeInputs nestedNativeInputs;
 #if defined(__has_feature)
@@ -2763,7 +2758,6 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
       .standardLibrary = toolchain.standardLibrary,
       .runtimeInclude = relocatedRuntimeInclude,
       .runtimeLibrary = relocatedRuntimeLibrary,
-      .vendorInclude = toolchain.vendorInclude,
   };
   const lang::driver::ExecutableBuildResult relocatedRuntime = build(
       "relocated-runtime", entry, relocatedToolchain, lang::CppStandard::Cpp23);
@@ -2775,74 +2769,34 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
          "moving identical runtime headers and archive should preserve their "
          "aggregate while recording new canonical paths");
 
-  const lang::driver::ExecutableBuildResult separateCpp20 =
-      build("cpp20-separate", entry, toolchain, lang::CppStandard::Cpp20);
-  const std::filesystem::path sharedInclude =
-      temporary.root() / "installed/include";
-  std::filesystem::create_directories(sharedInclude);
-  copyError.clear();
-  std::filesystem::copy(runtimeInclude / "gti", sharedInclude / "gti",
-                        std::filesystem::copy_options::recursive, copyError);
-  if (!copyError) {
-    std::filesystem::copy(discovered.vendorInclude / "nonstd",
-                          sharedInclude / "nonstd",
-                          std::filesystem::copy_options::recursive, copyError);
-  }
-  expect(!copyError,
-         "a shared installed runtime/compatibility include root should be "
-         "copyable");
-  const lang::driver::ToolchainLayout sharedRootToolchain{
-      .standardLibrary = toolchain.standardLibrary,
-      .runtimeInclude = sharedInclude,
-      .runtimeLibrary = runtimeLibrary,
-      .vendorInclude = sharedInclude,
+  // GTI owns its expected representation, so a C++20 build consumes exactly
+  // the runtime materials of the C++23 build and no standard-specific header.
+  const lang::driver::ExecutableBuildResult cpp20 =
+      build("cpp20", entry, toolchain, lang::CppStandard::Cpp20);
+  const auto runtimeSummary = [](const lang::driver::BuildProvenance &value) {
+    std::string summary = value.runtime.materialsSha256;
+    for (const lang::driver::BuildRuntimeHeaderProvenance &header :
+         value.runtime.headers) {
+      summary +=
+          " [" + header.logicalIdentity + ":" + header.material.sha256 + "]";
+    }
+    return summary;
   };
-  const lang::driver::ExecutableBuildResult sharedCpp20 = build(
-      "cpp20-shared", entry, sharedRootToolchain, lang::CppStandard::Cpp20);
-  // GTI owns its expected representation, so a C++20 build uses no vendored
-  // compatibility header even when the shared root still provides one.
-  const bool usesCompatibilityHeader =
-      sharedCpp20.provenance &&
-      std::any_of(
-          sharedCpp20.provenance->runtime.headers.begin(),
-          sharedCpp20.provenance->runtime.headers.end(),
-          [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
-            return header.kind ==
-                       lang::driver::BuildRuntimeHeaderKind::Compatibility ||
-                   header.logicalIdentity.starts_with("nonstd/");
-          });
-  const auto runtimeSummary =
-      [](const lang::driver::ExecutableBuildResult &value) {
-        std::string summary;
-        if (!value.provenance) {
-          return summary;
-        }
-        summary = value.provenance->runtime.materialsSha256;
-        for (const lang::driver::BuildRuntimeHeaderProvenance &header :
-             value.provenance->runtime.headers) {
-          summary +=
-              " [" +
-              std::string(
-                  lang::driver::buildRuntimeHeaderKindName(header.kind)) +
-              ":" + header.logicalIdentity + ":" + header.material.sha256 + "]";
-        }
-        return summary;
-      };
-  expect(
-      separateCpp20.succeeded() && separateCpp20.provenance &&
-          sharedCpp20.succeeded() && sharedCpp20.provenance &&
-          !usesCompatibilityHeader &&
-          sharedCpp20.provenance->runtime.materialsSha256 ==
-              separateCpp20.provenance->runtime.materialsSha256,
-      "a shared installed C++20 include root should preserve normalized "
-      "runtime identity without a compatibility header (separate "
-      "status=" +
-          std::to_string(static_cast<int>(separateCpp20.status)) +
-          ", shared status=" +
-          std::to_string(static_cast<int>(sharedCpp20.status)) +
-          ", shared detail=" + sharedCpp20.driverDiagnostic.value_or("none") +
-          ", separate materials=" + runtimeSummary(separateCpp20) +
-          ", shared materials=" + runtimeSummary(sharedCpp20) + ")");
+  expect(cpp20.succeeded() && cpp20.provenance &&
+             cpp20.provenance->runtime.materialsSha256 ==
+                 firstProvenance.runtime.materialsSha256 &&
+             std::all_of(
+                 cpp20.provenance->runtime.headers.begin(),
+                 cpp20.provenance->runtime.headers.end(),
+                 [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
+                   return header.logicalIdentity.starts_with("gti/");
+                 }),
+         "a C++20 build should consume the C++23 build's runtime materials "
+         "(status=" +
+             std::to_string(static_cast<int>(cpp20.status)) + ", detail=" +
+             cpp20.driverDiagnostic.value_or("none") + ", C++20 materials=" +
+             (cpp20.provenance ? runtimeSummary(*cpp20.provenance) : "none") +
+             ", C++23 materials=" + runtimeSummary(firstProvenance) + ")");
 
   expect(writeFile(dependency, "int dependency_value() { return 2; }\n"),
          "the included provenance source should be editable");
@@ -2962,9 +2916,9 @@ void testBuildReportRecordRoundTrip() {
                     .bytes = 900,
                     .sha256 = std::string(64, '1')}});
   recorded.runtime.headers.push_back(
-      {.kind = lang::driver::BuildRuntimeHeaderKind::Compatibility,
-       .logicalIdentity = "nonstd/print.h",
-       .material = {.canonicalPath = "/opt/gti/include/nonstd/print.h",
+      {.kind = lang::driver::BuildRuntimeHeaderKind::Runtime,
+       .logicalIdentity = "gti/runtime_failure.h",
+       .material = {.canonicalPath = "/opt/gti/include/gti/runtime_failure.h",
                     .bytes = 300,
                     .sha256 = std::string(64, '2')}});
   recorded.runtime.archive = {.canonicalPath = "/opt/gti/lib/libgti_runtime.a",
@@ -3051,7 +3005,7 @@ void testBuildReportRecordRoundTrip() {
          "a record built for another target should diverge on its triple");
   expect(named("source materials", "aggregate sha256"),
          "the source aggregate should be compared");
-  expect(named("nonstd/print.h", "presence"),
+  expect(named("gti/runtime_failure.h", "presence"),
          "a runtime header the rebuild no longer consumes should be named");
   expect(named("native argv[2]", "operand"),
          "a changed native operand should be named by position");
@@ -3115,54 +3069,36 @@ void testResourcesAndArtifactOwnership() {
       .standardLibrary = lang::standardLibraryLayout(temporary.root()),
       .runtimeInclude = include,
       .runtimeLibrary = runtime,
-      .vendorInclude = include,
   };
-  expect(
-      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
-          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
-      "runtime validation should require the installed public C ABI header");
+  expect(lang::driver::validateToolchainLayout(layout) ==
+             lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+         "runtime validation should require the installed public C ABI header");
   expect(writeFile(include / "gti/c_abi.h", ""),
          "the C ABI header fixture should be writable");
-  expect(
-      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
-          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
-      "runtime validation should require the defined-failure ABI header");
+  expect(lang::driver::validateToolchainLayout(layout) ==
+             lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+         "runtime validation should require the defined-failure ABI header");
   expect(writeFile(include / "gti/runtime_failure.h", ""),
          "the defined-failure ABI header fixture should be writable");
-  expect(
-      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
-          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
-      "runtime validation should require the managed-thread C ABI header");
+  expect(lang::driver::validateToolchainLayout(layout) ==
+             lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+         "runtime validation should require the managed-thread C ABI header");
   expect(writeFile(include / "gti/runtime_thread.h", ""),
          "the managed-thread C ABI header fixture should be writable");
-  expect(
-      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
-          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
-      "runtime validation should require the managed-thread C++ bridge");
+  expect(lang::driver::validateToolchainLayout(layout) ==
+             lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+         "runtime validation should require the managed-thread C++ bridge");
   expect(writeFile(include / "gti/runtime_thread.hpp", ""),
          "the managed-thread C++ bridge fixture should be writable");
-  expect(
-      !lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23),
-      "C++23 resource validation should accept the complete runtime surface");
-  expect(
-      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp20) ==
-          lang::driver::ToolchainResourceError::
-              ExpectedCompatibilityHeaderMissing,
-      "C++20 resource validation should require expected-lite");
-  std::filesystem::create_directories(include / "nonstd");
-  expect(writeFile(include / "nonstd/expected.hpp", ""),
-         "the compatibility header fixture should be writable");
-  expect(
-      !lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp20),
-      "a complete C++20 layout should pass validation");
+  expect(!lang::driver::validateToolchainLayout(layout),
+         "resource validation should accept the complete runtime surface");
 
   std::error_code resourceError;
   std::filesystem::remove(runtime, resourceError);
   resourceError.clear();
   std::filesystem::create_directory(runtime, resourceError);
   expect(!resourceError &&
-             lang::driver::validateToolchainLayout(layout,
-                                                   lang::CppStandard::Cpp23) ==
+             lang::driver::validateToolchainLayout(layout) ==
                  lang::driver::ToolchainResourceError::RuntimeFilesMissing,
          "runtime validation should reject a directory where the runtime "
          "archive must be a regular file");

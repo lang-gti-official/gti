@@ -149,13 +149,9 @@ std::filesystem::path build(const std::string &compiler,
                         " -std=c++23 -O0 -fno-fast-math -ffp-contract=off "
                         "-D__gti_strict_ieee754=1";
   const std::string runtimeInclude = environmentPath("GTI_RUNTIME_INCLUDE");
-  const std::string vendorInclude = environmentPath("GTI_VENDOR_INCLUDE");
   const std::string runtimeLibrary = environmentPath("GTI_RUNTIME_LIBRARY");
   if (!runtimeInclude.empty()) {
     command += " -I\"" + runtimeInclude + "\"";
-  }
-  if (!vendorInclude.empty()) {
-    command += " -I\"" + vendorInclude + "\"";
   }
   command += " \"" + artifact.string() + "\"";
   if (!runtimeLibrary.empty()) {

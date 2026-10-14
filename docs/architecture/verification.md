@@ -2046,8 +2046,8 @@ modes, including no-elide and ASan/UBSan, using the isolated optimized backend
 probe described below. Mandatory unchecked-access/loan negatives pass in both
 Off/Warn advisory modes, and MIR still selects bulk relocation structurally.
 
-The SIMD native-assembly probe now includes the same expected-lite headers as
-ordinary C++20 compilation. Its complete C++20/C++23 O0/O1/O3, scalar-reference,
+The SIMD native-assembly probe uses the same include paths as ordinary C++20
+compilation. Its complete C++20/C++23 O0/O1/O3, scalar-reference,
 sanitizer, macro-isolation and bounds matrix passes; native assembly has eleven
 SIMD instructions and the scalar reference has none. The c115/c116 storage
 failure corpus cases also pass with reviewed source-line changes only: exact
