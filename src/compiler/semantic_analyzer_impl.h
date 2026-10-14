@@ -7,6 +7,7 @@
 #include "gti/frontend_work.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/standard_library.h"
+#include "gti/support.h"
 #include "semantic_diagnostics.h"
 #include "semantic_spelling.h"
 
