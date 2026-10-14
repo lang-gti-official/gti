@@ -1920,14 +1920,11 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
        .spelling = "gti_hosted_entry_adapter_v1"});
   // Expected names the artifact's shipped expected representation. The
   // row's spelling is the exact error-construction call the compatibility
-  // path emits for the selected standard — std::unexpected under C++23,
-  // the vendored expected-lite constructor under C++20 — so Unexpected
-  // text is copied from this row and can never drift by standard.
+  // path emits. GTI's own expected is the same under every C++ standard, so
+  // Unexpected text is copied from this row and cannot drift by standard.
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Expected,
-       .spelling = standard == CppStandard::Cpp23
-                       ? "std::unexpected"
-                       : "::nonstd::make_unexpected"});
+       .spelling = "::gti_internal::backend::unexpected"});
   // Closure names the inline C++ lambda literal representation: a Closure
   // compute spells `[name = <place>, ...](<params>) -> <ret> { <verified
   // body> }` with capture names copied from the lambda's Capture rows,

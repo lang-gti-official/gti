@@ -41,6 +41,15 @@ for what minor and patch releases mean.
   result through `std::function_ptr` is rejected before native compilation
   in this slice (owning arguments stage through the thunk).
 
+## 0.431.3 — GTI's own expected representation
+
+- Generated C++ no longer uses `std::expected` under C++23 or the vendored
+  `nonstd::expected` (expected-lite) under C++20. `expected` values use GTI's
+  own representation in the generated support code, the same under both
+  standards, so a C++23 standard library without `<expected>` works and the
+  two standards can no longer differ in how results behave. Program behavior
+  is unchanged: wrong-state access still reports `GTI-R0009` after cleanup.
+
 ## 0.431.2 — Generic classes instantiated with lambda types
 
 - Fix the internal compiler error that 0.431.1 still listed (`GTI-B0001`,

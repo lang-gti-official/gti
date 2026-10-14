@@ -389,7 +389,7 @@ one child mutable loan limited to its iteration.
 
 It transfers fresh and explicitly moved `void()` tasks into move-only
 `std::thread` handles. Explicit `join()` reports native creation/join errors as
-`std::expected`; a still-joinable handle autojoins during deterministic scope
+an `expected` result; a still-joinable handle autojoins during deterministic scope
 cleanup. Worker-defined failures are re-raised by that explicit or automatic
 join boundary. The initial public slice deliberately has no detached handle or
 stop-token API.

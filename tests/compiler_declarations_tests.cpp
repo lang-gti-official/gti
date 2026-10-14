@@ -10144,7 +10144,7 @@ Result main() {
                  std::string::npos &&
              generated.find("static_cast<std::uint64_t>(3)") !=
                  std::string::npos &&
-             generated.find("#include <expected>") != std::string::npos &&
+             generated.find("struct unexpect_t {") != std::string::npos &&
              generated.find("int main()") != std::string::npos,
          "the C++ backend should emit canonical, declaration-order-independent "
          "aliases");

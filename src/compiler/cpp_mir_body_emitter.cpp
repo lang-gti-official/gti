@@ -2944,10 +2944,9 @@ expectedConditionalTransportSlot(const MirBody &body, MirValueId valueId);
 }
 
 // A propagation extraction is safe only on the matching edge of the exact
-// has-value branch over the same Expected carrier. This proof also lets the
-// C++20 compatibility representation use non-throwing operator* for success;
-// expected_lite's checked value() path otherwise requires a copyable E merely
-// to instantiate its bad-access exception.
+// has-value branch over the same Expected carrier. This proof lets the
+// extraction use the representation's unchecked operator* directly; GTI's
+// expected never checks state itself.
 [[nodiscard]] bool
 stateProvenExpectedExtraction(const MirBody &body,
                               const MirInstruction &instruction) {
@@ -28105,7 +28104,7 @@ movedReturnTemporaryForTransfer(const MirBody &body,
   return slot;
 }
 
-// An Unexpected value never materializes: std::unexpected has no default
+// An Unexpected value never materializes: unexpected has no default
 // construction, so the SSA declare-then-assign pattern cannot hold it. Its
 // single consumer (the Return that converts it into the expected-typed
 // result) spells the construction inline instead.
@@ -28876,8 +28875,8 @@ checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
   return found;
 }
 
-// GTI expected<T&, E> has a pointer-backed native carrier even though native
-// std::expected rejects reference payloads. This exact checked extraction is
+// GTI expected<T&, E> has a pointer-backed carrier rather than an expected
+// holding a reference. This exact checked extraction is
 // the only operation that may publish that stored pointer as a CallResult
 // loan; MIR still owns the lifetime proof through the exact Expected carrier.
 [[nodiscard]] const MirInstruction *
@@ -34471,7 +34470,7 @@ public:
         }
       }
       // An Unexpected result spells inline at its consuming Return and
-      // never declares: std::unexpected has no default construction.
+      // never declares: unexpected has no default construction.
       if (unexpectedDefinition(facts.body, value.id) != nullptr) {
         continue;
       }
@@ -56896,7 +56895,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return false;
             }
           }
-          // The wrapper value never materializes (std::unexpected has no
+          // The wrapper value never materializes (unexpected has no
           // default construction): its only consumer must be the Return
           // that converts it into the expected-typed result, where the
           // construction spells inline.
