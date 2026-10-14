@@ -567,9 +567,15 @@ collisions. Bundle publication is recoverable but not a transaction with the
 separately atomic executable replacement. A non-debug build does not delete
 an existing bundle; the debugger checks native UUIDs before using it.
 
-Debug builds bypass the executable cache in this first slice: native metadata
-retains absolute source/checkout paths, and cached symbol sidecars are not yet
-modeled. Debug builds are not promised byte-reproducible native artifacts.
+Debug builds use the executable cache like any other build. Their artifacts
+embed the loaded units' absolute paths (line directives, native DWARF, the
+symbol bundle), so a debug build is keyed on those paths as well as on
+logical names, and on Darwin on the `dsymutil` identity; a moved checkout is a
+miss where a plain build would hit. A cache entry of a Darwin debug build
+keeps a copy of the published `.dSYM` bundle with a digest over its files,
+and a hit restores the bundle through the same owned-bundle publication a
+fresh build uses. Debug builds are not promised byte-reproducible native
+artifacts.
 Schema-2 build reports add `debug_info` (absent in old reports means false);
 the artifact fingerprint still covers the executable, not the `.dSYM` contents.
 The benchmark harness accepts old and new non-debug reports, validates the
@@ -1809,6 +1815,10 @@ The current key includes:
 - the GTI release and project-manifest model identities, normalized GTI
   configuration flags, backend C++ standard, optimization, execution profile,
   target triple, and complete GTI data layout;
+- the source-level debug policy and, when it is on, every loaded unit's path
+  as loaded plus (on Darwin) the `dsymutil` command, executable content and
+  version, because debug artifacts embed those paths and the bundle is that
+  tool's output;
 - for an internally enabled dormant library plan, its library/shared kind and
   canonical public-symbol-to-qualified-function export rows (ordinary
   executable/test identities remain byte-compatible);
@@ -1874,11 +1884,12 @@ multiple roots for frontend callers. A later manifest/profile feature may
 supply more than one only through an immutable resolved policy, with direct,
 project, and CLI coverage for that ordering contract.
 
-Schema-v2 entries live beneath `build/gti/cache/v2/<sha256>/` and begin with the
-`gti-build-cache-v2` metadata marker. Older `v1` entries and metadata are not
-interpreted under the new ordered-root identity. Each v2 entry contains
-generated C++, the executable, and strict metadata recording the digest and
-size of both.
+Schema-v3 entries live beneath `build/gti/cache/v3/<sha256>/` and begin with the
+`gti-build-cache-v3` metadata marker. Older `v1` and `v2` entries and metadata
+are not interpreted. Each v3 entry contains generated C++, the executable, for
+a Darwin debug build a `symbols.dSYM` copy of the published bundle, and strict
+metadata recording the digest and size of the first two and a digest over the
+bundle's files (or `symbols none`).
 Executable permissions are recorded as well. Metadata is published last and
 acts as the commit marker. A hit verifies every digest and the executable mode
 before atomically copying the executable to the requested output; it
