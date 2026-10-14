@@ -1576,6 +1576,31 @@ SemanticModel::findArrayElementConstruction(
                          : base->findArrayElementConstruction(initializer);
 }
 
+[[nodiscard]] const ResolvedConstructionInfo *
+SemanticModel::findContextualConstruction(const Expr &initializer) const {
+  const auto found = contextualConstructions.find(&initializer);
+  if (found != contextualConstructions.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr
+                         : base->findContextualConstruction(initializer);
+}
+
+[[nodiscard]] bool
+SemanticModel::recordsContextualConstruction(const Expr &initializer) const {
+  return contextualConstructions.contains(&initializer);
+}
+
+[[nodiscard]] std::optional<Token>
+SemanticModel::contextualConstructionSite(const Expr &initializer) const {
+  const auto found = contextualConstructionSites.find(&initializer);
+  if (found != contextualConstructionSites.end()) {
+    return found->second;
+  }
+  return base == nullptr ? std::nullopt
+                         : base->contextualConstructionSite(initializer);
+}
+
 const ResolvedCollectionInfo *
 SemanticModel::findCollection(const ArrayInitializer &initializer) const {
   const auto found = collections.find(&initializer);
@@ -1669,6 +1694,7 @@ SemanticModel::executableEntryDiagnostic(SourceUnitId entryUnit,
 
 [[nodiscard]] std::size_t SemanticModel::resolvedConstructionCount() const {
   return constructions.size() + arrayElementConstructions.size() +
+         contextualConstructions.size() +
          (base == nullptr ? 0 : base->resolvedConstructionCount());
 }
 
@@ -1827,6 +1853,8 @@ void SemanticModel::clear() {
   sharedImplicitFieldInitializers.clear();
   designatedConstructors.clear();
   constructions.clear();
+  contextualConstructions.clear();
+  contextualConstructionSites.clear();
   collections.clear();
   constructorInitializers.clear();
   resolvedSymbols.clear();
@@ -2033,8 +2061,9 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
   return sizeof(SemanticModel) + expressions.size() * 256 +
-         (calls.size() + constructions.size() + operators.size() +
-          projectionOperators.size() + contextualConversions.size()) *
+         (calls.size() + constructions.size() + contextualConstructions.size() +
+          operators.size() + projectionOperators.size() +
+          contextualConversions.size()) *
              768 +
          (variableBindings.size() + parameterBindings.size()) * 256 +
          (places.size() + ownershipEvents.size() + constants.size()) * 160 +
@@ -2676,6 +2705,19 @@ void SemanticModel::recordArrayElementConstruction(
     const ArrayInitializer &initializer, ResolvedConstructionInfo info) {
   noteConstruction(info.declaration);
   arrayElementConstructions.insert_or_assign(&initializer, std::move(info));
+}
+
+void SemanticModel::recordContextualConstruction(const Expr &initializer,
+                                                 ResolvedConstructionInfo info,
+                                                 Token site) {
+  noteConstruction(info.declaration);
+  contextualConstructions.insert_or_assign(&initializer, std::move(info));
+  contextualConstructionSites.insert_or_assign(&initializer, std::move(site));
+}
+
+void SemanticModel::forgetContextualConstruction(const Expr &initializer) {
+  contextualConstructions.erase(&initializer);
+  contextualConstructionSites.erase(&initializer);
 }
 
 void SemanticModel::record(const ConstructorInitializer &initializer,

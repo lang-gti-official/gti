@@ -91,14 +91,17 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
 
   ProgressScope optimizationProgress(progress, ProgressPhase::Optimizing);
   const OptimizationPipeline optimizationPipeline;
-  const OptimizationResult optimizations = optimizationPipeline.run(
-      frontend.hir, request.optimization(), request.target());
-  OptimizedProgram optimizedProgram = optimizationPipeline.run(
-      OptimizationRequest{.hir = frontend.hir,
-                          .mir = std::move(frontend.mir),
-                          .level = request.optimization(),
-                          .target = request.target(),
-                          .compatibility = &optimizations});
+  OptimizedProgram optimizedProgram = [&] {
+    const PhaseTimeScope timeScope("gti-optimize");
+    const OptimizationResult optimizations = optimizationPipeline.run(
+        frontend.hir, request.optimization(), request.target());
+    return optimizationPipeline.run(
+        OptimizationRequest{.hir = frontend.hir,
+                            .mir = std::move(frontend.mir),
+                            .level = request.optimization(),
+                            .target = request.target(),
+                            .compatibility = &optimizations});
+  }();
   optimizationProgress.finish();
   if (!optimizedProgram.valid()) {
     result.status = CompilationStatus::MirVerificationFailure;
@@ -174,11 +177,22 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
 
   const ProgressScope emissionProgress(progress, ProgressPhase::Emitting,
                                        backendName);
-  LoweredProgramBuild loweredBuild = LoweredProgramBuilder().build(
-      frontend.program, frontend.semantics, frontend.hir,
-      optimizedProgram.sourceMir, optimizedProgram.mir,
-      optimizedProgram.report.transformations, request.target(),
-      request.debugInfo());
+  LoweredProgramBuild loweredBuild = [&] {
+    const PhaseTimeScope timeScope("gti-lowered-program");
+    // The pipeline verified its input and the coherence of its output on
+    // exactly these programs and records; the builder need not repeat them.
+    const OptimizationReport &report = optimizedProgram.report;
+    const LoweredProgramVerifiedInputs verified{
+        .sourceMirVerified =
+            report.verificationEnabled && report.inputVerification.valid(),
+        .optimizationCoherenceVerified =
+            report.verificationEnabled && report.outputVerification.valid()};
+    return LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir,
+        optimizedProgram.sourceMir, optimizedProgram.mir,
+        optimizedProgram.report.transformations, request.target(),
+        request.debugInfo(), verified);
+  }();
   if (!loweredBuild.valid()) {
     const std::string detail =
         loweredBuild.issues.empty()
@@ -189,6 +203,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
   LoweredProgram loweredProgram = std::move(*loweredBuild.program);
 
   try {
+    const PhaseTimeScope timeScope("gti-backend");
     result.artifact = backend.generate(std::move(loweredProgram));
   } catch (const BackendUnsupportedError &exception) {
     return backendLimitation(exception.what());

@@ -87,6 +87,35 @@ ordinary producer validity, unsafe obligations and escape checking remain
 mandatory. Tooling retains a selected construction occurrence whose hover
 explicitly explains that no additional copy/move is selected.
 
+## Declaration construction
+
+An explicitly typed class or struct declaration may have an initializer of
+another type that no assignment rule admits. `analyzeDeclarationConstruction`
+then selects a constructor for it, through the same
+`analyzeConstructorCallArguments` call a direct initializer makes, with the
+initializer as the sole analyzed argument. Overload, access, ownership and
+default-argument rules are therefore shared rather than restated. In this
+contextual mode, selection considers only constructors whose
+`ConstructorInfo::implicitConstruction` records a valid `implicit` modifier;
+declaration collection rejects the modifier on copy/move policies, packs and
+constructors that cannot take exactly one explicit argument (`GTI-S2121`), and
+the parser rejects it beside `unsafe`.
+`SemanticModel::recordContextualConstruction` keeps the selection and its site
+beside the initializer's own expression, call and construction records, which
+still describe the initializer itself. When no implicit constructor
+accepts the initializer, the selection's own `GTI-S2012` is dropped and the
+declaration reports its `GTI-S2003`, with a hint naming the explicit form;
+every other rejection keeps the selection's diagnostic. The construction records its program-storage and cleanup effects,
+and conservative raw-pointer field origins, at the declaration, as the direct
+initializer's expression would.
+
+The rule runs where the exact `nullptr_t` construction does, for declarations
+and field constructor initializers. It does not run for `constexpr` or
+range-element bindings, reference fields, unions, abstract classes,
+borrow-carrying declared types, or initializers typed by their destination
+(brace lists, contextually typed calls and function names). Calls, returns and
+assignment never consult it.
+
 ## Native C scalar target facts
 
 `NativeCScalarKind` identifies a C declaration family independently of numeric
