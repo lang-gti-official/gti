@@ -6416,6 +6416,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
               exact = exact && matched && event.target == 0 &&
                       !event.conditional && !event.failureCleanup;
             } else if (event.kind == MirLifecycleEventKind::Initialize) {
+              // An owning alternative arms the enum's cleanup. A passive one
+              // is initialized only into the slot of a temporary that a call
+              // borrows, whose value obligation has no cleanup to run.
               const MirDropObligation *target =
                   body->findDropObligation(event.target);
               ++resultInitializations;

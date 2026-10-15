@@ -97,11 +97,26 @@ body, satisfied through `for concept` blocks outside the type.
   `std::experimental::optional`, over a payload enum and consuming payload
   matches, has the block, and is the planned replacement.
 - `?` through `std::tryable` is not available in constant evaluation yet.
-- The original implementation admitted only class or struct operands. The
-  2026-10-15 generalization admits enum operands directly through the same
-  selected-call plan; ordinary tag, move, and cleanup rules own enum transport.
-  A wrapper class is an API choice, not a propagation requirement.
+- The operand must be a class, struct or payload-enum type. Payload enums
+  joined in the 2026-10-15 revision below; a scalar-backed enum remains
+  outside this phase.
 - Violations are reported as `GTI-S2086`.
+
+## Revision: payload-enum operands (2026-10-15)
+
+A payload enum, or an instance of an enum template that a block's pattern
+names, propagates like a class. No rule is specific to `?`:
+
+- an ordinary call may borrow a fresh payload-enum value for one read-only
+  `T&` argument, exactly as it borrows a fresh class value, so `has_value`
+  borrows a temporary operand that way;
+- a named place is copied and `std::move(place)` is consumed, as for a class;
+- a conformance block's pattern may apply an enum template, such as
+  `for <T, E> concept std::tryable<result<T, E>>`.
+
+An enum declares no constructors, so a residual returned from a function
+whose return type is a payload enum has that enum type, which is how a
+`result<T, E>`-style enum returns its own failure.
 
 ## Borrowed protocol results (2026-10-15)
 

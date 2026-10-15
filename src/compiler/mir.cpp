@@ -6806,8 +6806,11 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   if (directInitializationResult) {
     return true;
   }
+  // A result that arms an obligation on the success edge is published only
+  // there, whether it owns cleanup or is a passive value materialized in a
+  // temporary slot for a borrow, such as a cleanup-free payload enum.
   if (instruction.successResultDrop) {
-    return instruction.info.traits.drop == DropKind::Lexical;
+    return true;
   }
   // Expected<passive, E> crosses the transformed failure boundary through a
   // value out-parameter. It therefore has no semantic result drop to arm:
@@ -10784,7 +10787,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
            (!receiver || source->root != MirPlaceRootKind::Temporary)) ||
           !source->projections.empty() ||
           (source->type.kind != SemanticType::Class &&
-           source->type.kind != SemanticType::Enum) ||
+           (receiver || source->type.kind != SemanticType::Enum)) ||
           source->access != AccessMode::Mutable ||
           source->traits.containsBorrowedState != receiver ||
           (!receiver && loan.storedDependency != 0)) {
