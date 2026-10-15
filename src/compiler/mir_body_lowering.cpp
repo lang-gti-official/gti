@@ -4741,6 +4741,7 @@ private:
     const HirValue *temporary = findValue(id);
     if (temporary == nullptr ||
         (temporary->info.type.kind != SemanticType::Class &&
+         temporary->info.type.kind != SemanticType::Enum &&
          (!allowExpected ||
           temporary->info.type.kind != SemanticType::Expected)) ||
         temporary->info.category != ValueCategory::Value ||
@@ -5836,7 +5837,8 @@ private:
       if (type.kind != SemanticType::Reference ||
           type.referenceAccess != AccessMode::ReadOnly ||
           type.arguments.size() != 1 ||
-          type.arguments.front().kind != SemanticType::Class ||
+          (type.arguments.front().kind != SemanticType::Class &&
+           type.arguments.front().kind != SemanticType::Enum) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
           source->root != MirPlaceRootKind::Value ||
@@ -7952,6 +7954,18 @@ private:
         (ancestor != 0 && output.findLoan(ancestor) == nullptr)) {
       return false;
     }
+    // Control-flow expressions may transparently forward one selected
+    // checked call result. Use only aliases recorded after type/access/loan
+    // verification by forwardBorrowResult, not an arbitrary equal source ID.
+    std::unordered_set<HirValueId> aliases;
+    for (;;) {
+      const auto forwarded = forwardedBorrowValues.find(valueId);
+      if (forwarded == forwardedBorrowValues.end())
+        break;
+      if (!aliases.insert(valueId).second)
+        return false;
+      valueId = forwarded->second;
+    }
     std::unordered_set<MirLoanId> visited;
     MirLoanId link = outermost;
     while (link != ancestor) {
@@ -8374,12 +8388,19 @@ private:
   void forwardBorrowResult(const HirValue &value, HirValueId source) {
     emitValue(source);
     const MirLoanId loan = loanForValue(source);
-    if (loan == 0 || value.info.category != ValueCategory::Place ||
-        value.info.access != AccessMode::ReadOnly) {
+    const MirLoan *authority = output.findLoan(loan);
+    const HirValue *producer = findValue(source);
+    if (authority == nullptr || producer == nullptr ||
+        value.info.category != ValueCategory::Place ||
+        producer->info.category != ValueCategory::Place ||
+        producer->info.type != value.info.type ||
+        producer->info.access != value.info.access ||
+        authority->access != value.info.access) {
       valid = false;
       return;
     }
     valueLoans.insert_or_assign(value.id, loan);
+    forwardedBorrowValues.insert_or_assign(value.id, source);
     loweredValues.insert_or_assign(value.id, mirValueFor(source));
     valuePlaces.insert_or_assign(value.id,
                                  clonePlace(placeForValue(source), value));
@@ -8716,8 +8737,7 @@ private:
   // so far (newest first), performs lexical return cleanup and returns. Every
   // step is an ordinary call or construction verified like any other.
   void emitPropagation(const HirValue &value) {
-    if (!value.propagation || value.info.type == SemanticType::Unknown ||
-        value.info.category != ValueCategory::Value) {
+    if (!value.propagation || value.info.type == SemanticType::Unknown) {
       valid = false;
       return;
     }
@@ -8783,6 +8803,11 @@ private:
     // Cleanup on the residual path must not retire the success path's
     // carrier-to-owner mapping, just as it must not retire its scope loans.
     bindingLoans = evaluatedBindingLoans;
+    if (value.info.category == ValueCategory::Place) {
+      forwardBorrowResult(value, plan.output);
+      emittedValues.insert(value.id);
+      return;
+    }
     // The result is the take_value call's result itself, carrying the
     // propagation's own obligation, so consumers see an ordinary call result
     // rather than a join temporary that a class without a default
@@ -9671,6 +9696,20 @@ private:
       }
     }
     instruction.result = resultFor(*value);
+    if (value->kind == HirValueKind::PayloadConstruction &&
+        instruction.result && value->borrowDependencies) {
+      // Empty sets already have exact constructor-alternative evidence.
+      // Nonempty conditional sets will be bound to real MIR loans by the
+      // borrowed-construction path, never by manufacturing an empty loan.
+      if (!value->borrowDependencies->dependencies.empty()) {
+        valid = false;
+        return;
+      }
+      output.values[*instruction.result - 1].borrowDependencies =
+          MirBorrowDependencySet{
+              .possibleAlternatives =
+                  value->borrowDependencies->possibleAlternatives};
+    }
     if (value->kind == HirValueKind::ArrayInitializer ||
         value->kind == HirValueKind::PayloadConstruction ||
         value->kind == HirValueKind::Unexpected ||
@@ -9689,10 +9728,11 @@ private:
         value->info.category != ValueCategory::Place)
       (void)initializeValueLifecycle(instruction, *value);
     if (instruction.operation == MirOperation::Closure &&
-        !value->borrowDependencies.empty()) {
+        value->borrowDependencies &&
+        !value->borrowDependencies->dependencies.empty()) {
       const auto *target = program.findLambda(*instruction.lambdaTarget);
       std::vector<MirLoanDependency> dependencies;
-      for (const auto &dependency : value->borrowDependencies) {
+      for (const auto &dependency : value->borrowDependencies->dependencies) {
         const auto capture = target == nullptr ? 0 : [&] {
           for (std::size_t index = 0; index < target->captures.size(); ++index)
             if (!dependency.designatedFields.empty() &&
@@ -13462,6 +13502,7 @@ private:
   // its arm, including mixed copied/borrowed bindings of passive enums.
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
+  std::unordered_map<HirValueId, HirValueId> forwardedBorrowValues;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_set<HirBindingId> referenceAccessorBindings;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;

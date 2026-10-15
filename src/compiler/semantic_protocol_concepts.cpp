@@ -153,11 +153,10 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     if (operation->isStatic() || operation->isVirtual() ||
         operation->isConstexpr() || operation->unsafeKeyword() ||
         operation->receiverMutability() != ReceiverMutability::ReadOnly ||
-        !operation->functionAttributes().empty() ||
         operation->runtimeBinding() || operation->hasCLinkage()) {
       reject(operation->name(),
              "is a free function signature and takes no modifiers, "
-             "attributes or receiver qualifier");
+             "runtime binding or receiver qualifier");
     }
     validateType(operation->returnType());
     RegisteredConcept::ProtocolOperation resolved{
@@ -173,6 +172,35 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
       validateType(formal.type);
       resolved.parameterTypes.push_back(
           typeOf(formal, conceptInfo.namespaceScope));
+    }
+    for (const FunctionAttribute &attribute : operation->functionAttributes()) {
+      if (attribute.name.lexeme != "borrowed_from") {
+        reject(attribute.name, "only accepts a borrowed_from origin attribute");
+        continue;
+      }
+      if (resolved.returnBorrowParameter) {
+        reject(attribute.name, "cannot repeat its borrowed_from contract");
+        continue;
+      }
+      const auto &formals = operation->parameters();
+      const auto selected = std::find_if(
+          formals.begin(), formals.end(), [&](const Parameter &parameter) {
+            return attribute.argument &&
+                   attribute.argument->kind != TokenKind::THIS &&
+                   parameter.name.lexeme == attribute.argument->lexeme;
+          });
+      if (selected == formals.end()) {
+        reject(attribute.name,
+               "must name one of its parameters in borrowed_from");
+        continue;
+      }
+      resolved.returnBorrowParameter = std::size_t(selected - formals.begin());
+      if (!containsOpenTypeParameter(resolved.returnType) &&
+          resolved.returnType.kind != SemanticType::Reference) {
+        reject(attribute.name,
+               "requires a checked reference or dependent result for "
+               "borrowed_from");
+      }
     }
     conceptInfo.operations.push_back(std::move(resolved));
   }
@@ -504,7 +532,7 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       }
       defined[*index] = true;
       if (function->operatorName() || function->isStatic() ||
-          function->isVirtual() ||
+          function->isVirtual() || function->unsafeKeyword() ||
           function->receiverMutability() != ReceiverMutability::ReadOnly ||
           function->runtimeBinding() || function->hasCLinkage()) {
         reportConformanceError(function->name(),
@@ -564,6 +592,29 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
             actual(candidate.parameterTypes[parameter]) == expectedParameter;
       }
       expectedSignature += ")";
+      // A protocol's result-origin contract is part of its signature. A
+      // concrete owned result makes it inert; a borrowed or dependent result
+      // must publish the same parameter index, independently of parameter
+      // spelling. Bodies are checked against that declaration in the ordinary
+      // return-origin checker.
+      if (operation.returnBorrowParameter &&
+          (expectedReturn.kind == SemanticType::Reference ||
+           containsOpenTypeParameter(expectedReturn))) {
+        const auto *origin = function->findFunctionAttribute("borrowed_from");
+        const auto parameter = *operation.returnBorrowParameter;
+        if (origin == nullptr || !origin->argument ||
+            parameter >= function->parameters().size() ||
+            origin->argument->lexeme !=
+                function->parameters()[parameter].name.lexeme) {
+          reportConformanceError(
+              function->name(),
+              "Operation '" + function->name().lexeme +
+                  "' must preserve the concept's borrowed_from parameter "
+                  "contract.",
+              &operation.declaration->name(), "Operation declared here.");
+          continue;
+        }
+      }
       if (!exact) {
         reportConformanceError(
             function->name(),
@@ -1173,11 +1224,27 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
     }
   }
   if (valid) {
-    semanticModel.record(expr,
-                         ResolvedCallInfo{.returnType = returnType,
-                                          .parameterTypes = parameterTypes});
+    ResolvedCallInfo selected{.returnType = returnType,
+                              .parameterTypes = parameterTypes};
+    const auto inferred = functionReturnBorrowSummary(
+        returnType, parameterTypes, 0, false, IntrinsicKind::None);
+    selected.borrowOrigin = inferred.origin;
+    selected.borrowArgument = inferred.parameter;
+    selected.borrowAccess = inferred.access;
+    selected.borrowArguments = inferred.parameters;
+    if (returnType.kind == SemanticType::Reference &&
+        operation.returnBorrowParameter) {
+      selected.borrowOrigin = BorrowOriginKind::Argument;
+      selected.borrowArgument = *operation.returnBorrowParameter;
+      selected.borrowAccess = returnType.referenceAccess;
+    }
+    semanticModel.record(expr, std::move(selected));
   }
-  currentType = valid ? returnType : SemanticType::Unknown;
+  currentType = !valid ? SemanticType::Unknown
+                : returnType.kind == SemanticType::Reference &&
+                        returnType.arguments.size() == 1
+                    ? returnType.arguments.front()
+                    : returnType;
   return true;
 }
 

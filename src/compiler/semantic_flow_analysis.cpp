@@ -1568,6 +1568,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (operand != nullptr && isFallibleBorrowType(*operand))
       return expressionInfo(std::move(type), ValueCategory::Place,
                             AccessMode::ReadOnly);
+    if (const auto *plan = semanticModel.findTryablePropagation(*unary);
+        plan != nullptr &&
+        plan->output.returnType.kind == SemanticType::Reference)
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            plan->output.borrowAccess);
   }
   if (kind == ExprKind::Binary) {
     const Binary &binary = static_cast<const Binary &>(expr);
@@ -5839,6 +5844,22 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
              .parameterTypes = enumerator.payloadTypes});
+  // Establish empty evidence only from a complete typed inventory of every
+  // active payload field. The selected tag is part of the producer's proof;
+  // absence of an origin/loan is never itself evidence that the set is empty.
+  const bool dependencyFree =
+      call.arguments().size() == enumerator.payloadTypes.size() &&
+      std::all_of(enumerator.payloadTypes.begin(),
+                  enumerator.payloadTypes.end(),
+                  [&](const SemanticType &field) {
+                    const auto inventory = storedReferenceInventory(field);
+                    return inventory && inventory->empty();
+                  });
+  if (dependencyFree)
+    semanticModel.recordBorrowDependencySet(
+        call, {.possibleAlternatives = {
+                   {.conditions = {{.enumeration = enumerator.symbol.type,
+                                    .variant = enumerator.variantIndex}}}}});
   currentType = enumerator.symbol.type;
 }
 
@@ -6385,18 +6406,13 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
   if (info == nullptr || info->category != ValueCategory::Value ||
-      info->type.kind != SemanticType::Class) {
+      (info->type.kind != SemanticType::Class &&
+       info->type.kind != SemanticType::Enum)) {
     return result;
   }
   result.type = info->type;
   if (isExplicitMoveReceiver(expression)) {
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
-    return result;
-  }
-  const ClassInfo *record = classInfo(info->type);
-  if (record == nullptr ||
-      (record->kind != ClassKind::Class && record->kind != ClassKind::Struct)) {
-    result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
     return result;
   }
   if (info->traits.containsBorrowedState) {
@@ -6407,6 +6423,39 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  if (info->type.kind == SemanticType::Enum) {
+    // A passive payload construction already owns its full-expression value.
+    // The call can observe it, but cannot retain it or borrow mutable access.
+    // This family intentionally excludes owning enum values and factories:
+    // those need their own exact materialization/cleanup proof.
+    const auto enumeration = enumTypeFor(info->type);
+    const auto *call = exprAs<Call>(producer);
+    const auto *construction =
+        call == nullptr ? nullptr
+                        : semanticModel.findPayloadConstruction(*call);
+    if (enumeration && enumeration->payload &&
+        !containsOpenTypeParameter(info->type) &&
+        info->traits.ownership == OwnershipKind::Value &&
+        info->traits.drop == DropKind::Trivial && info->traits.copyable &&
+        info->traits.movable && construction != nullptr &&
+        construction->type == info->type &&
+        construction->owner == info->type.enumId &&
+        construction->variantIndex < enumeration->enumerators.size() &&
+        construction->declaration ==
+            enumeration->enumerators[construction->variantIndex].declaration) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+    } else {
+      result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    }
+    return result;
+  }
+  const ClassInfo *record = classInfo(info->type);
+  if (record == nullptr ||
+      (record->kind != ClassKind::Class && record->kind != ClassKind::Struct)) {
+    result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
     return result;
   }
   if (const ResolvedConstructionInfo *construction =
@@ -11950,7 +11999,7 @@ auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, Mutability mutability,
     const std::vector<std::string> &fromScope) const -> SemanticType {
   SemanticType result = typeOf(type, fromScope);
-  if (result.kind == SemanticType::Reference) {
+  if (result.kind == SemanticType::Reference && type.reference) {
     result.referenceAccess = mutability == Mutability::Mutable
                                  ? AccessMode::Mutable
                                  : AccessMode::ReadOnly;
