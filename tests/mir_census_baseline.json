@@ -161,7 +161,8 @@
     "161-consuming-matches.gti": 237,
     "162-experimental-optional.gti": 157,
     "164-payload-composition.gti": 137,
-    "163-payload-enum-propagation.gti": 134
+    "163-payload-enum-propagation.gti": 134,
+    "165-borrowed-payload-results.gti": 146
   },
-  "total": 18202
+  "total": 18452
 }
