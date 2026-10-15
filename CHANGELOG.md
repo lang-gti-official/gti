@@ -33,6 +33,27 @@ for what minor and patch releases mean.
 - Example 160 moves owned strings out of messages and takes a value out of a
   source-defined optional.
 
+## 0.436.1 — Method calls in constructor member initializers
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a constructor's member initializer
+  stores the result of a method call and the result's class needs cleanup.
+  This failed for every such method that cannot fail, such as
+  `Holder(Source source) : kept(source.make()) {}`, and for every consuming
+  (`&&`) method, such as `Holder(Single box) : kept(std::move(box).release()) {}`
+  or `Holder(int v) : kept(Single(v).release()) {}`. Receivers include
+  by-value, reference and `mut` reference parameters and temporaries, in
+  ordinary and generic classes. Field defaults that call a method on a
+  temporary, such as `Tracked kept = Source(3).make();`, are fixed too. A
+  consumed receiver is destroyed after the field is initialized; if its
+  destructor fails, the field is destroyed before the failure propagates.
+- A member initializer still stops with this error in these cases:
+  - a consuming call whose receiver is moved out of a variable whose class
+    has no destructor and no fields that need one, such as
+    `kept(std::move(source).take())` for a `Source` holding only an `int`
+  - a call to a `virtual` method whose result needs cleanup, such as
+    `kept(maker.make())`
+
 ## 0.436.0 — `?` for any type through `std::tryable`
 
 - Prefix `?` now works on any type with a `std::tryable` conformance block,
