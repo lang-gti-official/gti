@@ -3369,6 +3369,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(conditional_cleanup_free_call_result_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME conditional_moved_local_join_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_moved_local_join_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_moved_local_join_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_generic_owner_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_generic_owner_receiver_runtime_test.py"

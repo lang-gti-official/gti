@@ -920,8 +920,18 @@ passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
 (`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. A nested join is proved on its own, and the
-nested arm's region starts at that inner join's branch block. When a passive
+events stay outside this form. An arm may also move a whole named local out,
+as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
+obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
+ownership event that takes the local's key to `Moved`, and the local keeps its
+passive binding drop. That drop ends the moved-from shell after the join on
+the path that moved it, and the live object on the other. A member call on
+the joined value instead builds a join temporary with its own full-expression
+`Value` obligation, which the arm's `Initialize`, right after the `Move`,
+activates directly; `classValueDestinationSlot` admits that moved-local arm by
+the same ownership and passive-drop facts. A nested join is proved on its
+own, and the nested arm's region starts at that inner join's branch block.
+When a passive
 join's single move reaches neither the binding nor the prepared argument
 terminal, the moved value is staged in its own representation-only slot and
 the join's representation ends right after. That staged slot then serves a

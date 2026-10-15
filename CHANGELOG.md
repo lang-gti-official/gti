@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.3 — Conditional moves of locals without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` move a local whose
+  class has no destructor, as in
+  `Pod t = c ? std::move(a) : std::move(b);`. Binding, returning, reading a
+  field of, calling a method on, assigning and passing on the result all
+  work now, in functions that can fail too, as do by-value parameters and an
+  arm that moves a local beside one that constructs, copies or calls.
+
 ## 0.440.1 — Conditional member-call results without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
