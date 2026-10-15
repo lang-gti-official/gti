@@ -965,11 +965,14 @@ mutable one), and drops it at the end of the full expression. The join's Move is
 has no use. Each arm's `Initialize` activates the temporary's obligation
 directly, because a cleanup-free arm result has none of its own. A
 construction arm already constructed the temporary at that `Initialize`.
-`classValueDestinationSlot` also names the temporary for a call arm with no
-lifecycle event beyond its prepared input transfers, and for a copied place,
+`classValueDestinationSlot` also names the temporary for a call or ordinary
+constructor arm with no lifecycle event beyond its exact prepared input
+transfers, and for a copied place,
 when the `Initialize` follows the producer directly or opens its Invoke
 success block. Each constructs the temporary directly, a call that can fail
-only on success, and the receiver borrows it as `directTemporaryReceiver`
+only on success. Constructor admission requires its complete input schedule;
+input transfers do not substitute for the temporary's real full-expression
+drop, which stays inactive if construction fails. The receiver borrows it as `directTemporaryReceiver`
 borrows a fresh result's slot. A nested-join arm and a moved named local are
 not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
@@ -3674,6 +3677,31 @@ receiver proof and publishes into the slot only after the state check succeeds;
 the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
+
+Checked references, retained loan pointers and failure-result pointer channels
+share value-object qualification. In particular, a read-only `c_string&`
+borrows the pointer slot as `const char* const &`, not by adding another const
+to its character pointee. The same top-level qualifier is retained when that
+reference crosses nested returns, callable adapters or stored-reference fields.
+This is representation policy only; semantic owner dependencies and access
+permissions remain unchanged.
+
+Generated nominal and instance names hash logical source identities rather
+than host filesystem paths. The source descriptor table carried with failure
+metadata covers every loaded unit, including those without failure sites:
+`<prelude>`, standard-library include names, root/package-relative paths, and
+content-plus-include-route identities for external units. Lowered declaration
+source-unit references must resolve in that table before emission. Declaration
+spans retain physical paths for diagnostics and opt-in debug locations; those
+paths do not participate in generated identifier hashes. This preserves names
+across checkout and toolchain relocation without conflating same-basename
+external units. Failure-site serialization and runtime descriptor IDs retain
+their existing contract; the additional source rows are compiler metadata.
+Private module implementation roots retain their registering interface as
+loading provenance. Their external identity route extends that interface's
+route with the implementation's package-relative path, also covering files
+included only by the implementation. This provenance is separate from
+dependency/visibility edges and grants no access to private declarations.
 
 Interface-owned static functions use the ordinary static declaration and direct
 call path. Purity comes only from the verified function's `pureVirtual` fact,

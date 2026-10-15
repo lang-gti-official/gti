@@ -1871,6 +1871,12 @@ private:
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
 
+  [[nodiscard]] std::vector<
+      std::pair<std::size_t, const ConstructorInitializer *>>
+  ownerlessTextConstructorInputs(
+      const SemanticType &type, const ConstructorDecl *constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,
               AccessMode access = AccessMode::ReadOnly) const;
@@ -2170,6 +2176,8 @@ private:
   void validateSequencedTransientLoans(const ExprPtr &left,
                                        const ExprPtr &right,
                                        const Token &location);
+
+  [[nodiscard]] bool validateForeignStorageBorrow(const ExprPtr &expression);
 
   void validateCallPlaceExclusivityImpl(
       std::span<const SemanticType> parameterTypes,
@@ -3422,6 +3430,8 @@ private:
                                const SemanticType &returnType);
 
   void collectRootNativeStorageSymbols(const StmtList &statements);
+  void validateExternCVariable(const VariableDecl &variable,
+                               const SemanticType &type, SymbolId symbol);
 
   struct GlobalBorrowStorageInfo {
     const VariableDecl *declaration = nullptr;
@@ -3705,6 +3715,9 @@ private:
                      const std::vector<std::string> &fromScope) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
+  [[nodiscard]] std::optional<std::size_t>
+  protocolBorrowContractFailure(const RegisteredConformance &conformance,
+                                const std::vector<SemanticType> &binding) const;
   void validateAssociatedTypePath(const TypeRef &type, ConceptId id);
   [[nodiscard]] std::optional<ProtocolOperationTarget>
   protocolOperationTarget(const QualifiedName &callee) const;
@@ -5076,7 +5089,8 @@ private:
 
   [[nodiscard]] bool isOwnershipAssignment(const SemanticType &target,
                                            const SemanticType &value,
-                                           const ExprPtr &expression) const;
+                                           const ExprPtr &expression,
+                                           const SemanticPlace &destination);
 
   [[nodiscard]] static bool isAssignable(SemanticType target,
                                          SemanticType value,
@@ -5499,6 +5513,8 @@ private:
         programEffects;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
+    std::vector<const Expr *> foreignAddressPlaces;
+    std::unordered_map<std::string, const VariableDecl *> externCVariables;
     LambdaId nextLambdaId = 1;
     SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;

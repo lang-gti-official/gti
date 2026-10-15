@@ -89,6 +89,23 @@ public:
 
 Pod fresh(int id) { return Pod(id); }
 
+// The result has no cleanup, but its constructor still receives a prepared
+// class argument. The selected input is transferred exactly once, and failure
+// before publication must not activate the joined result.
+class FromPlain {
+public:
+  int value;
+  FromPlain(Plain input) : value(input.get()) {}
+  int read() { return this.value; }
+};
+
+class FromTracked {
+public:
+  int value;
+  FromTracked(Tracked input, int divisor) : value(input.id / divisor) {}
+  int read() { return this.value; }
+};
+
 Pod make_pod(Plain source) { return Pod(source.get()); }
 
 Pod unwrap(Tracked source) { return Pod(source.id); }
@@ -257,6 +274,10 @@ int run(bool left, int base) {
 }
 
 int main(int argc, std::vector<std::string> argv) {
+  if ((true ? FromPlain(Plain(41)) : FromPlain(Plain(42))).read() != 41 ||
+      (false ? FromPlain(Plain(41)) : FromPlain(Plain(42))).read() != 42) {
+    return 90;
+  }
   std::println(run(true, 0));
   std::println(run(false, 100));
   // Failure cleanup. Scenario 1 fails the left arm's callee, 2 the right
@@ -272,5 +293,8 @@ int main(int argc, std::vector<std::string> argv) {
   Tracked third{207};
   int ratio = ratio_calls(scenario != 3, 208, 209, scenario == 3 ? 0 : 1);
   std::println("ratio");
-  return left + right + ratio - 1616;
+  int constructed = (scenario == 4 ? FromTracked(Tracked(210), 0)
+                                    : FromTracked(Tracked(211), scenario == 5 ? 0 : 1)).read();
+  std::println("constructed");
+  return left + right + ratio - 1616 + constructed - 211;
 }

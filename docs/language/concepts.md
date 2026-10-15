@@ -778,7 +778,11 @@ An operation may declare `[[borrowed_from(parameter)]]`. This names the
 parameter position that supplies a checked reference result; an implementation
 may rename that parameter but must preserve its position and contract. For an
 associated or dependent result type the contract applies only to reference
-instances, and is inert for owned results. A by-value argument may supply the
+instances, and is inert for owned results. A generic implementation need not
+annotate an owned-returning instance merely because its uninstantiated return
+type is open. Selecting a concrete reference-returning conformance, including
+through a generic requirement, checks the implementation's exact parameter
+contract before permitting the call. A by-value argument may supply the
 reference through one exact stored external dependency. It never supplies a
 reference to the consumed argument's own storage. Each implementation body is
 checked against that declaration contract, including in generic instances.

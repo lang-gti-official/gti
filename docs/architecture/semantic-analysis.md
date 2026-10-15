@@ -1285,7 +1285,7 @@ extents, and checked size overflow. Unknown types keep the ordinary
 type-resolution diagnostic without a second layout error. No host or LLVM
 layout query participates.
 
-Native-record validation accepts only non-generic passive structs with public
+Native-record validation accepts only non-generic passive structs or unions with public
 instance fields drawn from fixed-width and target-C scalars, `bool`, nested
 valid native records, named native callbacks, recursive admitted raw pointers,
 and positive concrete fixed arrays of admitted field elements. It rejects

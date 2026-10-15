@@ -85,6 +85,11 @@ public:
     return sources;
   }
 
+  // Logical source identities cover every loaded unit, including declarations
+  // with no failure sites. Representation names must not depend on host paths.
+  [[nodiscard]] const FailureSourceDescriptor *
+  findSource(SourceUnitId id) const;
+
   [[nodiscard]] const std::vector<FailureSiteDescriptor> &sites() const {
     return siteTable;
   }

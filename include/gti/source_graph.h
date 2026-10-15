@@ -95,6 +95,13 @@ struct SourceUnit {
   bool prelude = false;
 };
 
+// Loading provenance, not a dependency or visibility edge. An interface may
+// register private implementation roots which themselves import that interface.
+struct SourceImplementation {
+  SourceUnitId interfaceUnit = 0;
+  SourceUnitId implementationUnit = 0;
+};
+
 struct PackageSourceDependency {
   std::string alias;
   std::string targetIdentity;
@@ -119,6 +126,8 @@ public:
   [[nodiscard]] SourceUnitId entryUnit() const;
   [[nodiscard]] const std::vector<SourceUnit> &sourceUnits() const;
   [[nodiscard]] const std::vector<SourceDependency> &dependencyEdges() const;
+  [[nodiscard]] const std::vector<SourceImplementation> &
+  moduleImplementations() const;
   [[nodiscard]] const std::vector<SourceUnitId> &preludeRoots() const;
   [[nodiscard]] const SourceUnit *findUnit(SourceUnitId id) const;
   [[nodiscard]] SourceUnitId sourceUnitForPath(std::string_view path) const;
@@ -159,7 +168,7 @@ private:
   std::vector<SourceUnit> units;
   std::vector<SourceDependency> dependencies;
   std::vector<SourceUnitId> configuredPreludeRoots;
-  std::vector<SourceUnitId> implementationRoots;
+  std::vector<SourceImplementation> implementationRoots;
   std::unordered_map<std::string, SourceUnitId> unitsByPath;
   SourceUnitId entry = 0;
 };

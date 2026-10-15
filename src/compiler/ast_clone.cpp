@@ -347,7 +347,8 @@ private:
         node.mutability(), node.type(), tok(node.name()),
         expr(node.initializer()), node.staticKeyword(), node.isRangeBinding(),
         tok(node.constexprKeyword()), node.isRangeOwner(),
-        node.isRangeIterator(), node.mutKeyword(), node.isRangeElementOwner());
+        node.isRangeIterator(), node.mutKeyword(), node.isRangeElementOwner(),
+        node.linkage(), node.nativeLinkName());
     if (node.extent()) {
       copy->setExtent(*node.extent());
     }

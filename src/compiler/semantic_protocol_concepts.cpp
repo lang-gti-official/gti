@@ -236,15 +236,43 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     }
     currentSourceUnit = sourceUnitFor(declaration->forKeyword());
     currentNamespace = enclosing;
+    // The header owns these parameters and their diagnostics. Operations share
+    // their resolved identities, rather than registering each written copy.
+    std::vector<GenericParameterInfo> parameters = makeGenericParameters(
+        declaration->genericParameters(), declaration->forKeyword(), enclosing);
+    for (const StmtPtr &member : declaration->members()) {
+      if (const auto *function = stmtAs<FunctionDecl>(member.get())) {
+        functionGenericParameters.emplace(function, parameters);
+      }
+    }
     const ConceptApplication &target = declaration->target();
     const Token &site = target.name.last();
+    if (reportCompilerPrivatePath(target.name)) {
+      continue;
+    }
     const std::optional<ConceptId> conceptId =
         resolveConceptPath(target.name, enclosing);
     if (!conceptId || *conceptId == 0 || *conceptId > concepts.size()) {
-      reportConformanceError(site, "Unknown or invisible concept '" +
-                                       pathSpelling(target.name) + "'.");
+      const auto global = resolveConceptPathGlobally(target.name, enclosing);
+      if (!(global && *global != 0 && *global <= concepts.size() &&
+            reportInvisibleDeclaration(
+                site, pathSpelling(target.name),
+                concepts[*global - 1].declaration->name(),
+                concepts[*global - 1].sourceUnit))) {
+        reportConformanceError(site, "Unknown or invisible concept '" +
+                                         pathSpelling(target.name) + "'.");
+        diagnostics.back().missingIncludeName = site.lexeme;
+      }
       continue;
     }
+    recordQualifiedPathUses(target.name);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(site),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = concepts[*conceptId - 1].symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+         .name = site.lexeme});
     (void)resolveConcept(*conceptId, &site);
     const RegisteredConcept &conceptInfo = concepts[*conceptId - 1];
     if (!conceptInfo.protocol) {
@@ -265,21 +293,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       continue;
     }
 
-    const bool hasFunctions =
-        std::any_of(declaration->members().begin(),
-                    declaration->members().end(), [](const StmtPtr &member) {
-                      return stmtAs<FunctionDecl>(member.get()) != nullptr;
-                    });
-    // Every block function carries these parameters and reports their
-    // problems itself; the block reports them only when it has no function.
-    const std::size_t parameterDiagnostics = diagnostics.size();
-    std::vector<GenericParameterInfo> parameters = makeGenericParameters(
-        declaration->genericParameters(), declaration->forKeyword(), enclosing);
-    if (hasFunctions) {
-      diagnostics.erase(diagnostics.begin() +
-                            static_cast<std::ptrdiff_t>(parameterDiagnostics),
-                        diagnostics.end());
-    }
     bool valid = parameters.size() == declaration->genericParameters().size();
     for (const GenericParameterInfo &parameter : parameters) {
       if (parameter.pack || parameter.value) {
@@ -589,13 +602,13 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       }
       expectedSignature += ")";
       // A protocol's result-origin contract is part of its signature. A
-      // concrete owned result makes it inert; a borrowed or dependent result
-      // must publish the same parameter index, independently of parameter
-      // spelling. Bodies are checked against that declaration in the ordinary
-      // return-origin checker.
+      // concrete owned result makes it inert; a borrowed result must publish
+      // the same parameter index, independently of parameter spelling. Defer
+      // dependent returns until concrete conformance selection: an open type
+      // can instantiate to an owned result with no origin contract. Bodies are
+      // checked against the declaration in the ordinary return-origin checker.
       if (operation.returnBorrowParameter &&
-          (expectedReturn.kind == SemanticType::Reference ||
-           containsOpenTypeParameter(expectedReturn))) {
+          expectedReturn.kind == SemanticType::Reference) {
         const auto *origin = function->findFunctionAttribute("borrowed_from");
         const auto parameter = *operation.returnBorrowParameter;
         if (origin == nullptr || !origin->argument ||
@@ -1036,7 +1049,55 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
-  return firstConstraintFailure(conformance.genericParameters, match->binding);
+  if (auto constraint =
+          firstConstraintFailure(conformance.genericParameters, match->binding))
+    return constraint;
+  if (const auto operation =
+          protocolBorrowContractFailure(conformance, match->binding)) {
+    failure.missingConformance = false;
+    failure.conformanceBorrowOperation =
+        conceptInfo.operations[*operation].declaration->name();
+    return failure;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::protocolBorrowContractFailure(
+    const RegisteredConformance &conformance,
+    const std::vector<SemanticType> &binding) const
+    -> std::optional<std::size_t> {
+  const auto &operations = concepts[conformance.conceptId - 1].operations;
+  for (std::size_t index = 0; index < operations.size(); ++index) {
+    const auto &operation = operations[index];
+    if (!operation.returnBorrowParameter)
+      continue;
+    if (index >= conformance.operations.size() ||
+        conformance.operations[index].overloads.size() != 1)
+      return index;
+    const auto &candidate = conformance.operations[index].overloads.front();
+    const auto &parameters = candidate.record().genericParameters;
+    if (parameters.size() != binding.size())
+      return index;
+    GenericSubstitution substitution;
+    for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter)
+      substitution.types.emplace(parameters[parameter].id, binding[parameter]);
+    const auto returnType = substituteType(candidate.returnType, substitution);
+    if (returnType == SemanticType::Unknown ||
+        containsOpenTypeParameter(returnType))
+      return index;
+    if (returnType.kind != SemanticType::Reference)
+      continue;
+    const auto *function = candidate.declaration;
+    const auto *origin =
+        function ? function->findFunctionAttribute("borrowed_from") : nullptr;
+    const auto parameter = *operation.returnBorrowParameter;
+    if (!origin || !origin->argument ||
+        parameter >= function->parameters().size() ||
+        origin->argument->lexeme !=
+            function->parameters()[parameter].name.lexeme)
+      return index;
+  }
+  return std::nullopt;
 }
 
 auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
@@ -1119,6 +1180,8 @@ auto SemanticVisitor::Impl::protocolOperationTarget(const QualifiedName &callee)
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
+  if (protocolBorrowContractFailure(conformance, match->binding))
+    return std::nullopt;
   const std::optional<std::size_t> operation =
       operationIndex(concepts[*id - 1].operations, callee.name().last().lexeme);
   if (!operation || *operation >= conformance.operations.size() ||
@@ -1185,6 +1248,20 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
                    [&](const SemanticType &argument) {
                      return containsOpenTypeParameter(argument);
                    })) {
+    if (const auto match = matchConformance(id, arguments)) {
+      const auto &conformance = conformances[match->conformance - 1];
+      if (const auto failed =
+              protocolBorrowContractFailure(conformance, match->binding)) {
+        const auto &operation = conceptInfo.operations[*failed];
+        reportConformanceError(
+            site,
+            "Operation '" + operation.name +
+                "' must preserve the concept's borrowed_from parameter "
+                "contract for its concrete reference result.",
+            &operation.declaration->name(), "Operation declared here.");
+        return fail();
+      }
+    }
     if (!protocolOperationTarget(callee)) {
       reportConformanceError(site, "No conformance block 'for concept " +
                                        application + "' is declared.");

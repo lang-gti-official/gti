@@ -1042,3 +1042,13 @@ workers, not a per-document scheduler. Its bounded exact-content parsed-unit reu
 contains no semantic records; the bounded instance reuse keeps only validated
 library-only instance deltas, never a translation unit's semantic model. Preserve the boundaries that allow measured
 evolution without importing those systems preemptively.
+
+### Foreign storage queries
+
+Foreign-variable hover uses the compiler's resolved external-storage identity
+to display C linkage, source access, exact renamed native symbol and unsafe
+load/store obligations at both declaration and use sites. Definition, references
+and semantic tokens retain the ordinary global symbol identity. The protocol
+does not infer ownership from an external declaration or add a fix accepting an
+unsafe access. Incremental diagnostic and hover tests cover edited link names,
+UTF-16 positions and clearing stale unsafe-access errors.

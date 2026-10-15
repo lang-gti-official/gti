@@ -49,6 +49,12 @@ void printType(const NativeModel &model, NativeTypeId id, std::ostream &out) {
     out << "<invalid-type " << id << '>';
     return;
   }
+  if (type->addressSpace != 0) {
+    out << "[address-space " << type->addressSpace << "] ";
+  }
+  if (type->isVolatileQualified) {
+    out << "volatile ";
+  }
   switch (type->kind) {
   case NativeTypeKind::Void:
     out << "void";
@@ -195,6 +201,44 @@ std::string printNativeModel(const NativeModel &model) {
       out << external << '\n';
       break;
     }
+    case NativeDeclarationKind::Variable:
+      out << "variable " << declaration->name << ": ";
+      if (declaration->isConst) {
+        out << "const ";
+      }
+      printType(model, declaration->type, out);
+      out << " [linkage ";
+      switch (declaration->linkage) {
+      case NativeLinkage::Invalid:
+        out << "invalid";
+        break;
+      case NativeLinkage::None:
+        out << "none";
+        break;
+      case NativeLinkage::Internal:
+        out << "internal";
+        break;
+      case NativeLinkage::UniqueExternal:
+        out << "unique-external";
+        break;
+      case NativeLinkage::External:
+        out << "external";
+        break;
+      }
+      out << "] [symbol \"" << declaration->externalSymbol << "\"]";
+      if (declaration->isDefinition) {
+        out << " [definition]";
+      }
+      if (declaration->isTentativeDefinition) {
+        out << " [tentative-definition]";
+      }
+      if (declaration->tlsKind != NativeTlsKind::None) {
+        out << (declaration->tlsKind == NativeTlsKind::Static
+                    ? " [tls static]"
+                    : " [tls dynamic]");
+      }
+      out << external << '\n';
+      break;
     case NativeDeclarationKind::Constant:
       out << "constant " << declaration->name << " = ";
       switch (declaration->constantKind) {

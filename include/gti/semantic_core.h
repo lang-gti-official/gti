@@ -853,6 +853,18 @@ struct ExpressionInfo {
                          const ExpressionInfo &) = default;
 };
 
+// A declaration of storage owned by the native program. Its symbol is a
+// declaration identity, never a GTI initialization or cleanup obligation.
+struct ForeignStorageInfo {
+  SymbolId symbol = 0;
+  SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  std::string externalSymbol;
+
+  friend bool operator==(const ForeignStorageInfo &,
+                         const ForeignStorageInfo &) = default;
+};
+
 struct BindingInfo {
   SemanticType type = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
@@ -860,6 +872,7 @@ struct BindingInfo {
   std::optional<ConstantValue> constant;
   bool explicitlyMoved = false;
   SymbolId symbol = 0;
+  bool foreignStorage = false;
   bool staticStorage = false;
   bool internalLinkage = false;
   SemanticLoanId retainedLoan = 0;
