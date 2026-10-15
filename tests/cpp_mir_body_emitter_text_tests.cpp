@@ -788,6 +788,183 @@ int main() {
          "their representation-only slot after retiring the previous one");
 }
 
+// A constructor that copies its closure parameter into a field can use that
+// parameter again in a body that may fail. A struct capture gives the field a
+// lexical drop, but the record-published copy still constructs it in the
+// native member-initializer list, and ending it on rollback runs no source
+// code. Both closure instances therefore keep failure-form constructors. Every
+// bare MIR place of a copied formal, closure or class, spells the one alias of
+// the native parameter, never a lifetime slot that nothing constructed.
+
+void testCopiedFormalReusedInConstructorBody() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-copied-formal-reuse.gti", R"(
+#include <std/utility>
+
+int call<F>(F f) { return f(); }
+
+class Keeper<F> {
+public:
+  F callback;
+  mut int seen;
+  Keeper(F f) : callback(f), seen(0) {
+    F spare = f;
+    this.seen = call(std::move(spare)) + call(f);
+  }
+};
+
+int keep<F>(F f) {
+  Keeper<F> value = Keeper<F>(f);
+  return value.seen;
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+int amount(Offset offset) { return offset.amount; }
+
+class Stamp {
+public:
+  Offset origin;
+  int total;
+  Stamp(Offset offset) : origin(offset), total(amount(offset)) {}
+};
+
+int main() {
+  int k = 3;
+  Offset offset{4};
+  Stamp stamp{offset};
+  return keep([offset]() -> int { return offset.amount; }) +
+         keep([k]() -> int { return k; }) + stamp.total - 18;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the copied-formal reuse fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a copied formal reused in a constructor body "
+                              "should emit: ") +
+                      error.what());
+    return;
+  }
+  // Every definition whose first line contains `marker`, through its closing
+  // brace at the definition's own indentation.
+  const auto definitions = [&](std::string_view marker) {
+    std::vector<std::string> found;
+    for (std::size_t at = text.find(marker); at != std::string::npos;
+         at = text.find(marker, at + marker.size())) {
+      const std::size_t lineStart = text.rfind('\n', at) + 1;
+      const std::size_t lineEnd = text.find('\n', at);
+      if (lineEnd == std::string::npos || text[lineEnd - 1] != '{') {
+        continue;
+      }
+      const std::size_t indent =
+          text.find_first_not_of(' ', lineStart) - lineStart;
+      const std::string closing = "\n" + std::string(indent, ' ') + "}\n";
+      const std::size_t end = text.find(closing, lineEnd);
+      if (end != std::string::npos) {
+        found.push_back(
+            text.substr(lineStart, end + closing.size() - lineStart));
+      }
+    }
+    return found;
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  // The one alias of the copied parameter, provided no other carrier of the
+  // formal is declared and nothing reads the alias as a lifetime slot.
+  const auto parameterAlias =
+      [&](const std::string &body) -> std::optional<std::string> {
+    constexpr std::string_view declaration = "auto &";
+    constexpr std::string_view source = " = __gti_mir_arg_0;\n";
+    const std::size_t sourceAt = body.find(source);
+    const std::size_t nameAt = body.rfind(declaration, sourceAt);
+    if (sourceAt == std::string::npos || nameAt == std::string::npos ||
+        count(body, source) != 1) {
+      return std::nullopt;
+    }
+    std::string alias = body.substr(nameAt + declaration.size(),
+                                    sourceAt - nameAt - declaration.size());
+    if (count(body, alias + ".get()") != 0 ||
+        count(body, "std::move(__gti_mir_arg_0)") != 0) {
+      return std::nullopt;
+    }
+    return alias;
+  };
+  // The slot that the first `.construct(alias)` constructs.
+  const auto copiedSlot = [&](const std::string &body,
+                              const std::string &alias) {
+    const std::string construction = ".construct(" + alias + ");";
+    const std::size_t at = body.find(construction);
+    if (at == std::string::npos) {
+      return std::string{};
+    }
+    const std::size_t nameAt = body.rfind(' ', at) + 1;
+    return body.substr(nameAt, at - nameAt);
+  };
+
+  const std::vector<std::string> keepers = definitions(
+      "Keeper<F>::Keeper(::gti_internal::backend::mir_failure_constructor_"
+      "tag_v1<");
+  std::size_t lexical = 0;
+  std::size_t passive = 0;
+  for (const std::string &body : keepers) {
+    const std::optional<std::string> alias = parameterAlias(body);
+    const std::string spare = alias ? copiedSlot(body, *alias) : "";
+    expect(alias.has_value() &&
+               count(body, ") : callback(__gti_mir_arg_0), ") == 1 &&
+               count(body, ".construct(" + *alias + ");") == 2,
+           "each closure instance should copy the field from the parameter "
+           "in its member-initializer list, then copy the local and the "
+           "call argument from the one parameter alias");
+    if (spare.empty()) {
+      continue;
+    }
+    // A struct capture makes the local's drop lexical: a real slot that the
+    // success and every failure edge destroy. A number capture keeps a
+    // representation-only slot with no MIR drop.
+    if (count(body, "mir_lifetime_slot<F> " + spare + ";") == 1 &&
+        count(body, spare + ".destroy();\n") == 1 &&
+        count(body, spare + ".destroy(); // failure cleanup") >= 1) {
+      ++lexical;
+    }
+    if (count(body, "mir_lifetime_slot<F, true> " + spare + ";") == 1 &&
+        count(body, spare + ".destroy()") == 0) {
+      ++passive;
+    }
+  }
+  expect(keepers.size() == 2 && lexical == 1 && passive == 1,
+         "the struct- and number-capturing instances should each keep a "
+         "failure-form constructor with their own local drop shape");
+
+  const std::vector<std::string> stamps = definitions("Stamp::Stamp(");
+  expect(!stamps.empty() &&
+             std::all_of(
+                 stamps.begin(), stamps.end(),
+                 [&](const std::string &body) {
+                   const std::optional<std::string> alias =
+                       parameterAlias(body);
+                   return alias.has_value() &&
+                          count(body, ") : origin(__gti_mir_arg_0), ") == 1 &&
+                          count(body, ".construct(" + *alias + ");") == 1;
+                 }),
+         "a class parameter copied into a field and passed on should read "
+         "its one alias rather than an unconstructed slot");
+}
+
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
@@ -5130,6 +5307,8 @@ constexpr NamedTest kTests[] = {
     {"testLexicalCopyCaptureThroughCallableTemplate",
      testLexicalCopyCaptureThroughCallableTemplate},
     {"testProducedClosureLocalSlots", testProducedClosureLocalSlots},
+    {"testCopiedFormalReusedInConstructorBody",
+     testCopiedFormalReusedInConstructorBody},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",
