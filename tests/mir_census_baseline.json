@@ -69,7 +69,7 @@
     "068-static-assertions.gti": 8,
     "069-mutable-field-groups.gti": 10,
     "070-qualified-specializations.gti": 40,
-    "071-fresh-temporary-borrows.gti": 12,
+    "071-fresh-temporary-borrows.gti": 19,
     "072-filesystem-paths.gti": 141,
     "073-constructor-local-generics.gti": 131,
     "074-read-only-range-loans.gti": 95,
@@ -161,5 +161,5 @@
     "161-consuming-matches.gti": 237,
     "162-experimental-optional.gti": 157
   },
-  "total": 17924
+  "total": 17931
 }

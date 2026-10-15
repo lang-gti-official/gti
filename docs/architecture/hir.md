@@ -860,8 +860,9 @@ parameter is a supported scalar/reference or passive fixed-array form, exact
 class/lambda/owning-enum value, or the scheduled borrowed class input described
 below. Native callback and function-item values retain their exact signatures.
 Each owning role still requires its checked copy/move capability. Reusable
-mutable temporary permission remains confined to ordinary methods and reusable
-`operator()`; consuming value operators also
+mutable temporary permission remains confined to ordinary methods, virtual or
+not, and reusable `operator()`; the call keeps its semantic dispatch. Consuming
+value operators also
 receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Unresolved deferred callables and
