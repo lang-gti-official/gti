@@ -8360,6 +8360,18 @@ The follow-up separates two cooperating implementation regions:
   complete-set dataflow supplies producer/return evidence to both checks, so
   this does not introduce another ownership or liveness engine.
 
+The selected-reference scaffold records the exact projected expression and
+subject in semantics, then resolves them to one current-body HIR extraction
+value and carrier operand. This is address-production identity, not an owner
+dependency: the external dependency set remains separate and may contain
+several origins for the same field after a branch join. A strict alternative
+inventory also records dependency-free unit/error variants, rather than
+inferring them from the absence of a reference path. These records do not yet
+admit stored reference payloads; independent MIR publication/transfer proofs,
+all-origin access checks and producer/entry seeding remain required. Optimized
+C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
+claimed for it.
+
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The

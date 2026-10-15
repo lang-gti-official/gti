@@ -10709,25 +10709,44 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
   }
 }
 
-[[nodiscard]] MirVerificationResult
-verifyBorrowDependencySetTransport(const MirBody &body, std::size_t owner) {
+using CompleteBorrowFact = std::optional<MirBorrowDependencySet>;
+
+struct CompleteBorrowReturnFact {
+  MirBlockId block = 0;
+  CompleteBorrowFact dependencies;
+};
+
+// Reconstruct facts once from executable producers and physical storage. The
+// consumers compare value annotations or declaration-relative return contracts
+// against these observations; neither kind of attached claim is a premise.
+struct CompleteBorrowFlow {
+  MirVerificationResult verification;
+  std::vector<CompleteBorrowFact> values;
+  std::vector<CompleteBorrowReturnFact> normalReturns;
+};
+
+[[nodiscard]] CompleteBorrowFlow
+reconstructCompleteBorrowFlow(const MirBody &body, std::size_t owner) {
   // Program-contract verification also runs when a structural verifier has
   // reported errors. Never index malformed identities while collecting the
   // independent dependency-set diagnostics.
   for (std::size_t index = 0; index < body.values.size(); ++index)
     if (body.values[index].id != index + 1)
-      return verificationFailure(
-          body, owner, "dependency-set flow has invalid value identities");
+      return {
+          .verification = verificationFailure(
+              body, owner, "dependency-set flow has invalid value identities")};
   for (std::size_t index = 0; index < body.places.size(); ++index)
     if (body.places[index].id != index + 1)
-      return verificationFailure(
-          body, owner, "dependency-set flow has invalid place identities");
+      return {
+          .verification = verificationFailure(
+              body, owner, "dependency-set flow has invalid place identities")};
   for (const auto &block : body.blocks)
     for (const auto &parameter : block.parameters)
       if (!parameter.value || parameter.value > body.values.size())
-        return verificationFailure(
-            body, owner, "dependency-set flow has an invalid edge parameter");
-  using Fact = std::optional<MirBorrowDependencySet>;
+        return {.verification = verificationFailure(
+                    body, owner,
+                    "dependency-set flow has an invalid edge parameter")};
+  using Fact = CompleteBorrowFact;
   struct State {
     std::vector<Fact> values;
     std::vector<Fact> places;
@@ -10760,22 +10779,6 @@ verifyBorrowDependencySetTransport(const MirBody &body, std::size_t owner) {
         changed = true;
       }
     return changed;
-  };
-  const auto equalSet = [](const Fact &left, const Fact &right) {
-    if (!left || !right)
-      return !left && !right;
-    const auto sameEntries = [](const auto &a, const auto &b) {
-      if (a.size() != b.size())
-        return false;
-      for (std::size_t index = 0; index < a.size(); ++index)
-        if (std::find(a.begin(), a.begin() + index, a[index]) !=
-                a.begin() + index ||
-            std::find(b.begin(), b.end(), a[index]) == b.end())
-          return false;
-      return true;
-    };
-    return sameEntries(left->dependencies, right->dependencies) &&
-           sameEntries(left->possibleAlternatives, right->possibleAlternatives);
   };
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
   for (const auto &loan : body.loans)
@@ -11026,32 +11029,72 @@ verifyBorrowDependencySetTransport(const MirBody &body, std::size_t owner) {
         return changed;
       });
   if (!flow.converged())
-    return verificationFailure(body, owner,
-                               "complete dependency-set flow did not converge");
+    return {.verification = verificationFailure(
+                body, owner, "complete dependency-set flow did not converge")};
+  CompleteBorrowFlow observations{.values =
+                                      std::vector<Fact>(body.values.size())};
   for (const auto &block : body.blocks) {
     State state = flow.incoming[block.id - 1].value_or(
         State{.values = std::vector<Fact>(body.values.size()),
               .places = std::vector<Fact>(body.places.size())});
     for (const auto &parameter : block.parameters)
-      if (const auto *value = body.findValue(parameter.value);
-          value && value->borrowDependencies &&
-          !equalSet(value->borrowDependencies,
-                    state.values[parameter.value - 1]))
-        return verificationFailure(
-            body, owner,
-            "complete dependency set disagrees with its incoming edge values",
-            block.id);
+      observations.values[parameter.value - 1] =
+          state.values[parameter.value - 1];
     for (const auto &instruction : block.instructions) {
       execute(state, instruction);
       const auto *value =
           instruction.result ? body.findValue(*instruction.result) : nullptr;
-      if (value && value->borrowDependencies &&
-          !equalSet(value->borrowDependencies, state.values[value->id - 1]))
-        return verificationFailure(body, owner,
-                                   "complete dependency set disagrees with "
-                                   "exact producer/storage flow",
-                                   block.id, instruction.id);
+      if (value)
+        observations.values[value->id - 1] = state.values[value->id - 1];
     }
+    // A function with no reachable normal return has no result evidence. Do
+    // not turn the absence of returning paths into a vacuous empty set.
+    if (flow.incoming[block.id - 1] &&
+        block.terminator.kind == MirTerminatorKind::Return)
+      observations.normalReturns.push_back(
+          {.block = block.id,
+           .dependencies = block.terminator.value
+                               ? fromOperand(state, *block.terminator.value)
+                               : Fact{}});
+  }
+  return observations;
+}
+
+[[nodiscard]] bool equalCompleteBorrowSets(const CompleteBorrowFact &left,
+                                           const CompleteBorrowFact &right) {
+  if (!left || !right)
+    return !left && !right;
+  const auto sameEntries = [](const auto &a, const auto &b) {
+    if (a.size() != b.size())
+      return false;
+    for (std::size_t index = 0; index < a.size(); ++index)
+      if (std::find(a.begin(), a.begin() + index, a[index]) !=
+              a.begin() + index ||
+          std::find(b.begin(), b.end(), a[index]) == b.end())
+        return false;
+    return true;
+  };
+  return sameEntries(left->dependencies, right->dependencies) &&
+         sameEntries(left->possibleAlternatives, right->possibleAlternatives);
+}
+
+[[nodiscard]] MirVerificationResult
+verifyBorrowDependencySetTransport(const MirBody &body, std::size_t owner) {
+  const auto flow = reconstructCompleteBorrowFlow(body, owner);
+  if (!flow.verification.valid())
+    return flow.verification;
+  for (const auto &value : body.values) {
+    if (!value.borrowDependencies ||
+        equalCompleteBorrowSets(value.borrowDependencies,
+                                flow.values[value.id - 1]))
+      continue;
+    return verificationFailure(
+        body, owner,
+        value.definition == 0
+            ? "complete dependency set disagrees with its incoming edge values"
+            : "complete dependency set disagrees with exact producer/storage "
+              "flow",
+        value.definitionBlock, value.definition);
   }
   return {};
 }
