@@ -9,7 +9,9 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.5 — No `mut` warning for moved fields and elements
+## 0.440.5 — Compiler fixes for moved values, borrows and payload switches
+
+### No `mut` warning for moved fields and elements
 
 - `warning[GTI-S2096]` ("Mutable binding '…' is never used mutably") no
   longer appears for a `mut` local whose field or constant-index array element
@@ -23,7 +25,7 @@ for what minor and patch releases mean.
 - Moving a whole local with `std::move` does not need `mut`, so an otherwise
   unused `mut` on that local still receives the warning and its quick fix.
 
-## 0.440.5 — Reading a field of a moved local
+### Reading a field of a moved local
 
 - Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
   MIR") when a field is read straight off a local or by-value parameter moved
@@ -34,7 +36,7 @@ for what minor and patch releases mean.
   runs it exactly once, also when a later part of the expression fails, inside
   a `?:` arm or `&&`/`||` operand, or in a member initializer.
 
-## 0.440.5 — Conditional moves of locals without cleanup
+### Conditional moves of locals without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when both arms of `?:` move a local whose
@@ -44,7 +46,7 @@ for what minor and patch releases mean.
   work now, in functions that can fail too, as do by-value parameters and an
   arm that moves a local beside one that constructs, copies or calls.
 
-## 0.440.5 — Move-only payloads without a destructor
+### Move-only payloads without a destructor
 
 - Fix native C++ compile errors ("copy assignment operator is implicitly
   deleted", "call to implicitly-deleted copy constructor") for a payload enum
@@ -59,7 +61,7 @@ for what minor and patch releases mean.
   now reads it in place instead of copying it, so tag-only matches compile.
 - `std::experimental::optional<T>` now compiles for such a `T`.
 
-## 0.440.5 — Temporary arguments in short-circuit operands
+### Temporary arguments in short-circuit operands
 
 - Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
   MIR. call-argument loan ... must be one exact non-escaping temporary input
@@ -76,7 +78,7 @@ for what minor and patch releases mean.
   failed with `GTI-S2057` ("reads a binding that is not constexpr"). The
   temporary's class may also have a destructor there.
 
-## 0.440.5 — String view storage and stored view returns
+### String view storage and stored view returns
 
 - Reject constructor initializers that store a dynamic `std::string_view` or
   `c_string` by value without retaining its owner, including generic holders
@@ -106,17 +108,7 @@ for what minor and patch releases mean.
 - A stored view may also be one branch of a function whose other branch
   returns a view tied to its receiver, in the same way a string literal can.
 
-## 0.440.4 — Member calls on conditional values without cleanup
-
-- Fix the internal compiler error (`GTI-B0001`, "backend failed while
-  generating a representation") when a method is called directly on a `?:`
-  whose arms produce a class without a destructor, such as
-  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
-  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
-  methods (including ones that can fail or that consume a moved value), arms
-  that copy a variable or construct the class, and mixtures of these.
-
-## 0.440.6 — Switches over fixed-array elements
+### Switches over fixed-array elements
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a `switch` observes an element of a
@@ -131,19 +123,7 @@ for what minor and patch releases mean.
   `this`, as in `switch (this.items[i])`, failed in the native C++ compiler
   instead and now works too.
 
-## 0.440.3 — Conditional results with checked arm arguments
-
-- Fix the internal compiler error (`GTI-B0001`, "backend failed while
-  generating a representation") when an arm of `?:` evaluates an input that
-  can fail before producing a class result without a destructor, such as
-  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
-  is overflow-checked. Arguments computed by calls that can fail, `?`
-  operands, and nested conditionals or `&&`/`||` inside an argument work the
-  same way, whether the result is bound, returned, assigned, passed on, read
-  through a field or used to initialize a field. A failing input ends its
-  arm before the call, with the usual cleanup.
-
-## 0.440.5 — Borrowed arguments before a conditional that creates an object
+### Borrowed arguments before a conditional that creates an object
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a call borrows an argument, a new object
@@ -157,6 +137,27 @@ for what minor and patch releases mean.
   never when the operand was skipped, also when its construction, the call
   that uses it or a later argument fails.
 
+## 0.440.4 — Member calls on conditional values without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called directly on a `?:`
+  whose arms produce a class without a destructor, such as
+  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
+  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
+  methods (including ones that can fail or that consume a moved value), arms
+  that copy a variable or construct the class, and mixtures of these.
+
+## 0.440.3 — Conditional results with checked arm arguments
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:` evaluates an input that
+  can fail before producing a class result without a destructor, such as
+  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
+  is overflow-checked. Arguments computed by calls that can fail, `?`
+  operands, and nested conditionals or `&&`/`||` inside an argument work the
+  same way, whether the result is bound, returned, assigned, passed on, read
+  through a field or used to initialize a field. A failing input ends its
+  arm before the call, with the usual cleanup.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
