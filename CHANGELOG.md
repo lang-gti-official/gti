@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.435.0 — Protocol concepts over several types
+
+- A concept with a body can now take several type parameters, so it can
+  relate types to each other. An associated type then depends on all of
+  them:
+  `concept adds_to<Left, Right> { typename sum_type; sum_type add(Left& left, Right& right); };`.
+- A block gives one pattern per parameter. Each is a concrete type or one
+  class template over the block's parameters, such as
+  `for <T> concept adds_to<Tally<T>, Tally<T>> { ... }`. A parameter may
+  repeat, and every occurrence must be the same type, so that block applies
+  only to two tallies of the same kind.
+- Two blocks that some types could both match are rejected as overlapping,
+  as before. A package may write a block when it owns the concept or the
+  outermost type of any argument.
+- Generic code names the application it needs, as in
+  `adds_to<L, R>::sum_type total<L, R>(L& left, R& right) requires adds_to<L, R>`.
+- Diagnostics now spell an associated type through its concept, such as
+  `scaled<A, B>::factor_type`, instead of "type parameter".
+- Example 158 demonstrates a two-parameter concept.
+
 ## 0.434.0 — Protocol concepts and conformance blocks
 
 - A concept can now have a body instead of `= constraint;`. It declares
