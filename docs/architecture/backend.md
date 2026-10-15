@@ -921,14 +921,16 @@ one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
 (`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
 events stay outside this form. A nested join is proved on its own, and the
-nested arm's region starts at that inner join's branch block. When a passive
-join's single move reaches neither the binding nor the prepared argument
-terminal, the moved value is staged in its own representation-only slot and
-the join's representation ends right after. That staged slot then serves a
-return, field read, assignment or field initializer exactly as a fresh
-result's slot does. In the failure form too, a Return of that staged value
-publishes the caller's result from the slot; the staging Move does not
-publish it.
+nested arm's region starts at that inner join's branch block. The outer arm's
+move out of the nested join is that join's single move, and the nested join's
+representation ends right after it, so a loop that evaluates the conditional
+again finds both storages empty. When a passive join's single move reaches
+neither the binding nor the prepared argument terminal, the moved value is
+staged in its own representation-only slot and the join's representation ends
+right after. That staged slot then serves a return, field read, assignment or
+field initializer exactly as a fresh result's slot does. In the failure form
+too, a Return of that staged value publishes the caller's result from the
+slot; the staging Move does not publish it.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is

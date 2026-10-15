@@ -6543,6 +6543,17 @@ result, is covered too. A failing callee in an arm leaves no result.
 removed, duplicated and conditional input transfers and a forged result
 activation, which MIR verification also rejects, and a forged consuming
 capability on a borrowed receiver.
+`conditional_cleanup_free_nested_join_runtime` runs the same eight
+configurations over loops that evaluate a cleanup-free conditional nested in
+another one's arm again on every iteration. The nested conditional sits in
+either arm, in both, or two levels deep. The result is bound, read through a
+field, passed on, assigned and returned. Its arms are failure-free and raising
+calls, constructions, borrowed and consuming member calls, and a generic
+class. Earlier, the second iteration aborted because the nested join's storage
+was still engaged. A raising callee in a nested arm fails the last iteration
+and leaves no result. `testNestedCleanupFreeJoinMove` in the emitter text
+suite checks that both nested joins and a viewed outer join end their storage
+right after the move that empties it.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,

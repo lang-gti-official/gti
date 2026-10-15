@@ -430,6 +430,10 @@
       "suite": "text"
     },
     {
+      "name": "testNestedCleanupFreeJoinMove",
+      "suite": "text"
+    },
+    {
       "name": "testShortCircuitOwnedFieldView",
       "suite": "text"
     },
