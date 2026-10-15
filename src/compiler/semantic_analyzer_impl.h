@@ -2163,6 +2163,18 @@ private:
 
   [[nodiscard]] SemanticLoanPlace loanPlace(const ExprPtr &expression);
 
+  // A selected stored reference has one runtime address but may retain
+  // several possible external owners after a control-flow join. Snapshot
+  // those origins at access evaluation; never choose its first dependency.
+  [[nodiscard]] std::optional<std::vector<SemanticLoanDependency>>
+  selectedReferenceDependencies(const SemanticPlace &place) const;
+
+  [[nodiscard]] std::vector<SemanticLoanPlace>
+  loanPlaces(const SemanticPlace &place);
+
+  [[nodiscard]] std::vector<SemanticLoanPlace>
+  loanPlaces(const ExprPtr &expression, bool transient = false);
+
   [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
                                               const SemanticLoanPlace &right);
 
@@ -2181,6 +2193,11 @@ private:
                                const SemanticLoanPlace &stable,
                                AccessMode requested, std::string message,
                                SemanticLoanId throughLoan = 0);
+
+  void reportLoanPlaceConflicts(const Token &token,
+                                std::span<const SemanticLoanPlace> places,
+                                AccessMode requested, std::string message,
+                                SemanticLoanId throughLoan = 0);
 
   void reportLoanPlaceConflict(const Token &token, const SemanticPlace &place,
                                AccessMode requested, std::string message,
@@ -2216,6 +2233,12 @@ private:
   static void appendUniquePlace(std::vector<SemanticLoanPlace> &places,
                                 SemanticLoanPlace place);
 
+  void appendLoanPlaces(std::vector<SemanticLoanPlace> &places,
+                        const SemanticPlace &place);
+
+  void appendLoanPlaces(std::vector<SemanticLoanPlace> &places,
+                        const ExprPtr &expression, bool transient = false);
+
   void appendTransientMutationPlaces(const ExprPtr &expression,
                                      std::vector<SemanticLoanPlace> &places);
 
@@ -2237,14 +2260,16 @@ private:
       std::span<const ExprPtr *> arguments, const Token &location,
       std::optional<SemanticLoanPlace> receiver = std::nullopt,
       AccessMode receiverAccess = AccessMode::ReadOnly,
-      bool transientReceiver = false);
+      bool transientReceiver = false,
+      std::span<const SemanticLoanPlace> receiverOrigins = {});
 
   void validateCallPlaceExclusivity(
       std::span<const SemanticType> parameterTypes,
       std::span<const ExprPtr> arguments, const Token &location,
       std::optional<SemanticLoanPlace> receiver = std::nullopt,
       AccessMode receiverAccess = AccessMode::ReadOnly,
-      bool transientReceiver = false);
+      bool transientReceiver = false,
+      std::span<const SemanticLoanPlace> receiverOrigins = {});
 
   void noteUnsupportedNestedLoanControlFlow();
 

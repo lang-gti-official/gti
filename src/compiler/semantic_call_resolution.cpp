@@ -4713,9 +4713,14 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
         SemanticPlace{.root = receiverStateSymbol(), .receiver = true});
   }
   const std::size_t exclusivityDiagnostics = diagnostics.size();
+  const auto receiverOrigins =
+      member != nullptr && !function.staticMember && !temporaryReceiver
+          ? loanPlaces(member->object(), true)
+          : (receiverPlace ? std::vector<SemanticLoanPlace>{*receiverPlace}
+                           : std::vector<SemanticLoanPlace>{});
   validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
                                receiverPlace, callReceiverAccess,
-                               transientReceiver);
+                               transientReceiver, receiverOrigins);
   const ExpressionInfo *receiverInfo =
       member == nullptr ? nullptr
                         : semanticModel.findExpression(*member->object());
@@ -4744,7 +4749,8 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     }
   }
   if (receiverPlace && callReceiverAccess == AccessMode::Mutable) {
-    recordMutableBindingUse(receiverPlace->root);
+    for (const auto &origin : receiverOrigins)
+      recordMutableBindingUse(origin.root);
   }
 
   if (function.staticMember) {
@@ -4794,8 +4800,8 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     const bool moveOnlyReceiver =
         selectedReceiverAccess == AccessMode::Mutable &&
         isMoveOnlyOwnerType(receiverType);
-    reportLoanPlaceConflict(
-        paren, *receiverPlace, callReceiverAccess,
+    reportLoanPlaceConflicts(
+        paren, receiverOrigins, callReceiverAccess,
         moveOnlyReceiver
             ? "Mutable method cannot use move-only storage while a "
               "reference borrowed from it may still be live."
@@ -6003,8 +6009,10 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
           : AccessMode::ReadOnly;
   const SemanticLoanPlace receiverPlace =
       receiverState ? loanPlace(receiverState->place) : loanPlace(receiver);
-  reportLoanPlaceConflict(
-      token, receiverPlace, receiverAccess,
+  const auto receiverOrigins =
+      receiverState ? loanPlaces(receiverState->place) : loanPlaces(receiver);
+  reportLoanPlaceConflicts(
+      token, receiverOrigins, receiverAccess,
       selected.receiverMutability == ReceiverMutability::Mutable
           ? "Mutable constrained operator receiver overlaps a borrow that "
             "may still be live."
@@ -6013,9 +6021,11 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
       receiverState ? accessLoan(receiverState->place) : accessLoan(receiver));
   validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
   validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
-                               receiverPlace, receiverAccess, false);
+                               receiverPlace, receiverAccess, false,
+                               receiverOrigins);
   if (receiverAccess == AccessMode::Mutable) {
-    recordMutableBindingUse(receiverPlace.root);
+    for (const auto &origin : receiverOrigins)
+      recordMutableBindingUse(origin.root);
   }
 
   ResolvedOperatorInfo resolved{
@@ -6491,9 +6501,13 @@ auto SemanticVisitor::Impl::resolveOperator(
       receiverProduction && receiverProduction->access == AccessMode::Mutable
           ? AccessMode::Mutable
           : selectedReceiverAccess;
+  const auto receiverOrigins = receiverState ? loanPlaces(receiverState->place)
+                               : !temporaryReceiver
+                                   ? loanPlaces(receiver, true)
+                                   : std::vector<SemanticLoanPlace>{};
   if (receiverPlace) {
-    reportLoanPlaceConflict(
-        token, *receiverPlace, selectedReceiverAccess,
+    reportLoanPlaceConflicts(
+        token, receiverOrigins, selectedReceiverAccess,
         receiverAllowsMutation(selected.receiverMutability)
             ? (selected.receiverMutability == ReceiverMutability::Consuming
                    ? "Consuming operator receiver overlaps a borrow that "
@@ -6518,11 +6532,12 @@ auto SemanticVisitor::Impl::resolveOperator(
         std::span<const SemanticType>(&parameter, 1),
         std::span<const ExprPtr>(argument.expression, 1), token);
   }
-  validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments, token,
-                                   receiverPlace, callReceiverAccess,
-                                   receiverProduction.has_value());
+  validateCallPlaceExclusivityImpl(
+      ordinaryParameters, ordinaryArguments, token, receiverPlace,
+      callReceiverAccess, receiverProduction.has_value(), receiverOrigins);
   if (receiverPlace && callReceiverAccess == AccessMode::Mutable) {
-    recordMutableBindingUse(receiverPlace->root);
+    for (const auto &origin : receiverOrigins)
+      recordMutableBindingUse(origin.root);
   }
 
   // A generic-result operator with an explicit borrowed_from contract
