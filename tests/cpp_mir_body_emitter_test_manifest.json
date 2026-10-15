@@ -98,6 +98,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testBorrowedArgumentFallibleConditionAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalExpectedArgumentReceiverAdmission",
       "suite": "preflight"
     },
