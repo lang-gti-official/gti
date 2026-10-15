@@ -1299,6 +1299,21 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
     if (!typeTraits(current).containsBorrowedState ||
         !requiresActiveCleanupFor(current))
       return false;
+    if (current.kind == SemanticType::Enum) {
+      const auto enumeration = enumTypeFor(current);
+      if (!enumeration || !enumeration->payload ||
+          std::find(visiting.begin(), visiting.end(), current) !=
+              visiting.end())
+        return true;
+      visiting.push_back(current);
+      bool bound = false;
+      for (const auto &variant : enumeration->enumerators)
+        for (const auto &field : variant.payloadTypes)
+          bound =
+              bound || field.kind == SemanticType::Unknown || self(self, field);
+      visiting.pop_back();
+      return bound;
+    }
     const auto *owner = classInfo(current);
     // Unknown/recursive cleanup is conservative. Compiler-bound resources and
     // source destructors may use or release a declared dependency. Generated
@@ -2147,6 +2162,25 @@ auto SemanticVisitor::Impl::storedFieldSymbols(
 auto SemanticVisitor::Impl::isDirectStoredReferenceType(
     const SemanticType &type) const -> bool {
   return !storedReferencePaths(type).empty();
+}
+
+auto SemanticVisitor::Impl::storedConditionSymbols(
+    const SemanticType &type,
+    std::span<const StoredReferenceCondition> conditions)
+    -> std::optional<std::vector<BorrowDependencyCondition>> {
+  std::vector<BorrowDependencyCondition> result;
+  for (const auto &condition : conditions) {
+    auto fields = storedFieldSymbols(type, condition.subobject);
+    const auto enumeration = enumTypeFor(condition.enumeration);
+    if (fields.size() != condition.subobject.size() || !enumeration ||
+        !enumeration->payload ||
+        condition.variant >= enumeration->enumerators.size())
+      return std::nullopt;
+    result.push_back({.subobject = std::move(fields),
+                      .enumeration = condition.enumeration,
+                      .variant = condition.variant});
+  }
+  return result;
 }
 
 auto SemanticVisitor::Impl::isFallibleBorrowType(const SemanticType &type) const
@@ -5534,17 +5568,21 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
       abstractEntry && (type.kind == SemanticType::StringView ||
                         type.kind == SemanticType::CString);
   std::vector<SymbolId> designatedFields;
+  std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additional;
   for (const auto &path : paths) {
     auto fields = storedFieldSymbols(type, path.fields);
-    if (fields.size() != path.fields.size())
+    auto qualified = storedConditionSymbols(type, path.conditions);
+    if (fields.size() != path.fields.size() || !qualified)
       return 0;
-    if (designatedFields.empty())
+    if (designatedFields.empty()) {
       designatedFields = std::move(fields);
-    else
+      conditions = std::move(*qualified);
+    } else
       additional.push_back({.place = place,
                             .designatedFields = std::move(fields),
-                            .access = path.reference.referenceAccess});
+                            .access = path.reference.referenceAccess,
+                            .conditions = std::move(*qualified)});
   }
   if (designatedFields.empty() && !textEntry)
     return 0;
@@ -5554,7 +5592,7 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
       textEntry       ? AccessMode::ReadOnly
       : abstractEntry ? paths.front().reference.referenceAccess
                       : borrowAccess(type),
-      false, 0, true, std::move(designatedFields));
+      false, 0, true, std::move(designatedFields), std::move(conditions));
   SemanticLoanInfo loan = *semanticModel.findLoan(id);
   loan.additionalDependencies = std::move(additional);
   if (abstractEntry) {
@@ -5810,6 +5848,15 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   // they cannot be copied onto a reference loan to the external referent.
   if (expression && carrier->type.kind != SemanticType::Reference &&
       !isFallibleBorrowType(carrier->type)) {
+    if (const auto *complete =
+            semanticModel.findBorrowDependencySet(*expression);
+        complete && complete->dependencies.empty() &&
+        !complete->possibleAlternatives.empty()) {
+      // A verified selected alternative with no external dependency has no
+      // origin-bearing loan to create. Keep the complete value fact on the
+      // binding; unknown/missing evidence must still take the checked path.
+      return;
+    }
     const auto dependencies = semanticModel.findBorrowDependencies(*expression);
     if (!dependencies.empty()) {
       for (const auto &dependency : dependencies)
