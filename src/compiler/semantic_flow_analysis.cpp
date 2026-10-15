@@ -6817,6 +6817,15 @@ auto SemanticVisitor::Impl::typeSpelling(const SemanticType &type) const
             return parameter;
           }
         }
+        for (const auto &conformance : conformances) {
+          if (const auto *parameter =
+                  findGenericParameter(conformance.genericParameters, id)) {
+            return parameter;
+          }
+        }
+        if (registeringConformanceParameters != nullptr) {
+          return findGenericParameter(*registeringConformanceParameters, id);
+        }
         return static_cast<const GenericParameterInfo *>(nullptr);
       });
 }
