@@ -7190,8 +7190,14 @@ public:
         throw std::logic_error(
             "declared lowered destructor has no lifecycle cleanup adapter");
       }
-      output << "{ " << loweredLifecycleCleanupName(classDeclaration->id)
-             << "(); }\n";
+      // The generated state is initialized on every native construction and
+      // disarmed by the verified move/drop protocol. Expose the same guard
+      // already used by the cleanup adapter so retiring a moved shell need
+      // not call its out-of-line failure machinery. The live adapter and all
+      // automatic member destruction remain unchanged.
+      output << "{ if (" << loweredLifecycleActiveName(classDeclaration->id)
+             << ") { " << loweredLifecycleCleanupName(classDeclaration->id)
+             << "(); } }\n";
       emitted = true;
       retainedPrimaryEmitted = retainedPrimaryEmitted || retainedPrimary;
       if (!generic) {
