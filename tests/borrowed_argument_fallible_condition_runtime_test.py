@@ -25,17 +25,18 @@ def fallible_condition_cases(name="borrowed_argument_fallible_condition"):
     done = "42\n81\n" + locals_
     early = "42\n80\n" + locals_
     return {fixture.stem: [
-        ((), (0, "21\n61\n82\n104\n1\n121\n152\n164\n" + done, "")),
-        (("free",), (0, "11\n61\n82\n104\n6\n121\n152\n164\n" + done, "")),
+        ((), (0, "21\n61\n82\n104\n1\n121\n152\n164\n182\n" + done, "")),
+        (("free",), (0, "11\n61\n82\n104\n6\n121\n152\n164\n182\n" + done, "")),
         (("construct",),
-         (0, "21\n61\n82\n104\n6\n121\n152\n164\n32\n81\n" + locals_, "")),
-        (("same",), (0, "21\n51\n82\n104\n6\n121\n152\n164\n" + done, "")),
-        (("method",), (0, "21\n61\n72\n104\n6\n121\n152\n164\n" + done, "")),
-        (("mut",), (0, "21\n61\n82\n94\n6\n121\n152\n164\n" + done, "")),
-        (("arm",), (0, "21\n61\n82\n104\n11\n121\n152\n164\n" + done, "")),
-        (("receiver",), (0, "21\n61\n82\n104\n6\n111\n152\n164\n" + done, "")),
-        (("step",), (0, "21\n61\n82\n104\n6\n121\n142\n164\n" + done, "")),
-        (("view",), (0, "21\n61\n82\n104\n6\n121\n152\n154\n" + done, "")),
+         (0, "21\n61\n82\n104\n6\n121\n152\n164\n182\n32\n81\n" + locals_, "")),
+        (("same",), (0, "21\n51\n82\n104\n6\n121\n152\n164\n182\n" + done, "")),
+        (("method",), (0, "21\n61\n72\n104\n6\n121\n152\n164\n182\n" + done, "")),
+        (("mut",), (0, "21\n61\n82\n94\n6\n121\n152\n164\n182\n" + done, "")),
+        (("arm",), (0, "21\n61\n82\n104\n11\n121\n152\n164\n182\n" + done, "")),
+        (("receiver",), (0, "21\n61\n82\n104\n6\n111\n152\n164\n182\n" + done, "")),
+        (("step",), (0, "21\n61\n82\n104\n6\n121\n142\n164\n182\n" + done, "")),
+        (("view",), (0, "21\n61\n82\n104\n6\n121\n152\n154\n182\n" + done, "")),
+        (("text",), (0, "21\n61\n82\n104\n6\n121\n152\n164\n172\n" + done, "")),
         (("free", "free"), (70, "80\n" + locals_, tested)),
         (("construct", "construct"), (70, "21\n80\n" + locals_, tested)),
         (("same", "same"), (70, "21\n" + early, tested)),
@@ -45,6 +46,8 @@ def fallible_condition_cases(name="borrowed_argument_fallible_condition"):
         (("receiver", "receiver"), (70, "21\n61\n82\n104\n6\n" + early, tested)),
         (("step", "step"), (70, "21\n61\n82\n104\n6\n121\n" + done, tested)),
         (("view", "view"), (70, "21\n61\n82\n104\n6\n121\n152\n" + done, tested)),
+        (("text", "text"),
+         (70, "21\n61\n82\n104\n6\n121\n152\n164\n" + done, tested)),
     ]}
 
 

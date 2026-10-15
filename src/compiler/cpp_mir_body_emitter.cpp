@@ -56362,8 +56362,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
     }
-    // Scalars and text views are plain values: reading, staging or
-    // computing one cannot carry, replace or end the borrowed storage.
+    // Scalars and text views are plain values: reading, staging, computing
+    // or publishing one into an expression temporary cannot carry, replace
+    // or end the borrowed storage.
     const auto passiveRegionValue = [&](const SemanticType &type) {
       const auto representation = cppMirExpectedTypeRepresentation(type);
       return representation == CppMirTypeRepresentationKind::Scalar ||
@@ -56773,8 +56774,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (temporary == nullptr ||
               temporary->root != MirPlaceRootKind::Temporary ||
               !temporary->projections.empty() ||
-              cppMirExpectedTypeRepresentation(temporary->type) !=
-                  CppMirTypeRepresentationKind::Scalar ||
+              !passiveRegionValue(temporary->type) ||
               !instruction.definedFailure.empty()) {
             return false;
           }

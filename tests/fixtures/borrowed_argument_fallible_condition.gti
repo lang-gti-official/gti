@@ -2,8 +2,8 @@
 // a call that can fail. The test borrows another local, reads the borrowed
 // local itself, runs a read or `mut` method on another receiver, or compares
 // a text view the call returns. A function, a constructor, a method on the
-// borrowed receiver and a local lambda consume the arguments, and the failing
-// call may also be one arm's value.
+// borrowed receiver and a local lambda consume the arguments; the failing
+// call may also be one arm's value, and the arms may select a text view.
 #include <std/string>
 #include <std/vector>
 
@@ -82,6 +82,10 @@ int32_t combine(Tracked& tracked, int32_t offset) {
   return tracked.read() + offset;
 }
 
+int32_t describe(Tracked& tracked, std::string_view text) {
+  return tracked.read() + (text == "yes" ? 170 : 180);
+}
+
 int32_t both(Tracked& left, Tracked& right, int32_t offset) {
   return left.read() * 10 + right.read() + offset;
 }
@@ -109,5 +113,6 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(first.plus(has(argv, "receiver") ? 110 : 120));
   std::println(both(first, second, counter.step(argv) ? 130 : 140));
   std::println(join(third, label(argv) == "view" ? 150 : 160));
+  std::println(describe(second, has(argv, "text") ? "yes" : "no"));
   return 0;
 }
