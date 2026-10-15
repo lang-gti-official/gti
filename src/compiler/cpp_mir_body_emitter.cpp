@@ -6611,6 +6611,8 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // temporary's Drop ends it. So does the move out of a nested cleanup-free
     // join, whose storage carries no obligation either; that move is the
     // nested join's single move, and its writer ends the nested storage.
+    // A moved whole cleanup-free named local keeps its passive binding drop,
+    // which ends its moved-from shell; its Move carries ownership only.
     const MirPlace *movedJoin =
         directMove ? body.findPlace(definition->operands.front().place)
                    : nullptr;
@@ -6637,10 +6639,31 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
         activatedNext |=
             published->instructions[index - 1].id == definition->id &&
             published->instructions[index].id == initialize->id;
-    if ((directFunctionCall || directCopy || nestedPassiveJoin) &&
+    const MirPlace *movedSource =
+        directMove ? body.findPlace(definition->operands.front().place)
+                   : nullptr;
+    const bool movedCleanupFreeLocal =
+        movedSource != nullptr &&
+        movedSource->root == MirPlaceRootKind::Binding &&
+        movedSource->binding != 0 && movedSource->projections.empty() &&
+        movedSource->type == value->info.type &&
+        definition->operands.front().type == value->info.type &&
+        definition->lifecycle.empty() && definition->ownership &&
+        definition->ownership->kind == OwnershipEventKind::Move &&
+        movedSource->key && definition->ownership->place == *movedSource->key &&
+        definition->ownership->after == OwnershipStateSet::Moved &&
+        definition->definedFailure.empty() &&
+        definition->localFailureSites.empty() &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &drop) {
+                       return drop.place == movedSource->id &&
+                              drop.dropType.requiresActiveCleanup;
+                     });
+    if ((((directFunctionCall || directCopy || nestedPassiveJoin) &&
+          !definition->successResultDrop &&
+          onlyPreparedInputTransfers(body, *definition)) ||
+         movedCleanupFreeLocal) &&
         activatedNext && initialize->lifecycle.size() == 1 &&
-        !definition->successResultDrop &&
-        onlyPreparedInputTransfers(body, *definition) &&
         initialize->definedFailure.empty() &&
         initialize->localFailureSites.empty() &&
         std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
@@ -9632,11 +9655,30 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
                    [&](const MirDropObligation &drop) {
                      return drop.place == armSource->id;
                    });
+  // An arm may also move a whole named local out. The class has no cleanup
+  // obligation, so MIR records only the local's ownership transition to
+  // Moved; the local keeps its passive binding drop, which still ends the
+  // moved-from shell after the join.
+  const bool movedLocal =
+      armSource != nullptr && construct->kind == MirInstructionKind::Move &&
+      construct->operands.front().kind == MirOperandKind::Move &&
+      armSource->root == MirPlaceRootKind::Binding && armSource->binding != 0 &&
+      armSource->projections.empty() && armSource->type == value->info.type &&
+      construct->operands.front().type == value->info.type &&
+      construct->ownership &&
+      construct->ownership->kind == OwnershipEventKind::Move &&
+      armSource->key && construct->ownership->place == *armSource->key &&
+      construct->ownership->after == OwnershipStateSet::Moved &&
+      std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                   [&](const MirDropObligation &drop) {
+                     return drop.place == armSource->id &&
+                            drop.dropType.requiresActiveCleanup;
+                   });
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       (value->info.category != ValueCategory::Value && !copiedPlace) ||
       construct == nullptr ||
       (construct->kind != MirInstructionKind::Construct && !sourceCall &&
-       !copiedPlace && !nestedJoin)) {
+       !copiedPlace && !nestedJoin && !movedLocal)) {
     return {};
   }
   const MirDropObligation *valueDrop =
@@ -9656,11 +9698,12 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
         construct->definedFailure.propagation ==
             FailurePropagationKind::Constructor) ||
        (sourceCall && !construct->definedFailure.empty()));
-  if ((sourceCall || copiedPlace || nestedJoin) && !representationOnly)
+  if ((sourceCall || copiedPlace || nestedJoin || movedLocal) &&
+      !representationOnly)
     return {};
-  if (sourceCall || copiedPlace || nestedJoin) {
-    // The call-specific shape is proved above; the construction-specific
-    // checks below do not apply.
+  if (sourceCall || copiedPlace || nestedJoin || movedLocal) {
+    // The call- and place-specific shapes are proved above; the
+    // construction-specific checks below do not apply.
   } else if ((!representationOnly &&
               value->info.traits.drop != DropKind::Lexical) ||
              !construct->result || *construct->result != valueId ||
