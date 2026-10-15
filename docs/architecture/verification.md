@@ -6492,6 +6492,21 @@ prepared parameter. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
+`conditional_prepared_input_result_runtime` runs the same eight configurations
+over class results that a conditional arm or short-circuit operand makes by
+consuming a moved input: a cleanup-free receiver of a consuming member, or a
+by-value argument with or without cleanup of its own. Each shape runs through
+both arms. The results are bound, assigned, passed on, read by a member call or
+through fields, and returned. They come from failure-free and raising calls,
+constructions, an arm beside an ordinary call, two moved arguments, a nested
+conditional, a generic receiver and a generic callee. Bodies whose drops
+cannot fail cover the plain emission form. Only the arm that ran consumes its
+input, and its result is destroyed once. A failing callee or construction in
+an arm leaves no result, a failing result destructor reports at the drop after
+the merge, and a failure while cleanup destroys a bound result reports the
+secondary failure. `testConditionalPreparedInputResult` in the emitter text
+suite refuses removed, duplicated and conditional input transfers and a second
+result activation, which MIR verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
