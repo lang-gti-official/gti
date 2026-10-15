@@ -44,6 +44,21 @@ for what minor and patch releases mean.
   work now, in functions that can fail too, as do by-value parameters and an
   arm that moves a local beside one that constructs, copies or calls.
 
+## 0.440.5 — Move-only payloads without a destructor
+
+- Fix native C++ compile errors ("copy assignment operator is implicitly
+  deleted", "call to implicitly-deleted copy constructor") for a payload enum
+  whose alternative holds a move-only class without a destructor, such as
+  `enum class Choice { none, some(Token token) }` where `Token` deletes its
+  copy constructor. Passing such an enum by value now moves it, whether to a
+  function, method, constructor, lambda or generic function. This covers
+  `Token pick(Choice choice)` whose `switch (std::move(choice))` arm returns
+  its binding. It also moves through fixed-array and `std::vector` elements,
+  both arms of `?:`, and results of functions that can fail.
+- A `switch` that observes a named enum, a parameter or a field of such a type
+  now reads it in place instead of copying it, so tag-only matches compile.
+- `std::experimental::optional<T>` now compiles for such a `T`.
+
 ## 0.440.4 — Member calls on conditional values without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

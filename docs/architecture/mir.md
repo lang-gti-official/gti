@@ -2417,7 +2417,14 @@ once. Whole-value move construction and the adjacent Move -> Replace -> Drop
 assignment schedule transfer that obligation without copying or duplicating
 active state. A switch or extraction over a named place read-borrows the owning
 enum place, and its extracted fields are immutable copies, so move-only fields
-admit tag-only matching or a borrowed binding there.
+admit tag-only matching or a borrowed binding there. The borrow applies to an
+enum that owns cleanup, to one whose folded traits forbid copying, and to one
+an arm binds by reference. A cleanup-free alternative can still hold a
+move-only field, which makes the enum move-only without giving it cleanup.
+Only a copyable passive enum is read through a copied subject value.
+Program verification rejects any `Copy` operand, in an instruction or a
+terminator, that names a payload enum whose folded traits forbid copying, so
+such an enum is only ever borrowed or moved.
 
 A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the

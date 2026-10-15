@@ -1,0 +1,246 @@
+#include <std/experimental/optional>
+#include <std/string>
+#include <std/vector>
+
+// Move-only payload transport. `token` deletes its copy constructor and has
+// no destructor, so a `slot` holding one needs no cleanup yet cannot be
+// copied: a by-value argument moves it, a switch over a named slot reads it
+// in place, and a consuming switch moves the token into its binding. A token
+// prints its id when constructed and the id plus 1000 when consumed, so a
+// trace shows each payload constructed once and consumed once. `Tracked` has
+// a destructor, so the same shapes over the owning `parcel` print
+// construction (id) and destruction (-id): each payload is destroyed exactly
+// once. Phase 0 runs every shape; phase 1 fails in the consuming arm of a
+// by-value slot argument, and phase 2 in the consuming arm of a by-value
+// parcel argument after its binding took the payload.
+mut int32_t zero = 0;
+
+class token {
+  int32_t id;
+
+public:
+  token(int32_t value) : id(value) { std::println(value); }
+  token(token& other) = delete;
+  token(token&& other) = default;
+  int32_t read() { return this.id; }
+};
+
+enum class slot {
+  none,
+  held(token item),
+};
+
+// The reported program: a parameter consumed by a switch whose arm returns
+// its binding.
+token pick(slot choice) {
+  switch (std::move(choice)) {
+  case slot::held(item):
+    return item;
+  case slot::none:
+    return token(0);
+  }
+}
+
+// The arm declares a local from its binding and returns that instead.
+token pick_local(slot choice) {
+  switch (std::move(choice)) {
+  case slot::held(item):
+    token kept = std::move(item);
+    return kept;
+  case slot::none:
+    return token(0);
+  }
+}
+
+int32_t redeem(slot choice) {
+  switch (std::move(choice)) {
+  case slot::held(item):
+    return item.read() + 1000;
+  case slot::none:
+    return 1000;
+  }
+}
+
+// A switch over a by-value parameter observes it in place.
+int32_t engaged(slot choice) {
+  switch (choice) {
+  case slot::held:
+    return 1;
+  case slot::none:
+    return 0;
+  }
+}
+
+class ledger {
+  mut int32_t total;
+
+public:
+  ledger() : total(0) {}
+  void add(slot choice) mut {
+    this.total = this.total + redeem(std::move(choice));
+  }
+  int32_t read() { return this.total; }
+};
+
+// A constructor argument stored in a field, observed and consumed there.
+class holder {
+  mut slot inner;
+
+public:
+  holder(slot value) : inner(std::move(value)) {}
+  int32_t full() {
+    switch (this.inner) {
+    case slot::held:
+      return 1;
+    case slot::none:
+      return 0;
+    }
+  }
+  int32_t take() && { return redeem(std::move(this.inner)); }
+};
+
+T relay<T>(T value) { return value; }
+
+// A function that can fail publishes its slot result by move.
+slot checked(int32_t divisor) {
+  int32_t id = 100 / divisor;
+  return slot::held(token(id));
+}
+
+int32_t divide_slot(slot choice, int32_t divisor) {
+  switch (std::move(choice)) {
+  case slot::held(item):
+    return item.read() / divisor;
+  case slot::none:
+    return 0;
+  }
+}
+
+void transport() {
+  std::println(pick(slot::held(token(1))).read() + 1000);
+  std::println(pick_local(slot::held(token(2))).read() + 1000);
+  std::println(pick(slot::none).read() + 1000);
+  slot named = slot::held(token(3));
+  switch (named) {
+  case slot::held:
+    std::println(2001);
+    break;
+  case slot::none:
+    std::println(2000);
+    break;
+  }
+  std::println(redeem(std::move(named)));
+  std::println(engaged(slot::held(token(4))) + 2000);
+  mut ledger book = ledger();
+  book.add(slot::held(token(5)));
+  book.add(slot::none);
+  std::println(book.read());
+  holder kept = holder(slot::held(token(6)));
+  std::println(kept.full() + 2000);
+  std::println(std::move(kept).take());
+  auto consume = [](slot choice) -> int32_t {
+    return redeem(std::move(choice));
+  };
+  std::println(consume(slot::held(token(7))));
+  std::println(redeem(relay<slot>(slot::held(token(8)))));
+  mut slot[2] pair = {slot::held(token(9)), slot::none};
+  std::println(redeem(std::move(pair[0])));
+  mut std::vector<slot> queue = std::vector<slot>();
+  queue.push_back(slot::held(token(10)));
+  std::println(queue.size());
+  std::experimental::optional<token> maybe =
+      std::experimental::optional<token>(token(11));
+  std::println(maybe.has_value() ? 2001 : 2000);
+  std::println(std::move(maybe).value().read() + 1000);
+  mut int32_t round = 0;
+  while (round < 2) {
+    round = round + 1;
+    std::println(redeem(slot::held(token(11 + round))));
+  }
+  std::println(redeem(checked(4)));
+}
+
+class Tracked {
+  int32_t id;
+
+public:
+  Tracked(int32_t value) : id(value) { std::println(value); }
+  ~Tracked() { std::println(0 - this.id); }
+  int32_t read() { return this.id; }
+};
+
+enum class parcel {
+  empty,
+  sealed(Tracked item),
+};
+
+Tracked open(parcel value) {
+  switch (std::move(value)) {
+  case parcel::sealed(item):
+    return item;
+  case parcel::empty:
+    return Tracked(0);
+  }
+}
+
+int32_t burn(parcel value) {
+  switch (std::move(value)) {
+  case parcel::sealed(item):
+    return item.read() + 1000;
+  case parcel::empty:
+    return 1000;
+  }
+}
+
+int32_t present(parcel value) {
+  switch (value) {
+  case parcel::sealed:
+    return 1;
+  case parcel::empty:
+    return 0;
+  }
+}
+
+int32_t divide_parcel(parcel value, int32_t by) {
+  switch (std::move(value)) {
+  case parcel::sealed(item):
+    return item.read() / by;
+  case parcel::empty:
+    return 0;
+  }
+}
+
+// The owning shapes: each Tracked prints its id once and its negation once.
+void owning() {
+  Tracked first = open(parcel::sealed(Tracked(21)));
+  std::println(first.read() + 1000);
+  parcel named = parcel::sealed(Tracked(22));
+  switch (named) {
+  case parcel::sealed:
+    std::println(2001);
+    break;
+  case parcel::empty:
+    std::println(2000);
+    break;
+  }
+  std::println(burn(std::move(named)));
+  std::println(present(parcel::sealed(Tracked(23))) + 2000);
+  std::println(burn(relay<parcel>(parcel::sealed(Tracked(24)))));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int32_t phase = argc - 1;
+  if (phase == 1) {
+    Tracked guard = Tracked(50);
+    std::println(divide_slot(slot::held(token(51)), zero));
+    return 0;
+  }
+  if (phase == 2) {
+    Tracked guard = Tracked(60);
+    std::println(divide_parcel(parcel::sealed(Tracked(61)), zero));
+    return 0;
+  }
+  transport();
+  owning();
+  return 0;
+}
