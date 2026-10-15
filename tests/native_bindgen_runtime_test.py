@@ -18,7 +18,8 @@ def run(command, cwd=None):
 
 def main():
     cases = {"native-enum-bindings": ("flags", "native_flags"),
-             "native-callback-slots": ("hooks", "native")}
+             "native-callback-slots": ("hooks", "native"),
+             "native-union-bindings": ("events", "native")}
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--example", choices=cases, default="native-enum-bindings")

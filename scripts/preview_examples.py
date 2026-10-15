@@ -14,9 +14,9 @@ import xml.etree.ElementTree as ET
 # harnesses own nested projects and local HTTP/native prerequisites.
 TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
-         "native_typedef_bindgen", "process_resource_policy"}
+         "native_typedef_bindgen", "native_union_bindgen", "process_resource_policy"}
 NESTED = {"allocator-support", "libc-region-provider", "native-callback-slots",
-          "native-enum-bindings", "objective-cpp-bridge", "scoped-configuration",
+          "native-enum-bindings", "native-union-bindings", "objective-cpp-bridge", "scoped-configuration",
           "toy-3d-engine", "transit-planner"}
 
 

@@ -879,8 +879,7 @@ private:
       }
       if (!declaration->complete) {
         // A genuinely opaque handle; no degradation note.
-      } else if (declaration->recordIsUnion) {
-        reason = "unions are outside the bounded GTI record surface";
+
       } else if (!declaration->layoutReason.empty()) {
         reason = declaration->layoutReason;
       } else if (declaration->fields.empty()) {
@@ -937,6 +936,7 @@ private:
       return item;
     }
     item.kind = BindingItemKind::Record;
+    item.recordIsUnion = declaration.recordIsUnion;
     for (const NativeRecordField &field : declaration.fields) {
       synthesisHint_ = declaration.name + "_" + field.name;
       const NativeType *type = canonical(field.type);
