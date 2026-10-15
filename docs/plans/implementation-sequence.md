@@ -8372,6 +8372,14 @@ function-summary publication, so return validation need not depend on an
 unfinished summary of its own body. Nonempty publication is still closed until
 independent MIR normalization, call substitution and combined source/loan
 regression evidence are complete; scaffold implementation is not admission.
+The MIR scaffold independently normalizes return places through typed
+formal/receiver paths, rather than trusting the semantic mapping. Semantic
+ancestry checking traverses primary, stored and every additional parent edge,
+including shared DAG ancestry; no primary entry may hide a local cleanup-bound
+secondary owner. These newly added nonempty paths are not yet validated or
+enabled. Final call substitution and malformed nonempty mapping tests remain
+open. Stable payload-string performance acceptance currently takes priority
+over enabling this follow-up.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
