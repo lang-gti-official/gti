@@ -6332,7 +6332,8 @@ results directly in the same eight configurations, from by-value parameter,
 local, fresh, generic, lambda and early-return receivers whose drops run
 before the Return. Each result is destroyed once, by its caller. A failing
 receiver destructor destroys the unpublished result, and a failure in that
-cleanup reports the secondary failure. Ownership
+cleanup reports the secondary failure. A body whose drops cannot fail covers
+the plain emission form. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.

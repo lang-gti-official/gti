@@ -1629,7 +1629,10 @@ never-constructed storage. The call may be a consuming (`&&`) source member
 whose `Once` receiver passes the shared consuming-receiver proof, as in
 `return std::move(box).release();`. Its receiver is not transferred at the
 call, so the receiver's full-expression drop is one of those later cleanups.
-No other invocation capability is admitted. A failure-free call returning a
+No other invocation capability is admitted. A cleanup-free receiver moved out
+of a binding is instead a prepared parameter that the call transfers out; the
+consuming-receiver proof does not admit that transport yet, so this proof
+refuses such a returned result. A failure-free call returning a
 reference binds its call-result loan by address in either body form. A plain
 body returning a moved class, callable, owning array or `Expected<Class, E>`
 value stages it at the
