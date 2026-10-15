@@ -2192,6 +2192,14 @@ public:
       }
       output << "> __gti_value;\n";
       writeIndent();
+      output << name << "() = default;\n";
+      writeIndent();
+      output << "template <std::size_t Index, typename... Args>\n";
+      writeIndent();
+      output << "explicit " << name
+             << "(std::in_place_index_t<Index> selected, Args &&...args)"
+                " : __gti_value(selected, std::forward<Args>(args)...) {}\n";
+      writeIndent();
       output << "friend bool operator==(const " << name << " &, const " << name
              << " &) = default;\n";
       --indentation;
