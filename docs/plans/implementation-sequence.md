@@ -3209,9 +3209,14 @@ contracts for exact admitted shapes.
   parameter types and value/class-copy/class-move/read-borrow/mutable-borrow
   roles. Direct ordinary constructor and by-value GTI call results of concrete
   self-contained class/struct type may additionally use exact read/mutable
-  temporary-borrow receiver roles for non-virtual ordinary methods and reusable
+  temporary-borrow receiver roles for ordinary methods and reusable
   `operator()`, with one producer-matched mutable place and full-expression
-  drop obligation. MIR emits
+  drop obligation. The member may be virtual, an override, an interface
+  implementation, or inherited from a recorded base instance of the
+  temporary's class; the call keeps the target's own dispatch and failure
+  contract, and verification requires `Virtual` dispatch exactly for virtual
+  targets (2026-10-15; previously virtual members were refused in semantics,
+  and an inherited member failed MIR verification). MIR emits
   one-use `CallInput` checkpoints and verifies call-site, role, index, type,
   dominance, and strict receiver-when-applicable, arguments, then `Call` or
   `Construct` order. For ordinary calls, each eligible class copy or move

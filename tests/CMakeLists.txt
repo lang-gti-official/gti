@@ -3519,6 +3519,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(constructor_virtual_call_field_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME virtual_temporary_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/virtual_temporary_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(virtual_temporary_receiver_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME fresh_callable_later_argument_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/fresh_callable_later_argument_failure_test.py"
