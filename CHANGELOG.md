@@ -22,6 +22,9 @@ for what minor and patch releases mean.
   a `mut` reference argument; a borrowed method receiver; and a local lambda
   as the called function. If the test or arm fails, each live local is
   destroyed once, as before.
+- A conditional argument whose arms select a `std::string_view`, such as
+  `describe(plain, argc > 1 ? "yes" : "no")`, also no longer stops with this
+  error after a local passed by reference.
 
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
