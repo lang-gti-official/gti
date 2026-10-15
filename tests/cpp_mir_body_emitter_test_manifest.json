@@ -370,6 +370,10 @@
       "suite": "text"
     },
     {
+      "name": "testPreparedConsumingReceiverLaterFailure",
+      "suite": "text"
+    },
+    {
       "name": "testConditionalPreparedInputResult",
       "suite": "text"
     },
