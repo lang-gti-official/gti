@@ -390,6 +390,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeConditionalMovedLocalArms",
+      "suite": "text"
+    },
+    {
       "name": "testCleanupFreeJoinReceiver",
       "suite": "text"
     },
@@ -442,6 +446,10 @@
       "suite": "text"
     },
     {
+      "name": "testNestedCleanupFreeJoinMove",
+      "suite": "text"
+    },
+    {
       "name": "testShortCircuitOwnedFieldView",
       "suite": "text"
     },
@@ -475,6 +483,14 @@
     },
     {
       "name": "testShortCircuitExpectedPayloadFieldView",
+      "suite": "text"
+    },
+    {
+      "name": "testCallableClassResultSlots",
+      "suite": "text"
+    },
+    {
+      "name": "testUnconsumedFusedClosureSpellsNoBody",
       "suite": "text"
     },
     {
@@ -699,6 +715,10 @@
     },
     {
       "name": "testOwningConstructionFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testMovedPlaceFieldView",
       "suite": "lifecycle"
     },
     {

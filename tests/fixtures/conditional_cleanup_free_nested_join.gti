@@ -1,0 +1,183 @@
+#include <std/string>
+#include <std/vector>
+
+// A cleanup-free conditional class result nested in an arm of another
+// conditional, evaluated again by a loop. The enclosing arm moves the inner
+// join's object into the outer join's storage, which empties the inner
+// storage; the next iteration constructs both again. The nested conditional
+// may sit in either arm or in both, nest again, compute checked arguments in
+// its arms, and be bound, read through a field, passed on, assigned or
+// returned.
+//
+// Pod has no destructor. Tracked inputs print the negated id when destroyed.
+// Nothing else prints outside main and run, which keeps the shape functions
+// below in the plain form.
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+
+// The cleanup-free member-call receiver.
+class Plain {
+  int base;
+public:
+  Plain(int base) : base(base) {}
+  Pod peek() { return Pod(this.base); }
+  Pod pod() && { return Pod(this.base); }
+};
+
+// A receiver with cleanup of its own.
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(-this.id); }
+  Pod peek() { return Pod(this.id); }
+};
+
+// A generic cleanup-free class.
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+};
+
+Pod fresh(int id) { return Pod(id); }
+
+Box<int> boxed(int id) { return Box<int>(id); }
+
+Pod divide(int a, int b) { return Pod(a / b); }
+
+int consume(Pod input) { return input.read(); }
+
+int nested_right(bool left, int one, int two) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Pod t = left ? fresh(i) : (i > one ? fresh(two) : Pod(i));
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
+int nested_left(bool left, int one, int two) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Pod t = left ? (i > one ? fresh(i) : Pod(one)) : fresh(two);
+    total = total * 10 + t.read();
+  }
+  return total;
+}
+
+int nested_both(bool left, int two) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Pod t = i > two ? (left ? fresh(i) : Pod(5)) : (left ? Pod(6) : fresh(i));
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
+int nested_deep(bool left, int one, int two) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Pod t = left ? fresh(7)
+                 : (i > two ? fresh(i) : (i > one ? Pod(8) : fresh(9)));
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
+int consumers(bool left, int one, int two) {
+  mut int total = 0;
+  mut Pod kept{0};
+  mut int i = 0;
+  while (i < 3) {
+    total = total * 10 + (left ? fresh(i) : (i > one ? fresh(two) : Pod(i))).x;
+    total = total * 10 +
+            consume(left ? Pod(i) : (i > one ? Pod(two) : fresh(i)));
+    kept = left ? (i > one ? fresh(two) : Pod(i)) : fresh(i);
+    total = total * 10 + kept.x;
+    i += 1;
+  }
+  return total;
+}
+
+Pod returned(bool left, int i, int one) {
+  return left ? fresh(i) : (i > one ? fresh(one) : Pod(i));
+}
+
+int nested_returned(bool left, int one) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1)
+    total = total * 10 + returned(left, i, one).read();
+  return total;
+}
+
+int member_arms(bool left, int one) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Plain p{i};
+    Plain q{i};
+    Tracked r{i};
+    Pod t = left ? r.peek() : (i > one ? p.peek() : std::move(q).pod());
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
+int generic_box(bool left, int one) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Box<int> t = left ? boxed(i) : (i > one ? boxed(one) : Box<int>(i));
+    total = total * 10 + t.value;
+  }
+  return total;
+}
+
+// Nested arms that compute overflow-checked arguments first.
+int nested_checked(bool left, int one, int two) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Pod t = left ? (i > one ? fresh(i + 1) : Pod(i * 2))
+                 : (i > two ? fresh(two + 1) : Pod(i + 5));
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
+// A raising callee in a nested arm leaves no result.
+int raising(bool left, int one, int dividend, int last) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    int divisor = last - i;
+    Pod t = left ? fresh(i) : (i > one ? divide(dividend, divisor) : Pod(i));
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
+int run(bool left) {
+  std::println(nested_right(left, 1, 2));
+  std::println(nested_left(left, 1, 2));
+  std::println(nested_both(left, 2));
+  std::println(nested_deep(left, 1, 2));
+  std::println(consumers(left, 1, 2));
+  std::println(nested_returned(left, 1));
+  std::println(member_arms(left, 1));
+  std::println(generic_box(left, 1));
+  std::println(nested_checked(left, 1, 2));
+  return raising(left, 1, 12, 7);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true));
+  std::println(run(false));
+  // Scenario 1 fails the nested raising arm on the loop's last iteration.
+  int scenario = argc - 1;
+  Tracked guard{99};
+  int got = raising(false, 1, 12, scenario == 1 ? 3 : 7);
+  std::println(got);
+  return got == 123 ? 0 : 1;
+}

@@ -1,0 +1,246 @@
+#include <std/string>
+#include <std/vector>
+
+// A cleanup-free class value moved out of a whole named local in each arm of
+// a conditional expression, then bound, returned, read through a field,
+// borrowed as a member-call receiver, assigned or passed on. Only the arm
+// that runs moves its local. A moved-from local keeps its binding: it is
+// still destroyed at scope exit, and an assignment gives it a new value.
+//
+// Pod has no destructor. Tracked prints its negated id when destroyed.
+// Nothing else prints outside main and run, which keeps the plain shape
+// functions below in the plain form.
+class Pod {
+public:
+  mut int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+  int scaled(int factor) { return this.x * factor; }
+  int ratio(int divisor) { return this.x / divisor; }
+};
+
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(-this.id); }
+};
+
+// A cleanup-free class holding a view of text that outlives it.
+class Label {
+public:
+  std::string_view text;
+  int weight;
+  Label(std::string_view text, int weight) : text(text), weight(weight) {}
+  int score() { return this.weight * 10 + int(this.text.size()); }
+};
+
+int consume(Pod input) { return input.read(); }
+
+Pod fresh(int id) { return Pod(id); }
+
+// Plain bodies. A value moved out of the other arm's local, or read from
+// storage the arm did not write, reads back a different value.
+int bound(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  Pod kept = left ? std::move(a) : std::move(b);
+  return kept.read();
+}
+
+Pod returned(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return left ? std::move(a) : std::move(b);
+}
+
+int field(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).x;
+}
+
+int receiver(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).scaled(3);
+}
+
+int assigned(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  mut Pod kept{0};
+  kept = left ? std::move(a) : std::move(b);
+  return kept.read();
+}
+
+int passed(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return consume(left ? std::move(a) : std::move(b));
+}
+
+// By-value parameters are named locals too.
+Pod parameters(bool left, Pod a, Pod b) {
+  return left ? std::move(a) : std::move(b);
+}
+
+// One moved arm beside a construction, a copy, a call or a nested join. The
+// other arm's checked argument is computed inside that arm.
+int mixed(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  Pod c{one + 1};
+  Pod d{two + 1};
+  Pod built = left ? std::move(a) : Pod(two + 1000);
+  Pod copied = left ? b : std::move(c);
+  Pod called = left ? fresh(one + 2000) : std::move(d);
+  return built.read() + copied.read() * 3 + called.read() * 5 + b.read();
+}
+
+int nested(bool left, bool inner, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  Pod c{one + two};
+  Pod kept = left ? (inner ? std::move(a) : std::move(b)) : std::move(c);
+  return kept.read();
+}
+
+// The moved-from local takes a new value afterwards.
+int reassigned(bool left, int one, int two) {
+  mut Pod a{one};
+  mut Pod b{two};
+  Pod kept = left ? std::move(a) : std::move(b);
+  a = Pod(7);
+  b = Pod(11);
+  return kept.read() * 100 + a.read() + b.read();
+}
+
+// The join assigned back into one of the moved locals, and both arms
+// moving the same local.
+int self_assigned(bool left, int one, int two) {
+  mut Pod a{one};
+  Pod b{two};
+  a = left ? std::move(a) : std::move(b);
+  return a.read();
+}
+
+int same_local(bool left, int one) {
+  Pod a{one};
+  Pod kept = left ? std::move(a) : std::move(a);
+  return kept.read();
+}
+
+// A moved value holding a view, read through a member call.
+int labelled(bool left, std::string_view one, std::string_view two,
+             int weight) {
+  Label a{one, weight};
+  Label b{two, weight + 1};
+  return (left ? std::move(a) : std::move(b)).score();
+}
+
+int looped(bool left, int start) {
+  mut int total = 0;
+  for (mut int index = 0; index < 3; ++index) {
+    Pod a{start + index};
+    Pod b{start + 10 * index};
+    Pod kept = left ? std::move(a) : std::move(b);
+    total += kept.read() * (index + 1);
+  }
+  return total;
+}
+
+// Bodies that can fail: each also divides by `divisor`, after the join, in
+// the joined value's member call, or before the join.
+int bound_raising(bool left, int one, int two, int divisor) {
+  Tracked guard{one};
+  Pod a{one};
+  Pod b{two};
+  Pod kept = left ? std::move(a) : std::move(b);
+  return kept.read() / divisor;
+}
+
+Pod returned_raising(bool left, int one, int two, int divisor) {
+  Tracked guard{two};
+  Pod a{one / divisor};
+  Pod b{two};
+  return left ? std::move(a) : std::move(b);
+}
+
+int field_raising(bool left, int one, int two, int divisor) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).x / divisor;
+}
+
+int receiver_raising(bool left, int one, int two, int divisor) {
+  Tracked guard{one + two};
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).ratio(divisor);
+}
+
+int passed_raising(bool left, int one, int two, int divisor) {
+  Pod a{one};
+  Pod b{two};
+  return consume(left ? std::move(a) : std::move(b)) / divisor;
+}
+
+// Runs every shape through one arm; `base` keeps the two runs apart.
+int run(bool left, int base) {
+  mut int total = 0;
+  total += bound(left, base + 1, base + 2);
+  total += returned(left, base + 3, base + 4).read() * 2;
+  total += field(left, base + 5, base + 6) * 3;
+  total += receiver(left, base + 7, base + 8) * 4;
+  total += assigned(left, base + 9, base + 10) * 5;
+  total += passed(left, base + 11, base + 12) * 6;
+  total += parameters(left, Pod(base + 13), Pod(base + 14)).read() * 7;
+  total += mixed(left, base + 15, base + 16) * 8;
+  total += nested(left, true, base + 17, base + 18) * 9;
+  total += nested(left, false, base + 19, base + 20) * 10;
+  total += reassigned(left, base + 21, base + 22) * 11;
+  total += looped(left, base + 23) * 12;
+  total += labelled(left, "abc", "hello", base + 24) * 13;
+  total += self_assigned(left, base + 25, base + 26) * 14;
+  total += same_local(left, base + 27) * 15;
+  std::println(total);
+  total = 0;
+  total += bound_raising(left, base + 31, base + 32, 1);
+  total += returned_raising(left, base + 33, base + 34, 1).read() * 2;
+  total += field_raising(left, base + 35, base + 36, 1) * 3;
+  total += receiver_raising(left, base + 37, base + 38, 1) * 4;
+  total += passed_raising(left, base + 39, base + 40, 1) * 5;
+  {
+    // Bound and read in a body that can fail.
+    Pod a{base + 41};
+    Pod b{base + 42};
+    Pod c{base + 43};
+    Pod d{base + 44};
+    Pod kept = left ? std::move(a) : std::move(b);
+    total += kept.read() * 6;
+    total += (left ? std::move(c) : std::move(d)).scaled(7);
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true, 0));
+  std::println(run(false, 100));
+  // Failure cleanup. Scenario 1 fails after a bound join, 2 before a
+  // returned join, and 3 in the joined value's member call. Cleanup destroys
+  // only what was constructed before the failure.
+  int scenario = argc - 1;
+  Tracked first{201};
+  int bound = bound_raising(scenario != 1, 202, 203, scenario == 1 ? 0 : 1);
+  std::println("bound");
+  Tracked second{204};
+  Pod returned = returned_raising(scenario == 2, 205, 206,
+                                  scenario == 2 ? 0 : 1);
+  std::println("returned");
+  Tracked third{207};
+  int received = receiver_raising(scenario != 3, 208, 209,
+                                  scenario == 3 ? 0 : 1);
+  std::println("received");
+  return bound + returned.read() + received - 616;
+}
