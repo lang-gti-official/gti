@@ -3568,6 +3568,14 @@ the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
 
+Checked references, retained loan pointers and failure-result pointer channels
+share value-object qualification. In particular, a read-only `c_string&`
+borrows the pointer slot as `const char* const &`, not by adding another const
+to its character pointee. The same top-level qualifier is retained when that
+reference crosses nested returns, callable adapters or stored-reference fields.
+This is representation policy only; semantic owner dependencies and access
+permissions remain unchanged.
+
 Generated nominal and instance names hash logical source identities rather
 than host filesystem paths. The source descriptor table carried with failure
 metadata covers every loaded unit, including those without failure sites:

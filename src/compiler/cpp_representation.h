@@ -62,6 +62,13 @@ cppFunctionHasFailureResultChannel(const LoweredProgram &program,
                                                   CppStandard standard,
                                                   const SemanticType &type);
 
+// Qualify the value object, not a native pointer's pointee. Reference
+// signatures, loan carriers and failure-result channels must use the same
+// qualification.
+[[nodiscard]] std::string
+cppAccessQualifiedTypeSpelling(const SemanticType &type, AccessMode access,
+                               std::string spelling);
+
 // Foreign declarations and native-layout fields retain their actual pointer
 // ABI. Ordinary GTI values use inert integer-address carriers instead.
 [[nodiscard]] std::string cppNativeTypeSpelling(const LoweredProgram &program,

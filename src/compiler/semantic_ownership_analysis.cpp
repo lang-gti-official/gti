@@ -5536,8 +5536,10 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             sourceLoan->kind == SemanticLoanKind::StoredValue
                 ? sourceLoan->id
                 : sourceLoan->storedDependency;
-        const auto parent = sourceLoan->kind == SemanticLoanKind::Reference &&
-                                    sourceLoan->access == AccessMode::Mutable
+        // Storing the referent's address retains its physical reference even
+        // when access is shared. Otherwise its semantic endpoint can retire
+        // the named accessor before the adapter and its copied results.
+        const auto parent = sourceLoan->kind == SemanticLoanKind::Reference
                                 ? sourceLoan->id
                                 : SemanticLoanId{0};
         SemanticLoanPlace shell = loanPlace(argument);

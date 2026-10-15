@@ -76,6 +76,11 @@ int main() {
   std::string second = std::string("second");
   std::string_view a = first.view();
   std::string_view b = second.view();
+  std::string_view& alias = relay_text(a);
+  TextReader direct{alias};
+  TextReader nested{relay_text(alias)};
+  if (direct.size() != std::size_t(5) || nested.size() != std::size_t(5))
+    return 1;
   return int(text_size(a, b) + relayed_size(a)) - 16;
 }
 )gti");
@@ -97,6 +102,7 @@ int main() {
   bool checkedEndpoint = false;
   bool checkedReturnedReference = false;
   bool checkedCopiedReturn = false;
+  bool checkedRetainedAccessor = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     if (function.returnType.kind == lang::SemanticType::StringView &&
         function.returnBorrowOrigin == lang::BorrowOriginKind::Receiver) {
@@ -113,6 +119,18 @@ int main() {
       }
     }
     for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      if (loan.kind == lang::MirLoanKind::Stored && parent &&
+          parent->kind == lang::MirLoanKind::CallResult &&
+          !parent->carriers.empty() && loan.storedDependency != 0) {
+        auto detached = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            detached.findFunctionInstance(function.id));
+        changed->body.loans[loan.id - 1].parent = 0;
+        expect(!lang::verifyMirProgram(detached).valid(),
+               "a stored reference cannot detach its named accessor parent");
+        checkedRetainedAccessor = true;
+      }
       if (loan.kind == lang::MirLoanKind::CallResult &&
           loan.storedDependency != 0) {
         const auto *dependency = function.body.findLoan(loan.storedDependency);
@@ -212,11 +230,21 @@ int main() {
     }
   }
   expect(checkedEntry && checkedWrongOwner && checkedEndpoint &&
-             checkedReturnedReference && checkedCopiedReturn,
+             checkedReturnedReference && checkedCopiedReturn &&
+             checkedRetainedAccessor,
          "text reference fixtures exercise missing, forged and early owner "
          "retirement");
   for (const std::string invalid :
        {"int main() { mut std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); "
+        "std::string_view& alias = relay_text(view); "
+        "TextReader reader{relay_text(alias)}; owner.clear(); "
+        "return int(reader.size()); }",
+        "int main() { std::string owner = std::string(\"text\"); "
+        "mut std::string_view view = owner.view(); "
+        "std::string_view& alias = relay_text(view); TextReader reader{alias}; "
+        "view = \"changed\"; return int(reader.size()); }",
+        "int main() { mut std::string owner = std::string(\"text\"); "
         "std::string_view view = owner.view(); TextReader reader{view}; "
         "owner.clear(); return int(reader.size()); }",
         "int main() { std::string owner = std::string(\"text\"); "

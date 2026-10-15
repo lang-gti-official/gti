@@ -34502,14 +34502,14 @@ public:
               "verified reference carrier lost its referent type");
         }
         writeIndent();
-        if (place.type.referenceAccess == AccessMode::ReadOnly) {
-          output << "const ";
-        }
         if (parameter) {
+          if (place.type.referenceAccess == AccessMode::ReadOnly)
+            output << "const ";
           output << "auto *__gti_mir_p_" << place.id << " = &__gti_mir_arg_"
                  << *parameter << ";\n";
         } else {
-          output << typeSpelling(place.type.arguments.front())
+          output << accessTypeSpelling(place.type.arguments.front(),
+                                       place.type.referenceAccess)
                  << " *__gti_mir_p_" << place.id << "{};\n";
         }
         continue;
@@ -35391,16 +35391,16 @@ public:
         throw std::logic_error("verified MIR loan lost its source place");
       }
       writeIndent();
-      if (loan.access == AccessMode::ReadOnly) {
-        output << "const ";
-      }
+      const auto loanTypeSpelling = [&](const SemanticType &type) {
+        return accessTypeSpelling(type, loan.access);
+      };
       // A nested reference call publishes its exact referent pointer into
       // this Return loan. The semantic source still names the owner used for
       // conflicts, so the transfer payload owns the runtime pointer type.
       if (const MirInstruction *transfer =
               callResultReturnLoanProducer(facts.body, loan);
           transfer != nullptr) {
-        output << typeSpelling(transfer->info.type) << " *__gti_mir_loan_"
+        output << loanTypeSpelling(transfer->info.type) << " *__gti_mir_loan_"
                << loan.id << "{};\n";
         continue;
       }
@@ -35412,7 +35412,7 @@ public:
           throw std::logic_error(
               "verified MIR storage loan lost its element type");
         }
-        output << typeSpelling(source->type.arguments.front())
+        output << loanTypeSpelling(source->type.arguments.front())
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
@@ -35420,7 +35420,8 @@ public:
         // The entry loan aliases the reference parameter's pointer
         // carrier (ADR 018 §4): the place prelude above already bound
         // the carrier from the argument, so the loan pointer copies it.
-        // The declaration is already indented and may already carry `const`.
+        if (loan.access == AccessMode::ReadOnly)
+          output << "const ";
         output << "auto *__gti_mir_loan_" << loan.id << " = ";
         if (const auto element = packElementParameterIndex(
                 program, facts.body, {facts.kind, facts.id}, *source)) {
@@ -35449,7 +35450,7 @@ public:
             throw std::logic_error(
                 "verified MIR checked storage loan lost its element type");
           }
-          output << typeSpelling(source->type.arguments.front())
+          output << loanTypeSpelling(source->type.arguments.front())
                  << " *__gti_mir_loan_" << loan.id << "{};\n";
           continue;
         }
@@ -35459,7 +35460,7 @@ public:
           throw std::logic_error(
               "verified MIR call-result loan lost its element type");
         }
-        output << typeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
+        output << loanTypeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
                << "{};\n";
         continue;
       }
@@ -35470,7 +35471,7 @@ public:
           throw std::logic_error(
               "verified MIR return loan lost its exact referent type");
         }
-        output << typeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
+        output << loanTypeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
                << "{};\n";
         continue;
       }
@@ -35482,7 +35483,7 @@ public:
         }
         loanedType = &source->type.arguments.front();
       }
-      output << typeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
+      output << loanTypeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
     if (!failureForm) {
@@ -35584,10 +35585,8 @@ public:
             if (calleeReturn.kind == SemanticType::Reference &&
                 producedCallResultLoan(facts.body, instruction) == nullptr) {
               writeIndent();
-              if (calleeReturn.referenceAccess == AccessMode::ReadOnly) {
-                output << "const ";
-              }
-              output << typeSpelling(calleeReturn.arguments.front())
+              output << accessTypeSpelling(calleeReturn.arguments.front(),
+                                           calleeReturn.referenceAccess)
                      << " *__gti_mir_discard_" << instruction.id << "{};\n";
             } else if (!instruction.result &&
                        (calleeReturn.kind == SemanticType::Class ||
@@ -36332,6 +36331,11 @@ private:
     return copiedTypeSpelling(type);
   }
 
+  [[nodiscard]] std::string accessTypeSpelling(const SemanticType &type,
+                                               AccessMode access) {
+    return cppAccessQualifiedTypeSpelling(type, access, typeSpelling(type));
+  }
+
   [[nodiscard]] const std::string &
   copiedTypeSpelling(const SemanticType &type) {
     const auto found = std::find_if(
@@ -36506,10 +36510,9 @@ private:
             closure.lambda->returnType.arguments.size() == 1) {
           // A reference result publishes its loan pointer through the
           // `T **` channel shared with function bodies (ADR 018 §5).
-          if (closure.lambda->returnType.referenceAccess ==
-              AccessMode::ReadOnly)
-            output << "const ";
-          output << typeSpelling(closure.lambda->returnType.arguments.front())
+          output << accessTypeSpelling(
+                        closure.lambda->returnType.arguments.front(),
+                        closure.lambda->returnType.referenceAccess)
                  << " **__gti_mir_out_result, ";
         } else if (closure.lambda->returnType != SemanticType::Void) {
           output << typeSpelling(closure.lambda->returnType)
@@ -37529,9 +37532,8 @@ private:
       }
       if (lambda->returnType.kind == SemanticType::Reference &&
           lambda->returnType.arguments.size() == 1) {
-        if (lambda->returnType.referenceAccess == AccessMode::ReadOnly)
-          output << "const ";
-        output << typeSpelling(lambda->returnType.arguments.front())
+        output << accessTypeSpelling(lambda->returnType.arguments.front(),
+                                     lambda->returnType.referenceAccess)
                << " **__gti_mir_out_result, ";
       } else if (lambda->returnType != SemanticType::Void) {
         output << typeSpelling(lambda->returnType)
@@ -43732,9 +43734,8 @@ private:
         output << ", ";
       if (result.kind == SemanticType::Reference &&
           result.arguments.size() == 1) {
-        if (result.referenceAccess == AccessMode::ReadOnly)
-          output << "const ";
-        output << typeSpelling(result.arguments.front())
+        output << accessTypeSpelling(result.arguments.front(),
+                                     result.referenceAccess)
                << " **__gti_mir_out_result, ";
       } else if (result != SemanticType::Void) {
         output << typeSpelling(result) << " *__gti_mir_out_result, ";
@@ -44665,9 +44666,8 @@ private:
     if (const auto *loan = mir_detail::erasedReferenceResultLoan(
             program, facts.body, instruction)) {
       output << "__gti_mir_loan_" << loan->id << " = reinterpret_cast<";
-      if (loan->access == AccessMode::ReadOnly)
-        output << "const ";
-      output << typeSpelling(instruction.info.type) << "*>(std::addressof(";
+      output << accessTypeSpelling(instruction.info.type, loan->access)
+             << "*>(std::addressof(";
       // The verified call schedule can carry a borrowed place or loan through
       // a CallInput. Spell its referent with the ordinary argument transport,
       // not as a scalar SSA value (which need not exist for a checked borrow).

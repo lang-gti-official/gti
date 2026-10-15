@@ -506,7 +506,10 @@ Reference-returning helpers preserve the physical view address and its stored
 owner separately, including when their result is immediately used to construct
 a cursor or another source-defined adapter. A retained adapter keeps the exact
 accessor-result chain alive; a read-only chain may terminate at the matching
-live reference formal with the same verified external dependency. Literal-backed
+live reference formal with the same verified external dependency. When an
+adapter stores a named reference, semantics retains that reference as its parent
+even for shared access; its endpoint must outlive the adapter and dependent
+copies. MIR preserves this parent separately from the backing owner. Literal-backed
 locals may omit an external owner only when verification proves their literal
 initialization through write-free copies or read-only local reference aliases.
 For an alias, both its supplied address and its loan origin must prove that
