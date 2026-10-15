@@ -262,6 +262,10 @@
       "suite": "text"
     },
     {
+      "name": "testMovedClosureFieldInFallibleConstructor",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },
