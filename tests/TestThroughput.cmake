@@ -33,6 +33,7 @@ if(Python3_Interpreter_FOUND)
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
     borrowed_argument_fallible_condition_runtime
     borrowed_argument_nested_owning_argument_runtime
+    conditional_cleanup_free_call_result_runtime
     conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime
