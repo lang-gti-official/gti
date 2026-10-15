@@ -2385,7 +2385,16 @@ production emission and hosted containment consume that same schedule.
 `MirClassInstance` carries the selected `[[c_abi]]` record size, alignment, and
 ordered field offsets. Program verification checks that this metadata is
 structurally complete and within the record bounds; deterministic printing
-exposes it for audits. MIR does not contain a native-layout instruction.
+exposes it for audits. C ABI unions retain zero offsets and a union-layout view
+derived from the same semantic computation; verification rejects disagreement
+in size, alignment, field identities, types or field layouts between those
+views. Existing verified union field places and load/store operations own
+execution; ABI opt-in adds no new body operation or recursive emitter path.
+Passive ABI result copies include unions inside source wrappers. When a call
+result has a verified placement slot, publication uses that slot even when the
+result is also a passive ABI value; raw value assignment and placement-factory
+publication are mutually exclusive emission choices.
+MIR does not contain a native-layout instruction.
 
 Floating literals lower as ordinary `MirOperation::Literal` values tagged by
 their semantic `float` or `double` type. The verifier requires the retained

@@ -22,3 +22,29 @@ int observe_snapshot(void) {
   return snapshot.value == 42 && snapshot.counter == &counter &&
          snapshot.operation(21) == 42;
 }
+
+union Payload payload = {.number = 7};
+union Payload second_payload = {.number = 0};
+const union Payload frozen_payload = {.number = 41};
+struct Packet packet = {1, {.number = 3}};
+
+struct Snapshot make_snapshot(int value) {
+  struct Snapshot result = {value, &counter, double_value};
+  return result;
+}
+union Payload make_payload(int value) {
+  union Payload result = {.number = value};
+  return result;
+}
+struct Coordinates make_coordinates(int x, int y) {
+  struct Coordinates result = {x, y};
+  return result;
+}
+int observe_position(void) {
+  return payload.position.x == 10 && payload.position.y == 20;
+}
+void switch_payload(void) { payload.position.x = 10; payload.position.y = 20; }
+int observe_payload(union Payload value) { return value.number == 42; }
+int observe_packet(struct Packet value) {
+  return value.tag == 1 && value.data.number == 43;
+}

@@ -13209,11 +13209,12 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
     if (instance.cAbiRecord) {
-      if (instance.kind != ClassKind::Struct || !instance.bases.empty() ||
-          instance.abstract || instance.polymorphic || !instance.cAbiLayout ||
-          instance.destructor || instance.requiresActiveDropState ||
-          instance.requiresActiveCleanup || !instance.fields.empty() ||
-          !instance.fieldDropOrder.empty()) {
+      if ((instance.kind != ClassKind::Struct &&
+           instance.kind != ClassKind::Union) ||
+          !instance.bases.empty() || instance.abstract ||
+          instance.polymorphic || !instance.cAbiLayout || instance.destructor ||
+          instance.requiresActiveDropState || instance.requiresActiveCleanup ||
+          !instance.fields.empty() || !instance.fieldDropOrder.empty()) {
         result.errors.push_back(
             {.bodyKind = MirBodyKind::FieldInitializers,
              .owner = instance.id,
@@ -13235,8 +13236,10 @@ verifyMirProgramContracts(const MirProgram &program) {
                         field.type != SemanticType::Unknown &&
                         field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
                         field.offsetBytes % field.abiAlignmentBytes == 0 &&
-                        field.offsetBytes >= previousEnd && fieldEndValid &&
-                        fieldEnd <= layout.sizeBytes;
+                        (instance.kind == ClassKind::Union
+                             ? field.offsetBytes == 0
+                             : field.offsetBytes >= previousEnd) &&
+                        fieldEndValid && fieldEnd <= layout.sizeBytes;
           previousEnd = fieldEnd;
         }
         if (!validLayout) {
@@ -13255,9 +13258,9 @@ verifyMirProgramContracts(const MirProgram &program) {
     if (instance.kind == ClassKind::Union) {
       bool validLayout =
           instance.unionLayout.has_value() && instance.bases.empty() &&
-          !instance.abstract && !instance.polymorphic && !instance.cAbiRecord &&
-          !instance.cAbiLayout && !instance.destructor &&
-          !instance.requiresActiveDropState &&
+          !instance.abstract && !instance.polymorphic &&
+          instance.cAbiRecord == instance.cAbiLayout.has_value() &&
+          !instance.destructor && !instance.requiresActiveDropState &&
           !instance.requiresActiveCleanup && instance.fields.empty() &&
           instance.fieldDropOrder.empty();
       if (instance.unionLayout) {
@@ -13273,6 +13276,23 @@ verifyMirProgramContracts(const MirProgram &program) {
                         field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
                         field.sizeBytes <= layout.sizeBytes &&
                         layout.abiAlignmentBytes % field.abiAlignmentBytes == 0;
+        }
+      }
+      if (instance.cAbiLayout && instance.unionLayout) {
+        const auto &record = *instance.cAbiLayout;
+        const auto &overlap = *instance.unionLayout;
+        validLayout = validLayout && record.sizeBytes == overlap.sizeBytes &&
+                      record.abiAlignmentBytes == overlap.abiAlignmentBytes &&
+                      record.fields.size() == overlap.fields.size();
+        if (record.fields.size() == overlap.fields.size()) {
+          for (std::size_t index = 0; index < record.fields.size(); ++index) {
+            const auto &a = record.fields[index];
+            const auto &b = overlap.fields[index];
+            validLayout = validLayout && a.field == b.field &&
+                          a.type == b.type && a.offsetBytes == 0 &&
+                          a.sizeBytes == b.sizeBytes &&
+                          a.abiAlignmentBytes == b.abiAlignmentBytes;
+          }
         }
       }
       if (!validLayout) {

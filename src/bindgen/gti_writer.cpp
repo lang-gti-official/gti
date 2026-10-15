@@ -23,7 +23,8 @@ void writeItem(const BindingItem &item, std::string_view indent,
     return;
   case BindingItemKind::Record:
     out << indent << "[[c_abi]]\n"
-        << indent << "struct " << item.name << " {\n";
+        << indent << (item.recordIsUnion ? "union " : "struct ") << item.name
+        << " {\n";
     for (const BindingField &field : item.fields) {
       out << indent << "  " << (field.mutableField ? "mut " : "")
           << field.spelling << ";\n";

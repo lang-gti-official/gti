@@ -38,6 +38,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Encode and decode any struct as JSON with no codec | [141: reflected JSON](141-reflected-json.gti) |
 | Organize a reflected JSON configuration with nested types | [147: nested configuration](147-nested-configuration.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
+| Import named C unions and nested event payloads | [native union bindings project](native-union-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
 | Access actual C-owned globals, callback slots and passive records | [native variable bindings project](native-variable-bindings/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |

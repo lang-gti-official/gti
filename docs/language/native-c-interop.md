@@ -287,7 +287,7 @@ paths, and explicit definitions have their native meaning before declaration
 import. The host target is used by default; an explicit supported 64-bit
 target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
-passive records become `[[c_abi]]` structs, incomplete or inexpressible
+passive records become `[[c_abi]]` structs or unions, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
 enums become aliases to their native-compatible C integer family plus exact
 `constexpr` constants, a bare anonymous enum contributes those constants alone, function-pointer
@@ -657,7 +657,7 @@ extern "C" {
 }
 ```
 
-The opt-in applies only to a non-generic `struct` with at least one public
+The opt-in applies only to a non-generic `struct` or `union` with at least one public
 instance field. It cannot declare bases, access sections, static fields,
 methods, constructors, a destructor, or copy/move policies. It also cannot be
 combined with the transfer/share capability attributes. A native record is a
@@ -689,13 +689,27 @@ through an array element — are rejected; pointers provide linked/opaque edges.
 Fields remain in source order. Starting at offset zero, semantics rounds each
 field offset up to that field's ABI alignment, advances by its size, records
 the maximum field alignment as the record ABI alignment, and rounds final size
-up to that alignment. Every operation is checked in the compiler's unsigned
+up to that alignment. A `[[c_abi]] union` instead places every field at offset
+zero, takes the maximum field size and alignment, then rounds that size up to
+the alignment. Unions and structs may nest by value or through positive fixed
+arrays. Every operation is checked in the compiler's unsigned
 64-bit layout domain. `sizeof(NativePoint)` and `alignof(NativePoint)` consume
 these frontend facts just like the existing scalar and fixed-array queries.
 `GTI-S2064` owns invalid native-record declarations and non-array fields;
 `GTI-S2069` owns a fixed-array field with a non-concrete or zero extent;
 `GTI-S2070` owns an inadmissible array element type. `GTI-S2063` continues to
 own an unsupported standalone layout query.
+
+A native union is untagged storage. Every member read or write retains the
+ordinary union requirement for lexical `unsafe`; the caller must establish
+which alternative is initialized and must not read an inactive alternative.
+Copying or passing the complete union transports the initialized alternative
+without adding a tag, allocation, ownership or cleanup state. A native factory
+can supply the first valid value. A surrounding C tag is application policy,
+not a compiler-recognized type. Ordinary unions without `[[c_abi]]` remain
+outside C signatures. Named union fields import through `gti bindgen`; anonymous
+promoted fields, bit-fields, packed/over-aligned records and flexible arrays
+remain unsupported. See the runnable [native union binding example](../../examples/native-union-bindings/README.md).
 
 A field cannot have a GTI initializer. A C ABI record is representation only:
 default construction policy belongs in an ordinary safe GTI wrapper or in a
@@ -710,7 +724,7 @@ definition. `mut` controls source write access to the field and has no
 representation effect.
 
 The semantic model owns size, ABI alignment, and every field offset. HIR and
-MIR retain that metadata. Generated C++ uses a passive struct and compile-time
+MIR retain that metadata. Generated C++ uses a passive struct or union and compile-time
 standard-layout, trivially-copyable, `sizeof`, `alignof`, and `offsetof`
 assertions to audit the native compiler. Native C++ layout never substitutes
 for the frontend calculation.

@@ -348,6 +348,12 @@ struct Packed { int flags : 3; };
 union Overlay { int whole; float parts; };
 struct Holder { struct Packed *packed; union Overlay *overlay; };
 struct Plain { int value; };
+union Nested { struct Pair { int x; int y; } pair; int words[2]; };
+struct Envelope { int tag; union Inner { int whole; float real; } value; };
+struct Forward; typedef struct Forward ForwardAlias;
+struct Forward { union ForwardInner { int whole; float real; } value; };
+struct Anonymous { int tag; union { int whole; float real; }; };
+union AnonymousStruct { struct { int first; int second; }; double whole; };
 int use_pointer(struct Packed *packed);
 int use_value(struct Packed packed);
 int use_plain(struct Plain plain);
@@ -361,9 +367,23 @@ int use_plain(struct Plain plain);
          "a bit-field record should degrade to opaque with its reason");
   const lang::bindgen::BindingItem *overlay = findItem(plan, "Overlay");
   expect(overlay != nullptr &&
-             overlay->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(overlay->reason, "union"),
-         "a union should degrade to opaque with its reason");
+             overlay->kind == lang::bindgen::BindingItemKind::Record &&
+             overlay->recordIsUnion,
+         "a passive union should import its overlapping record kind");
+  for (const std::string name :
+       {"Nested", "Pair", "Envelope", "Inner", "Forward", "ForwardInner"}) {
+    const auto *nested = findItem(plan, name);
+    expect(nested != nullptr &&
+               nested->kind == lang::bindgen::BindingItemKind::Record,
+           "named inline record definitions must import dependency-first");
+  }
+  for (const std::string name : {"Anonymous", "AnonymousStruct"}) {
+    const auto *anonymous = findItem(plan, name);
+    expect(anonymous != nullptr &&
+               anonymous->kind == lang::bindgen::BindingItemKind::Opaque &&
+               contains(anonymous->reason, "anonymous"),
+           "anonymous promoted fields must never silently lose storage");
+  }
   const lang::bindgen::BindingItem *holder = findItem(plan, "Holder");
   expect(holder != nullptr &&
              holder->kind == lang::bindgen::BindingItemKind::Record,

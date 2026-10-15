@@ -105,6 +105,7 @@ struct BindingItem {
   std::string name;
   SourceOrigin origin;
   // Record.
+  bool recordIsUnion = false;
   std::vector<BindingField> fields;
   // Enum.
   std::vector<BindingConstant> constants;
