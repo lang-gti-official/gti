@@ -330,6 +330,10 @@
       "suite": "text"
     },
     {
+      "name": "testGenericInstanceSpecialMemberRows",
+      "suite": "text"
+    },
+    {
       "name": "testReferenceParameterBorrowUsesReferentCarrier",
       "suite": "text"
     },

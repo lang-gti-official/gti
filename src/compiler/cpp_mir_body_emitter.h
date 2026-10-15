@@ -68,8 +68,9 @@ struct CppMirTypeRepresentation {
   // A Class row's semantic lifecycle proves the prelude-declaration shape
   // compiles: a usable default constructor and move assignment let the
   // value declare value-initialized and receive its construction by
-  // assignment (the 0.215 boundary rule, carried here because the MIR
-  // program records no special-member status).
+  // assignment (the 0.215 boundary rule). Class rows take their special-
+  // member statuses from the exact MIR class instance, so a generic
+  // application's arguments decide them rather than its declaration.
   bool boundaryConstructible = false;
   // A usable copy constructor lets a Load publish directly into an
   // uninitialized lifetime slot.  Keep this separate from assignment:

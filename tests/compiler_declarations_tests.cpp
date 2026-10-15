@@ -11237,6 +11237,130 @@ int main() {
          "scoped enum formatting should be idempotent");
 }
 
+// A generic declaration's lifecycle describes its open primary. Each concrete
+// application records its own special members: a payload that cannot be
+// copied deletes the application's copy, and a declared default constructor
+// whose requirements fail for the arguments does not exist on that
+// application, because construction never selects it.
+void testConcreteApplicationSpecialMembers() {
+  const std::string declarations = R"(
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+
+enum class state<T> { empty, engaged(T value) };
+
+class maybe<T> {
+  mut state<T> slot;
+public:
+  maybe() : slot(state<T>::empty) {}
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  int get() { return 1; }
+};
+
+class box<T> {
+  mut T item;
+public:
+  box() requires std::default_initializable<T> : item(T()) {}
+  box(T value) : item(std::move(value)) {}
+  int get() { return 1; }
+};
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "concrete-application-special-members.gti", declarations + R"(
+int main() {
+  maybe<Tracked> owned = maybe<Tracked>(Tracked(3));
+  maybe<int> scalar = maybe<int>();
+  box<Tracked> boxed = box<Tracked>(Tracked(5));
+  box<int> zero = box<int>();
+  return owned.get() + scalar.get() + boxed.get() + zero.get() - 4;
+}
+)",
+      {standardLibraryPrelude()});
+  expect(frontend.canGenerateCode(),
+         "generic applications over move-only and scalar payloads should "
+         "verify");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  using Status = lang::SpecialMemberStatus;
+  const lang::ClassDecl *boxDeclaration =
+      findTopLevelClass(frontend.program, "box");
+  const lang::ClassLifecycleInfo *primary =
+      boxDeclaration == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*boxDeclaration);
+  expect(primary != nullptr &&
+             primary->defaultConstructor == Status::Declared &&
+             primary->copyConstructor == Status::Generated &&
+             primary->copyAssignment == Status::Generated,
+         "the open primary keeps its declared default constructor and "
+         "generated copies");
+
+  const auto application = [&](std::string_view name, bool tracked) {
+    const auto found =
+        std::find_if(frontend.hir.classInstances().begin(),
+                     frontend.hir.classInstances().end(),
+                     [&](const lang::HirClassInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == name &&
+                              instance.typeArguments.size() == 1 &&
+                              (tracked ? instance.typeArguments.front().kind ==
+                                             lang::SemanticType::Class
+                                       : instance.typeArguments.front() ==
+                                             lang::SemanticType::Int32);
+                     });
+    return found == frontend.hir.classInstances().end() ? nullptr : &*found;
+  };
+  const auto statuses = [&](const lang::HirClassInstance *instance,
+                            Status defaultConstructor, Status copy) {
+    const lang::MirClassInstance *sealed =
+        instance == nullptr ? nullptr
+                            : frontend.mir.findClassInstance(instance->id);
+    return instance != nullptr && sealed != nullptr &&
+           instance->defaultConstructor == defaultConstructor &&
+           instance->copyConstructor == copy &&
+           instance->copyAssignment == copy &&
+           instance->moveConstructor == Status::Generated &&
+           instance->moveAssignment == Status::Generated &&
+           sealed->defaultConstructor == instance->defaultConstructor &&
+           sealed->copyConstructor == instance->copyConstructor &&
+           sealed->copyAssignment == instance->copyAssignment &&
+           sealed->moveConstructor == instance->moveConstructor &&
+           sealed->moveAssignment == instance->moveAssignment;
+  };
+  expect(
+      statuses(application("maybe", true), Status::Declared, Status::Deleted),
+      "a move-only payload deletes maybe<Tracked>'s copies, and its "
+      "unconstrained default constructor remains");
+  expect(statuses(application("maybe", false), Status::Declared,
+                  Status::Generated),
+         "maybe<int> keeps its default constructor and generated copies");
+  expect(statuses(application("box", true), Status::Deleted, Status::Deleted),
+         "box<Tracked> has neither copies nor the default constructor its "
+         "requirements exclude");
+  expect(
+      statuses(application("box", false), Status::Declared, Status::Generated),
+      "box<int> satisfies the default constructor's requirements");
+
+  const lang::FrontendResult defaulted = lang::Frontend().analyze(
+      "concrete-application-excluded-default.gti", declarations + R"(
+int main() {
+  box<Tracked> empty = box<Tracked>();
+  return empty.get() - 1;
+}
+)",
+      {standardLibraryPrelude()});
+  expect(!defaulted.canGenerateCode() &&
+             hasDiagnostic(defaulted.diagnostics, "std::default_initializable"),
+         "construction rejects the default constructor box<Tracked>'s "
+         "lifecycle excludes");
+}
+
 void testDefaultParameters() {
   {
     lang::Lexer lexer;
@@ -12182,6 +12306,8 @@ constexpr NamedTest kTests[] = {
     {"testNamespacesAndAliases", testNamespacesAndAliases},
     {"testExternCInterop", testExternCInterop},
     {"testScopedEnums", testScopedEnums},
+    {"testConcreteApplicationSpecialMembers",
+     testConcreteApplicationSpecialMembers},
     {"testDefaultParameters", testDefaultParameters},
 };
 
