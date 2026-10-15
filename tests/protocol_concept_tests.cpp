@@ -10,6 +10,19 @@
 #include <string>
 
 namespace lang {
+struct SemanticModelTestAccess {
+  static void record(SemanticModel &model, const Expr &expression,
+                     std::vector<SemanticLoanDependency> dependencies) {
+    model.recordBorrowDependencies(expression, std::move(dependencies));
+  }
+  static void delta(SemanticModel &model, const SemanticModel &base) {
+    model.beginInstanceDelta(base);
+  }
+  static void rebase(SemanticModel &model, const SemanticModel &base) {
+    model.rebase(&base);
+  }
+  static void clear(SemanticModel &model) { model.clear(); }
+};
 struct MirProgramTestAccess {
   static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
     return program.functions;
@@ -28,6 +41,33 @@ int main() {
       ++failures;
     }
   };
+  {
+    lang::LiteralExpr expression(std::uint64_t{0});
+    lang::SemanticModel base;
+    expect(base.findBorrowDependencySet(expression) == nullptr,
+           "unproved dependencies must be absent, not complete-empty");
+    lang::SemanticModelTestAccess::record(base, expression,
+                                          {{.place = {.root = 1}}});
+    lang::SemanticModel overlay;
+    lang::SemanticModelTestAccess::delta(overlay, base);
+    expect(overlay.findBorrowDependencySet(expression) != nullptr &&
+               overlay.findBorrowDependencySet(expression)->size() == 1,
+           "an instance inherits the exact complete dependency set");
+    lang::SemanticModelTestAccess::record(overlay, expression, {});
+    expect(overlay.findBorrowDependencySet(expression) != nullptr &&
+               overlay.findBorrowDependencySet(expression)->empty(),
+           "complete-empty overrides an inherited nonempty set");
+    lang::SemanticModel relocated;
+    lang::SemanticModelTestAccess::record(relocated, expression,
+                                          {{.place = {.root = 2}}});
+    lang::SemanticModelTestAccess::rebase(overlay, relocated);
+    expect(overlay.findBorrowDependencySet(expression) != nullptr &&
+               overlay.findBorrowDependencySet(expression)->empty(),
+           "rebase preserves explicitly empty instance evidence");
+    lang::SemanticModelTestAccess::clear(overlay);
+    expect(overlay.findBorrowDependencySet(expression) == nullptr,
+           "clearing semantic evidence removes complete-set presence");
+  }
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze(root / "tests" / "protocol-concepts.gti",

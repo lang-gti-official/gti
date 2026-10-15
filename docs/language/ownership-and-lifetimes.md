@@ -437,6 +437,14 @@ to `mut T&`, local or stored bindings, explicit moves, compound or native
 producers, borrowed-state values, or a callable result that can retain the
 loan.
 
+A concrete payload-enum construction with copyable, movable, trivial-drop
+value traits and no stored borrows supports the same ordinary call-only
+read borrow. Its selected alternative remains in the existing temporary
+value storage, and its exact full-expression lifetime is checked even though
+destruction does no runtime work. Enum factories, owning alternatives and
+borrowed alternatives do not yet use this temporary-argument family. This is
+an ordinary argument rule; protocol-generated observations use it too.
+
 An unqualified non-static field denotes the same receiver-rooted place as an
 explicit `this` projection. Consequently, both `return field;` and
 `return this.field;` preserve receiver-tied reference provenance, and a

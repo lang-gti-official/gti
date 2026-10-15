@@ -222,6 +222,27 @@ Status enumerated() {
 int main() { return enumerated().code - 1; }
 )gti";
   accepted(enumProtocol, "a payload enum can implement propagation directly");
+  const std::string passiveEnum = R"gti(
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+)gti";
+  accepted(passiveEnum + "int main() { return inspect(Token::item(7)) - 7; }",
+           "ordinary readonly calls can observe passive enum temporaries");
+  rejected(passiveEnum + R"gti(
+void change(mut Token& token) {}
+int main() { change(Token::item(7)); return 0; }
+)gti",
+           "GTI-S2017", "mutable reference to a temporary");
+  rejected(passiveEnum + R"gti(
+[[borrowed_from(token)]] Token& escape(Token& token) { return token; }
+int main() { Token& value = escape(Token::item(7)); return inspect(value); }
+)gti",
+           "GTI-S2017", "may return a reference");
   const auto enumProof = analyze(enumProtocol);
   if (enumProof.canGenerateCode()) {
     for (int corruption = 0; corruption != 9; ++corruption) {
@@ -253,12 +274,12 @@ int main() { return enumerated().code - 1; }
             if (corruption == 5)
               instruction.loan.reset();
             if (corruption >= 6) {
-              auto obligation = std::find_if(
-                  function.body.dropObligations.begin(),
-                  function.body.dropObligations.end(),
-                  [&](const lang::MirDropObligation &candidate) {
-                    return candidate.place == place.id;
-                  });
+              auto obligation =
+                  std::find_if(function.body.dropObligations.begin(),
+                               function.body.dropObligations.end(),
+                               [&](const lang::MirDropObligation &candidate) {
+                                 return candidate.place == place.id;
+                               });
               if (obligation == function.body.dropObligations.end())
                 continue;
               if (corruption == 6)

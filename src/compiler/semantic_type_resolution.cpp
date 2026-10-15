@@ -912,8 +912,9 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
       parameter.arguments.front() != argument ||
-      argument.kind != SemanticType::Class || !expression ||
-      !ephemeralBorrowTargetSupported(function)) {
+      (argument.kind != SemanticType::Class &&
+       argument.kind != SemanticType::Enum) ||
+      !expression || !ephemeralBorrowTargetSupported(function)) {
     return false;
   }
   const FreshTemporaryValueAssessment assessment =
@@ -966,7 +967,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       if (parameter.referenceAccess == AccessMode::Mutable) {
         reason = argumentLabel + std::to_string(index + 1) +
                  " cannot bind a mutable reference to a temporary.";
-      } else if (argument.kind == SemanticType::Class) {
+      } else if (argument.kind == SemanticType::Class ||
+                 argument.kind == SemanticType::Enum) {
         const FreshTemporaryValueAssessment assessment =
             freshTemporaryValue(expression);
         if (assessment.eligible && function != nullptr &&
@@ -999,8 +1001,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
             break;
           case FreshTemporaryValueFailure::UnsupportedProducer:
             reason = argumentLabel + std::to_string(index + 1) +
-                     " is not produced directly by an ordinary constructor "
-                     "or source-defined GTI function call.";
+                     " is not a supported fresh record producer or passive "
+                     "payload-enum construction.";
             break;
           case FreshTemporaryValueFailure::None:
           case FreshTemporaryValueFailure::NotClassValue:

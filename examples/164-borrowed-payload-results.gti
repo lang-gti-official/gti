@@ -94,6 +94,13 @@ Status parse() {
   return Status(value);
 }
 
+int inspect_parse(Parse& value) {
+  switch (value) {
+    case Parse::ready(number): return number;
+    case Parse::failed: return 0;
+  }
+}
+
 int main() {
   int owner = 42;
   std::println(std::to_string(inspect(owner, false).code));
@@ -103,5 +110,6 @@ int main() {
   std::println(std::to_string(edit(changing, true).code));
   std::println(std::to_string(changing));
   std::println(std::to_string(parse().code));
-  return 0;
+  // This temporary borrow is an ordinary call, independent of tryable.
+  return inspect_parse(Parse::ready(7)) - 7;
 }

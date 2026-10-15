@@ -8288,11 +8288,19 @@ Prerequisite checkpoint evidence: optimized macOS `protocol_concepts` passes
 the shared/mutable generic result-origin cases and malformed forwarding-chain
 checks. The shared/mutable class-wrapper cases in `tryable_propagation` pass
 their semantic/HIR/MIR checks, including guard destruction and mutable alias
-negatives. The full test is **not yet passing**: direct enum temporary
-propagation now verifies but its native staging is outside the backend's
-current representation vocabulary. A named passive enum operand additionally
-exposes a branch-dominance lowering failure. Both regressions remain acceptance
-gates, and example 164 has not yet passed its native matrix. This is an honest
+negatives. Ordinary passive enum temporary observers and direct enum temporary
+propagation now pass the focused semantic/HIR/MIR and representation tests;
+malformed loan, materialization, access and lifetime mutations remain rejected.
+The complete-set query distinguishes present-empty metadata from absence,
+including instance overlays and rebasing. Its concrete type-inventory query
+rejects unresolved children; symbolic generic path enumeration remains a
+separate contract and never supplies completeness evidence.
+
+Native acceptance is **not yet passing**: example 164's class wrapper with an
+owned string error exposes a representation decline in the shared-reference
+propagation function. A named passive enum operand also exposed a
+branch-dominance lowering failure in an earlier probe. These remain acceptance
+gates, and the example has not yet passed its native matrix. This is an honest
 WIP recovery checkpoint, not permission to admit reference-bearing payloads or
 to integrate the slice.
 

@@ -2127,6 +2127,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           fullExpressionOrder.size()) *
              96 +
          (retainedLoans.size() + borrowedDependencies) * 256 +
+         expressionBorrowDependencies.size() * 96 +
          semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
          (resolvedSymbols.size() + definedFailures.size() +
           placeSelections.size() + implicitReturnMoves.size()) *
@@ -2318,13 +2319,20 @@ void SemanticModel::recordPayloadBinding(const Token &name, BindingInfo info) {
   payloadBindings.insert_or_assign(&name, std::move(info));
 }
 
-std::span<const SemanticLoanDependency>
-SemanticModel::findBorrowDependencies(const Expr &expression) const {
+const std::vector<SemanticLoanDependency> *
+SemanticModel::findBorrowDependencySet(const Expr &expression) const {
   if (const auto found = expressionBorrowDependencies.find(&expression);
       found != expressionBorrowDependencies.end())
-    return found->second;
-  return base == nullptr ? std::span<const SemanticLoanDependency>{}
-                         : base->findBorrowDependencies(expression);
+    return &found->second;
+  return base == nullptr ? nullptr : base->findBorrowDependencySet(expression);
+}
+
+std::span<const SemanticLoanDependency>
+SemanticModel::findBorrowDependencies(const Expr &expression) const {
+  const auto *complete = findBorrowDependencySet(expression);
+  return complete == nullptr
+             ? std::span<const SemanticLoanDependency>{}
+             : std::span<const SemanticLoanDependency>{*complete};
 }
 
 void SemanticModel::recordBorrowDependencies(

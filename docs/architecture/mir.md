@@ -3473,8 +3473,8 @@ value, stage site/role/type, unique result slot, activation, and scheduled drop;
 it does not reclassify this carrier as a fresh owning temporary.
 
 An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
-input names an exact fresh class/struct producer and its selected parameter is
-read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
+input names an exact fresh class/struct producer or a passive payload-enum
+construction, and its selected parameter is read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
 place, emits `BorrowRead`, and attaches one `CallArgument` loan to the
 `CallInput`. The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
@@ -3486,13 +3486,19 @@ premature or missing loan ending, and a missing or duplicate drop. The backend
 therefore consumes a complete schedule rather than relying on C++ reference
 lifetime rules.
 
-The generated `has_value` observation for source-defined propagation uses the
-same schedule for a fresh payload-enum value. Its materialization may be the
+An ordinary enum observer and the generated `has_value` observation for
+source-defined propagation use the same schedule. Their materialization may be the
 exact typed `PayloadConstruct` producer, checked against the enum's alternative
 table, rather than a class constructor. The complete full-expression lifetime
 obligation remains mandatory, including for passive payloads; the call loan
 still ends on every normal and failure successor. This does not permit an
 observation to return or retain a reference to temporary enum storage.
+Passive enum representation retains the existing SSA value, rather than
+allocating a class lifetime slot. Its view requires an exact unique
+`PayloadConstruct`, typed alternative, materialization, read loan, call stage
+and full-expression obligation. Subsequent passive copy/transfer stages keep
+that same value; owning or reference-bearing alternatives are not admitted by
+this representation rule.
 
 An ordinary-call or constructor argument may use `MoveBorrowedTemporary` only
 for the corresponding HIR input: one exact fresh GTI call result of the same
