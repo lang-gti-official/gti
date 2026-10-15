@@ -1,4 +1,5 @@
 #include <std/experimental/optional>
+#include <std/memory>
 #include <std/string>
 #include <std/vector>
 
@@ -50,6 +51,17 @@ int run(int phase) {
         Packet<Resource>::item(Resource(31, zero)));
     return 0;
   }
+  if (phase == 3) {
+    auto owner = Pair<Packet<Resource>, Packet<Resource>>::items(
+        Packet<Resource>::item(Resource(40, zero)),
+        Packet<Resource>::item(Resource(41, zero)));
+    return 0;
+  }
+  if (phase == 4) {
+    auto never = Pair<Packet<Resource>, int>::items(
+        Packet<Resource>::item(Resource(50, zero)), 1 / zero);
+    return 1;
+  }
   {
     auto result = consume_optional();
     if (!result || result.value() != 1) { return 1; }
@@ -87,6 +99,26 @@ int run(int phase) {
     case Packet<expected<Resource, int>>::empty: return 7;
     case Packet<expected<Resource, int>>::item(result):
       if (!result || result.value().read() != 6) { return 8; }
+      break;
+    }
+  }
+  {
+    expected<int, Resource> error = unexpected(Resource(7));
+    auto owner = Packet<expected<int, Resource>>::item(std::move(error));
+    switch (std::move(owner)) {
+    case Packet<expected<int, Resource>>::empty: return 9;
+    case Packet<expected<int, Resource>>::item(result):
+      if (result || result.error().read() != 7) { return 12; }
+      break;
+    }
+  }
+  {
+    auto value = std::make_unique<Resource>(8);
+    auto owner = Packet<std::unique_ptr<Resource>>::item(std::move(value));
+    switch (std::move(owner)) {
+    case Packet<std::unique_ptr<Resource>>::empty: return 10;
+    case Packet<std::unique_ptr<Resource>>::item(pointer):
+      if (pointer->read() != 8) { return 11; }
       break;
     }
   }

@@ -77,10 +77,10 @@ auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
     if (cursor->kind != SemanticType::Class &&
         cursor->kind != SemanticType::Enum)
       continue;
-    const bool samePrimary = cursor->kind == type.kind &&
-                            (type.kind == SemanticType::Class
-                                 ? cursor->classId == type.classId
-                                 : cursor->enumId == type.enumId);
+    const bool samePrimary =
+        cursor->kind == type.kind &&
+        (type.kind == SemanticType::Class ? cursor->classId == type.classId
+                                          : cursor->enumId == type.enumId);
     if (samePrimary) {
       const bool concreteValues =
           !type.valueArguments.empty() &&

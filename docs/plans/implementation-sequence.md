@@ -8064,6 +8064,15 @@ consumer, and release refreshes remain outstanding for the full campaign.
   capture, excluded transport/storage profiles and stable-layout work remain
   bounded separately by ADR 014 and the current language contract; do not
   reopen generic declaration acceptance.
+- **Structural composition update (2026-10-15):** the composition campaign
+  extends actual alternative fields to finite nested enums, fixed arrays,
+  and existing result values (both success and error alternatives), preserving
+  source-defined owner wrappers.
+  Focused tests cover consuming extraction, replacement, partial construction,
+  nested destructor failure and emergency cleanup under C++20/23 and sanitizers.
+  Final combined integration remains pending the performance and borrowed-payload
+  slices. Arrays of owning enum elements, direct enum result alternatives and
+  direct lexical closure fields remain separate transport/representation goals.
 - **State/role:** bounded profiles delivered; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,

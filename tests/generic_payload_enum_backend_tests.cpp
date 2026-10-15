@@ -7,6 +7,7 @@
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <variant>
@@ -100,7 +101,8 @@ int main() {
   const auto cyclicVerification = lang::verifyMirProgram(cyclicMir);
   expect(!cyclicVerification.valid() &&
              std::any_of(cyclicVerification.errors.begin(),
-                         cyclicVerification.errors.end(), [](const auto &error) {
+                         cyclicVerification.errors.end(),
+                         [](const auto &error) {
                            return error.message.find("inline layout") !=
                                   std::string::npos;
                          }),
@@ -152,6 +154,71 @@ int main() {
                artifact.contents.find("struct " + *rightName) !=
                    std::string::npos,
            "production verified-MIR emission defines both concrete layouts");
+  }
+  const auto compositionLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto composed = lang::Frontend().analyze(
+      "composed-payload-move.gti", R"(
+class Resource {
+  int id;
+public:
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+  int read() { return this.id; }
+};
+enum Packet<T> { empty, item(T value) };
+int main() {
+  Resource[2] values = {Resource(3), Resource(4)};
+  auto packet = Packet<Resource[2]>::item(std::move(values));
+  switch (std::move(packet)) {
+  case Packet<Resource[2]>::empty: return 1;
+  case Packet<Resource[2]>::item(items):
+    return items[0].read() + items[1].read() - 7;
+  }
+}
+)",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(composed.canGenerateCode(),
+         "an owning array payload retains verified move/drop identities");
+  if (!composed.canGenerateCode())
+    for (const auto &diagnostic : composed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (composed.canGenerateCode()) {
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto invalid = composed.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(invalid)) {
+        auto &body = function.body;
+        for (const auto &block : body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Move ||
+                instruction.info.type.kind != lang::SemanticType::Array ||
+                instruction.lifecycle.size() != 1)
+              continue;
+            const auto target = instruction.lifecycle.front().target;
+            for (auto &drop : body.dropObligations) {
+              if (drop.id != target)
+                continue;
+              if (mutation == 0)
+                drop.value = 0;
+              else if (mutation == 1)
+                drop.value = instruction.hirValue + 10000;
+              else if (mutation == 2)
+                drop.generatedValue = 10000;
+              else
+                drop.place = instruction.operands.front().place;
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(invalid).valid(),
+             "array payload move rejects missing/substituted drop identity or "
+             "slot");
+    }
   }
   const auto projected =
       lang::Frontend().analyze("projected-enum-borrow.gti", R"(

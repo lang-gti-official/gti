@@ -1829,12 +1829,7 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
            (type.arguments.front() == SemanticType::Void ||
             payloadTypeAllowed(type.arguments.front(), owner)) &&
            payloadTypeAllowed(type.arguments.back(), owner);
-  case SemanticType::Unexpected:
-    return type.arguments.size() == 1 &&
-           payloadTypeAllowed(type.arguments.front(), owner);
   case SemanticType::UniqueOwner:
-  case SemanticType::SharedPointer:
-  case SemanticType::Lambda:
     return true;
   case SemanticType::Class:
     // Cleanup and ownership fold structurally from the actual payload, not
@@ -1961,15 +1956,14 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                  "GTI-S2067");
         }
         if (parameter.type.reference) {
-          report(location,
-                 "Payload enums do not yet store reference fields.",
+          report(location, "Payload enums do not yet store reference fields.",
                  "GTI-S2067");
         } else if (type != SemanticType::Unknown &&
                    !containsOpenTypeParameter(type) &&
                    !payloadTypeAllowed(type, info.id)) {
           report(location,
                  "Payload field type '" + typeSpelling(type) +
-                     "' is outside the passive payload family.",
+                     "' is outside the supported payload field family.",
                  "GTI-S2067");
         }
         // Borrowed-state payloads are checked again at construction, where
@@ -2022,11 +2016,11 @@ auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
         for (const auto &variant : info->enumerators) {
           for (const auto &payload : variant.payloadTypes) {
             if (byValueTypeReachesClass(payload, current, layoutClasses,
-                                       layoutEnums, exhausted)) {
-              auto diagnostic = makeDiagnostic(
-                  "GTI-S2067", DiagnosticPhase::Semantics, site,
-                  "Payload enum '" + typeSpelling(current) +
-                      "' has a recursive by-value layout.");
+                                        layoutEnums, exhausted)) {
+              auto diagnostic =
+                  makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, site,
+                                 "Payload enum '" + typeSpelling(current) +
+                                     "' has a recursive by-value layout.");
               diagnostic.related.push_back(
                   {tokenSpan(enums[current.enumId - 1].name),
                    "The recursively contained enum is declared here."});
@@ -4815,8 +4809,7 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
-    if (type == target ||
-        nonDecreasingNominalRecurrence(type, visitingEnums))
+    if (type == target || nonDecreasingNominalRecurrence(type, visitingEnums))
       return true;
     if (visiting.size() + visitingEnums.size() >= 64) {
       exhausted = true;
@@ -4903,7 +4896,8 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
   // once all inline containment edges exist, including unused declarations.
   for (const EnumInfo &owner : registering(enums, registrationFloor.enums)) {
     if (owner.payload && owner.genericParameters.empty())
-      validateConcreteEnumPayloads(SemanticType::enumType(owner.id), owner.name);
+      validateConcreteEnumPayloads(SemanticType::enumType(owner.id),
+                                   owner.name);
   }
 }
 

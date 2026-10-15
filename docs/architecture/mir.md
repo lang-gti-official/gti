@@ -1194,11 +1194,18 @@ types and serialize the new zero-state `FunctionItem` operation with its exact
 concrete namespace target. Program v53 adds the closed payload-enum lifecycle
 table: exact enum identity, folded traits, enum-wide active cleanup, dense
 variants, ordered field types, and per-field active-cleanup facts.
-`PayloadConstruct` exact-checks that table, transfers every active class
+`PayloadConstruct` exact-checks that table, transfers every active owning
 operand once, and initializes one enum value
 obligation; `PayloadExtract` and switches observe an active enum place without
 copying the enum, or, for a consuming switch, move fields out of its hidden
-subject binding with one final `TransferOut`. Program v52 serializes ordered type and `uint64_t` value arguments on every
+subject binding with one final `TransferOut`. Nested enums, fixed arrays and
+result payloads use structural success/error drop recipes, not class-only transfer
+rules. Program verification rejects recursive inline enum/class/array layouts
+before invoking recursive trait or drop queries; owning indirection is not an
+inline-layout edge. A prepared move identifies its source/generated drop in
+the correct HIR/SSA identity domain and preserves the exact place and slot;
+missing or substituted identities do not authorize publication.
+Program v52 serializes ordered type and `uint64_t` value arguments on every
 concrete function row. HIR-to-MIR lowering and the detached lowered verifier
 exact-compare both vectors, so a nondeducible value-only function or method
 cannot collapse into another instance or delegate identity recovery to native
