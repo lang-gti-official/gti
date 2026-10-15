@@ -6326,7 +6326,13 @@ receivers, lambda results, generated copy/move construction, Expected value/erro
 extraction, reusable receiver fallbacks, and fresh owning callback wrappers.
 The joint return-composition
 fixture checks implicit local returns from consuming methods through successful
-cleanup, primary cleanup failure, and secondary cleanup failure. Ownership
+cleanup, primary cleanup failure, and secondary cleanup failure.
+`consuming_returned_result_runtime` returns failure-free consuming-member
+results directly in the same eight configurations, from by-value parameter,
+local, fresh, generic, lambda and early-return receivers whose drops run
+before the Return. Each result is destroyed once, by its caller. A failing
+receiver destructor destroys the unpublished result, and a failure in that
+cleanup reports the secondary failure. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.

@@ -1,0 +1,112 @@
+#include <std/string>
+#include <std/vector>
+
+// A consuming member's owning result is returned directly. The receiver's
+// full-expression drop runs after the call and before the Return, so the
+// result stays in its own slot until the Return publishes it.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+class Single {
+  mut Tracked item;
+public:
+  Single(int value) : item(Tracked(value)) {}
+  Tracked release() && { return std::move(this.item); }
+};
+
+class Pair<T> {
+  mut T first;
+  mut T second;
+public:
+  Pair(T first, T second) : first(std::move(first)), second(std::move(second)) {}
+  T release() && { return std::move(this.first); }
+};
+
+// A result whose destructor can fail while failure cleanup destroys it.
+class Fragile {
+  int id;
+  int divisor;
+public:
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {
+    std::println(std::to_string(value));
+  }
+  ~Fragile() {
+    std::println(std::to_string(-this.id));
+    int fragile = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+// The receiver's destructor runs after release() has produced the result.
+class Guarded {
+  mut Fragile item;
+  int divisor;
+public:
+  Guarded(int value, int item_divisor, int divisor)
+      : item(Fragile(value, item_divisor)), divisor(divisor) {}
+  ~Guarded() { int guard = 1 / this.divisor; }
+  Fragile release() && { return std::move(this.item); }
+};
+
+Tracked take_single(Single box) { return std::move(box).release(); }
+
+T take_pair<T>(Pair<T> box) { return std::move(box).release(); }
+
+Tracked take_local(int value) {
+  Single local{value};
+  return std::move(local).release();
+}
+
+Tracked take_fresh(int value) { return Single(value).release(); }
+
+Tracked take_either(bool left, Single a, Single b) {
+  if (left) {
+    return std::move(a).release();
+  }
+  return std::move(b).release();
+}
+
+Fragile take_guarded(Guarded box) { return std::move(box).release(); }
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int total = 0;
+  {
+    Single single{1};
+    Tracked first = take_single(std::move(single));
+    total += first.read();
+  }
+  {
+    Pair<Tracked> pair{Tracked(2), Tracked(3)};
+    Tracked first = take_pair<Tracked>(std::move(pair));
+    total += first.read();
+  }
+  {
+    Tracked local = take_local(4);
+    total += local.read();
+  }
+  {
+    Tracked fresh = take_fresh(5);
+    total += fresh.read();
+  }
+  {
+    auto take = [](Single box) -> Tracked { return std::move(box).release(); };
+    Single single{6};
+    Tracked taken = take(std::move(single));
+    total += taken.read();
+  }
+  {
+    Single left{7};
+    Single right{8};
+    Tracked chosen = take_either(false, std::move(left), std::move(right));
+    total += chosen.read();
+  }
+  Guarded guarded{9, argc == 3 ? 0 : 1, argc >= 2 ? 0 : 1};
+  Fragile kept = take_guarded(std::move(guarded));
+  std::println("kept");
+  return total + kept.read() - 35;
+}

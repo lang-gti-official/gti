@@ -27478,7 +27478,9 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
 // drop identity keeps the result in its value-rooted slot from the call until
 // the Return transfers it out, so the scheduled drops still run in MIR order
 // between them. A failure-capable call instead constructs straight into its
-// caller's result storage.
+// caller's result storage. A consuming (`&&`) member call qualifies through
+// the shared consuming-receiver proof: its receiver is not transferred at
+// Call, so the receiver's full-expression drop is one of those later drops.
 [[nodiscard]] const MirPlace *returnedCallResultSlot(const MirProgram &program,
                                                      const MirBody &body,
                                                      MirValueId valueId) {
@@ -27493,7 +27495,9 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
       call->kind != MirInstructionKind::Call || !call->result ||
       *call->result != valueId || call->destination ||
       call->successResultDestination || call->constructorTarget ||
-      call->lambdaTarget || call->bodyTarget || call->callableInvocation ||
+      call->lambdaTarget || call->bodyTarget ||
+      (call->callableInvocation &&
+       !exactMemberConsumingReceiver(program, body, *call, *target)) ||
       call->intrinsic != IntrinsicKind::None ||
       call->dispatch != CallDispatch::Static ||
       target->definitionKind != MirDefinitionKind::Source ||
