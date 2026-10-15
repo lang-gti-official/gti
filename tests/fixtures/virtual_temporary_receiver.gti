@@ -109,6 +109,19 @@ int traced() {
   return made.read();
 }
 
+// Each conditional arm borrows its own fresh receiver, so only the arm that
+// runs creates and destroys one. A conditional-joined receiver is destroyed
+// once, after the call.
+int chosen(bool left) {
+  Tracked made = left ? Maker().make() : Source(4).make();
+  return made.read();
+}
+
+int joined(bool left) {
+  Tracked made = (left ? Source(5) : Source(6)).make();
+  return made.read();
+}
+
 int built(int divisor) { return Counting(4).build(divisor).read(); }
 
 int split(int divisor) {
@@ -132,6 +145,7 @@ int main(int argc, std::vector<std::string> argv) {
   mut int total = made() + traced();
   total += Inheriting(7).make().read() + Inheriting(8).plain().read();
   total += Source(2)(3).read();
+  total += chosen(false) + chosen(true) + joined(false);
   {
     Kept kept{};
     Defaulted defaulted{};
@@ -142,5 +156,5 @@ int main(int argc, std::vector<std::string> argv) {
   total += split(split_divisor);
   SplitKept split_kept{kept_divisor};
   std::println("kept");
-  return total + split_kept.read() - 58;
+  return total + split_kept.read() - 69;
 }

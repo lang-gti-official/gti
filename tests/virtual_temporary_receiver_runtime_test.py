@@ -19,6 +19,7 @@ def virtual_temporary_receiver_cases(name="virtual_temporary_receiver"):
     # expression and after any result it produced, in reverse construction
     # order. A failing override destroys its receiver and publishes nothing.
     before = ("-1\n105\n-5\n-9\n108\n-7\n107\n-6\n102\n"
+              "104\n-4\n-1\n106\n-6\n"
               "0\n104\n-8\n-1\n-1\n")
     split = division("return Tracked(this.base / divisor)")
     return {fixture.stem: [
