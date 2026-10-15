@@ -93,6 +93,17 @@ struct SemanticBorrowDependencySet {
                          const SemanticBorrowDependencySet &) = default;
 };
 
+// The evaluated address of a stored reference is independent of the complete
+// set of external places that may own its referent. In particular a branch
+// join must not select the first dependency as though it were that address.
+struct SemanticReferenceSelection {
+  const Expr *source = nullptr;
+  const Expr *carrier = nullptr;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -126,6 +137,7 @@ struct SemanticLoanInfo {
   // additionalDependencies. An empty list denotes an unconditional path.
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
+  std::optional<SemanticReferenceSelection> referenceSelection;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
