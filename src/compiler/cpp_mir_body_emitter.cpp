@@ -56722,13 +56722,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // place. The producer, a function or constructor call, runs at its MIR
     // position behind its own Invoke failure edge unless it cannot fail, and
     // activates only that slot. Its inputs are those of a nested call without
-    // owning arguments, and its receiver, if any, is read-borrowed. Nothing in
-    // that operand writes, moves or ends the borrowed storage.
+    // owning arguments, and its receiver, if any, is read-borrowed. Only an
+    // argument stage carries a loan, its call-argument loan. Nothing in that
+    // operand writes, moves or ends the borrowed storage.
     const auto innerTemporaryBorrow =
         [&](const MirInstruction &input,
             const MirInstruction &call) -> DirectTemporaryBorrow {
       if (input.kind != MirInstructionKind::CallInput || !input.result ||
-          !input.callInputRole || input.callSite != call.callSite)
+          !input.callInputRole || input.callSite != call.callSite ||
+          (*input.callInputRole == MirCallInputRole::Receiver && input.loan) ||
+          input.destination || input.receiver || !input.lifecycle.empty() ||
+          !input.definedFailure.empty() || !input.localFailureSites.empty() ||
+          input.rawMemoryAccess ||
+          input.unsafeOperation != UnsafeOperationKind::None)
         return {};
       const DirectTemporaryBorrow temporary =
           *input.callInputRole == MirCallInputRole::Receiver
