@@ -3198,10 +3198,15 @@ int main() {
           containsMangledFunction(generated, "", "identity", "(__gti_mir_v_") &&
           generated.find("_set(__gti_mir_v_") != std::string::npos,
       "applied types and explicit generic calls should lower recursively");
+  const auto sourceNamespace = generated.find("namespace __gti_program {");
+  expect(sourceNamespace != std::string::npos,
+         "concrete source declarations retain their GTI program namespace");
   expect(generated.find(".template __gti_fn_") == std::string::npos &&
              generated.find("_Box::__gti_member_") != std::string::npos &&
              generated.find("_echo(__gti_mir_v_") != std::string::npos &&
-             generated.find("template <> ") == std::string::npos,
+             sourceNamespace != std::string::npos &&
+             generated.find("template <> ", sourceNamespace) ==
+                 std::string::npos,
          "the backend should emit the concrete selected generic method "
          "without reopening C++ dependent-template lookup");
 
