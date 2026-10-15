@@ -56467,16 +56467,97 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
     }
+    // Scalars and text views are plain values: reading, staging, computing
+    // or publishing one into an expression temporary cannot carry, replace
+    // or end the borrowed storage.
+    const auto passiveRegionValue = [&](const SemanticType &type) {
+      const auto representation = cppMirExpectedTypeRepresentation(type);
+      return representation == CppMirTypeRepresentationKind::Scalar ||
+             representation == CppMirTypeRepresentationKind::StringView;
+    };
+    // A nested call can run wholly inside the argument region: the test of a
+    // conditional argument, one arm's value, or a direct scalar argument. It
+    // executes at its MIR position with its own Invoke failure edge, and its
+    // inputs are staged for it alone: plain values and borrows of
+    // binding-rooted places as receiver or arguments, none of them a mutable
+    // borrow of the borrowed place's root. Its plain result owns nothing and
+    // cannot carry the borrowed address, whichever region instruction
+    // consumes it.
+    const auto nestedCallBorrow = [&](const MirInstruction &input,
+                                      const MirInstruction &call) {
+      const MirPlace *borrowed =
+          input.kind == MirInstructionKind::CallInput &&
+                  input.operands.size() == 1
+              ? body.findPlace(input.operands.front().place)
+              : nullptr;
+      const bool readBorrow =
+          input.callInputKind == HirCallInputKind::ReadBorrow &&
+          input.operands.front().kind == MirOperandKind::BorrowRead;
+      const bool mutableBorrow =
+          input.callInputKind == HirCallInputKind::MutableBorrow &&
+          input.operands.front().kind == MirOperandKind::BorrowWrite;
+      return borrowed != nullptr && input.result &&
+             input.callSite == call.callSite &&
+             (input.callInputRole == MirCallInputRole::Argument ||
+              input.callInputRole == MirCallInputRole::Receiver) &&
+             (readBorrow ||
+              (mutableBorrow && !sameMirPlaceRoot(*borrowed, *place))) &&
+             borrowed->root == MirPlaceRootKind::Binding &&
+             std::all_of(
+                 borrowed->projections.begin(), borrowed->projections.end(),
+                 [](const MirPlaceProjection &projection) {
+                   return projection.kind == MirProjectionKind::Field ||
+                          projection.kind == MirProjectionKind::Dereference;
+                 }) &&
+             !input.destination && !input.receiver && !input.loan &&
+             input.lifecycle.empty() && input.definedFailure.empty() &&
+             input.localFailureSites.empty() && !input.rawMemoryAccess &&
+             input.unsafeOperation == UnsafeOperationKind::None;
+    };
+    const auto nestedPlainCall = [&](const MirInstruction &call) {
+      if (call.kind != MirInstructionKind::Call || !call.functionTarget ||
+          call.constructorTarget || call.lambdaTarget || call.bodyTarget ||
+          call.callableInvocation || call.intrinsic != IntrinsicKind::None ||
+          !call.result || call.destination || call.loan ||
+          call.rawMemoryAccess ||
+          call.unsafeOperation != UnsafeOperationKind::None ||
+          !call.lifecycle.empty() || call.callSite == consumer->callSite ||
+          !(isPassiveScalarValueType(call.info.type) ||
+            passiveRegionValue(call.info.type)) ||
+          (!call.definedFailure.empty() &&
+           !invokePairedInstruction(body, call.id)))
+        return false;
+      if (call.receiver) {
+        const MirInstruction *receiver =
+            borrowStagedCallInput(body, *call.receiver);
+        if (receiver == nullptr ||
+            receiver->callInputRole != MirCallInputRole::Receiver ||
+            !nestedCallBorrow(*receiver, call))
+          return false;
+      }
+      return std::all_of(
+          call.operands.begin(), call.operands.end(),
+          [&](const MirOperand &input) {
+            if (input.kind != MirOperandKind::Value || input.value == id)
+              return false;
+            const MirInstruction *borrow = borrowStagedCallInput(body, input);
+            return borrow != nullptr
+                       ? borrow->callInputRole == MirCallInputRole::Argument &&
+                             nestedCallBorrow(*borrow, call)
+                       : isPassiveScalarValueType(input.type) ||
+                             passiveRegionValue(input.type);
+          });
+    };
     // A bare local, a binding-rooted field/reference path, or an exact
     // full-expression slot has a stable native address. Erasing its borrowed
     // input across an acyclic argument diamond is exact only when all normal
     // paths reach the one call and cannot mutate or end that storage's
     // lifetime.
-    // Intervening scalar temporaries and exact nested read-call result
-    // preparations do not change that address. Calls still execute where MIR
-    // places them, with their own failure edges; nothing is inlined or moved
-    // across the conditional. Loans, raw memory, and arbitrary stores remain
-    // outside this erased-address proof.
+    // Intervening scalar temporaries, nested plain-value calls and exact nested
+    // read-call result preparations do not change that address. Calls still
+    // execute where MIR places them, with their own failure edges; nothing is
+    // inlined or moved across the conditional. Loans, raw memory, and
+    // arbitrary stores remain outside this erased-address proof.
     std::unordered_set<MirBlockId> visiting;
     std::unordered_set<MirBlockId> complete;
     const auto visit = [&](const auto &self, MirBlockId blockId) -> bool {
@@ -56560,44 +56641,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !instruction.rawMemoryAccess &&
             instruction.unsafeOperation == UnsafeOperationKind::None)
           continue;
-        // A source call supplying a scalar argument cannot carry or replace
-        // this bare receiver. Keep the call at its MIR position, with the
-        // original Invoke failure edge; only its address staging is erased.
-        const auto scalarUses =
-            instruction.result ? nonRootRecordUses(body, *instruction.result)
-                               : std::vector<MirValueUse>{};
-        const MirInstruction *scalarStage =
-            scalarUses.size() == 1 && scalarUses.front().kind ==
-                                          MirValueUseKind::InstructionOperand
-                ? findInstruction(body, scalarUses.front().instruction)
-                : nullptr;
-        if (instruction.kind == MirInstructionKind::Call &&
-            instruction.functionTarget && !instruction.receiver &&
-            !instruction.constructorTarget && !instruction.lambdaTarget &&
-            !instruction.bodyTarget && !instruction.callableInvocation &&
-            instruction.intrinsic == IntrinsicKind::None && !instruction.loan &&
-            !instruction.rawMemoryAccess &&
-            instruction.unsafeOperation == UnsafeOperationKind::None &&
-            instruction.lifecycle.empty() &&
-            isPassiveScalarValueType(instruction.info.type) &&
-            std::all_of(instruction.operands.begin(),
-                        instruction.operands.end(),
-                        [&](const MirOperand &input) {
-                          return input.kind == MirOperandKind::Value &&
-                                 isPassiveScalarValueType(input.type);
-                        }) &&
-            scalarStage != nullptr &&
-            scalarStage->kind == MirInstructionKind::CallInput &&
-            scalarStage->result &&
-            scalarStage->callSite == consumer->callSite &&
-            scalarStage->callInputRole == MirCallInputRole::Argument &&
-            scalarStage->callInputIndex < consumer->operands.size() &&
-            consumer->operands[scalarStage->callInputIndex].kind ==
-                MirOperandKind::Value &&
-            consumer->operands[scalarStage->callInputIndex].value ==
-                *scalarStage->result &&
-            (instruction.definedFailure.empty() ||
-             invokePairedInstruction(body, instruction.id)))
+        // A nested plain-value call, and each borrow staged for it, cannot
+        // carry or replace this borrowed place. Keep the call at its MIR
+        // position, with the original Invoke failure edge; only the outer
+        // address staging is erased.
+        if (nestedPlainCall(instruction))
+          continue;
+        const bool nestedBorrowUse =
+            peerConsumer != nullptr &&
+            (instruction.callInputRole == MirCallInputRole::Receiver
+                 ? peerUses.front().kind == MirValueUseKind::InstructionReceiver
+                 : peerUses.front().kind ==
+                           MirValueUseKind::InstructionOperand &&
+                       peerUses.front().operandIndex ==
+                           instruction.callInputIndex);
+        if (nestedBorrowUse && peerConsumer != consumer &&
+            nestedCallBorrow(instruction, *peerConsumer) &&
+            nestedPlainCall(*peerConsumer))
           continue;
         const auto nestedResult =
             instruction.result
@@ -56808,8 +56868,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (peerBorrow)
             break;
           if (!instruction.result || instruction.destination ||
-              cppMirExpectedTypeRepresentation(instruction.info.type) !=
-                  CppMirTypeRepresentationKind::Scalar) {
+              !passiveRegionValue(instruction.info.type)) {
             return false;
           }
           break;
@@ -56820,8 +56879,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (temporary == nullptr ||
               temporary->root != MirPlaceRootKind::Temporary ||
               !temporary->projections.empty() ||
-              cppMirExpectedTypeRepresentation(temporary->type) !=
-                  CppMirTypeRepresentationKind::Scalar ||
+              !passiveRegionValue(temporary->type) ||
               !instruction.definedFailure.empty()) {
             return false;
           }
