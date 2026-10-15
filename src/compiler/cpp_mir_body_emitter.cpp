@@ -29098,8 +29098,8 @@ struct PassiveCAbiCallValueResult {
 };
 
 // A passive native result has no result cleanup identity. Its exact consumer
-// may be a bare assignment, an unchanged return following only passive cleanup,
-// or discard. Keep production at the Call rather than inventing construction
+// may be a bare assignment, one payload field, an unchanged return following
+// only passive cleanup, or discard. Keep production at the Call rather than inventing construction
 // policy or moving foreign effects to a later source boundary.
 [[nodiscard]] PassiveCAbiCallValueResult
 passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
@@ -29149,6 +29149,58 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
   if (body.returnType == value->info.type) {
     if (const auto *returned = passiveResultReturnBlock(body, *value, *call)) {
       return {.call = call, .returnBlock = returned};
+    }
+  }
+  // A foreign result feeding an enum field is still produced at the Call.
+  // Its passive SSA representation survives any intervening operand effects;
+  // the variant copies those bytes only at its own MIR construction. A
+  // value-rooted place or drop would require the ordinary storage protocol.
+  if (uses.size() == 1 && body.usesOf(valueId).size() == 1 &&
+      uses.front().kind == MirValueUseKind::InstructionOperand &&
+      value->info.category == ValueCategory::Value && call->lifecycle.empty()) {
+    const auto &use = uses.front();
+    const auto *payload = findInstruction(body, use.instruction);
+    const auto *enumeration =
+        payload ? program.findPayloadEnum(payload->info.type) : nullptr;
+    const auto *result = payload && payload->result
+                             ? body.findValue(*payload->result)
+                             : nullptr;
+    const auto *produced = body.findBlock(value->definitionBlock);
+    const BodyDominance dominance(body);
+    const bool noStorage =
+        std::none_of(body.places.begin(), body.places.end(),
+                     [&](const auto &place) {
+                       return place.root == MirPlaceRootKind::Value &&
+                              place.value == valueId;
+                     }) &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const auto &drop) { return drop.value == valueId; });
+    if (payload && enumeration && result && produced && dominance &&
+        noStorage && payload->kind == MirInstructionKind::Compute &&
+        payload->operation == MirOperation::PayloadConstruct &&
+        payload->enumOwner == enumeration->declaration && payload->enumVariant &&
+        *payload->enumVariant < enumeration->variants.size() &&
+        payload->operands.size() ==
+            enumeration->variants[*payload->enumVariant].payloadTypes.size() &&
+        use.operandIndex < payload->operands.size() &&
+        enumeration->variants[*payload->enumVariant]
+                .payloadTypes[use.operandIndex] == value->info.type &&
+        payload->operands[use.operandIndex].kind == MirOperandKind::Value &&
+        payload->operands[use.operandIndex].value == valueId &&
+        payload->operands[use.operandIndex].type == value->info.type &&
+        result->definition == payload->id && result->info == payload->info &&
+        !payload->destination && !payload->receiver && !payload->loan &&
+        payload->localFailureSites.empty() && payload->definedFailure.empty() &&
+        dominance->dominates(produced->id, use.block)) {
+      const auto position = [&](MirInstructionId id) {
+        return std::find_if(produced->instructions.begin(),
+                            produced->instructions.end(),
+                            [&](const auto &item) { return item.id == id; });
+      };
+      const auto callPosition = position(call->id);
+      if (callPosition != produced->instructions.end() &&
+          (produced->id != use.block || callPosition < position(payload->id)))
+        return {.call = call};
     }
   }
   if (uses.size() != 1 ||
