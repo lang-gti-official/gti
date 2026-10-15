@@ -6643,8 +6643,13 @@ publish into the borrowed temporary and that its Drop ends it, and that a
 nested arm ends the nested join's storage right after moving out of it. It
 refuses a removed, conditional, duplicated or retargeted activation, an arm
 result that activates the obligation itself, and a nested join's storage with
-an obligation of its own, all of which MIR verification also rejects. A differential `--emit-cpp` of every source under `tests/fixtures`
-and `examples` at O0 and O3 changed only the new fixture.
+an obligation of its own, all of which MIR verification also rejects. The
+original receiver-only differential `--emit-cpp` check of every source under
+`tests/fixtures` and `examples` at O0 and O3 changed only that receiver fixture.
+The later nested-join differential covered 1,168 programs (2,336 emissions):
+2,326 emissions were identical, two changed acceptance as expected, and eight
+changed only the required storage-retirement text. These are historical
+individual-change results, not validation of the combined recovery.
 `conditional_cleanup_free_nested_join_runtime` runs the same eight
 configurations over loops that evaluate a cleanup-free conditional nested in
 another one's arm again on every iteration. The nested conditional sits in
