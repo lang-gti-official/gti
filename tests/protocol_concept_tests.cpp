@@ -231,14 +231,168 @@ int main() {
 )gti",
            "a composed concept should check the block for a concrete type");
 
-  // Declarations.
-  rejected(R"gti(
-concept pairish<A, B> {
-  typename first;
+  // Several parameters: each block argument is a closed type or one class
+  // template over block parameters; a parameter may repeat, and every one
+  // of its occurrences must bind the same type.
+  const std::string adds = R"gti(
+concept adds_to<Left, Right> {
+  typename sum_type;
+  sum_type add(Left& left, Right& right);
+};
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+struct Centimeters {
+  int value;
+  Centimeters(int amount) : value(amount) {}
+};
+class Tally<T> {
+public:
+  int count;
+  Tally(int amount) : count(amount) {}
+};
+class Pair<A, B> {
+public:
+  A first;
+  B second;
+  Pair(A one, B two) : first(one), second(two) {}
+};
+for concept adds_to<Meters, Centimeters> {
+  using sum_type = Centimeters;
+  Centimeters add(Meters& left, Centimeters& right) {
+    return Centimeters(left.value * 100 + right.value);
+  }
+};
+for <T> concept adds_to<Tally<T>, Tally<T>> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, Tally<T>& right) {
+    adds_to<Tally<T>, Tally<T>>::sum_type sum = Tally<T>(left.count);
+    return Tally<T>(sum.count + right.count);
+  }
+};
+for <T> concept adds_to<Tally<T>, int> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, int& right) {
+    return Tally<T>(left.count + right);
+  }
+};
+for <V, std::numeric K> concept adds_to<Pair<K, V>, Pair<K, K>> {
+  using sum_type = K;
+  K add(Pair<K, V>& left, Pair<K, K>& right) {
+    return left.first + right.first + right.second;
+  }
+};
+)gti";
+  accepted(adds + R"gti(
+adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
+  requires adds_to<L, R> {
+  return adds_to<L, R>::add(left, right);
+}
+struct Apples {};
+int main() {
+  Meters length{2};
+  Centimeters extra{35};
+  Centimeters sum = total(length, extra);
+  Tally<Apples> morning{3};
+  Tally<Apples> evening{4};
+  Tally<Apples> day = total(morning, evening);
+  int more = 5;
+  adds_to<Tally<Apples>, int>::sum_type later =
+      adds_to<Tally<Apples>, int>::add(day, more);
+  Pair<int, bool> left{1, true};
+  Pair<int, int> right{2, 3};
+  int keys = total(left, right);
+  return sum.value + later.count + keys - 253;
+}
+)gti",
+           "concepts with several parameters should select blocks by every "
+           "argument, including repeated parameters");
+  // The same kind on both sides is required by the repeated parameter.
+  rejected(adds + R"gti(
+struct Apples {};
+struct Pears {};
+int main() {
+  Tally<Apples> apples{1};
+  Tally<Pears> pears{2};
+  adds_to<Tally<Apples>, Tally<Pears>>::add(apples, pears);
+  return 0;
+}
+)gti",
+           "GTI-S2123",
+           "No conformance block 'for concept adds_to<Tally<Apples>, "
+           "Tally<Pears>>'");
+  rejected(adds + R"gti(
+int main() {
+  adds_to<Meters>::sum_type sum = Centimeters(1);
+  return 0;
+}
+)gti",
+           "GTI-S2123", "takes 2 type arguments");
+  rejected(adds + R"gti(
+for concept adds_to<Centimeters> {
+  using sum_type = int;
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "exactly one type parameter");
+           "GTI-S2123", "to 2 types");
+  rejected(adds + R"gti(
+for <T> concept adds_to<T, Meters> {
+  using sum_type = Meters;
+  Meters add(T& left, Meters& right) { return Meters(right.value); }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "Each argument of a conformance block");
+  rejected(adds + R"gti(
+for concept adds_to<Tally<bool>, Tally<bool>> {
+  using sum_type = int;
+  int add(Tally<bool>& left, Tally<bool>& right) { return 0; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "overlaps another");
+  rejected(adds + R"gti(
+for <A, B> concept adds_to<Pair<A, B>, Pair<B, B>> {
+  using sum_type = int;
+  int add(Pair<A, B>& left, Pair<B, B>& right) { return 0; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "overlaps another");
+  // Unifying the repeated parameter with two different closed types fails,
+  // so these blocks are disjoint.
+  accepted(adds + R"gti(
+for concept adds_to<Pair<int, bool>, Pair<int, int64_t>> {
+  using sum_type = int;
+  int add(Pair<int, bool>& left, Pair<int, int64_t>& right) { return 1; }
+};
+int main() { return 0; }
+)gti",
+           "blocks whose repeated parameter cannot unify should not overlap");
+  rejected(adds + R"gti(
+int unconstrained<L, R>(L& left, R& right) requires adds_to<R, L> {
+  adds_to<L, R>::add(left, right);
+  return 0;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "requires 'requires adds_to<L, R>'");
+  // Generic checks spell an associated type through its concept.
+  rejected(R"gti(
+concept scaled<From, To> {
+  typename factor_type;
+  To scale(From& value, factor_type factor);
+};
+int apply<A, B>(A& value) requires scaled<A, B> {
+  scaled<A, B>::scale(value, 5);
+  return 0;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2005", "expects 'scaled<A, B>::factor_type'");
+
+  // Declarations.
   rejected(R"gti(
 concept dup<T> {
   typename item;
@@ -291,7 +445,7 @@ for <T, U> concept measurable<Crate<T>> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "pattern applies one class template");
+           "GTI-S2123", "Block parameter 'U' does not appear");
   rejected(measurable + R"gti(
 for <T> concept measurable<Crate<Crate<T>>> {
   using unit_type = int;
@@ -300,7 +454,7 @@ for <T> concept measurable<Crate<Crate<T>>> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "pattern applies one class template");
+           "GTI-S2123", "Each argument of a conformance block");
   rejected(measurable + blocks + R"gti(
 for concept measurable<Crate<int>> {
   using unit_type = int;
@@ -539,6 +693,20 @@ for <T> concept measurable<Crate<T>> {
 )gti";
   expect(lang::Formatter().format(formatted) == formatted,
          "formatted protocol concepts and blocks should be stable");
+  const std::string formattedPair = R"gti(concept adds_to<Left, Right> {
+  typename sum_type;
+  sum_type add(Left& left, Right& right);
+};
+
+for <T> concept adds_to<Tally<T>, Tally<T>> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, Tally<T>& right) {
+    return Tally<T>(left.count + right.count);
+  }
+};
+)gti";
+  expect(lang::Formatter().format(formattedPair) == formattedPair,
+         "formatted concepts with several parameters should be stable");
   expect(lang::Formatter().format(
              "class Crate<T>{public:int count;};\n"
              "for<T>concept measurable<Crate<T>>{using unit_type=int;"

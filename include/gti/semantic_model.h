@@ -1295,6 +1295,13 @@ struct ExpectedCombinatorInfo {
   LambdaId lambda = 0;
 };
 
+// A concept with a body, as an associated type projection of it prints:
+// `Concept<Arguments>::name`.
+struct ProtocolConceptSpelling {
+  std::string qualifiedName;
+  std::vector<std::string> associatedTypes;
+};
+
 // Contextual collection braces select ordinary static GTI functions. The
 // compiler owns sequencing/transfer; the selected library owns storage policy.
 struct ResolvedCollectionInfo {
@@ -2154,6 +2161,8 @@ public:
   findExpectedCombinator(const Call &call) const;
   [[nodiscard]] const ResolvedCollectionInfo *
   findCollection(const ArrayInitializer &initializer) const;
+  [[nodiscard]] const ProtocolConceptSpelling *
+  findProtocolConcept(ConceptId id) const;
 
   [[nodiscard]] const NativeFunctionConversionInfo *
   findNativeFunctionConversion(const Expr &expression) const;
@@ -2486,6 +2495,7 @@ private:
   void recordExpectedCombinator(const Call &call, ExpectedCombinatorInfo info);
   void recordCollection(const ArrayInitializer &initializer,
                         ResolvedCollectionInfo info);
+  void recordProtocolConcept(ConceptId id, ProtocolConceptSpelling spelling);
 
   void recordNativeFunctionConversion(const Expr &expression,
                                       NativeFunctionConversionInfo info);
@@ -2706,6 +2716,7 @@ private:
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
       collections;
+  std::unordered_map<ConceptId, ProtocolConceptSpelling> protocolConcepts;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
   std::unordered_map<const Expr *, ResolvedConstructionInfo>
