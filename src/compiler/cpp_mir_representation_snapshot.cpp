@@ -1517,6 +1517,33 @@ struct RowsBuilder {
   CppStandard standard;
   CppMirBodyEmissionMapRows rows;
 
+  // A class application's special members are those of its sealed MIR
+  // instance. A generic declaration's statuses describe the open primary, not
+  // an application whose arguments delete a copy or fail a constructor's
+  // requirements. A type without exactly one instance keeps its
+  // declaration's statuses.
+  [[nodiscard]] std::optional<RowClassFacts>
+  applicationClassFacts(const SemanticType &type) const {
+    std::optional<RowClassFacts> result = facts.classFacts(type.classId);
+    const MirClassInstance *instance = nullptr;
+    for (const MirClassInstance &candidate : mir.classInstances()) {
+      if (candidate.type != type) {
+        continue;
+      }
+      if (instance != nullptr) {
+        return result;
+      }
+      instance = &candidate;
+    }
+    if (result && instance != nullptr) {
+      result->defaultConstructor = instance->defaultConstructor;
+      result->copyConstructor = instance->copyConstructor;
+      result->moveAssignment = instance->moveAssignment;
+      result->copyAssignment = instance->copyAssignment;
+    }
+    return result;
+  }
+
   void addType(const SemanticType &type) {
     if (type == SemanticType::Unknown) {
       return;
@@ -1543,7 +1570,7 @@ struct RowsBuilder {
       std::string templateNameSpelling;
       if (type.kind == SemanticType::Class) {
         const std::optional<RowClassFacts> classInfo =
-            facts.classFacts(type.classId);
+            applicationClassFacts(type);
         boundaryConstructible =
             classInfo &&
             (classInfo->compilerCapability ==
