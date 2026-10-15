@@ -263,9 +263,9 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
 
-    // Each argument is a closed type, or one class template applied to block
-    // parameters; every block parameter appears in some argument. A repeated
-    // parameter must bind the same type at each of its occurrences.
+    // Each argument is a closed type, or one class or enum template applied
+    // to block parameters; every block parameter appears in some argument. A
+    // repeated parameter must bind the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
     registeringConformanceParameters = &parameters;
     // Registration needs only the types' identities; validateConformanceTypes
@@ -274,7 +274,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                                    .namespaceScope = enclosing,
                                    .genericParameters = parameters};
     std::vector<SemanticType> patterns;
-    std::vector<ClassId> patternTemplates;
     std::unordered_set<GenericParameterId> used;
     const auto ownParameter = [&](const SemanticType &type) {
       return type.kind == SemanticType::TypeParameter &&
@@ -287,35 +286,35 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     for (const TypeRef &argument : target.arguments) {
       typeCheck.types.push_back(&argument);
       SemanticType pattern = typeOf(argument, enclosing);
-      ClassId patternTemplate = 0;
       if (pattern == SemanticType::Unknown) {
         valid = false;
       } else if (!containsOpenTypeParameter(pattern)) {
         pattern = canonicalExactSpecializationType(std::move(pattern));
       } else {
-        bool shape =
-            pattern.kind == SemanticType::Class && pattern.classId != 0 &&
-            pattern.classId <= classes.size() &&
-            classInfo(pattern.classId).exactSpecializationPrimary == 0 &&
-            pattern.valueArguments.empty() && !pattern.arguments.empty() &&
-            std::all_of(pattern.arguments.begin(), pattern.arguments.end(),
-                        ownParameter);
+        const bool nominalTemplate =
+            (pattern.kind == SemanticType::Class && pattern.classId != 0 &&
+             pattern.classId <= classes.size() &&
+             classInfo(pattern.classId).exactSpecializationPrimary == 0) ||
+            (pattern.kind == SemanticType::Enum && pattern.enumId != 0 &&
+             pattern.enumId <= enums.size());
+        const bool shape = nominalTemplate && pattern.valueArguments.empty() &&
+                           !pattern.arguments.empty() &&
+                           std::all_of(pattern.arguments.begin(),
+                                       pattern.arguments.end(), ownParameter);
         if (!shape) {
           reportConformanceError(
               argument.name.last(),
               "Each argument of a conformance block is a concrete type or "
-              "one class template applied to the block's parameters, such "
-              "as 'Box<T>'.");
+              "one class or enum template applied to the block's "
+              "parameters, such as 'Box<T>'.");
           valid = false;
         } else {
-          patternTemplate = pattern.classId;
           for (const SemanticType &parameter : pattern.arguments) {
             used.insert(parameter.genericParameterId);
           }
         }
       }
       patterns.push_back(std::move(pattern));
-      patternTemplates.push_back(patternTemplate);
     }
     if (valid) {
       for (const GenericParameterInfo &parameter : parameters) {
@@ -336,16 +335,14 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     application += ">";
 
     if (valid) {
+      // An open pattern is owned by its template's package, a closed one by
+      // its top-level nominal type's.
       bool owns =
           samePackageOwnershipDomain(currentSourceUnit, conceptInfo.sourceUnit);
       for (std::size_t position = 0; !owns && position < patterns.size();
            ++position) {
-        owns = patternTemplates[position] != 0
-                   ? samePackageOwnershipDomain(
-                         currentSourceUnit,
-                         classInfo(patternTemplates[position]).sourceUnit)
-                   : ownsNominalSpecializationArgument(currentSourceUnit,
-                                                       patterns[position]);
+        owns = ownsNominalSpecializationArgument(currentSourceUnit,
+                                                 patterns[position]);
       }
       if (!owns) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -368,7 +365,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     if (valid) {
       for (const RegisteredConformance &other : conformances) {
         if (other.conceptId == *conceptId &&
-            conformancePatternsOverlap(other, patterns, patternTemplates)) {
+            conformancePatternsOverlap(other, patterns)) {
           reportConformanceError(
               site,
               "This conformance block for concept '" +
@@ -434,7 +431,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                             .functionScope = scope,
                             .genericParameters = std::move(parameters),
                             .patterns = std::move(patterns),
-                            .patternTemplates = std::move(patternTemplates),
                             .associatedTypes = std::move(associatedTypes)});
   }
   currentSourceUnit = enclosingSourceUnit;
@@ -635,6 +631,28 @@ auto SemanticVisitor::Impl::classTemplateArguments(const SemanticType &type,
   return std::nullopt;
 }
 
+// A block's pattern is open when it applies a template to block parameters;
+// a closed pattern is one concrete type.
+auto SemanticVisitor::Impl::openConformancePattern(const SemanticType &pattern)
+    -> bool {
+  return containsOpenTypeParameter(pattern);
+}
+
+// The arguments that make `type` an instance of an open pattern's class or
+// enum template, or nothing when it is not one.
+auto SemanticVisitor::Impl::patternInstanceArguments(
+    const SemanticType &pattern, const SemanticType &type) const
+    -> std::optional<std::vector<SemanticType>> {
+  if (pattern.kind == SemanticType::Class) {
+    return classTemplateArguments(type, pattern.classId);
+  }
+  if (pattern.kind == SemanticType::Enum && type.kind == SemanticType::Enum &&
+      type.enumId == pattern.enumId && type.valueArguments.empty()) {
+    return type.arguments;
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::matchConformance(
     ConceptId id, const std::vector<SemanticType> &arguments) const
     -> std::optional<ConformanceMatch> {
@@ -673,14 +691,13 @@ auto SemanticVisitor::Impl::matchConformance(
     for (std::size_t position = 0; matches && position < arguments.size();
          ++position) {
       const SemanticType &pattern = conformance.patterns[position];
-      if (conformance.patternTemplates[position] == 0) {
+      if (!openConformancePattern(pattern)) {
         matches =
             pattern == canonicalExactSpecializationType(arguments[position]);
         continue;
       }
       const std::optional<std::vector<SemanticType>> instance =
-          classTemplateArguments(arguments[position],
-                                 conformance.patternTemplates[position]);
+          patternInstanceArguments(pattern, arguments[position]);
       matches = instance && instance->size() == pattern.arguments.size();
       for (std::size_t inner = 0; matches && inner < pattern.arguments.size();
            ++inner) {
@@ -696,14 +713,13 @@ auto SemanticVisitor::Impl::matchConformance(
 }
 
 // Whether some concrete arguments match both blocks. Every pattern is a
-// closed type or a class template applied to block parameters, so unifying
-// two blocks binds parameters only to closed types or to each other: a
-// union-find over both blocks' parameters, each class carrying at most one
-// closed type, decides it.
+// closed type or a class or enum template applied to block parameters, so
+// unifying two blocks binds parameters only to closed types or to each
+// other: a union-find over both blocks' parameters, each class carrying at
+// most one closed type, decides it.
 auto SemanticVisitor::Impl::conformancePatternsOverlap(
     const RegisteredConformance &existing,
-    const std::vector<SemanticType> &patterns,
-    const std::vector<ClassId> &templates) const -> bool {
+    const std::vector<SemanticType> &patterns) const -> bool {
   if (existing.patterns.size() != patterns.size()) {
     return false;
   }
@@ -748,16 +764,17 @@ auto SemanticVisitor::Impl::conformancePatternsOverlap(
   for (std::size_t position = 0; position < patterns.size(); ++position) {
     const SemanticType &left = existing.patterns[position];
     const SemanticType &right = patterns[position];
-    const ClassId leftTemplate = existing.patternTemplates[position];
-    const ClassId rightTemplate = templates[position];
-    if (leftTemplate == 0 && rightTemplate == 0) {
+    const bool leftOpen = openConformancePattern(left);
+    const bool rightOpen = openConformancePattern(right);
+    if (!leftOpen && !rightOpen) {
       if (left != right) {
         return false;
       }
       continue;
     }
-    if (leftTemplate != 0 && rightTemplate != 0) {
-      if (leftTemplate != rightTemplate ||
+    if (leftOpen && rightOpen) {
+      if (left.kind != right.kind || left.classId != right.classId ||
+          left.enumId != right.enumId ||
           left.arguments.size() != right.arguments.size()) {
         return false;
       }
@@ -770,11 +787,9 @@ auto SemanticVisitor::Impl::conformancePatternsOverlap(
       continue;
     }
     // One side is closed: it must be an instance of the other's template.
-    const bool leftOpen = leftTemplate != 0;
     const SemanticType &open = leftOpen ? left : right;
     const std::optional<std::vector<SemanticType>> instance =
-        classTemplateArguments(leftOpen ? right : left,
-                               leftOpen ? leftTemplate : rightTemplate);
+        patternInstanceArguments(open, leftOpen ? right : left);
     if (!instance || instance->size() != open.arguments.size()) {
       return false;
     }
