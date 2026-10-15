@@ -965,6 +965,246 @@ int main() {
          "its one alias rather than an unconstructed slot");
 }
 
+// A constructor that moves its closure parameter into a field can still fail
+// afterwards, in its body or in a later sibling initializer. MIR publishes
+// the move through the constructor record. Only effect-free initializer
+// records may precede it, so the native member-initializer list constructs
+// the field exactly where MIR moves the formal, in the failure form too; a
+// struct capture's lexical field drop ends with the caller's object like a
+// trivial one. The proof never hoists the move across earlier body work.
+
+void testMovedClosureFieldInFallibleConstructor() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-closure-field.gti", R"(
+#include <std/utility>
+
+int call<F>(F f) { return f(); }
+
+class Keeper<F> {
+public:
+  F callback;
+  mut int seen;
+  Keeper(F f) : callback(std::move(f)), seen(0) {
+    this.seen = call(this.callback);
+  }
+};
+
+class Sibling<F> {
+public:
+  F callback;
+  int seen;
+  Sibling(F f) : callback(std::move(f)), seen(call([]() -> int { return 5; })) {}
+};
+
+int keep<F>(F f) {
+  Keeper<F> value = Keeper<F>(f);
+  Sibling<F> sibling = Sibling<F>(f);
+  return value.seen + sibling.seen;
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+int main() {
+  int k = 3;
+  Offset offset{4};
+  return keep([offset]() -> int { return offset.amount; }) +
+         keep([k]() -> int { return k; }) - 17;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved-closure-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto movesClosure = [](const lang::MirConstructorInstance &candidate) {
+    return std::any_of(
+        candidate.initializers.begin(), candidate.initializers.end(),
+        [](const lang::MirConstructorInitializer &initializer) {
+          return initializer.ownedParameter.has_value() &&
+                 initializer.targetType.kind == lang::SemanticType::Lambda;
+        });
+  };
+  std::size_t provenMoves = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (!movesClosure(constructor)) {
+      continue;
+    }
+    const auto bindings =
+        lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor);
+    if (constructor.mayRaiseDefinedFailure &&
+        !constructor.body.failureRecords.empty() && bindings &&
+        bindings->size() == 1 && bindings->front().initializeInstruction == 0 &&
+        bindings->front().valueDrop == 0 && bindings->front().fieldDrop == 0) {
+      ++provenMoves;
+    }
+  }
+  expect(provenMoves == 4,
+         "both closure instances of both fallible constructors should prove "
+         "their record-published move as a native owned-field publication");
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a closure field moved in a fallible "
+                              "constructor should emit: ") +
+                      error.what());
+    return;
+  }
+  // Every definition whose first line contains `marker`, through its closing
+  // brace at the definition's own indentation.
+  const auto definitions = [&](std::string_view marker) {
+    std::vector<std::string> found;
+    for (std::size_t at = text.find(marker); at != std::string::npos;
+         at = text.find(marker, at + marker.size())) {
+      const std::size_t lineStart = text.rfind('\n', at) + 1;
+      const std::size_t lineEnd = text.find('\n', at);
+      if (lineEnd == std::string::npos || text[lineEnd - 1] != '{') {
+        continue;
+      }
+      const std::size_t indent =
+          text.find_first_not_of(' ', lineStart) - lineStart;
+      const std::string closing = "\n" + std::string(indent, ' ') + "}\n";
+      const std::size_t end = text.find(closing, lineEnd);
+      if (end != std::string::npos) {
+        found.push_back(
+            text.substr(lineStart, end + closing.size() - lineStart));
+      }
+    }
+    return found;
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  // The member-initializer list moves the parameter once, and the body only
+  // records that publication: it neither aliases nor moves the formal again.
+  const auto nativeMove = [&](const std::string &body) {
+    return count(body, ") : callback(std::move(__gti_mir_arg_0)), seen(") ==
+               1 &&
+           count(body, "std::move(__gti_mir_arg_0)") == 1 &&
+           count(body, " = __gti_mir_arg_0;") == 0 &&
+           count(body, " publishes in the member initializer list\n") == 1;
+  };
+  for (std::string_view owner : {"Keeper", "Sibling"}) {
+    const std::vector<std::string> bodies = definitions(
+        std::string(owner) + "<F>::" + std::string(owner) +
+        "(::gti_internal::backend::mir_failure_constructor_tag_v1<");
+    // The struct-capturing formal keeps its lexical drop on both exits; it
+    // retires only the moved-from native parameter.
+    const auto lexical = std::count_if(
+        bodies.begin(), bodies.end(), [&](const std::string &body) {
+          return count(body,
+                       "// GTI MIR owned-field parameter drop of place") == 2;
+        });
+    expect(bodies.size() == 2 &&
+               std::all_of(bodies.begin(), bodies.end(), nativeMove) &&
+               lexical == 1,
+           std::string(owner) +
+               " should keep one failure-form constructor per closure "
+               "instance, each publishing the moved field natively");
+  }
+
+  // Native publication stays exact only while no body work precedes the
+  // move. Replaying the later scalar sibling first must fail closed.
+  {
+    lang::MirProgram mutated = frontend.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            mutated.constructorInstances());
+    bool reordered = false;
+    for (lang::MirConstructorInstance &constructor : constructors) {
+      const auto bindings =
+          movesClosure(constructor)
+              ? lang::cppMirOwnedParameterFieldBindings(mutated, constructor)
+              : std::nullopt;
+      lang::MirBlock *entry =
+          constructor.body.findBlock(constructor.body.entry);
+      if (reordered || !bindings || bindings->size() != 1 || entry == nullptr) {
+        continue;
+      }
+      auto &instructions = entry->instructions;
+      const auto move = std::find_if(
+          instructions.begin(), instructions.end(), [&](const auto &item) {
+            return item.id == bindings->front().moveInstruction;
+          });
+      // Keeper's `seen(0)` sibling publishes in the three records after the
+      // move and its boundary: a Literal, its Initialize and a boundary.
+      if (move != instructions.begin() ||
+          std::distance(move, instructions.end()) < 5 ||
+          std::next(move, 2)->kind != lang::MirInstructionKind::Compute ||
+          std::next(move, 2)->operation != lang::MirOperation::Literal) {
+        continue;
+      }
+      std::rotate(move, std::next(move, 2), std::next(move, 5));
+      reordered = true;
+      expect(!lang::cppMirOwnedParameterFieldBindings(mutated, constructor),
+             "a move recorded after a later sibling's publication must not "
+             "be hoisted into the member-initializer list");
+    }
+    expect(reordered, "the mutation should find a Keeper constructor");
+  }
+
+  // A fallible sibling initializer declared before the closure field runs
+  // before the move. The owned proof never reorders the move across it.
+  const lang::FrontendResult late =
+      analyzeWithStandardLibrary("cpp-mir-moved-closure-late-field.gti", R"(
+#include <std/utility>
+
+int call<F>(F f) { return f(); }
+
+class Late<F> {
+public:
+  int seen;
+  F callback;
+  Late(F f) : seen(call([]() -> int { return 4; })), callback(std::move(f)) {}
+};
+
+int late<F>(F f) {
+  Late<F> value = Late<F>(f);
+  return value.seen;
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+int main() {
+  int k = 3;
+  Offset offset{4};
+  return late([offset]() -> int { return offset.amount; }) +
+         late([k]() -> int { return k; }) - 8;
+}
+)");
+  expect(late.canGenerateCode(),
+         "the late moved-closure-field fixture should pass the frontend");
+  if (!late.canGenerateCode()) {
+    return;
+  }
+  std::size_t lateConstructors = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       late.mir.constructorInstances()) {
+    if (!movesClosure(constructor)) {
+      continue;
+    }
+    ++lateConstructors;
+    expect(!constructor.body.failureRecords.empty() &&
+               !lang::cppMirOwnedParameterFieldBindings(late.mir, constructor),
+           "a move after a fallible sibling must not publish natively");
+  }
+  expect(lateConstructors == 2,
+         "both late closure instances should keep their own constructor");
+}
+
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
@@ -5400,6 +5640,8 @@ constexpr NamedTest kTests[] = {
     {"testProducedClosureLocalSlots", testProducedClosureLocalSlots},
     {"testCopiedFormalReusedInConstructorBody",
      testCopiedFormalReusedInConstructorBody},
+    {"testMovedClosureFieldInFallibleConstructor",
+     testMovedClosureFieldInFallibleConstructor},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",
