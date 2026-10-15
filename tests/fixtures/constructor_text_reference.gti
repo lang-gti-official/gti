@@ -25,9 +25,18 @@ struct TextReader {
   std::string_view& text;
   TextReader(std::string_view& input) : text(input) {}
   std::size_t size() { return this.text.size(); }
+  std::string_view read() { return this.text; }
+  std::string_view read_implicit() { return text; }
 };
 
 std::string_view& relay_text(std::string_view& input) { return input; }
+
+struct CReader {
+  c_string& text;
+  CReader(c_string& input) : text(input) {}
+  c_string read() { return this.text; }
+};
+c_string& relay_c_text(c_string& input) { return input; }
 
 std::size_t inspect(std::string_view input, bool fail) {
   TextOwner reader{relay_text(input), Ticket(), fail};
@@ -40,7 +49,22 @@ int main(int argc, std::vector<std::string> argv) {
   std::string_view& reference = alias;
   TextReader static_reader{relay_text(reference)};
   if (static_reader.size() != std::size_t(7)) { return 1; }
+  std::string_view copied_static = static_reader.read();
+  if (copied_static.size() != std::size_t(7)) { return 4; }
   mut std::string owner = std::string("dynamic");
+  {
+    std::string_view view = owner.view();
+    TextReader reader{relay_text(view)};
+    std::string_view copy = reader.read();
+    if (copy.size() != std::size_t(7)) { return 5; }
+    std::string_view implicit_copy = reader.read_implicit();
+    if (implicit_copy.size() != std::size_t(7)) { return 6; }
+    c_string pointer = owner.c_string();
+    CReader c_reader{relay_c_text(pointer)};
+    c_string c_copy = c_reader.read();
+    c_string empty = nullptr;
+    CReader empty_reader{empty};
+  }
   if (inspect(owner.view(), argc > 1) != std::size_t(7)) { return 2; }
   // The adapter and its external dependency both retired, without consuming
   // the original owner. Its resource was destroyed exactly once.

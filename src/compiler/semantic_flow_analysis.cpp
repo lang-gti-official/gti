@@ -1595,7 +1595,9 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
     if (borrowedTextType(type) && symbol != nullptr &&
-        symbol->retainedLoan != 0) {
+        (symbol->retainedLoan != 0 ||
+         (symbol->ownerClass != 0 && !symbol->staticMember &&
+          symbol->type.kind == SemanticType::Reference))) {
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
@@ -1735,6 +1737,15 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                         : objectInfo != nullptr &&
                               objectInfo->category == ValueCategory::Place &&
                               objectInfo->access == AccessMode::Mutable));
+    // Reading a checked text-reference field copies its dependent view, not
+    // an ownerless value. The receiver's stored-reference contract supplies
+    // the external lifetime for explicit and implicit field spelling alike.
+    if (borrowedTextType(type) && member != nullptr &&
+        member->symbol.type.kind == SemanticType::Reference) {
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
