@@ -1,0 +1,126 @@
+#include <std/string>
+#include <std/vector>
+
+// A lambda invocation returning a class without a default constructor
+// publishes its result into exactly the storage a source call's result uses:
+// a field read, a by-value argument, a constructor argument, an assignment, a
+// discarded result and a constructor field initializer. Destroying a result
+// prints its negated id, so every drop is visible in the trace. A lambda that
+// is never invoked spells no body at all, even when the body constructs a
+// class from a move-only or destructor-bearing temporary.
+
+struct Plain {
+  int id;
+  Plain(int raw) : id(raw) {}
+};
+
+struct Res {
+  int id;
+  Res(int raw) : id(raw) {}
+  ~Res() { std::println(0 - id); }
+};
+
+struct Outer {
+  Plain inner;
+  Outer(int raw) : inner(Plain(raw)) {}
+};
+
+struct Holder {
+  Plain p;
+  Holder(Plain p) : p(p) {}
+};
+
+struct ResHolder {
+  Res r;
+  ResHolder(Res r) : r(std::move(r)) {}
+};
+
+struct Box {
+  Plain p;
+  Box(int raw) : p([](int r) -> Plain { return Plain(r * 2); }(raw)) {}
+};
+
+struct Token {
+  int id;
+  Token(int raw) : id(raw) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+};
+
+struct Logged {
+  int id;
+  Logged(int raw) : id(raw) {}
+  ~Logged() { std::println("logged"); }
+};
+
+struct Ticket {
+  int id;
+  Ticket(Token token) : id(token.id) {}
+};
+
+struct Receipt {
+  int id;
+  Receipt(Logged entry) : id(entry.id) {}
+};
+
+int take(Plain p) { return p.id; }
+int takeRes(Res r) { return r.id; }
+int combine(Res r, int extra) { return r.id + extra; }
+int later(int value) { return value + 1; }
+
+int observe(int raw) {
+  auto make = [](int v) -> Plain { return Plain(v); };
+  return make(raw).id;
+}
+
+int unused() {
+  auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
+  auto receipt = [](int raw) -> Receipt { return Receipt(Logged(raw)); };
+  return 7;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  auto make = [](int raw) -> Plain { return Plain(raw); };
+  auto makeRes = [](int raw) -> Res { return Res(raw); };
+  int offset = 100;
+  auto shifted = [offset](int raw) -> Plain { return Plain(raw + offset); };
+  auto divide = [](int v) -> Plain { return Plain(84 / v); };
+  if (argc == 2) {
+    // The invocation's result already exists when a later argument raises;
+    // its failure cleanup destroys it exactly once.
+    std::println(combine(makeRes(6), later(int(2147483647))));
+    return 0;
+  }
+  if (argc == 3) {
+    // The invocation itself raises before it publishes any result.
+    std::println(divide(argc - 3).id);
+    return 0;
+  }
+  std::println(make(1).id);
+  std::println(shifted(2).id);
+  std::println(make(3).id + make(4).id);
+  bool ready = true;
+  std::println(ready && make(5).id == 5 ? 1 : 0);
+  std::println(take(make(6)));
+  Holder holder{make(7)};
+  std::println(holder.p.id);
+  mut Plain replaced = Plain(0);
+  replaced = make(8);
+  std::println(replaced.id);
+  [[discard]] make(9);
+  Box box{10};
+  std::println(box.p.id);
+  std::println(observe(11));
+  std::println(makeRes(12).id);
+  std::println(takeRes(makeRes(13)));
+  [[discard]] makeRes(14);
+  ResHolder kept{makeRes(15)};
+  std::println(kept.r.id);
+  mut Res current = Res(16);
+  current = makeRes(17);
+  std::println(current.id);
+  auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
+  auto receipt = [](int raw) -> Receipt { return Receipt(Logged(raw)); };
+  std::println(unused());
+  return 0;
+}

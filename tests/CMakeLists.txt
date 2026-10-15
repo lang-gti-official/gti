@@ -3377,6 +3377,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(conditional_cleanup_free_call_result_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME lambda_class_result_consumers_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/lambda_class_result_consumers_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(lambda_class_result_consumers_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_generic_owner_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_generic_owner_receiver_runtime_test.py"

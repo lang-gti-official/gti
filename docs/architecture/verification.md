@@ -1,5 +1,56 @@
 # Compiler Verification
 
+## Class results of callable invocations (0.440.3)
+
+- **Defect.** A lambda call returning a class without a default constructor
+  reported `GTI-B0001` unless its result initialized a variable directly:
+  `make(1).id`, `take(make(2))`, `Holder h{make(3)}`, `v = make(4);`, a
+  discarded call and a member initializer all failed, with or without a
+  destructor on the class. Separately, a lambda that was never called failed
+  when its body passed a move-only or destructor-bearing temporary by value
+  into a class constructor, as in `Ticket(Token(raw))`; calling it built.
+- **Cause and rule.** The class-result slots that a source call's result uses
+  (`classSsaLifetimeSlot`, `valueRootedClassCallResultSlot` and
+  `stagedClassResultForSource`) admitted only function-target producers, so
+  the invocation's result fell back to a value-initialized C++ local, which
+  the vocabulary refuses. `callableClassResultInvocation` now admits a
+  callable value invocation whose verified MIR binds it to its lambda
+  instance and completes it on the Invoke success edge under callable
+  propagation, under each slot's unchanged consumer, activation and transfer
+  proofs; the invocation writer constructs the selected slot. The uncalled
+  lambda was probed in the plain convention because its fused chain had no
+  consumer, and that body has no plain form: the plain `Ticket(Token)`
+  constructor is outside the vocabulary. `closureChainAdmits` now reports the
+  chain's spelling sites (invocations, deduced callable arguments and comma
+  discards), and a chain with none spells, and therefore probes, no body.
+- **Regression tests.** `lambda_class_result_consumers_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. It reads fields of results of plain, capturing,
+  twice-called and helper-function lambdas, including in a short-circuit
+  operand, and passes results to a function and a constructor, assigns,
+  discards and initializes a member with them. Destructor-bearing results
+  trace each drop: once after a field read, inside the callee for a moved
+  argument, at once when discarded, at assignment and at scope exit. A later
+  argument that raises destroys the already published result once, and a
+  raising invocation publishes nothing. The fixture also declares uninvoked
+  lambdas that construct `Ticket(Token(raw))` and a destructor-bearing
+  equivalent, in `main` and in a helper. In `cpp_mir_body_emitter_text`,
+  `testCallableClassResultSlots` requires each invocation to construct its
+  slot at its address with no default-constructed class local, and refuses an
+  invocation forged without callable propagation or without its lambda
+  target. `testUnconsumedFusedClosureSpellsNoBody` admits a function whose
+  two lambdas are never consumed and emits no lambda body for it, while the
+  same lambda invoked once still emits its body. Against the 0.440.2 emitter
+  the runtime fixture and both text tests fail.
+- **Out of scope.** Reading a nested field of a class call result, as in
+  `build(1).inner.id`, and reading a field of a construction that takes a
+  call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a
+  source function and a lambda alike. A lambda passed to a generic callable
+  parameter whose class result initializes a variable or is passed by value,
+  as in `int run<F>(F f) { Plain v = f(2); return v.id; }`, also still fails;
+  the staged callable's transformed invocation admits a class result only as
+  a direct return, a borrowed receiver or an Expected payload.
+
 ## Consuming payload-enum matches (0.438.0)
 
 `sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and

@@ -1771,6 +1771,20 @@ or `error()` extraction, a constructor field, or a whole binding it replaces.
 A binding the result initializes directly keeps the direct construction into
 that binding.
 
+A class result of a callable value invocation follows the same rule
+(`callableClassResultInvocation`). Verified MIR binds the invocation's result
+and parameters to its exact lambda instance, and the invocation completes the
+result on its Invoke success edge under callable propagation, as a
+transformed source call does. A cleanup-free result therefore takes the
+representation-only SSA slot (`classSsaLifetimeSlot`) for one field read,
+by-value call argument, assignment, constructor field or discard. An owning
+result takes the value-rooted slot (`valueRootedClassCallResultSlot`) that its
+field views or one consuming call read, and a by-value argument with a
+prepared parameter receives the result directly in that parameter's slot
+(`stagedClassResultForSource`). The invocation writer passes the selected
+slot's construction address and marks it constructed on success. No class
+result of an invocation becomes a default-constructed C++ local.
+
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
 construction must match the constructor's parameter types and owner, carry no
@@ -2286,7 +2300,13 @@ cleanup. Re-entered passive local bindings and passive value-root slots retire
 only their representation before reconstructing the next loop iteration's
 environment. Owning closures and prepared argument temporaries keep their
 verified explicit lifetime protocol. Fused non-escaping closures can still
-use native lambdas.
+use native lambdas. A fused literal is spelled only where its chain is
+consumed: at an invocation, a deduced callable argument or a comma discard,
+each of which selects the literal's calling convention. A chain with no such
+consumer spells no lambda body, so the vocabulary requires neither convention
+of that body. A lambda whose body has no plain form, for example because it
+passes a move-only or destructor-bearing temporary by value into a class
+constructor, can therefore be declared and never invoked.
 Each materialized environment carries a private type alias for its exact
 artifact-local MIR lambda identity. Source-template member families use this
 identity alongside signature and cleanup selectors when distinct closure
