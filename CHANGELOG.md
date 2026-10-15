@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.4 — Borrowed arguments before a conditional that creates an object
+## 0.440.5 — Borrowed arguments before a conditional that creates an object
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a call borrows an argument, a new object
