@@ -1490,8 +1490,8 @@ with identical short-circuit semantics.
 
 ### 3.9.1 Expected Propagation
 
-For a prefix expression `?operand`, `operand` must have type `expected<T, E>`
-and the immediately enclosing function or lambda must return
+For a prefix expression `?operand` whose `operand` has type `expected<T, E>`,
+the immediately enclosing function or lambda must return
 `expected<U, E>`. The error types are identical semantic types; propagation
 does not consider conversions or overloads. The expression has type `T`, or
 `void` when `T` is `void`.
@@ -1505,6 +1505,29 @@ argument, or global owner origin described by the ownership rules. It may be a
 local or function return, but not a field, global variable, parameter, or
 lambda return; `value_or` and direct local `unexpected` initialization are not
 available in the initial surface.
+
+### 3.9.2 Propagation Through `std::tryable`
+
+For `?operand` with any other operand type `X`, `std::tryable<X>` must hold
+([ADR 029](../decisions/029-tryable-propagation.md)):
+- for a concrete `X`, through a `for concept std::tryable<...>` block that
+  matches `X`, whose parameter constraints hold for the binding;
+- for a dependent `X`, through a `std::tryable<X>` conjunct of the enclosing
+  `requires` clause.
+
+The operand is transported like a by-value argument of type `X`. A temporary
+or `std::move(place)` operand needs a movable `X`. A named place needs a
+copyable `X` and remains available. `X`, `value_type` and `residual_type`
+contain no stored borrows, and `value_type` and `residual_type` are not
+references. The expression has type `std::tryable<X>::value_type`, or `void`
+when that type is `void`.
+
+The immediately enclosing function or lambda has a declared return type `R`,
+which is not `void`. The residual type is `R` itself, or `R` declares exactly
+one unconstrained, safe `implicit` constructor whose single parameter is the
+residual type. In a generic body these checks happen for each concrete
+instance. Propagation through `std::tryable` is not available in constant
+evaluation. Violations are `GTI-S2086`.
 
 An owning operand whose expression category is a value selects move transport
 for both alternatives. A named owning place selects copy transport for both

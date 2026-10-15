@@ -104,7 +104,8 @@ client.
     arrays or pointers;
   - no default operations and no constraints on associated types;
   - no access through a composite concept;
-  - `?` is not yet bound to a protocol concept.
+  - `?` is not yet bound to a protocol concept (bound to `std::tryable` by
+    [ADR 029](029-tryable-propagation.md)).
 - Next phases: bind `?` to a standard protocol concept, and move existing
   member-name protocols (collection hooks, iterator value types) onto
   protocol concepts where coherent.
