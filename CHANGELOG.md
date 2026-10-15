@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.4 — No `mut` warning for moved fields and elements
+
+- `warning[GTI-S2096]` ("Mutable binding '…' is never used mutably") no
+  longer appears for a `mut` local whose field or constant-index array element
+  is moved out, such as `mut std::string[2] pair = …;` followed by
+  `std::string taken = std::move(pair[0]);`. Such a move requires a writable
+  binding, so removing the `mut` as the warning suggested turned the program
+  into `error[GTI-S2018]`. Moving an element through a consuming call, as in
+  `std::move(tokens[1]).take()`, and moves inside generic functions count the
+  same way. Reading a field through reflected `field.get_mut(owner)`, which
+  requires a writable owner (`GTI-S2112`), also counts as a mutable use.
+- Moving a whole local with `std::move` does not need `mut`, so an otherwise
+  unused `mut` on that local still receives the warning and its quick fix.
+
 ## 0.440.3 — Conditional results with checked arm arguments
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
