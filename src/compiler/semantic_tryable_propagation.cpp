@@ -81,8 +81,8 @@ auto SemanticVisitor::Impl::selectResidualReturn(
   const std::size_t diagnosticStart = diagnostics.size();
   // Built-in scalar and `expected` initialization never converts a residual:
   // the propagation plan returns the residual itself or a selected call.
-  if (!isOwnershipAssignable(target, residualType, residual) &&
-      analyzeReturnConversion(residual, target, residualType)) {
+  const bool builtIn = isOwnershipAssignable(target, residualType, residual);
+  if (!builtIn && analyzeReturnConversion(residual, target, residualType)) {
     if (const ResolvedConstructionInfo *selected =
             semanticModel.findContextualConstruction(*residual)) {
       construction = *selected;
@@ -97,15 +97,21 @@ auto SemanticVisitor::Impl::selectResidualReturn(
            diagnostics.size() == diagnosticStart;
   }
   const ClassInfo *owner = classInfo(target);
+  const std::string returned = "Error propagation returns the residual '" +
+                               typeSpelling(residualType) + "' as '" +
+                               typeSpelling(target) + "'";
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2086", DiagnosticPhase::Semantics, site,
-      "Error propagation returns the residual '" + typeSpelling(residualType) +
-          "' as '" + typeSpelling(target) + "', which " +
-          (owner == nullptr
-               ? std::string("cannot be initialized from it.")
-               : "declares no implicit constructor taking it, and '" +
-                     typeSpelling(residualType) +
-                     "' declares no implicit conversion operator to it."));
+      builtIn ? returned + ", which only a built-in conversion would "
+                           "initialize; a residual takes no built-in "
+                           "conversion."
+      : owner == nullptr
+          ? returned + ", which cannot be initialized from it."
+          : returned +
+                ", which declares no implicit constructor taking it, "
+                "and '" +
+                typeSpelling(residualType) +
+                "' declares no implicit conversion operator to it.");
   if (owner != nullptr) {
     diagnostic.related.push_back(
         {tokenSpan(owner->name),

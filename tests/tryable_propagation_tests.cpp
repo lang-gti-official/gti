@@ -118,7 +118,7 @@ int main() {
   // would: through an implicit conversion operator of the residual, to a
   // class or a scalar return type, or an implicit constructor with a trailing
   // default or a satisfied requirement, under ADR 027's one shared
-  // selection.
+  // selection. A generic body's instance selects its own conversion.
   accepted(R"gti(
 struct Rejected {
   int code;
@@ -194,9 +194,13 @@ Report<int> constrained(int failure) {
   int value = ?Attempt(failure);
   return Report<int>(value);
 }
+int forwarded<T>(T attempt) requires std::tryable<T> {
+  std::tryable<T>::value_type value = ?std::move(attempt);
+  return 10;
+}
 int main() {
   return scalar(0) + defaulted(3).bias + consumed(4).code +
-         constrained(5).code;
+         constrained(5).code + forwarded(Attempt(6));
 }
 )gti",
            "a residual must return through an implicit operator or a "
@@ -229,6 +233,29 @@ int scalar(int failure) {
 int main() { return 0; }
 )gti",
            "GTI-S2086", "'implicit operator int32_t()' in 'Rejected'");
+  // A residual takes no built-in scalar conversion, such as a widening.
+  rejected(R"gti(
+class Code {
+public:
+  int code;
+  Code(int failure) : code(failure) {}
+  Code(Code& other) = delete;
+  Code(Code&& other) = default;
+};
+for concept std::tryable<Code> {
+  using value_type = int;
+  using residual_type = int;
+  bool has_value(Code& code) { return code.code == 0; }
+  int take_value(Code code) { return 1; }
+  int take_residual(Code code) { return code.code; }
+};
+int64_t widened(int failure) {
+  int value = ?Code(failure);
+  return int64_t(value);
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2086", "a residual takes no built-in conversion");
   rejected(R"gti(
 struct Outcome {
   int code;
