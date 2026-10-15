@@ -3384,6 +3384,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(conditional_checked_arm_input_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME moved_local_field_read_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/moved_local_field_read_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(moved_local_field_read_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_generic_owner_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_generic_owner_receiver_runtime_test.py"

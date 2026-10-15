@@ -22591,6 +22591,48 @@ exactFieldProjectionRows(const MirProgram &program,
                                   place.projections, 0, place.type, false);
 }
 
+// A Move of a whole object out of an available place into a fresh class
+// value, as `std::move(a)` does, with no failure of its own. Its single
+// lifecycle event arms the result's obligation: a Move from the source's
+// obligation, or an Initialize when the source had none. The source is left
+// moved-from. Returns that event; its target names the result's obligation.
+[[nodiscard]] const MirLifecycleEvent *
+exactPlaceMoveActivation(const MirBody &body, const MirInstruction &producer,
+                         const MirValue &value) {
+  const MirPlace *source =
+      producer.kind == MirInstructionKind::Move &&
+              producer.operands.size() == 1 &&
+              producer.operands.front().kind == MirOperandKind::Move
+          ? body.findPlace(producer.operands.front().place)
+          : nullptr;
+  if (source == nullptr || value.info.type.kind != SemanticType::Class ||
+      !value.info.traits.movable || !producer.result ||
+      *producer.result != value.id || producer.receiver ||
+      producer.operation != MirOperation::None ||
+      producer.info.type != value.info.type ||
+      producer.operands.front().type != value.info.type ||
+      source->type != value.info.type || !source->key ||
+      !producer.definedFailure.empty() || !producer.localFailureSites.empty() ||
+      producer.preparedParameterDrop || producer.successResultDrop ||
+      producer.successResultDestination || !producer.ownership ||
+      producer.ownership->kind != OwnershipEventKind::Move ||
+      producer.ownership->place != *source->key ||
+      producer.ownership->before != OwnershipStateSet::Available ||
+      producer.ownership->after != OwnershipStateSet::Moved ||
+      !producer.ownership->reachable || producer.fullExpressionEnd != 0 ||
+      producer.cleanupBoundaryEnd != 0 || producer.lifecycle.size() != 1)
+    return nullptr;
+  const MirLifecycleEvent &event = producer.lifecycle.front();
+  const bool armed = event.kind == MirLifecycleEventKind::Move
+                         ? event.source != 0
+                         : event.kind == MirLifecycleEventKind::Initialize &&
+                               event.source == 0;
+  return armed && event.target != 0 && !event.conditional &&
+                 !event.failureCleanup
+             ? &event
+             : nullptr;
+}
+
 struct ValueRootedClassCallResultSlot {
   const MirValue *value = nullptr;
   const MirInstruction *producer = nullptr;
@@ -22812,6 +22854,14 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       constructor->parameterTypes.size() == producer->operands.size() &&
       hasCompleteCallInputSchedule(body, *producer) && drop != nullptr &&
       callSuccessActivates(body, *producer, drop->id);
+  // A value moved out of an available place, as in `std::move(a).x`, owns
+  // the moved object in the same slot.
+  const MirLifecycleEvent *moveActivationEvent =
+      producer != nullptr && value != nullptr && !producer->destination
+          ? exactPlaceMoveActivation(body, *producer, *value)
+          : nullptr;
+  const bool moveProducer = moveActivationEvent != nullptr && drop != nullptr &&
+                            moveActivationEvent->target == drop->id;
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       value->info.category != ValueCategory::Value ||
       value->info.traits.drop != DropKind::Lexical || producer == nullptr ||
@@ -22819,7 +22869,7 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       producer->info.type != value->info.type ||
       (!transformedCallProducer && !plainCallProducer &&
        !defaultConstructionProducer && !ownedExtractionProducer &&
-       !constructionProducer) ||
+       !constructionProducer && !moveProducer) ||
       drop == nullptr || drop->kind != MirDropObligationKind::Value ||
       drop->initiallyActive || drop->dropType.type != value->info.type ||
       slot == nullptr || slot->root != MirPlaceRootKind::Value ||
@@ -22856,8 +22906,9 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       // class-returning call below, including failure of old-value cleanup.
       (ownedExtractionProducer && fieldViews == 0 &&
        executableUses.size() != 1) ||
-      // Every other construction consumer keeps its own publication route.
-      (constructionProducer && fieldViews == 0)) {
+      // Every other construction or move consumer keeps its own publication
+      // route.
+      ((constructionProducer || moveProducer) && fieldViews == 0)) {
     return {};
   }
 
@@ -22972,7 +23023,9 @@ valueRootedClassCallResultSlot(const MirProgram &program,
             event.kind == MirLifecycleEventKind::Initialize &&
             event.source == 0 && event.target == drop->id &&
             !event.conditional && !event.failureCleanup;
-        if (defaultActivation) {
+        // The Move's single event, proved above, arms the result's slot.
+        const bool moveActivation = moveProducer && &instruction == producer;
+        if (defaultActivation || moveActivation) {
           ++activationCount;
           continue;
         }
@@ -23081,8 +23134,10 @@ ownedExpectedExtractionStorage(const MirProgram &program,
 // An owned class result constructed directly into a conditional temporary,
 // as a short-circuit operand or conditional arm does, keeps its obligation on
 // that temporary; MIR's conditional Drop destroys it at the end of the full
-// expression. When the result is read only through field views, the
-// temporary is its storage and those views read it.
+// expression. A value moved out of a place there, as in
+// `c ? std::move(a).x : 0`, is moved into the temporary the same way. When
+// the result is read only through field views, the temporary is its storage
+// and those views read it.
 [[nodiscard]] const MirPlace *
 conditionalTemporaryViewedResult(const MirProgram &program,
                                  const CppMirBodyEmissionMap &representations,
@@ -23093,17 +23148,28 @@ conditionalTemporaryViewedResult(const MirProgram &program,
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       producer == nullptr ||
       (producer->kind != MirInstructionKind::Call &&
-       producer->kind != MirInstructionKind::Construct) ||
+       producer->kind != MirInstructionKind::Construct &&
+       producer->kind != MirInstructionKind::Move) ||
       !producer->result || *producer->result != value->id)
     return nullptr;
   // A failure-free producer constructs at its destination and arms the
   // temporary with its own Initialize event, beside the exact transfers of
   // any prepared inputs; a transformed one arms the temporary's obligation on
-  // its Invoke success edge.
+  // its Invoke success edge. A Move arms it with its single event.
   const MirDropObligation *drop = nullptr;
-  if (const MirLifecycleEvent *activation =
-          producer->destination ? preparedInputResultActivation(body, *producer)
-                                : nullptr) {
+  if (producer->kind == MirInstructionKind::Move) {
+    const MirLifecycleEvent *activation =
+        producer->destination
+            ? exactPlaceMoveActivation(body, *producer, *value)
+            : nullptr;
+    drop = activation == nullptr ? nullptr
+                                 : body.findDropObligation(activation->target);
+    if (drop != nullptr && drop->place != *producer->destination)
+      drop = nullptr;
+  } else if (const MirLifecycleEvent *activation =
+                 producer->destination
+                     ? preparedInputResultActivation(body, *producer)
+                     : nullptr) {
     drop = activation->kind == MirLifecycleEventKind::Initialize &&
                    activation->source == 0 && !activation->failureCleanup
                ? body.findDropObligation(activation->target)
@@ -32174,9 +32240,11 @@ classSsaLifetimeSlot(const MirProgram &program,
   // A cleanup-free class result may be observed through one exact field
   // projection before the full expression ends. The transformed callee still
   // needs uninitialized representation storage; the projected place is only
-  // an lvalue view over that slot and owns no independent lifetime.
+  // an lvalue view over that slot and owns no independent lifetime. A value
+  // moved out of a place, as in `std::move(a).x`, is staged the same way: the
+  // Move constructs the slot and leaves its source moved-from.
   const std::vector<MirValueUse> allUses = body.usesOf(valueId);
-  if (!directMoveProducer && allUses.size() == 1 &&
+  if (allUses.size() == 1 &&
       allUses.front().kind == MirValueUseKind::PlaceRoot &&
       allUses.front().place != 0 &&
       !std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
@@ -41385,6 +41453,24 @@ private:
         output << "));\n";
         return;
       }
+      // An owning value moved out of a place and read only through field
+      // views lives in its value-rooted slot, or in the conditional
+      // temporary its Move names, until the full-expression Drop.
+      const ValueRootedClassCallResultSlot owned =
+          valueRootedClassCallResultSlot(program, representations, facts.body,
+                                         *instruction.result);
+      if (const MirPlace *viewed = owned.producer == &instruction
+                                       ? owned.slot
+                                       : conditionalTemporaryViewedResult(
+                                             program, representations,
+                                             facts.body, *instruction.result)) {
+        writeIndent();
+        output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *viewed)
+               << ".construct(std::move(";
+        emitMoveSource(facts, instruction);
+        output << "));\n";
+        return;
+      }
       if (const ClassMoveAssignmentFusion fusion =
               classMoveAssignmentFusion(program, facts.body, instruction)) {
         writeIndent();
@@ -41458,9 +41544,13 @@ private:
                << ".destroy(); // end moved join representation\n";
         return;
       }
+      // A passive error moved into its Unexpected return, or a cleanup-free
+      // value moved out of a place and observed through one field read,
+      // constructs its representation slot here, where MIR moves the source.
       if (passiveError.producer == &instruction &&
-          passiveError.consumerKind ==
-              ClassSsaSlotConsumerKind::UnexpectedReturn) {
+          (passiveError.consumerKind ==
+               ClassSsaSlotConsumerKind::UnexpectedReturn ||
+           passiveError.consumerKind == ClassSsaSlotConsumerKind::FieldRead)) {
         writeIndent();
         output << "__gti_mir_v_" << *instruction.result
                << ".construct(std::move(";

@@ -698,6 +698,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testMovedPlaceFieldView",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDiscardedCleanupFreeClassResult",
       "suite": "lifecycle"
     },
