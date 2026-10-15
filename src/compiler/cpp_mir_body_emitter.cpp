@@ -34057,7 +34057,8 @@ public:
         continue;
       }
       if (consumedReceiverValueSlot(facts.body, value.id)) {
-        // The moved receiver already has its exact Value-rooted lifetime slot.
+        // The moved receiver already has its exact lifetime slot: its
+        // Value-rooted place, or the conditional temporary it moves into.
         continue;
       }
       if (valueRootedMoveAssignmentSlot(program, representations, facts.body,
