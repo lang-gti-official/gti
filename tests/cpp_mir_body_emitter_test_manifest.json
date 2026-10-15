@@ -366,11 +366,19 @@
       "suite": "text"
     },
     {
+      "name": "testPreparedConsumingReceiverLaterFailure",
+      "suite": "text"
+    },
+    {
       "name": "testConditionalPreparedInputResult",
       "suite": "text"
     },
     {
       "name": "testCleanupFreeConditionalCallArms",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedGenericOwnerReceiverStage",
       "suite": "text"
     },
     {
