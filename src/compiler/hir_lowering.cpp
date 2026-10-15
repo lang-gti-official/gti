@@ -3822,6 +3822,9 @@ private:
         .capability = info->capability,
         .captureRequiresActiveCleanup = std::move(captureRequiresActiveCleanup),
         .traits = info->traits,
+        .returnBorrowOrigin = info->returnBorrowOrigin,
+        .returnBorrowParameter = info->returnBorrowParameter,
+        .returnBorrowAccess = info->returnBorrowAccess,
         .body = std::move(body),
     };
     return id;
@@ -6405,6 +6408,9 @@ private:
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
+        value.borrowOrigin = resolved->borrowOrigin;
+        value.borrowArgument = resolved->borrowArgument;
+        value.borrowAccess = resolved->borrowAccess;
         // The callee is an explicit receiver even when a final pack prevents
         // formation of the fixed-arity call plan. MIR stages it before the
         // expanded arguments rather than losing the closure environment.
