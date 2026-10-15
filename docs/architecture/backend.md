@@ -3552,6 +3552,11 @@ paths do not participate in generated identifier hashes. This preserves names
 across checkout and toolchain relocation without conflating same-basename
 external units. Failure-site serialization and runtime descriptor IDs retain
 their existing contract; the additional source rows are compiler metadata.
+Private module implementation roots retain their registering interface as
+loading provenance. Their external identity route extends that interface's
+route with the implementation's package-relative path, also covering files
+included only by the implementation. This provenance is separate from
+dependency/visibility edges and grants no access to private declarations.
 
 Interface-owned static functions use the ordinary static declaration and direct
 call path. Purity comes only from the verified function's `pureVirtual` fact,

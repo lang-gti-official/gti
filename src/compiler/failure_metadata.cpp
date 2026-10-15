@@ -244,6 +244,27 @@ selectRoutes(const SourceGraph &graph) {
       next.orderingBytes = encodeRoute(next.edges);
       queue.push({.unit = dependency.target, .route = std::move(next)});
     }
+    for (const SourceImplementation &implementation :
+         graph.moduleImplementations()) {
+      if (implementation.interfaceUnit != candidate.unit)
+        continue;
+      const SourceUnit *unit =
+          graph.findUnit(implementation.implementationUnit);
+      if (unit == nullptr || !unit->packageRelativePath)
+        continue;
+      const auto relative =
+          canonicalLogicalRelativePath(*unit->packageRelativePath);
+      if (!relative)
+        continue;
+      SourceRoute next = candidate.route;
+      // A registration is a stable source route, but must never grant the
+      // interface or its importers access to private implementation names.
+      next.edges.push_back(
+          {.spelling = "<module-implementation>/" + *relative});
+      next.orderingBytes = encodeRoute(next.edges);
+      queue.push({.unit = implementation.implementationUnit,
+                  .route = std::move(next)});
+    }
   }
   return selected;
 }
@@ -256,7 +277,7 @@ externalLogicalName(const SourceUnit &unit, const SourceManager &sources,
   const auto route = routes.find(unit.id);
   if (source == nullptr || route == routes.end()) {
     errors.push_back("failure metadata cannot resolve source bytes or an "
-                     "include route for source unit " +
+                     "source route for source unit " +
                      std::to_string(unit.id));
     return std::nullopt;
   }
