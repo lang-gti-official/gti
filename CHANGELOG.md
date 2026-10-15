@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.441.1 — Nested conditional results in loops
+
+- Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
+  constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
+  and the class result has no destructor, as in
+  `for (...) { Pod t = c ? fresh(i) : (i > 1 ? fresh(2) : Pod(i)); }` or
+  `total += (c ? fresh(i) : (i > 1 ? fresh(2) : Pod(i))).x;`. The nested
+  arm worked the first time and stopped the program the next time it ran.
+  The nested conditional may sit in either arm or both, nest further, and be
+  bound, read through a field, passed on, assigned or returned.
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called on such a nested
+  conditional, as in `(c ? fresh(1) : (d ? fresh(2) : Pod(3))).read()`,
+  including in loops and with `mut` and consuming (`&&`) methods.
+
 ## 0.441.0 — `?` on payload enums
 
 - `?` works directly on a payload enum that has a `std::tryable` block, such

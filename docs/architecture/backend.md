@@ -933,14 +933,16 @@ region's start; and their ordinary edges stay inside or reach the entry. An
 Invoke's failure edge leaves through its own failure record's cleanup and a
 `Return` leaves the body (a propagated `?` residual), both before the arm
 publishes anything. An owning join whose arms evaluate inputs first keeps the
-ordinary owned-temporary publication it already has. When a passive join's
-single move reaches neither the binding nor the prepared argument
-terminal, the moved value is staged in its own representation-only slot and
-the join's representation ends right after. That staged slot then serves a
-return, field read, assignment or field initializer exactly as a fresh
-result's slot does. In the failure form too, a Return of that staged value
-publishes the caller's result from the slot; the staging Move does not
-publish it.
+ordinary owned-temporary publication it already has. The outer arm's move
+out of a nested join is that join's single move, and the nested join's
+representation ends right after it, so a loop that evaluates the conditional
+again finds both storages empty. When a passive join's single move reaches
+neither the binding nor the prepared argument terminal, the moved value is
+staged in its own representation-only slot and the join's representation ends
+right after. That staged slot then serves a return, field read, assignment or
+field initializer exactly as a fresh result's slot does. In the failure form
+too, a Return of that staged value publishes the caller's result from the
+slot; the staging Move does not publish it.
 A member call on the joined value itself, as in `(c ? a() : b()).read()`,
 has a different MIR shape. MIR gives the join temporary a full-expression
 value obligation, stages the temporary as the call's receiver (a read-only
@@ -954,8 +956,10 @@ lifecycle event beyond its prepared input transfers, and for a copied place,
 when the `Initialize` follows the producer directly or opens its Invoke
 success block. Each constructs the temporary directly, a call that can fail
 only on success, and the receiver borrows it as `directTemporaryReceiver`
-borrows a fresh result's slot. A nested-join arm and a moved named local are
-not admitted in this form.
+borrows a fresh result's slot. An arm may also move out of a nested
+cleanup-free join, whose storage has no obligation either. That move is the
+nested join's single move, and its writer ends the nested storage right after
+constructing the temporary. A moved named local is not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
