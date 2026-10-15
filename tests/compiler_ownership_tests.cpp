@@ -20279,8 +20279,9 @@ Resource global_resource{};
           }
         }
       }
-      expect(checkedCarrier && checkedEarlyEnd,
-             "cleanup-bearing temporary exercises marker and early-end proofs");
+      expect(checkedCarrier && checkedEarlyEnd == dependentCleanup,
+             "temporary exercises marker proofs and retains owners through "
+             "drop exactly when its cleanup depends on them");
     }
   }
 
