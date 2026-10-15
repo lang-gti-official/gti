@@ -85,19 +85,16 @@ Pod parameters(bool left, Pod a, Pod b) {
   return left ? std::move(a) : std::move(b);
 }
 
-// One moved arm beside a construction, a copy, a call or a nested join.
-// Arm arguments are computed first: an arm whose argument computation can
-// fail is not this join's shape.
+// One moved arm beside a construction, a copy, a call or a nested join. The
+// other arm's checked argument is computed inside that arm.
 int mixed(bool left, int one, int two) {
-  int three = two + 1000;
-  int four = one + 2000;
   Pod a{one};
   Pod b{two};
   Pod c{one + 1};
   Pod d{two + 1};
-  Pod built = left ? std::move(a) : Pod(three);
+  Pod built = left ? std::move(a) : Pod(two + 1000);
   Pod copied = left ? b : std::move(c);
-  Pod called = left ? fresh(four) : std::move(d);
+  Pod called = left ? fresh(one + 2000) : std::move(d);
   return built.read() + copied.read() * 3 + called.read() * 5 + b.read();
 }
 
