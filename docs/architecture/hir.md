@@ -299,6 +299,24 @@ the other arm is terminal panic. HIR verification checks the exact receiver,
 referent type, access, plan and transfer identities, including the absence of
 a referent copy/move. No public type spelling supplies these rules.
 
+Prefix `?` through `std::tryable`
+([ADR 029](../decisions/029-tryable-propagation.md)) lowers to a
+`Propagation` value with a `HirPropagationPlan`. The plan has five steps:
+- the operand;
+- an ordinary static call of the block's `has_value`, borrowing it;
+- `take_value` and `take_residual` calls, each consuming it on its own path;
+- the residual return: an implicit construction of the return type, or the
+  residual itself.
+
+A temporary operand is borrowed in place and moved into the consuming call.
+An explicit `std::move(place)` leaves the place in place: the test borrows it,
+and each consuming call receives its own move of it. A named operand is
+borrowed and copied. HIR verification checks:
+- each call against the semantic record's block function and its argument
+  kind;
+- that every step belongs to the propagation's full expression;
+- the residual construction's identity.
+
 `expect(message)` uses the same selected-combinator record and eager input
 contract, with receiver then counted message rather than a mapper. Its success
 arm extracts/moves the active owned value, borrows the reference success, or

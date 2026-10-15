@@ -3566,6 +3566,18 @@ private:
   [[nodiscard]] bool analyzeProtocolOperationCall(const Call &expr,
                                                   const QualifiedName &callee,
                                                   ConceptId id);
+  // Prefix `?` through the prelude's `std::tryable` protocol concept.
+  [[nodiscard]] std::optional<ConceptId> tryableConcept() const;
+  [[nodiscard]] std::optional<ResolvedCallInfo>
+  protocolOperationCall(const RegisteredConformance &conformance,
+                        const std::vector<SemanticType> &binding,
+                        std::size_t operation) const;
+  [[nodiscard]] bool
+  selectResidualReturn(const Unary &expr, const SemanticType &returnType,
+                       const SemanticType &residualType,
+                       std::optional<ResolvedConstructionInfo> &construction);
+  [[nodiscard]] SemanticType
+  analyzeTryablePropagation(const Unary &expr, const SemanticType &operandType);
   void reportConformanceError(const Token &site, std::string message,
                               const Token *related = nullptr,
                               std::string relatedMessage = {});

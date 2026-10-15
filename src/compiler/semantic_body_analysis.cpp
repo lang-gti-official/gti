@@ -9973,16 +9973,7 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
     }
     if (operandType.kind != SemanticType::Expected ||
         operandType.arguments.size() != 2) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
-          "Error propagation requires an 'expected<T, E>' operand, but "
-          "received '" +
-              typeSpelling(operandType) + "'.");
-      diagnostic.hints.emplace_back(
-          "Apply '?' to a fallible result, or handle this value without "
-          "error propagation.");
-      diagnostics.emplace_back(std::move(diagnostic));
-      currentType = SemanticType::Unknown;
+      currentType = analyzeTryablePropagation(expr, operandType);
       return;
     }
     if (currentReturnType.kind != SemanticType::Expected ||

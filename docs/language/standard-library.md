@@ -69,6 +69,7 @@ public surface includes:
 | `std::copy_constructible<T>` | Copy construction is available; copy assignment is not implied |
 | `std::move_constructible<T>` | Move construction is available; move assignment is not implied |
 | `std::copyable<T>` | Copy construction and copy assignment are both available |
+| `std::tryable<T>` | The protocol concept of prefix `?` for every type except built-in `expected`; a type supplies `value_type`, `residual_type`, `has_value`, `take_value` and `take_residual` through a `for concept` block ([ADR 029](../decisions/029-tryable-propagation.md)) |
 
 `expected<T, E>` and `unexpected(error)` currently have language-level syntax
 and semantics rather than being ordinary prelude templates.

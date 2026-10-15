@@ -81,6 +81,7 @@ enum class HirValueKind {
   DereferenceSet,
   PlaceSet,
   ExpectedPropagation,
+  Propagation,
   MemberAccess,
   Grouping,
   Index,
@@ -205,6 +206,23 @@ struct HirExpectedPropagationPlan {
   bool moves = false;
 };
 
+// Prefix `?` through `std::tryable`. Every step is an ordinary call of the
+// selected conformance block's function, in the operand's full expression.
+// `test` borrows the operand; `output` and `residual` each consume it on
+// their own path. A temporary is consumed in place, an explicitly moved place
+// through a move of that place (`movedPlace`), and a named place by copy.
+// `residualReturn` constructs the enclosing return value from the residual;
+// zero means the residual is that value itself.
+struct HirPropagationPlan {
+  HirValueId operand = 0;
+  HirValueId movedPlace = 0;
+  HirValueId test = 0;
+  HirValueId output = 0;
+  HirValueId residual = 0;
+  HirValueId residualReturn = 0;
+  bool consumesOperand = false;
+};
+
 struct HirValue {
   HirValueId id = 0;
   HirValueKind kind = HirValueKind::Literal;
@@ -250,6 +268,7 @@ struct HirValue {
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
   std::optional<HirExpectedPropagationPlan> expectedPropagation;
+  std::optional<HirPropagationPlan> propagation;
   // Eager call inputs evaluated in source order before a synthesized branch.
   // Unlike branch operands these retain their full-expression cleanup on both
   // paths, including when the conditional mapper is never invoked.

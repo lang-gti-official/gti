@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.436.0 — Consuming payload-enum matches
+## 0.437.0 — Consuming payload-enum matches
 
 - A `switch` over a temporary or over an explicit `std::move(name)` now
   consumes its payload enum. By-value bindings take ownership of their fields
@@ -30,8 +30,48 @@ for what minor and patch releases mean.
 - Switching over a temporary enum whose payload has cleanup no longer fails in
   native compilation, and copyable payloads bound from a consumed subject are
   moved rather than copied.
-- Example 159 moves owned strings out of messages and takes a value out of a
+- Example 160 moves owned strings out of messages and takes a value out of a
   source-defined optional.
+
+## 0.436.0 — `?` for any type through `std::tryable`
+
+- Prefix `?` now works on any type with a `std::tryable` conformance block,
+  not only on `expected`. The prelude declares the protocol:
+  `concept tryable<T> { typename value_type; typename residual_type; bool has_value(T& value); value_type take_value(T value); residual_type take_residual(T value); };`.
+- A type opts in from outside its own declaration, with a block such as
+  `for <std::copyable T> concept std::tryable<Checked<T>> { ... }`.
+- `?operand` evaluates the operand once. On success it produces
+  `take_value`'s result. On failure the enclosing function returns
+  `take_residual`'s residual, as `R result = residual;` would initialize its
+  return type.
+  - The residual can be the return type itself, or the return type can take
+    it through one `implicit` constructor.
+  - Earlier temporaries in the expression, then the enclosing scope, are
+    cleaned up first, as for `expected`.
+- The operand is passed like a by-value argument. A temporary or
+  `?std::move(x)` is consumed. A named operand is copied and stays usable,
+  and a named move-only operand asks for `std::move`.
+- A `void` `value_type` makes `?status()` a statement.
+- Generic code can use `?` on a `T` under `requires std::tryable<T>`, and
+  name `std::tryable<T>::value_type`.
+- `expected` keeps its existing rule. Moving it onto the protocol needs
+  patterns over built-in types and origin contracts for its borrowed form
+  ([ADR 029](docs/decisions/029-tryable-propagation.md)).
+
+## 0.435.1 — Constructors that move a lambda parameter into a field
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class moves a lambda
+  parameter into a field and the constructor can fail afterwards, for example
+  `Keeper(F f) : callback(std::move(f)), seen(0) { this.seen = call(this.callback); }`,
+  or with a later member initializer that can fail, such as
+  `seen(call(...))`. Lambdas capturing numbers and lambdas capturing structs
+  both failed; copying the lambda (`callback(f)`) already worked.
+- The same fix covers moving an enum value with a payload into a field in a
+  constructor whose body can fail.
+- A lambda field that is moved after another member initializer that can
+  fail, or a lambda capturing a struct that cannot be copied, is still
+  rejected with `GTI-B0001`.
 
 ## 0.435.0 — Protocol concepts over several types
 
