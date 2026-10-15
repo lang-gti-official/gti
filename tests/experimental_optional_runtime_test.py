@@ -13,6 +13,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from native_fixture_build import build_fixture
 
 # (phase, exit code, stdout integers)
 CASES = [
@@ -48,6 +49,20 @@ def main():
             shown = run([str(demo)])
             assert (shown.returncode, shown.stdout) == (0, "42\nmissing\n"), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
+            allocation_binary = pathlib.Path(directory) / f"allocations-{name}"
+            standard = flags[1]
+            optimization = flags[2][1:]
+            built = build_fixture(
+                [str(compiler), str(source.with_name("payload_optional_allocations.gti")),
+                 *flags], allocation_binary,
+                native_sources=[source.with_name("stdlib_adoption_allocation_counts.cpp")],
+                native_arguments=native[1:] if native else (),
+                standard=standard, optimization=optimization,
+                text=True, capture_output=True, check=False, timeout=120)
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            counted = run([str(allocation_binary)])
+            assert (counted.returncode, counted.stdout, counted.stderr) == (0, "", ""), \
+                (name, counted.returncode, counted.stdout, counted.stderr)
             print(f"experimental optional: {name} passed", flush=True)
 
 

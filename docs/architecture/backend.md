@@ -74,6 +74,22 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+Payload alternatives construct in place from their already selected MIR
+operands. The native enum's in-place alternative constructor avoids temporary
+alternative and whole-enum transfers. List initialization preserves operand
+evaluation order. An owning fresh alternative followed immediately by its
+constructor-field `Initialize` may use the final field storage directly: the
+existing publication proof establishes the observation-free empty field shell,
+unique result consumer, result activation, field rollback obligation and exact
+`Reparent`. Adjacency excludes intervening failures or observations. Non-adjacent
+and returned/moved inputs retain their original staged publication. MIR cleanup
+and lifetime events are not removed or rescheduled by this representation choice.
+
+A switch over a payload-enum place observes that place's discriminant even
+when all payloads are passive. It does not first copy the complete enum. Arm
+bindings independently retain their selected copy, borrow or consuming-transfer
+semantics; an ordinary integral enum still uses the scalar switch path.
+
 A staged call receiver can cross the existing scalar conditional-argument
 control flow when its exact origin remains unchanged. The receiver place may be
 a bare local, the exact full-expression slot, or a binding-rooted path of field
