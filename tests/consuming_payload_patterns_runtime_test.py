@@ -6,10 +6,11 @@ owners in every mode. Phase 0 covers prvalue and std::move subjects, tag-only
 and default arms (which drop the consumed enum at their entry), multi-field
 and mixed alternatives, a class payload holding its own owners, a generic enum
 consumed by a source-defined optional's `&&` accessor and by a generic
-function, continue/break/return out of an arm, and a move-only payload without
-cleanup. Phases 1-3 fail inside a binding arm, while a tag-only arm drops its
-enum, and while the subject's other temporaries end; every live owner is
-released exactly once. Example 158 runs as documented.
+function, continue/break/return out of an arm, a move-only payload without
+cleanup, and an alternative whose class owns another payload enum. Phases 1-3
+fail inside a binding arm, while a tag-only arm drops its enum, and while the
+subject's other temporaries end; every live owner is released exactly once.
+Example 158 runs as documented.
 """
 
 import pathlib
@@ -24,7 +25,7 @@ CASES = [
     (0, 0, [1, 1001, -1, 1, 2, -2, 1002, 3, 4, 34, -4, -3, 1003, 5, 30, -5,
             7, -7, 1007, 8, 9, -9, -8, 17, 10, 1010, 2010, -10, 11, 12, -12,
             1011, 13, 1013, 14, -13, -11, 21, -21, 22, -22, 23, -23, 44, 30,
-            31, -31, 1030, -30, 42], None),
+            31, -31, 1030, -30, 42, 80, -80, 80, 81, -81, 1081], None),
     (1, 70, [50, 51, -51, -50], ("ordinary", "divide")),
     (2, 70, [60, 61, -61, -60], ("ordinary", "fragile")),
     (3, 70, [70, 71, 72, -71, -72, -70], ("ordinary", "fragile")),

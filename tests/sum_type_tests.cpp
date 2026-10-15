@@ -1581,6 +1581,25 @@ int main() {
          "a named subject is observed, so a move-only binding stays rejected "
          "with a hint to consume the enum");
 
+  const auto terminal = analyzeWithPrelude(
+      "consuming-terminal-subject.gti", "#include <std/panic>\n" + prefix + R"(
+[[noreturn]] data never() { std::panic("never"); }
+int main() {
+  switch (never()) {
+  case data::some(item):
+    return item.read();
+  default:
+    return 0;
+  }
+}
+)");
+  if (!terminal.canGenerateCode()) {
+    printDiagnostics(terminal);
+  }
+  expect(terminal.canGenerateCode() &&
+             lang::verifyMirProgram(terminal.mir).valid(),
+         "a terminal consumed subject leaves the whole switch unreachable");
+
   const auto generic = analyzeWithPrelude("consuming-generic.gti", R"(
 class resource {
 public:

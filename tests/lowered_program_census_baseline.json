@@ -2324,11 +2324,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 41
       }
+    },
+    "158-consuming-matches.gti": {
+      "declarations": 1353,
+      "bodies": 237,
+      "generated_items": 148,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 31,
+        "callable_adapter": 16,
+        "lifecycle_cleanup": 5,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 94
+      }
     }
   },
   "totals": {
-    "declarations": 113719,
-    "bodies": 17128,
-    "generated_items": 10610
+    "declarations": 115072,
+    "bodies": 17365,
+    "generated_items": 10758
   }
 }
