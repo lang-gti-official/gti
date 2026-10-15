@@ -8243,6 +8243,64 @@ consumer, and release refreshes remain outstanding for the full campaign.
   deterministic layout facts, and O0/O3 runtime parity. The passive first slice
   already has exact construction, exhaustive diagnostics, and runtime parity.
 
+#### Conditional payload dependency sets (2026-10-15 implementation goal)
+
+The borrowed-payload slice is being developed with the owned-composition and
+layout work. Its motivating client is a source-defined result whose success
+stores a checked reference and whose failure owns an error; unrelated sum/view
+types must use exactly the same rules. Accepting reference payload syntax alone
+does not establish this support.
+
+- A dependency set distinguishes **complete and empty** from absent/unknown
+  evidence. Error and unit alternatives do not acquire a fabricated owner.
+  Unknown evidence must never be interpreted as the empty set.
+  Keep real loans origin-bearing; the complete set is a separate value/binding
+  fact that may contain zero, one, or several conditional loan dependencies.
+  Existing unconditional multi-field dependencies remain complete sets, not a
+  forced single-origin representation. Empty evidence identifies the exact
+  constructor alternative and proves every payload field dependency-free.
+- A dependency identifies its source place, access, escape boundary, loan
+  endpoint and transfer/drop behavior. Its destination path includes the
+  exact alternative-qualified payload field identity. Abstract parameter
+  paths describe conditional dependencies, not unconditional live fields.
+- Construction proves the selected alternative's complete set. Movement
+  preserves it; replacement ends the old active dependencies before publishing
+  the new set. A control-flow join unions the conditional alternatives without
+  discarding a possible dependency or inventing a common origin.
+  Nested conditions retain their complete typed alternative/field path.
+  Unknown tags retain every possibly active obligation; only dominating tag
+  evidence may select one alternative. No general Boolean solver is required.
+- Matching first proves the exact active tag. Extracting a reference payload
+  relays the external referent, while borrowing an owned payload protects enum
+  storage. Consuming a carrier must not consume the external referent or end a
+  loan transferred into the result.
+- Returning an empty alternative needs no owner contract. A potentially
+  borrowed return still needs exact caller-owned origins for every possible
+  borrowed alternative. Protocol result-origin contracts and propagation carry
+  those same facts; the backend must not infer them from layout or API names.
+
+Current prerequisite work adds protocol operation `borrowed_from` contracts,
+explicit mutable associated reference types, reference-result propagation and
+stable payload field identities. Payload storage admission remains unchanged
+until the conditional-set proof is complete. Required gates include zero-owner
+error/unit construction and return, borrowed success with owned errors,
+mutable exclusivity, replacement and failure cleanup, and malformed MIR that
+removes a dependency or substitutes an origin, tag, access or expired source.
+The runnable example and C++20/23 O0/O1/O2/O3 native matrix must demonstrate the
+usable wrapper, not only metadata formation.
+
+Prerequisite checkpoint evidence: optimized macOS `protocol_concepts` passes
+the shared/mutable generic result-origin cases and malformed forwarding-chain
+checks. The shared/mutable class-wrapper cases in `tryable_propagation` pass
+their semantic/HIR/MIR checks, including guard destruction and mutable alias
+negatives. The full test is **not yet passing**: direct enum temporary
+propagation now verifies but its native staging is outside the backend's
+current representation vocabulary. A named passive enum operand additionally
+exposes a branch-dominance lowering failure. Both regressions remain acceptance
+gates, and example 164 has not yet passed its native matrix. This is an honest
+WIP recovery checkpoint, not permission to admit reference-bearing payloads or
+to integrate the slice.
+
 ### L-ERR-01: Error Propagation Operator
 
 - **State/role:** complete in 0.311.0; `M-LIFE-01`, `D-LANG-01`, and

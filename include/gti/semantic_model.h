@@ -977,6 +977,9 @@ struct EnumeratorInfo {
   bool explicitValue = false;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  // Stable source declaration identities, distinct across alternatives.
+  // Borrow paths use these identities rather than inventing class fields.
+  std::vector<SymbolId> payloadSymbols;
 };
 
 struct EnumTypeInfo {

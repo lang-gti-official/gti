@@ -3488,6 +3488,14 @@ premature or missing loan ending, and a missing or duplicate drop. The backend
 therefore consumes a complete schedule rather than relying on C++ reference
 lifetime rules.
 
+The generated `has_value` observation for source-defined propagation uses the
+same schedule for a fresh payload-enum value. Its materialization may be the
+exact typed `PayloadConstruct` producer, checked against the enum's alternative
+table, rather than a class constructor. The complete full-expression lifetime
+obligation remains mandatory, including for passive payloads; the call loan
+still ends on every normal and failure successor. This does not permit an
+observation to return or retain a reference to temporary enum storage.
+
 An ordinary-call or constructor argument may use `MoveBorrowedTemporary` only
 for the corresponding HIR input: one exact fresh GTI call result of the same
 concrete class type as the selected by-value parameter. Lowering assigns the

@@ -335,6 +335,7 @@ module.exports = grammar({
           "using",
           field("name", $.identifier),
           "=",
+          optional("mut"),
           field("target", $.type),
           ";",
         ),

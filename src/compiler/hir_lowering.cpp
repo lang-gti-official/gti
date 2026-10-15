@@ -932,7 +932,8 @@ private:
       HirEnumerator variant{.source = enumerator.declaration,
                             .value = enumerator.value,
                             .variantIndex = enumerator.variantIndex,
-                            .payloadTypes = enumerator.payloadTypes};
+                            .payloadTypes = enumerator.payloadTypes,
+                            .payloadSymbols = enumerator.payloadSymbols};
       for (const SemanticType &payload : enumerator.payloadTypes) {
         variant.payloadRequiresActiveCleanup.push_back(
             instanceProvider->requiresActiveCleanupFor(payload));
@@ -4705,15 +4706,49 @@ private:
         kind = consumes ? HirCallInputKind::CopyValue
                         : HirCallInputKind::ReadBorrow;
       }
+      // Passive enum transport is the ordinary by-value scalar path; it
+      // does not manufacture a prepared owning-parameter obligation. The
+      // selected Move still consumes a moved source exactly once.
+      if (consumes && movedOperand.info.type.kind == SemanticType::Enum &&
+          movedOperand.info.traits.drop == DropKind::Trivial &&
+          movedOperand.info.traits.copyable &&
+          !movedOperand.info.traits.containsBorrowedState)
+        kind = HirCallInputKind::Value;
+      if (!consumes && kind == HirCallInputKind::ReadBorrow) {
+        const auto source = std::find_if(body.values.begin(), body.values.end(),
+                                         [&](const HirValue &candidate) {
+                                           return candidate.id == argument;
+                                         });
+        if (source == body.values.end() || !source->place) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        // The protocol test reads the wrapper's storage before either arm
+        // consumes it. Give this synthetic occurrence the exact checked
+        // place, rather than inheriting the later move's ownership event.
+        source->ownership = OwnershipEvent{.kind = OwnershipEventKind::Read,
+                                           .place = *source->place};
+      }
+      const bool borrowed = call.returnType.kind == SemanticType::Reference &&
+                            call.returnType.arguments.size() == 1;
+      const SemanticType resultType =
+          borrowed ? call.returnType.arguments.front() : call.returnType;
       HirValue value{
           .id = nextValueId++,
           .kind = HirValueKind::Call,
-          .info = {.type = call.returnType,
-                   .category = ValueCategory::Value,
-                   .access = AccessMode::ReadOnly,
-                   .traits = instanceProvider->traitsFor(call.returnType)},
+          .info = {.type = resultType,
+                   .category =
+                       borrowed ? ValueCategory::Place : ValueCategory::Value,
+                   .access =
+                       borrowed ? call.borrowAccess : AccessMode::ReadOnly,
+                   .traits = instanceProvider->traitsFor(resultType)},
           .operands = {argument},
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
+          .borrowOrigin = call.borrowOrigin,
+          .borrowArgument = call.borrowArgument,
+          .borrowAccess = call.borrowAccess,
+          .borrowArguments = call.borrowArguments,
+          .borrowFields = call.borrowFields,
           .dispatch = CallDispatch::Static,
           .callPlan =
               HirCallPlan{.receiver = std::nullopt,

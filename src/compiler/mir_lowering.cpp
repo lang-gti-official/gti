@@ -235,6 +235,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     for (const HirEnumerator &variant : enumeration.enumerators) {
       lowered.variants.push_back({.variantIndex = variant.variantIndex,
                                   .payloadTypes = variant.payloadTypes,
+                                  .payloadSymbols = variant.payloadSymbols,
                                   .payloadRequiresActiveCleanup =
                                       variant.payloadRequiresActiveCleanup});
     }
