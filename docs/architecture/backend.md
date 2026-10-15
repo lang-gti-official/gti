@@ -2547,6 +2547,20 @@ breaks adjacency. An owning result from a failure-free call
 arms its value obligation with the call's own `Initialize` event, as a
 failure-free constructor does, and the field `Initialize` reparents it into the
 field's rollback. The value then moves from its lifetime slot into the field.
+Either kind of call may be a source member whose receiver passes the shared
+receiver proofs: a typed borrow, as in `kept(source.make())` or through a
+reference parameter, or a consuming (`&&`) member's `Once` receiver, as in
+`kept(std::move(box).release())` or `kept(Single(v).release())`. Neither
+receiver is transferred at the call. A consumed receiver's full-expression
+`Drop` follows the field `Initialize`, and MIR's failure edge from that drop
+rolls the published field back; the backend emits that schedule unchanged.
+Field declaration defaults such as `Tracked kept = Source(3).make();` run as
+the same constructor-initializer stages. A cleanup-free receiver moved out of
+a binding is instead a prepared parameter that the call transfers out. The
+consuming-receiver proof does not admit that transport yet, so this proof
+still refuses `kept(std::move(source).take())` when `source`'s class needs no
+cleanup. Both producers also require static dispatch, so a virtual member
+call's result has no constructor-field route.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;
