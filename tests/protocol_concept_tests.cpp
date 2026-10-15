@@ -391,6 +391,52 @@ int apply<A, B>(A& value) requires scaled<A, B> {
 int main() { return 0; }
 )gti",
            "GTI-S2005", "expects 'scaled<A, B>::factor_type'");
+  // An enum template is a pattern like a class template: its instances
+  // select the block, and a concrete instance overlaps it.
+  const std::string slot = R"gti(
+concept sized<T> {
+  typename count_type;
+  count_type count(T& value);
+};
+enum class Slot<T> {
+  empty,
+  full(T value),
+};
+for <T> concept sized<Slot<T>> {
+  using count_type = int;
+  int count(Slot<T>& value) {
+    switch (value) {
+    case Slot<T>::full:
+      return 1;
+    case Slot<T>::empty:
+      return 0;
+    }
+  }
+};
+)gti";
+  accepted(slot + R"gti(
+sized<Slot<int>>::count_type total(Slot<int>& value) {
+  return sized<Slot<int>>::count(value);
+}
+sized<T>::count_type counted<T>(T& value) requires sized<T> {
+  return sized<T>::count(value);
+}
+int main() {
+  Slot<int> full = Slot<int>::full(3);
+  Slot<bool> empty = Slot<bool>::empty;
+  return total(full) + counted(empty) - 1;
+}
+)gti",
+           "an enum-template block should serve its instances");
+  rejected(slot + R"gti(
+for concept sized<Slot<int>> {
+  using count_type = int;
+  int count(Slot<int>& value) { return 2; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "overlaps another");
+
   // A constraint a block's pattern fails names the block's own parameter.
   rejected(R"gti(
 concept wrapped<T> {

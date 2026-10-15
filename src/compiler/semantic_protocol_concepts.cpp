@@ -292,11 +292,10 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
              classInfo(pattern.classId).exactSpecializationPrimary == 0) ||
             (pattern.kind == SemanticType::Enum && pattern.enumId != 0 &&
              pattern.enumId <= enums.size());
-        const bool shape =
-            nominalTemplate && pattern.valueArguments.empty() &&
-            !pattern.arguments.empty() &&
-            std::all_of(pattern.arguments.begin(), pattern.arguments.end(),
-                        ownParameter);
+        const bool shape = nominalTemplate && pattern.valueArguments.empty() &&
+                           !pattern.arguments.empty() &&
+                           std::all_of(pattern.arguments.begin(),
+                                       pattern.arguments.end(), ownParameter);
         if (!shape) {
           reportConformanceError(
               argument.name.last(),

@@ -4699,7 +4699,7 @@ private:
         // A consuming step takes the operand exactly as any by-value argument
         // would: its own move of a moved place or temporary, or a copy of a
         // named place, and a value without cleanup simply by value.
-        argument = movedPlace != 0          ? consumedMove()
+        argument = movedPlace != 0        ? consumedMove()
                    : plan.consumesOperand ? temporaryMove()
                                           : *operand;
         const std::optional<std::vector<HirCallArgument>> ordered =

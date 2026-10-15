@@ -1996,11 +1996,11 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct) {
           // A payload enum's alternative is its ordinary construction.
-          exactProducer = argumentPlace != nullptr &&
-                          argumentPlace->type.kind == SemanticType::Enum &&
-                          producer->info.type == argumentPlace->type &&
-                          program.findPayloadEnum(argumentPlace->type) !=
-                              nullptr;
+          exactProducer =
+              argumentPlace != nullptr &&
+              argumentPlace->type.kind == SemanticType::Enum &&
+              producer->info.type == argumentPlace->type &&
+              program.findPayloadEnum(argumentPlace->type) != nullptr;
         }
         const bool supportedResult =
             supportsEphemeralBorrowResult(functionTarget, instruction.info);

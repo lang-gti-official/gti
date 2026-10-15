@@ -427,7 +427,11 @@ fields are destroyed before the carrier's external loans end.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
-an ordinary GTI function or non-operator method. The compiler materializes the
+an ordinary GTI function or non-operator method. A payload enum's alternative,
+with or without fields, such as `state::engaged(1)` or `state::empty`, and a
+by-value GTI call returning a payload enum produce such a value too, so
+`observe(make_state())` borrows the fresh enum for that call. A scalar-backed
+enum is not an aggregate value and stays excluded. The compiler materializes the
 owned value at its written argument position, begins one read loan, evaluates
 later arguments, invokes the selected callable, ends the loan immediately
 afterward, and retains the value's drop obligation until the enclosing
