@@ -114,6 +114,18 @@ public:
   int read() { return this.value; }
 };
 
+// A destructor body consumes an owner of its own.
+class Closer {
+  int id;
+public:
+  Closer(int id) : id(id) {}
+  ~Closer() {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(this.id));
+    int probed = std::move(owner).probe();
+    std::println("closed");
+  }
+};
+
 int main(int argc, std::vector<std::string> argv) {
   mut int total = 0;
   {
@@ -178,15 +190,24 @@ int main(int argc, std::vector<std::string> argv) {
     Tracked kept = std::move(other).release();
     total += kept.read();
   }
+  {
+    auto consume = [](maybe<Tracked> owner) -> int {
+      return std::move(owner).probe();
+    };
+    total += consume(maybe<Tracked>(Tracked(20)));
+  }
+  {
+    Closer closer = Closer(21);
+  }
   // Failure cleanup. Scenario 1 fails the consuming call itself, 2 the
   // receiver's payload destructor at the end of the full expression, and 3
   // the call and then the payload destructor during its cleanup.
   int scenario = argc - 1;
-  maybe<Tracked> spare = maybe<Tracked>(Tracked(20));
+  maybe<Tracked> spare = maybe<Tracked>(Tracked(22));
   maybe<Fragile> risky = maybe<Fragile>(
-      Fragile(21, scenario == 2 || scenario == 3 ? 0 : 1),
+      Fragile(23, scenario == 2 || scenario == 3 ? 0 : 1),
       scenario == 1 || scenario == 3 ? 0 : 1);
   int divided = std::move(risky).divide();
   std::println("divided");
-  return total + divided - 57;
+  return total + divided - 58;
 }
