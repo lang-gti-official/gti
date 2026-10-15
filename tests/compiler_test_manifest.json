@@ -574,6 +574,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testConditionalTemporaryArgumentBorrows",
+      "suite": "ownership"
+    },
+    {
       "name": "testRetainedBorrowedCallResults",
       "suite": "ownership"
     },
