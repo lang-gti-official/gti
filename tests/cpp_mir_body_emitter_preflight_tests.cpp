@@ -2533,6 +2533,153 @@ void testBorrowedArgumentNestedOwningArgumentAdmission() {
            "admission");
 }
 
+// A borrowed argument stays representation-erased across a later conditional
+// argument that creates a class object for a nested call to borrow. That
+// object lives in its own slot; nothing in its operand may end the outer
+// borrow or the borrowed object's lifetime.
+void testBorrowedArgumentInnerTemporaryAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_argument_inner_temporary.gti";
+  std::ifstream input(path);
+  expect(input.good(), "the inner temporary fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "the inner temporary fixture must pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the inner temporary fixture needs a complete backend "
+         "representation");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None)
+      entry = &candidate;
+  }
+  expect(entry != nullptr, "the fixture must retain its entry body");
+  if (entry == nullptr)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "borrowed arguments before a nested call borrowing a new object "
+         "should stay admissible");
+
+  // Each class temporary's value drop obligation names its slot and full
+  // expression. A value-rooted one with a call-argument loan is an outer
+  // borrowed argument; a hidden slot belongs to a conditional operand.
+  const lang::MirBody &body = entry->body;
+  const auto valueDrop =
+      [&](lang::MirPlaceId place) -> const lang::MirDropObligation * {
+    for (const lang::MirDropObligation &drop : body.dropObligations)
+      if (drop.kind == lang::MirDropObligationKind::Value &&
+          drop.place == place)
+        return &drop;
+    return nullptr;
+  };
+  const auto rooted = [&](lang::MirPlaceId id, lang::MirPlaceRootKind root) {
+    const lang::MirPlace *place = body.findPlace(id);
+    return place != nullptr && place->root == root;
+  };
+  struct Outer {
+    lang::MirLoanId loan = 0;
+    const lang::MirDropObligation *drop = nullptr;
+  };
+  std::vector<Outer> outers;
+  for (const lang::MirLoan &loan : body.loans) {
+    const lang::MirDropObligation *drop = valueDrop(loan.source);
+    if (loan.kind == lang::MirLoanKind::CallArgument && drop != nullptr &&
+        rooted(loan.source, lang::MirPlaceRootKind::Value))
+      outers.push_back({loan.id, drop});
+  }
+  const auto outerOf = [&](lang::MirPlaceId place) -> const Outer * {
+    const lang::MirDropObligation *inner = valueDrop(place);
+    if (inner == nullptr ||
+        !rooted(inner->place, lang::MirPlaceRootKind::Temporary))
+      return nullptr;
+    for (const Outer &outer : outers)
+      if (outer.drop->fullExpression == inner->fullExpression)
+        return &outer;
+    return nullptr;
+  };
+  // Producers activating a hidden slot, and normal-path ends of a hidden
+  // slot's loan, whose full expression also borrows an outer temporary. A
+  // failure path ends the outer borrow as well and never reaches the outer
+  // call.
+  std::vector<std::pair<lang::MirInstructionId, const Outer *>> producers;
+  std::vector<std::pair<lang::MirInstructionId, const Outer *>> loanEnds;
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+          instruction.loan && block.failureParameter == 0) {
+        const lang::MirLoan *loan = body.findLoan(*instruction.loan);
+        const Outer *outer = loan == nullptr ? nullptr : outerOf(loan->source);
+        if (outer != nullptr)
+          loanEnds.emplace_back(instruction.id, outer);
+        continue;
+      }
+      if (instruction.kind != lang::MirInstructionKind::Call &&
+          instruction.kind != lang::MirInstructionKind::Construct)
+        continue;
+      for (const lang::MirDropObligation &drop : body.dropObligations) {
+        const bool activates =
+            instruction.successResultDrop == drop.id ||
+            std::any_of(instruction.lifecycle.begin(),
+                        instruction.lifecycle.end(),
+                        [&](const lang::MirLifecycleEvent &event) {
+                          return event.kind ==
+                                     lang::MirLifecycleEventKind::Initialize &&
+                                 event.target == drop.id;
+                        });
+        const Outer *outer = activates ? outerOf(drop.place) : nullptr;
+        if (outer != nullptr)
+          producers.emplace_back(instruction.id, outer);
+      }
+    }
+  }
+  expect(producers.size() == 10,
+         "the fixture should create ten objects in conditional operands "
+         "after a borrowed temporary");
+  expect(loanEnds.size() == 3,
+         "the fixture should end three such objects' argument loans in "
+         "their operands");
+
+  const auto admitted = [&](lang::MirInstructionId id, const Outer &outer,
+                            bool producer) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != entry->id)
+        continue;
+      lang::MirInstruction *instruction =
+          findPreflightInstruction(function.body, id);
+      if (producer)
+        instruction->lifecycle.push_back(
+            {.kind = lang::MirLifecycleEventKind::TransferOut,
+             .source = outer.drop->id});
+      else
+        instruction->loan = outer.loan;
+      expect(lang::rebuildMirValueUses(function.body),
+             "the forged inner temporary body should retain a rebuildable "
+             "use index");
+    }
+    return lang::CppMirBodyEmitter(forged, map)
+        .supportsFailureBodyText(address);
+  };
+  for (const auto &[id, outer] : producers)
+    expect(!admitted(id, *outer, true),
+           "a conditional operand's producer that also takes the borrowed "
+           "object must fail admission");
+  for (const auto &[id, outer] : loanEnds)
+    expect(!admitted(id, *outer, false),
+           "a conditional operand that ends the outer argument's borrow "
+           "must fail admission");
+}
+
 void testConditionalExpectedArgumentReceiverAdmission() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/conditional_expected_argument_receiver.gti";
@@ -6272,6 +6419,8 @@ constexpr NamedTest kTests[] = {
      testBorrowedArgumentFallibleConditionAdmission},
     {"testBorrowedArgumentNestedOwningArgumentAdmission",
      testBorrowedArgumentNestedOwningArgumentAdmission},
+    {"testBorrowedArgumentInnerTemporaryAdmission",
+     testBorrowedArgumentInnerTemporaryAdmission},
     {"testConditionalExpectedArgumentReceiverAdmission",
      testConditionalExpectedArgumentReceiverAdmission},
     {"testFreshClassPayloadOperandStaging",
