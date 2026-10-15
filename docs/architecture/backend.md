@@ -282,13 +282,19 @@ Checked references to raw pointers remain outside the current language slice;
 the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
 Failure-free passive C-compatible call results share one consumer proof for
-bare assignment, discard, and unchanged return. The exact record/type/signature
+bare assignment, a single enum payload field, discard, and unchanged return.
+The exact record/type/signature
 must agree, no result cleanup obligation may be invented, and return permits
 only the existing passive cleanup tail. A return writes caller-provided result
 storage at its Call; discard still executes the foreign call. Assignment and
 discard use byte-preserving representation transfer rather than native
 memberwise pointer reads. Neither source default construction nor owning-result
 transport is inferred from this passive representation rule.
+The payload consumer additionally proves the exact typed alternative/field,
+sole SSA use without value-rooted storage, and producer dominance/order. The
+call executes into its passive representation at its original MIR position;
+later payload operands cannot reorder it. Missing or duplicated uses, changed
+tags/types, and newly fallible payload publication fail representation admission.
 
 Checked class-payload extraction can construct a function's exact return result
 at its existing MIR Call, without an intermediate object or a second source
