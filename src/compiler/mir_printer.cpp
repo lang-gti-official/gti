@@ -1618,6 +1618,11 @@ private:
     optional(value.enumVariant);
     output << " payload-index=";
     optional(value.payloadIndex);
+    output << " payload-extraction=";
+    if (value.payloadExtractionKind)
+      output << static_cast<unsigned>(*value.payloadExtractionKind);
+    else
+      output << '-';
     output << " intrinsic=" << name(value.intrinsic)
            << " function-pointer-function=";
     optional(value.functionPointerFunctionTarget);

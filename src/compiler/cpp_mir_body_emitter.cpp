@@ -38198,7 +38198,9 @@ private:
     // then transfers the enum's obligation out and retires the shell.
     const MirOperand &subject = extract.operands.front();
     const bool consuming = subject.kind == MirOperandKind::Move;
-    if (consuming) {
+    const bool moveObject =
+        extract.payloadExtractionKind == PayloadExtractionKind::MoveValue;
+    if (moveObject) {
       output << "std::move(";
     }
     output << "::gti_internal::backend::payload_get<" << variant->index + 1
@@ -38214,7 +38216,7 @@ private:
     if (cppRequiresBytePreservingTransport(
             program, variant->fieldTypes.at(*extract.payloadIndex)))
       output << ".get()";
-    if (consuming) {
+    if (moveObject) {
       output << ')';
     }
   }
