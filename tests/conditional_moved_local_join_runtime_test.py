@@ -24,8 +24,8 @@ def moved_local_join_cases(name="conditional_moved_local_join"):
     # shape's result is weighted differently, so a value moved out of the
     # other arm's local, or read from storage the arm did not write, changes
     # the sums. Each failure-form body's guard is destroyed on return.
-    shapes = trace(106943, -31, -34, -75, 1092,
-                   169983, -131, -134, -275, 3920)
+    shapes = trace(110102, -31, -34, -75, 1092,
+                   186298, -131, -134, -275, 3920)
     # A failure leaves no result, and cleanup destroys only what was
     # constructed before it.
     expected = [

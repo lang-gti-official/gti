@@ -6543,20 +6543,20 @@ result, is covered too. A failing callee in an arm leaves no result.
 removed, duplicated and conditional input transfers and a forged result
 activation, which MIR verification also rejects, and a forged consuming
 capability on a borrowed receiver.
-`conditional_moved_local_join_runtime` runs the same eight configurations
-over a cleanup-free class value that each arm of a conditional moves out of a
-whole named local, a by-value parameter included. Each shape runs through both
-arms, bound, assigned, passed on, read through a field, used as a member-call
-receiver and returned, in plain and failure-form bodies, beside a
-construction, copy, call or nested-join arm, with the moved-from locals
-reassigned afterwards and inside a loop. Failures after a bound join, before a
-returned join and in the joined value's member call destroy only what was
-constructed. `testCleanupFreeConditionalMovedLocalArms` in the emitter text
-suite checks that each moved local's binding drop ends its shell exactly once,
-and that the arm proofs themselves refuse a removed, weakened or retargeted
-ownership event, a lifecycle event on the `Move`, forged cleanup on the
-moved-from local and a conditional activation, all of which MIR verification
-also rejects.
+`conditional_moved_local_join_runtime` runs the same eight configurations over
+a cleanup-free class value that each arm of a conditional moves out of a whole
+named local, a by-value parameter included. Each shape runs through both arms,
+bound, assigned, passed on, read through a field, used as a member-call
+receiver (also for a class holding a view) and returned, in plain and
+failure-form bodies, beside a construction, copy, call or nested-join arm, with
+the moved-from locals reassigned afterwards and inside a loop. Failures after a
+bound join, before a returned join and in the joined value's member call
+destroy only what was constructed. `testCleanupFreeConditionalMovedLocalArms`
+in the emitter text suite checks that each moved local's binding drop ends its
+shell exactly once, and that the arm proofs themselves refuse a removed,
+weakened or retargeted ownership event, a lifecycle event on the `Move`, forged
+cleanup on the moved-from local and a conditional activation, all of which MIR
+verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
