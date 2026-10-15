@@ -134,6 +134,7 @@ ConstantFoldingPass::evaluate(const HirValue &value) const {
   case HirValueKind::DereferenceSet:
   case HirValueKind::PlaceSet:
   case HirValueKind::ExpectedPropagation:
+  case HirValueKind::Propagation:
   case HirValueKind::MemberAccess:
   case HirValueKind::Index:
   case HirValueKind::IndexSet:

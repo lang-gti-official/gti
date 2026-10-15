@@ -1,0 +1,134 @@
+// Prefix `?` through `std::tryable` on user types. Construction prints a
+// tracked id and destruction its negation, so each phase's trace follows from
+// this source alone: an operand is consumed exactly once, by take_value on
+// success or take_residual on failure, and the failure path cleans the full
+// expression's earlier temporaries and then the enclosing scope.
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+};
+
+// A result whose tag traces the operand's lifetime.
+class Checked<T> {
+public:
+  T value;
+  int code;
+  Tracked tag;
+  Checked(T payload, int id, int failure)
+      : value(payload), code(failure), tag(Tracked(id)) {}
+};
+
+for <std::copyable T> concept std::tryable<Checked<T>> {
+  using value_type = T;
+  using residual_type = Rejected;
+  bool has_value(Checked<T>& result) { return result.code == 0; }
+  T take_value(Checked<T> result) { return result.value; }
+  Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
+};
+
+// A status with nothing to produce: `?` on it is a statement.
+struct Done {
+  int code;
+  Done(int value) : code(value) {}
+};
+
+for concept std::tryable<Done> {
+  using value_type = void;
+  using residual_type = Rejected;
+  bool has_value(Done& done) { return done.code == 0; }
+  void take_value(Done done) {}
+  Rejected take_residual(Done done) { return Rejected(done.code); }
+};
+
+// A copyable result: a named operand is copied, not consumed.
+struct Flag {
+  int value;
+  int code;
+  Flag(int payload, int failure) : value(payload), code(failure) {}
+};
+
+for concept std::tryable<Flag> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Flag& flag) { return flag.code == 0; }
+  int take_value(Flag flag) { return flag.value; }
+  Rejected take_residual(Flag flag) { return Rejected(flag.code); }
+};
+
+class Status {
+public:
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected rejected) : code(rejected.code) {}
+};
+
+Checked<int> make(int id, int value, int failure) {
+  return Checked<int>(value, id, failure);
+}
+
+Done check(int failure) { return Done(failure); }
+
+Status successes() {
+  int first = ?make(1, 10, 0);
+  Checked<int> held = make(2, 20, 0);
+  int second = ?std::move(held);
+  std::println(std::to_string(first + second));
+  ?check(0);
+  Flag flag{5, 0};
+  int twice = ?flag + ?flag;
+  std::println(std::to_string(twice));
+  return Status(0);
+}
+
+Status early(int phase) {
+  Tracked guard{5};
+  int first = ?make(3, 30, 0);
+  if (phase == 2) {
+    int total = Tracked(8).read() + ?make(9, 90, 2);
+    std::println(std::to_string(total));
+  }
+  ?check(phase == 3 ? 4 : 0);
+  int second = ?make(4, 40, 7);
+  std::println(std::to_string(first + second));
+  return Status(0);
+}
+
+// Generic code names the associated type and may constrain it.
+Status forward<T>(T result)
+  requires std::tryable<T> && std::integral<std::tryable<T>::value_type> {
+  std::tryable<T>::value_type value = ?std::move(result);
+  std::println(std::to_string(value));
+  return Status(0);
+}
+
+// The residual is the return type itself.
+Rejected first_failure(int failure) {
+  int value = ?make(11, 110, failure);
+  return Rejected(value);
+}
+
+int run(int phase) {
+  if (phase == 0) {
+    Status status = successes();
+    Status forwarded = forward(make(6, 60, 0));
+    Rejected direct = first_failure(3);
+    return status.code + forwarded.code + direct.code - 3;
+  }
+  return early(phase).code;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}
