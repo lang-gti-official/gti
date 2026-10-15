@@ -6252,8 +6252,10 @@ int main() {
 // propagation. A cleanup-free result read through one field or passed by
 // value, and an owning result read through a field view, therefore publish
 // into the slot a source call's result uses rather than a default-constructed
-// C++ local. An invocation without callable propagation or without its exact
-// lambda target cannot enter backend emission.
+// C++ local. An owning result read inside a short-circuit operand constructs
+// in that operand's conditional temporary. An invocation without callable
+// propagation or without its exact lambda target cannot enter backend
+// emission.
 void testCallableClassResultSlots() {
   const auto frontend =
       analyzeWithStandardLibrary("cpp-mir-callable-class-result-slots.gti", R"(
@@ -6267,11 +6269,15 @@ struct Res {
   ~Res() {}
 };
 int take(Plain p) { return p.id; }
+int operand(bool skip) {
+  auto owned = [](int raw) -> Res { return Res(raw); };
+  return skip || owned(4).id == 4 ? 1 : 0;
+}
 int main() {
   auto read = [](int raw) -> Plain { return Plain(raw); };
   auto pass = [](int raw) -> Plain { return Plain(raw); };
   auto owned = [](int raw) -> Res { return Res(raw); };
-  return read(1).id + take(pass(2)) + owned(3).id - 6;
+  return read(1).id + take(pass(2)) + owned(3).id + operand(false) - 7;
 }
 )");
   expect(frontend.canGenerateCode(), "callable class results verify");
@@ -6339,6 +6345,50 @@ int main() {
            "a forged lambda class result cannot enter backend emission: " +
                what);
   };
+  // The short-circuit operand's result lives in its conditional temporary.
+  const auto operand = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return function.entryKind == lang::ProgramEntryKind::None &&
+               std::any_of(
+                   function.body.blocks.begin(), function.body.blocks.end(),
+                   [](const lang::MirBlock &block) {
+                     return std::any_of(
+                         block.instructions.begin(), block.instructions.end(),
+                         [](const lang::MirInstruction &instruction) {
+                           return instruction.kind ==
+                                      lang::MirInstructionKind::Call &&
+                                  instruction.callableInvocation &&
+                                  instruction.info.type.kind ==
+                                      lang::SemanticType::Class;
+                         });
+                   });
+      });
+  expect(operand != frontend.mir.functionInstances().end() &&
+             supportsSelectedBodyText(frontend.mir, map, operand->id),
+         "a lambda result read inside a short-circuit operand enters "
+         "emission");
+  if (operand != frontend.mir.functionInstances().end() &&
+      supportsSelectedBodyText(frontend.mir, map, operand->id)) {
+    const lang::MirBodyAddress operandAddress{
+        .kind = lang::MirBodyKind::Function, .owner = operand->id};
+    const std::string operandText =
+        operand->mayRaiseDefinedFailure
+            ? emitter
+                  .emitFailureBodyText(operandAddress,
+                                       "callable-class-result-v0", 1)
+                  .text
+            : emitter
+                  .emitBodyText(operandAddress, "callable-class-result-v0", 1)
+                  .text;
+    expect(operandText.find(".construction_address(), "
+                            "__gti_mir_failure_record);") !=
+                   std::string::npos &&
+               operandText.find(", &__gti_mir_v_") == std::string::npos,
+           "the operand's invocation constructs its conditional temporary, "
+           "not an undeclared SSA local");
+  }
   for (const lang::MirInstructionId call : invocations) {
     refused(
         [&](lang::MirInstruction &instruction) {

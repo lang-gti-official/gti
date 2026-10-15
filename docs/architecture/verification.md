@@ -9,6 +9,9 @@
   destructor on the class. Separately, a lambda that was never called failed
   when its body passed a move-only or destructor-bearing temporary by value
   into a class constructor, as in `Ticket(Token(raw))`; calling it built.
+  A destructor-bearing result read inside a short-circuit operand, as in
+  `skip || make(1).id == 1`, passed the vocabulary but produced C++ that named
+  an undeclared SSA local, so the native build failed.
 - **Cause and rule.** The class-result slots that a source call's result uses
   (`classSsaLifetimeSlot`, `valueRootedClassCallResultSlot` and
   `stagedClassResultForSource`) admitted only function-target producers, so
@@ -17,7 +20,9 @@
   callable value invocation whose verified MIR binds it to its lambda
   instance and completes it on the Invoke success edge under callable
   propagation, under each slot's unchanged consumer, activation and transfer
-  proofs; the invocation writer constructs the selected slot. The uncalled
+  proofs; the invocation writer constructs the selected slot, including the
+  conditional temporary (`conditionalTemporaryViewedResult`) that the
+  vocabulary already admitted for a short-circuit operand. The uncalled
   lambda was probed in the plain convention because its fused chain had no
   consumer, and that body has no plain form: the plain `Ticket(Token)`
   constructor is outside the vocabulary. `closureChainAdmits` now reports the
@@ -30,18 +35,21 @@
   operand, and passes results to a function and a constructor, assigns,
   discards and initializes a member with them. Destructor-bearing results
   trace each drop: once after a field read, inside the callee for a moved
-  argument, at once when discarded, at assignment and at scope exit. A later
+  argument, at once when discarded, at assignment, inside an evaluated
+  short-circuit operand but not a skipped one, and at scope exit. A later
   argument that raises destroys the already published result once, and a
   raising invocation publishes nothing. The fixture also declares uninvoked
   lambdas that construct `Ticket(Token(raw))` and a destructor-bearing
   equivalent, in `main` and in a helper. In `cpp_mir_body_emitter_text`,
   `testCallableClassResultSlots` requires each invocation to construct its
-  slot at its address with no default-constructed class local, and refuses an
-  invocation forged without callable propagation or without its lambda
-  target. `testUnconsumedFusedClosureSpellsNoBody` admits a function whose
-  two lambdas are never consumed and emits no lambda body for it, while the
-  same lambda invoked once still emits its body. Against the 0.440.2 emitter
-  the runtime fixture and both text tests fail.
+  slot at its address with no default-constructed class local, and a
+  short-circuit operand's invocation to construct its conditional temporary
+  rather than an undeclared local. It refuses an invocation forged without
+  callable propagation or without its lambda target.
+  `testUnconsumedFusedClosureSpellsNoBody` admits a function whose two
+  lambdas are never consumed and emits no lambda body for it, while the same
+  lambda invoked once still emits its body. Against the 0.440.2 emitter the
+  runtime fixture and both text tests fail.
 - **Out of scope.** Reading a nested field of a class call result, as in
   `build(1).inner.id`, and reading a field of a construction that takes a
   call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a

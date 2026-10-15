@@ -119,6 +119,11 @@ int main(int argc, std::vector<std::string> argv) {
   mut Res current = Res(16);
   current = makeRes(17);
   std::println(current.id);
+  // A destructor-bearing result read inside a short-circuit operand lives in
+  // the operand's conditional temporary and is destroyed only if evaluated.
+  bool skip = argc > 5;
+  std::println(skip || makeRes(18).id == 18 ? 1 : 0);
+  std::println(!skip || makeRes(19).id == 19 ? 1 : 0);
   auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
   auto receipt = [](int raw) -> Receipt { return Receipt(Logged(raw)); };
   std::println(unused());
