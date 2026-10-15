@@ -12656,12 +12656,27 @@ private:
       const HirBinding *binding = findBinding(payload.binding);
       const HirValue *extraction = findValue(payload.value);
       const MirPlaceId destination = placeForBinding(payload.binding);
+      const bool referenceTransfer =
+          extraction != nullptr && extraction->payloadExtractionKind ==
+                                       PayloadExtractionKind::TransferReference;
+      const bool exactBinding =
+          binding != nullptr && extraction != nullptr &&
+          (referenceTransfer
+               ? binding->info.type.kind == SemanticType::Reference &&
+                     binding->info.type.arguments.size() == 1 &&
+                     binding->info.type.arguments.front() ==
+                         extraction->info.type &&
+                     extraction->info.category == ValueCategory::Place &&
+                     binding->info.type.referenceAccess ==
+                         extraction->info.access
+               : binding->info.type.kind != SemanticType::Reference &&
+                     binding->info.type == extraction->info.type &&
+                     extraction->info.category == ValueCategory::Value &&
+                     extraction->payloadExtractionKind ==
+                         PayloadExtractionKind::MoveValue);
       if (binding == nullptr || extraction == nullptr || destination == 0 ||
           extraction->kind != HirValueKind::PayloadExtraction ||
-          extraction->info.category != ValueCategory::Value ||
-          binding->info.type.kind == SemanticType::Reference ||
-          binding->info.type != extraction->info.type ||
-          !extraction->enumOwner || !extraction->enumVariant ||
+          !exactBinding || !extraction->enumOwner || !extraction->enumVariant ||
           !extraction->payloadIndex) {
         valid = false;
         continue;
@@ -12685,14 +12700,17 @@ private:
       }
       (void)appendInstruction(std::move(extract));
       emittedValues.insert(extraction->id);
-      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
-                                .hirStatement = statement.id,
-                                .destination = destination,
-                                .operands = {valueOperand(payload.value)},
-                                .info = {.type = binding->info.type,
-                                         .category = ValueCategory::Place,
-                                         .access = binding->info.access,
-                                         .traits = binding->info.traits}};
+      MirInstruction initialize{
+          .kind = MirInstructionKind::Initialize,
+          .hirStatement = statement.id,
+          .destination = destination,
+          .operands = {referenceTransfer
+                           ? referenceOperand(payload.value, payload.binding)
+                           : valueOperand(payload.value)},
+          .info = {.type = binding->info.type,
+                   .category = ValueCategory::Place,
+                   .access = binding->info.access,
+                   .traits = binding->info.traits}};
       if (binding->info.traits.drop == DropKind::Lexical) {
         const MirDropObligationId obligation =
             dropObligationForBinding(payload.binding);

@@ -8382,7 +8382,11 @@ proof. Its implementation must preserve every possible external origin at a
 branch join, never pick the first origin or treat the carrier as the referent.
 Explicit reference patterns reborrow an unconsumed carrier; a plain binding on
 a consumed reference alternative transfers the reference without moving its
-external object. These prerequisites do not yet admit reference payloads.
+external object. The backend caches the external address at extraction, before
+retiring a consumed carrier; later reference publication must not re-read a
+dead carrier's field. These paths remain unreachable until independent selected
+reference proofs are implemented and validated. The prerequisite syntax checks
+do not constitute runtime evidence or admit reference payloads.
 
 The usable end-to-end client is an ordinary source-defined result with borrowed
 success and owning failure, including shared and exclusive results, direct
