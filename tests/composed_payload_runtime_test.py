@@ -26,7 +26,7 @@ SITES["composed_payloads.gti"] = {
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "composed_payloads.gti"
-    example = pathlib.Path(__file__).parent.parent / "examples" / "163-payload-composition.gti"
+    example = pathlib.Path(__file__).parent.parent / "examples" / "164-payload-composition.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],

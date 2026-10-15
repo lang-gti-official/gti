@@ -30,7 +30,7 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "tryable_propagation.gti"
     example = pathlib.Path(__file__).parent.parent / "examples" / "159-tryable-propagation.gti"
-    borrowed_example = pathlib.Path(__file__).parent.parent / "examples" / "164-borrowed-payload-results.gti"
+    borrowed_example = pathlib.Path(__file__).parent.parent / "examples" / "165-borrowed-payload-results.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
