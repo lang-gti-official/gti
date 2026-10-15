@@ -29,6 +29,16 @@ for what minor and patch releases mean.
 - Conformance block header errors are reported once, independently of the
   number of operations. An indirectly included concept retains its declaration
   location and direct-include suggestion even when the block has no operations.
+- Reject constructor initializers that store a dynamic `std::string_view` or
+  `c_string` by value without retaining its owner, including generic holders
+  and forwarded constructor arguments. Literal-backed constructor inputs remain
+  valid. The diagnostic identifies the initializer and suggests owned text or
+  an explicit checked reference instead of allowing dangling storage.
+- Preserve both the view object's lifetime and its external character owner's
+  lifetime when a field stores a checked text-view reference. JSON decoding uses
+  these checked references without copying the input or its member index.
+- Verify missing, forged, mutable and prematurely retired owner dependencies;
+  preserve exactly-once resource cleanup when a constructor also owns fields.
 
 ## 0.440.4 — Member calls on conditional values without cleanup
 

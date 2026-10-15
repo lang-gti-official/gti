@@ -2146,6 +2146,25 @@ Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
 
+Constructor field initializers obey the same storage rule. A constructor that
+directly stores a by-value text parameter in a text field requires an ownerless
+argument at each selected call. This includes generic fields after substitution,
+parenthesized inputs, and explicit movement: moving a view does not move its
+owner. Literal-backed inputs and ownerless defaults remain valid. A computed
+dynamic initializer such as `text(owner.view())` is rejected at its initializer;
+an ordinary view parameter forwarded to a storing constructor is potentially
+dynamic, even if some callers happen to pass literals. Conditional expressions
+cannot erase a dynamic operand's dependency.
+
+An adapter that needs to retain dynamic input can instead declare a checked
+`std::string_view&` or `c_string&` field and accept the same reference type in its
+constructor. The adapter borrows the view object and retains its underlying
+text dependency separately. Both must outlive its uses: neither invalidating the
+text owner nor replacing the borrowed view is permitted while the adapter is
+live. This does not enable by-value dynamic views in arbitrary aggregates, and
+does not copy or allocate the input text. JSON's private scanning adapters use
+this checked-reference form.
+
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain
 the same enclosing receiver dependency when `text` names an instance field.

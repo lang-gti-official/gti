@@ -493,6 +493,24 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+Checked references to primitive text views use the same two-dependency model.
+Their abstract `Stored` entry has no nominal field path: it represents the
+opaque caller-owned text and grants read-only access only. Semantic analysis
+creates that entry separately from the physical reference loan; HIR preserves
+both identities and MIR lowering seeds both before body execution. Verification
+requires the exact text-reference formal, independently checks every local
+publication, and rejects missing, substituted or prematurely retired owner
+dependencies. An empty field list is not evidence for an arbitrary carrier or
+permission to omit the external dependency.
+Reference-returning helpers preserve the physical view address and its stored
+owner separately, including when their result is immediately used to construct
+a cursor or another source-defined adapter. A retained adapter keeps the exact
+accessor-result chain alive; a read-only chain may terminate at the matching
+live reference formal with the same verified external dependency. Literal-backed
+locals may omit an external owner only when verification proves their literal
+initialization through write-free copies or read-only local reference aliases.
+For an alias, both its supplied address and its loan origin must prove that
+same static-lifetime property; clearing borrowed-state flags is not proof.
 Checked restoration of an opaque reference has a separate explicit proof:
 the concrete restored field paths and access must match a verified restore
 operation or body-proven helper summary. Its hidden dependencies remain bounded
