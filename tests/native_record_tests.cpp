@@ -93,6 +93,8 @@ struct Packet {
   mut Vec2 point;
 };
 
+[[c_abi]] union NativeOverlay { mut Packet packet; mut uint8_t bytes[48]; };
+
 [[c_abi]]
 struct Link {
   mut Packet* next;
@@ -247,6 +249,15 @@ void testTargetMatrix() {
     const lang::ClassTypeInfo *packet =
         packetSyntax == nullptr ? nullptr
                                 : result.semantics.findClassType(*packetSyntax);
+    const auto *unionSyntax = findClass(result.program, "NativeOverlay");
+    const auto *unionInfo = unionSyntax == nullptr
+                                ? nullptr
+                                : result.semantics.findClassType(*unionSyntax);
+    allMatch = allMatch && unionInfo && unionInfo->cAbiLayout &&
+               unionInfo->unionLayout &&
+               unionInfo->cAbiLayout->sizeBytes == 48 &&
+               unionInfo->cAbiLayout->abiAlignmentBytes == 8 &&
+               unionInfo->cAbiLayout->fields[1].offsetBytes == 0;
     allMatch = allMatch && result.canGenerateCode() && packet != nullptr &&
                packet->cAbiLayout && packet->cAbiLayout->sizeBytes == 32 &&
                packet->cAbiLayout->abiAlignmentBytes == 8 &&
@@ -903,6 +914,77 @@ int main() { return 0; }
          "comparison, null comparison, parameter, and return operations");
 }
 
+void testCAbiUnions() {
+  const auto result = analyze("native-unions.gti", R"(
+[[c_abi]] struct Point { mut float x; mut float y; };
+[[c_abi]] union Payload { mut uint64_t number; mut Point point; mut uint8_t bytes[16]; };
+[[c_abi]] struct Event { mut uint32_t tag; mut Payload data; };
+[[c_abi]] union PointerPayload { mut void* pointer; mut uint64_t number; };
+union Local { Payload payload; uint64_t number; };
+extern "C" { Payload obtain(); Payload relay(Payload value); Event event(); }
+int main() {
+  mut Payload payload = obtain();
+  unsafe { payload.number = uint64_t(42); }
+  Payload copied = relay(payload);
+  unsafe { return int32_t(copied.number - uint64_t(42)); }
+}
+)");
+  if (!result.canGenerateCode()) {
+    printDiagnostics(result);
+  }
+  expect(result.canGenerateCode(),
+         "C ABI unions should traverse the production MIR pipeline");
+  if (!result.canGenerateCode()) {
+    return;
+  }
+  const auto *syntax = findClass(result.program, "Payload");
+  const auto *type = result.semantics.findClassType(*syntax);
+  expect(
+      type && type->cAbiLayout && type->unionLayout &&
+          type->cAbiLayout->sizeBytes == 16 &&
+          type->cAbiLayout->abiAlignmentBytes == 8 &&
+          std::all_of(type->cAbiLayout->fields.begin(),
+                      type->cAbiLayout->fields.end(),
+                      [](const auto &field) { return field.offsetBytes == 0; }),
+      "C ABI union fields should overlap at zero with maximum size and "
+      "alignment");
+  auto forged = result.mir;
+  auto &instances = const_cast<std::vector<lang::MirClassInstance> &>(
+      forged.classInstances());
+  auto selected =
+      std::find_if(instances.begin(), instances.end(), [](const auto &value) {
+        return value.cAbiRecord && value.kind == lang::ClassKind::Union;
+      });
+  expect(selected != instances.end(),
+         "MIR should preserve C ABI union identity");
+  if (selected != instances.end()) {
+    selected->unionLayout->fields.front().sizeBytes += 1;
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "MIR must reject disagreement between ABI and union layout views");
+  }
+  const auto unsafeRead = analyze("union-unsafe.gti", R"(
+[[c_abi]] union Value { mut uint64_t number; mut double real; };
+extern "C" { Value obtain(); }
+int main() { Value value = obtain(); return int32_t(value.number); }
+)");
+  expect(!unsafeRead.canGenerateCode() &&
+             countCode(unsafeRead, "GTI-S2055") != 0,
+         "C ABI union fields retain the ordinary unsafe union contract");
+  const auto ordinary = analyze("union-opt-in.gti", R"(
+union Value { int number; float real; };
+extern "C" { Value obtain(); }
+int main() { return 0; }
+)");
+  expect(!ordinary.canGenerateCode(),
+         "ordinary unions do not implicitly acquire a C ABI");
+  const auto recursive = analyze("union-recursion.gti", R"(
+[[c_abi]] union Cycle { Cycle values[2]; uint64_t bits; };
+int main() { return 0; }
+)");
+  expect(!recursive.canGenerateCode() && countCode(recursive, "GTI-S2064") != 0,
+         "ABI union array recursion must be rejected before backend entry");
+}
+
 void testFormatting() {
   const std::string formatted = lang::Formatter().format(
       "[[ c_abi ]]struct Point{mut float x;mut float y;};");
@@ -945,6 +1027,7 @@ int main() {
   testNativeIdentifierPortability();
   testUnsafeBoundary();
   testOpaqueHandles();
+  testCAbiUnions();
   testFormatting();
   if (failures != 0) {
     std::cerr << failures << " native-record test(s) failed\n";

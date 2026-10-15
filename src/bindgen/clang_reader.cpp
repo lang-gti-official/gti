@@ -1078,6 +1078,14 @@ private:
         }
         continue;
       }
+      if (childKind == CXCursor_UnionDecl || childKind == CXCursor_StructDecl) {
+        if (clang_Cursor_isAnonymousRecordDecl(child) != 0) {
+          fail("anonymous promoted record fields have no GTI representation");
+        } else {
+          handleRecord(child);
+        }
+        continue;
+      }
       if (childKind != CXCursor_FieldDecl) {
         continue; // Nested tag definitions surface through the field using
                   // them.
@@ -1133,6 +1141,12 @@ private:
     // Re-find after mapping: type mapping may have grown the declaration
     // arena and moved the record.
     NativeDeclaration *record = result_.model.findDeclaration(id);
+    // Identity is reserved before descending so pointer recursion resolves;
+    // publication is dependency-first, including inline named definitions.
+    // C requires a by-value member's complete definition before its parent.
+    auto &order = result_.model.order;
+    order.erase(std::remove(order.begin(), order.end(), id), order.end());
+    order.push_back(id);
     record->complete = true;
     record->layout = layout;
     if (failureReason.empty()) {

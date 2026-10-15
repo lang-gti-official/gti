@@ -41,6 +41,7 @@ void testCAndCppHeaderSurface() {
 using NativeInt = int32_t;
 
 [[c_opaque]] struct RootHandle;
+[[c_abi]] union RootPayload { mut uint64_t number; mut double real; };
 
 [[c_abi]]
 struct RootRecord {
@@ -112,7 +113,10 @@ int main() { return 0; }
       "the C++ branch should preserve source namespaces, exact record "
       "identity, selected C link names, directly declared public C linkage, "
       "and portable definition lookup");
-  expect(header.find("typedef struct RootRecord RootRecord;") !=
+  expect(header.find("typedef union RootPayload RootPayload;") !=
+                 std::string::npos &&
+             header.find("union RootPayload {") != std::string::npos &&
+             header.find("typedef struct RootRecord RootRecord;") !=
                  std::string::npos &&
              header.find("typedef struct RootHandle RootHandle;") !=
                  std::string::npos &&

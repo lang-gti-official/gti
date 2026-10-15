@@ -12291,7 +12291,6 @@ passiveCAbiRecordInstance(const MirProgram &program, const SemanticType &type) {
   }
   return selected != nullptr && selected->cAbiRecord &&
                  selected->cAbiLayout.has_value() &&
-                 !selected->unionLayout.has_value() &&
                  !selected->requiresActiveDropState &&
                  !selected->requiresActiveCleanup
              ? selected
@@ -45808,8 +45807,12 @@ private:
               &instruction) ||
          ((failureForm || indirectResultForm) &&
           passiveResult.returnBlock != nullptr));
+    const bool placementResult =
+        classResultDestination != nullptr ||
+        expectedPayloadResult.producer == &instruction || stagedAssignment ||
+        stagedArrayResult;
     const bool passiveLocalResult =
-        passiveResult &&
+        passiveResult && !placementResult &&
         (passiveResult.returnBlock == nullptr ||
          (!failureForm && !indirectResultForm &&
           returnCallDefinition(facts.body, *instruction.result) !=
@@ -45890,11 +45893,7 @@ private:
     }
     if (nativeIndirectReturn || passiveLocalResult)
       output << ')';
-    output << (classResultDestination != nullptr ||
-                       expectedPayloadResult.producer == &instruction ||
-                       stagedAssignment || stagedArrayResult
-                   ? "; });\n"
-                   : ";\n");
+    output << (!nativeIndirectReturn && placementResult ? "; });\n" : ";\n");
     if (stagedDiscard) {
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result
