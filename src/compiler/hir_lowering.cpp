@@ -3936,11 +3936,13 @@ private:
           source = input->operands.front();
           input = body.findValue(source);
         }
+        // Semantics admitted a fresh class, struct or payload-enum value.
         if (input == nullptr || parameter.kind != SemanticType::Reference ||
             parameter.referenceAccess != AccessMode::ReadOnly ||
             parameter.arguments.size() != 1 ||
             parameter.arguments.front() != input->info.type ||
-            input->info.type.kind != SemanticType::Class ||
+            (input->info.type.kind != SemanticType::Class &&
+             input->info.type.kind != SemanticType::Enum) ||
             input->info.category != ValueCategory::Value ||
             input->info.traits.containsBorrowedState) {
           return std::nullopt;
@@ -4706,17 +4708,24 @@ private:
       (void)enqueueClass(call.returnType);
       HirValueId argument = *operand;
       HirCallInputKind kind = HirCallInputKind::ReadBorrow;
-      if (movedPlace != 0) {
-        argument = consumes ? consumedMove() : movedPlace;
-        kind = consumes ? HirCallInputKind::MoveValue
-                        : HirCallInputKind::ReadBorrow;
+      if (consumes) {
+        // A consuming step takes the operand exactly as any by-value argument
+        // would: its own move of a moved place or temporary, or a copy of a
+        // named place, and a value without cleanup simply by value.
+        argument = movedPlace != 0        ? consumedMove()
+                   : plan.consumesOperand ? temporaryMove()
+                                          : *operand;
+        const std::optional<std::vector<HirCallArgument>> ordered =
+            orderedArguments({argument}, call.parameterTypes, body);
+        if (!ordered || ordered->size() != 1) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        kind = ordered->front().kind;
+      } else if (movedPlace != 0) {
+        argument = movedPlace;
       } else if (plan.consumesOperand) {
-        argument = consumes ? temporaryMove() : *operand;
-        kind = consumes ? HirCallInputKind::MoveValue
-                        : HirCallInputKind::ReadTemporaryBorrow;
-      } else {
-        kind = consumes ? HirCallInputKind::CopyValue
-                        : HirCallInputKind::ReadBorrow;
+        kind = HirCallInputKind::ReadTemporaryBorrow;
       }
       HirValue value{
           .id = nextValueId++,

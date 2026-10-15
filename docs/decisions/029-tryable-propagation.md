@@ -97,13 +97,30 @@ body, satisfied through `for concept` blocks outside the type.
   `std::experimental::optional`, over a payload enum and consuming payload
   matches, has the block, and is the planned replacement.
 - `?` through `std::tryable` is not available in constant evaluation yet.
-- The operand must be a class or struct type in this phase. A payload enum
-  can have a block, but `?` on it is rejected until the propagation plan can
-  stage enum temporaries and places. Wrapping the enum in a class works, and
-  is how `std::experimental::optional` is meant to be built.
+- The operand must be a class, struct or payload-enum type. Payload enums
+  joined in the 2026-10-15 revision below; a scalar-backed enum remains
+  outside this phase.
 - Violations are reported as `GTI-S2086`. A residual conversion that the
   shared selection rejects keeps that selection's own diagnostic, such as
   `GTI-S2122` for an ambiguity.
+
+## Revision: payload-enum operands (2026-10-15)
+
+A payload enum, or an instance of an enum template that a block's pattern
+names, propagates like a class. No rule is specific to `?`:
+
+- an ordinary call may borrow a fresh payload-enum value for one read-only
+  `T&` argument, exactly as it borrows a fresh class value, so `has_value`
+  borrows a temporary operand that way;
+- a named place is copied and `std::move(place)` is consumed, as for a class;
+- a conformance block's pattern may apply an enum template, such as
+  `for <T, E> concept std::tryable<result<T, E>>`.
+
+An enum declares no constructors, so a residual returned from a function
+whose return type is a payload enum has that enum type, which is how a
+`result<T, E>`-style enum returns its own failure, or converts through an
+`implicit` conversion operator of the residual's class (see the next
+revision).
 
 ## Revision: the residual is an ordinary return (2026-10-15)
 

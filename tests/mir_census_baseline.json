@@ -160,7 +160,7 @@
     "160-borrowed-callback-results.gti": 145,
     "161-consuming-matches.gti": 237,
     "162-experimental-optional.gti": 157,
-    "164-implicit-returns.gti": 141
+    "163-payload-enum-propagation.gti": 134
   },
-  "total": 18072
+  "total": 18065
 }

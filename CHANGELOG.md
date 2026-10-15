@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.441.0 — Implicit conversions in return statements
+## 0.442.0 — Implicit conversions in return statements
 
 - `return value;` now converts a value of another type to the function's,
   method's or lambda's declared owned return type exactly as the declaration
@@ -33,6 +33,47 @@ for what minor and patch releases mean.
   from its semantic construction") when a generic function's declaration
   constructs its declared class from an initializer of another type, such as
   `Box<T> b = std::move(value);`.
+
+## 0.441.0 — `?` on payload enums
+
+- `?` works directly on a payload enum that has a `std::tryable` block, such
+  as a `result<T, E>`-style enum. The operand may be a temporary, a named
+  enum (copied) or `std::move(name)`. Owning payloads move out exactly once,
+  and the residual is returned as the enum itself:
+  `std::string name = ?owner(id);`.
+- A conformance block's pattern may name an enum template, as it names a
+  class template: `for <T, E> concept std::tryable<result<T, E>>`.
+- An ordinary call may borrow a fresh payload-enum value for a read-only
+  reference parameter, as it already borrowed a fresh class value:
+  `observe(make_state())`, `observe(state::engaged(1))`.
+- Fix two internal compiler errors (`GTI-B0001`) when a function that can
+  fail returns an owning payload enum:
+  - the result of a call that cannot fail, such as `return pass(std::move(x));`;
+  - a freshly constructed variant while other owning locals still have to be
+    destroyed, such as `return found::present(Tracked(n));` with a live local.
+- Example 163 demonstrates it.
+
+## 0.440.4 — Member calls on conditional values without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called directly on a `?:`
+  whose arms produce a class without a destructor, such as
+  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
+  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
+  methods (including ones that can fail or that consume a moved value), arms
+  that copy a variable or construct the class, and mixtures of these.
+
+## 0.440.3 — Conditional results with checked arm arguments
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:` evaluates an input that
+  can fail before producing a class result without a destructor, such as
+  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
+  is overflow-checked. Arguments computed by calls that can fail, `?`
+  operands, and nested conditionals or `&&`/`||` inside an argument work the
+  same way, whether the result is bound, returned, assigned, passed on, read
+  through a field or used to initialize a field. A failing input ends its
+  arm before the call, with the usual cleanup.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 

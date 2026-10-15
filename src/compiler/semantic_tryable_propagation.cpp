@@ -228,11 +228,13 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                       operand + ">' block is declared.",
                   blockHint);
   }
-  // The propagation plan stages a class operand's temporary or place; other
-  // operand kinds, such as payload enums, are a later slice.
-  if (operandType.kind != SemanticType::Class) {
+  // The propagation plan stages a class, struct or payload-enum operand's
+  // temporary or place. A temporary is borrowed for the test exactly as an
+  // ordinary call borrows one; other operand kinds are a later slice.
+  if (operandType.kind != SemanticType::Class &&
+      !payloadEnumType(operandType)) {
     return reject("Error propagation through 'std::tryable' currently needs "
-                  "a class or struct operand, but received '" +
+                  "a class, struct or payload-enum operand, but received '" +
                       operand + "'.",
                   "Wrap the value in a class or struct and give that type "
                   "the 'std::tryable' block.");

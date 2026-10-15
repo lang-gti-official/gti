@@ -1567,10 +1567,14 @@ For `?operand` with any other operand type `X`, `std::tryable<X>` must hold
 - for a dependent `X`, through a `std::tryable<X>` conjunct of the enclosing
   `requires` clause.
 
-In this phase `X` is a class or struct type; a payload enum with a block is
-rejected. The operand is transported like a by-value argument of type `X`. A
-temporary
-or `std::move(place)` operand needs a movable `X`. A named place needs a
+`X` is a class, struct or payload-enum type, possibly an instance of a class
+or enum template that a block's pattern names; a scalar-backed enum is
+rejected in this phase. The operand is transported like a by-value argument of
+type `X`, and `has_value` borrows a temporary as an ordinary call borrows a
+fresh value of `X`. A payload enum declares no constructors, so a residual
+initializes a payload-enum return type only when it has that type or converts
+through an `implicit` conversion operator of its class. A temporary or
+`std::move(place)` operand needs a movable `X`. A named place needs a
 copyable `X` and remains available. `X`, `value_type` and `residual_type`
 contain no stored borrows, and `value_type` and `residual_type` are not
 references. The expression has type `std::tryable<X>::value_type`, or `void`

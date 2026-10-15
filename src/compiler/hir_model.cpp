@@ -1017,6 +1017,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              move->info.type == operand->info.type &&
              move->fullExpression == value.fullExpression;
     };
+    const bool passiveEnumOperand =
+        operand->info.type.kind == SemanticType::Enum &&
+        std::any_of(program.enumDeclarations().begin(),
+                    program.enumDeclarations().end(),
+                    [&](const HirEnum &enumeration) {
+                      return enumeration.type == operand->info.type &&
+                             !enumeration.requiresActiveCleanup;
+                    });
     const auto selectedCall = [&](const HirValue &call,
                                   const ResolvedCallInfo *step, bool consumes) {
       const HirFunctionInstance *target =
@@ -1029,6 +1037,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                           : HirCallInputKind::ReadBorrow)
               : (consumes ? HirCallInputKind::MoveValue
                           : HirCallInputKind::ReadTemporaryBorrow);
+      // An enum without cleanup passes by value, as in any by-value call.
+      if (consumes && passiveEnumOperand) {
+        kind = HirCallInputKind::Value;
+      }
       const auto movesTemporary = [&](HirValueId id) {
         const HirValue *move = body.findValue(id);
         return move != nullptr && move->kind == HirValueKind::Move &&
@@ -1041,8 +1053,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                            ? movesTemporary(call.operands.front())
                            : call.operands.front() == operand->id);
       if (movedTransport) {
-        kind = consumes ? HirCallInputKind::MoveValue
-                        : HirCallInputKind::ReadBorrow;
+        kind = !consumes            ? HirCallInputKind::ReadBorrow
+               : passiveEnumOperand ? HirCallInputKind::Value
+                                    : HirCallInputKind::MoveValue;
         argument = call.operands.size() == 1 &&
                    (consumes ? movesPlace(call.operands.front())
                              : call.operands.front() == plan.movedPlace);

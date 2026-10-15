@@ -6474,6 +6474,12 @@ auto SemanticVisitor::Impl::transparentTemporaryProducer(
   return producer;
 }
 
+auto SemanticVisitor::Impl::payloadEnumType(const SemanticType &type) const
+    -> bool {
+  return type.kind == SemanticType::Enum && type.enumId != 0 &&
+         type.enumId <= enums.size() && enums[type.enumId - 1].payload;
+}
+
 auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result;
@@ -6481,8 +6487,9 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     return result;
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
+  const bool payloadEnum = info != nullptr && payloadEnumType(info->type);
   if (info == nullptr || info->category != ValueCategory::Value ||
-      info->type.kind != SemanticType::Class) {
+      (info->type.kind != SemanticType::Class && !payloadEnum)) {
     return result;
   }
   result.type = info->type;
@@ -6490,11 +6497,13 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  const ClassInfo *record = classInfo(info->type);
-  if (record == nullptr ||
-      (record->kind != ClassKind::Class && record->kind != ClassKind::Struct)) {
-    result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
-    return result;
+  if (!payloadEnum) {
+    const ClassInfo *record = classInfo(info->type);
+    if (record == nullptr || (record->kind != ClassKind::Class &&
+                              record->kind != ClassKind::Struct)) {
+      result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
+      return result;
+    }
   }
   if (info->traits.containsBorrowedState) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
@@ -6505,6 +6514,19 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
+  }
+  // A payload enum's alternative, with or without fields, is a fresh value
+  // of the enum, as an ordinary construction is of a class.
+  if (payloadEnum) {
+    const auto *call = exprAs<Call>(producer);
+    const auto *name = exprAs<QualifiedName>(producer);
+    if ((call != nullptr &&
+         semanticModel.findPayloadConstruction(*call) != nullptr) ||
+        (name != nullptr && semanticModel.findEnumerator(*name) != nullptr)) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+      return result;
+    }
   }
   if (const ResolvedConstructionInfo *construction =
           semanticModel.findConstruction(*producer)) {
