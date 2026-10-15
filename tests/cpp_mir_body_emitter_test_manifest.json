@@ -358,6 +358,10 @@
       "suite": "text"
     },
     {
+      "name": "testPreparedConsumingReceiverReturn",
+      "suite": "text"
+    },
+    {
       "name": "testExpectedTemporaryObservationSlot",
       "suite": "text"
     },

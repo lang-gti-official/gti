@@ -4049,6 +4049,97 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
   }
 }
 
+// A cleanup-free receiver moved out of an immutable parameter is a prepared
+// parameter that the consuming call transfers to its callee. The returned
+// result keeps its own slot across the moved-from parameter's drop. Forged
+// handoff facts must not reach emission.
+void testPreparedConsumingReceiverReturn() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-prepared-consuming-receiver-return.gti", R"(
+class Tracked {
+  mut int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { this.id = 0; }
+  int read() { return this.id; }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  Tracked make() && { return Tracked(this.base); }
+};
+Tracked take(Maker maker) { return std::move(maker).make(); }
+int main() { Tracked kept = take(Maker(1)); return kept.read() - 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a consuming member may consume an immutable cleanup-free parameter");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::MirBodyAddress address{};
+  lang::MirInstructionId call = 0;
+  lang::MirInstructionId stage = 0;
+  lang::MirDropObligationId prepared = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+            !instruction.preparedParameterDrop)
+          continue;
+        for (const auto &consumer : block.instructions)
+          if (consumer.kind == lang::MirInstructionKind::Call &&
+              consumer.receiver && instruction.result &&
+              consumer.receiver->value == *instruction.result &&
+              consumer.callableInvocation ==
+                  lang::CallableInvocationCapability::Once) {
+            address = {.kind = lang::MirBodyKind::Function,
+                       .owner = function.id};
+            call = consumer.id;
+            stage = instruction.id;
+            prepared = *instruction.preparedParameterDrop;
+          }
+      }
+  expect(call != 0 && stage != 0,
+         "the moved receiver is staged as the call's prepared parameter");
+  if (call == 0 || stage == 0)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyze(address).ready() && emitter.supportsBodyText(address),
+         "the returned result accounts for the prepared receiver handoff");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.id == call && mutation == 0)
+          std::erase_if(instruction.lifecycle, [&](const auto &event) {
+            return event.source == prepared;
+          });
+        else if (instruction.id == call && mutation == 1)
+          instruction.lifecycle.push_back(
+              {.kind = lang::MirLifecycleEventKind::TransferOut,
+               .source = prepared});
+        else if (instruction.id == stage && mutation == 2)
+          instruction.lifecycle.clear();
+        else if (instruction.id == call && mutation == 3)
+          instruction.callableInvocation =
+              lang::CallableInvocationCapability::Mutable;
+      }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "a forged prepared receiver handoff fails MIR verification " +
+               std::to_string(mutation));
+    const lang::CppMirBodyEmitter rejected(malformed, map);
+    expect(!rejected.analyze(address).ready() ||
+               !rejected.supportsBodyText(address),
+           "a forged prepared receiver handoff cannot enter backend "
+           "emission " +
+               std::to_string(mutation));
+  }
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -5351,6 +5442,8 @@ constexpr NamedTest kTests[] = {
     {"testExpectedClassArgumentReturnedConstruction",
      testExpectedClassArgumentReturnedConstruction},
     {"testExpectedConsumingMemberReturn", testExpectedConsumingMemberReturn},
+    {"testPreparedConsumingReceiverReturn",
+     testPreparedConsumingReceiverReturn},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
