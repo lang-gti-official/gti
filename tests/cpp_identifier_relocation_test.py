@@ -26,8 +26,8 @@ def main():
         shutil.copytree(repository / "stdlib", moved_stdlib)
         for name, source in (
             ("ownership", (repository / "examples/013-ownership.gti").read_text()),
-            ("nominal", """#include "left.gti"
-#include "right.gti"
+            ("nominal", """#include "../external/left/shared.gti"
+#include "../external/right/shared.gti"
 struct Outer { struct Inner { int value; }; };
 class Box<T> {
 public:
@@ -57,8 +57,6 @@ int main() {
                     (external / "shared.gti").write_text(
                         f"static int local<T>(T ignored) {{ return {value}; }}\n"
                         f"int {side}() {{ return local<int>(0); }}\n")
-                    (project / f"app/{side}.gti").write_text(
-                        f'#include "../external/{side}/shared.gti"\n')
             for optimization in ("-O0", "-O3"):
                 outputs = []
                 for project in projects:
