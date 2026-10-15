@@ -3864,6 +3864,11 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
   }
+  // Complete producer/call evidence owns the whole set, including a known
+  // empty alternative. Do not reduce it through legacy single-source field
+  // inference or fall back to stale carrier facts when it is empty.
+  if (auto complete = completeBorrowDependencySet(expression))
+    return std::move(complete->dependencies);
   if (const auto dependencies =
           selectedReferenceDependencies(semanticPlace(expression)))
     return *dependencies;
