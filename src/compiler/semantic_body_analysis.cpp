@@ -5797,7 +5797,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   }
   const bool valueAssignable =
       !simpleAssignment ||
-      isOwnershipAssignment(targetType, valueType, expr.value());
+      isOwnershipAssignment(targetType, valueType, expr.value(), targetPlace);
   if (simpleAssignment && !valueAssignable) {
     const bool ownerAssignment =
         isMoveOnlyOwnerType(targetType) && targetType == valueType;
@@ -7897,8 +7897,8 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
           "may still be live.");
     }
   }
-  if (simpleAssignment &&
-      !isOwnershipAssignment(valueTarget, valueType, expr.value())) {
+  if (simpleAssignment && !isOwnershipAssignment(valueTarget, valueType,
+                                                 expr.value(), targetPlace)) {
     const ExpressionInfo *valueInfo =
         semanticModel.findExpression(*expr.value());
     const bool moving =
@@ -7936,7 +7936,8 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
   }
   if (ownerType.kind == SemanticType::RawPointer && simpleAssignment &&
       mutableTarget &&
-      isOwnershipAssignment(valueTarget, valueType, expr.value())) {
+      isOwnershipAssignment(valueTarget, valueType, expr.value(),
+                            targetPlace)) {
     assignRawPointerFields(targetPlace, expr.value().get());
   }
   currentType = valueTarget;
@@ -8007,8 +8008,8 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
                            : SemanticType::Unknown;
     return;
   }
-  if (simpleAssignment &&
-      !isOwnershipAssignment(targetType, valueType, expr.value())) {
+  if (simpleAssignment && !isOwnershipAssignment(targetType, valueType,
+                                                 expr.value(), targetPlace)) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
                "' to a mutable place of type '" + typeSpelling(targetType) +
@@ -8405,7 +8406,7 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
   }
   const bool valueAssignable =
       !simpleAssignment ||
-      isOwnershipAssignment(elementType, valueType, expr.value());
+      isOwnershipAssignment(elementType, valueType, expr.value(), targetPlace);
   if (simpleAssignment && !valueAssignable) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
@@ -9971,8 +9972,8 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
         "Cannot assign to a field while an overlapping borrow may still be "
         "live.");
   }
-  if (simpleAssignment &&
-      !isOwnershipAssignment(targetType, valueType, expr.value())) {
+  if (simpleAssignment && !isOwnershipAssignment(targetType, valueType,
+                                                 expr.value(), targetPlace)) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
                "' to member '" + expr.name().lexeme + "' of type '" +
@@ -10009,7 +10010,7 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   if (simpleAssignment && resolvedMember.type != SemanticType::Function &&
       resolvedMember.assignable && mutableReceiver && targetStateValid &&
       !directSelfMove &&
-      isOwnershipAssignment(targetType, valueType, expr.value())) {
+      isOwnershipAssignment(targetType, valueType, expr.value(), targetPlace)) {
     if (targetType.kind == SemanticType::Class ||
         targetType.kind == SemanticType::Array)
       invalidateRawPointerOrigins(targetPlace);

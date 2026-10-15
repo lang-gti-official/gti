@@ -66,11 +66,17 @@ void testRawAccessAndWitness() {
 [[borrowed_from(owner)]] c_int& restore(c_int& owner) {
   unsafe { return *pointer; }
 }
+[[borrowed_from(owner)]] c_int& claim(c_int* address, c_int& owner) {
+  unsafe { return *address; }
+}
 void transport() {
+  c_int snapshot = unsafe { limit };
   auto scalar_address = &counter;
   auto pointer_slot_address = &pointer;
   auto field_address = &record.field;
+  c_int witness = c_int(0);
   unsafe {
+    c_int& checked = claim(pointer, witness);
     auto pointee_address = &*pointer;
     auto indexed_address = &pointer[0];
     auto field_pointee_address = &record.pointer[0];
@@ -85,10 +91,54 @@ int main() { return 0; }
          "contracts",
          result);
 }
+void testConstNativeRecordAssignment() {
+  for (const std::string &shape : std::vector<std::string>{
+           "[[c_abi]] struct R { c_int value; };",
+           "[[c_abi]] struct R { c_int values[2]; };",
+           "[[c_abi]] struct Inner { c_int value; }; "
+           "[[c_abi]] struct R { mut Inner inner; };",
+           "[[c_abi]] struct Inner { c_int value; }; "
+           "[[c_abi]] struct R { mut Inner values[2]; };",
+       }) {
+    const std::string globals =
+        shape + "extern \"C\" { mut R a; mut R b; R fresh(); }";
+    for (const std::string &operation : std::vector<std::string>{
+             "void use() { unsafe { a = b; } }",
+             "void use() { unsafe { a = fresh(); } }",
+         }) {
+      const auto result =
+          analyze(globals + operation + "int main() { return 0; }");
+      const bool assignmentError =
+          std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2003" &&
+                               diagnostic.message.find("Cannot assign") !=
+                                   std::string::npos;
+                      });
+      expect(!result.canGenerateCode() && assignmentError,
+             "readonly foreign subobjects forbid copy and move replacement",
+             result);
+    }
+    const auto copy =
+        analyze(globals + "void take(R value) {} void use() { unsafe { mut R "
+                          "copy = a; take(a); copy = b; copy = fresh(); } }"
+                          "int main() { return 0; }");
+    expect(copy.canGenerateCode(),
+           "readonly ABI fields preserve local replacement and value transport",
+           copy);
+  }
+  const auto ordinary =
+      analyze("struct Plain { int value; }; "
+              "void use(mut Plain target, Plain source) { target = source; } "
+              "int main() { return 0; }");
+  expect(ordinary.canGenerateCode(),
+         "ordinary GTI immutable fields retain replacement policy", ordinary);
+}
 } // namespace
 
 int main() {
   testRejectedBorrows();
   testRawAccessAndWitness();
+  testConstNativeRecordAssignment();
   return failures == 0 ? 0 : 1;
 }

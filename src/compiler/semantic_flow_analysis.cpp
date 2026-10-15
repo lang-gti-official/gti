@@ -2781,7 +2781,11 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
         return exprAs<Index>(parent) != nullptr;
       });
     }
-    if (!addressOnly &&
+    const bool transparent =
+        kind == ExprKind::Grouping ||
+        (kind == ExprKind::Binary &&
+         static_cast<const Binary &>(expr).oper().kind == TokenKind::COMMA);
+    if (!addressOnly && !transparent &&
         (semanticModel.unsafeOperation(expr) == UnsafeOperationKind::None ||
          semanticModel.unsafeOperation(expr) ==
              UnsafeOperationKind::ForeignStorage)) {
@@ -11616,7 +11620,46 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
 
 auto SemanticVisitor::Impl::isOwnershipAssignment(
     const SemanticType &target, const SemanticType &value,
-    const ExprPtr &expression) const -> bool {
+    const ExprPtr &expression, const SemanticPlace &destination) -> bool {
+  const bool indirect = std::any_of(
+      destination.projections.begin(), destination.projections.end(),
+      [](const PlaceProjection &projection) {
+        return projection.kind == PlaceProjectionKind::Dereference;
+      });
+  const SymbolId root = destination.root == nullptr
+                            ? destination.rootIdentity
+                            : toolingSymbolFor(*destination.root);
+  if (!indirect && semanticModel.findForeignStorage(root) != nullptr) {
+    // External storage has no GTI replacement authority. A whole-record store
+    // must respect every embedded field's access policy, while a local value
+    // copied from it keeps the ordinary GTI replacement rules (ADR 013).
+    const auto writable = [&](const auto &self,
+                              const SemanticType &type) -> bool {
+      if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+        return self(self, type.arguments.front());
+      if (type.kind != SemanticType::Class)
+        return true;
+      if (type.classId == 0 || type.classId > classes.size())
+        return false;
+      const ClassInfo &record = classInfo(type.classId);
+      if (!record.cAbiRecord)
+        return false;
+      const GenericSubstitution substitution = classSubstitution(type);
+      for (const FieldInfo &field : record.fields) {
+        if (field.declaration == nullptr || !field.declaration->isMutable())
+          return false;
+        const auto member =
+            record.members.find(field.declaration->name().lexeme);
+        if (member == record.members.end() ||
+            !self(self,
+                  substituteType(member->second.symbol.type, substitution)))
+          return false;
+      }
+      return true;
+    };
+    if (!writable(writable, target))
+      return false;
+  }
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
   const bool moving = info != nullptr && info->category == ValueCategory::Value;

@@ -2990,11 +2990,23 @@ private:
                       return operand.kind != MirOperandKind::Address &&
                              operand.place != 0 && rawPlace(operand.place);
                     });
+    // Expanded checked updates retain the foreign load obligation even when
+    // the read is synthesized separately from its source modify expression.
+    if (instruction.kind == MirInstructionKind::Load &&
+        instruction.unsafeOperation == UnsafeOperationKind::None &&
+        std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                    [&](const MirOperand &operand) {
+                      const auto *place = output.findPlace(operand.place);
+                      return operand.kind != MirOperandKind::Address && place &&
+                             place->foreignStorage;
+                    }))
+      instruction.unsafeOperation = UnsafeOperationKind::ForeignStorage;
     // An outer field selection has no new unsafe syntax of its own, but a
     // store through its raw prefix still executes that checked source access.
     // Preserve its operation marker alongside the raw-memory effect rather
     // than losing it on `pointer->inner.field` or `pointer[index].field`.
-    if (instruction.kind == MirInstructionKind::Assign &&
+    if ((instruction.kind == MirInstructionKind::Assign ||
+         instruction.kind == MirInstructionKind::Modify) &&
         instruction.destination && rawPlace(*instruction.destination) &&
         instruction.unsafeOperation == UnsafeOperationKind::None) {
       const auto *destination = output.findPlace(*instruction.destination);
@@ -3984,12 +3996,13 @@ private:
         return bindingPlace;
       }
       const auto capture = lambdaCaptures.find(value.symbol);
+      const auto *foreign = program.findForeignStorage(value.symbol);
       const auto place = appendPlace(
           {.root = MirPlaceRootKind::Symbol,
            .symbol = value.symbol,
            .capture = capture == lambdaCaptures.end() ? 0 : capture->second,
            .type = value.info.type,
-           .access = value.info.access,
+           .access = foreign ? foreign->access : value.info.access,
            .traits = value.info.traits,
            .sourceValue = value.id});
       if (lambda != nullptr && capture != lambdaCaptures.end() &&
@@ -4010,6 +4023,8 @@ private:
                                   MirProjectionKind::RawDereference)
                 : clonePlace(placeForValue(value.operands[0]), value);
         if (place != 0) {
+          if (output.places[place - 1].foreignStorage)
+            output.places[place - 1].access = AccessMode::Mutable;
           if (value.operation == TokenKind::ARROW &&
               value.unsafeOperation != UnsafeOperationKind::RawMember) {
             output.places[place - 1].projections.push_back(
@@ -4037,6 +4052,8 @@ private:
           place = clonePlace(placeForValue(value.operands[0]), value);
         }
         if (place != 0) {
+          if (output.places[place - 1].foreignStorage)
+            output.places[place - 1].access = AccessMode::Mutable;
           if (value.unsafeOperation != UnsafeOperationKind::RawIndex) {
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Index,

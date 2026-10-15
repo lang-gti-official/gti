@@ -31,6 +31,8 @@ void testStorage() {
   auto result = analyze(R"(
 using Callback = (c_int) -> c_int;
 [[c_abi]] struct Record { mut c_int value; mut c_int* pointer; };
+[[c_abi]] struct Wrapper { mut Record record; };
+Record relay(Record value) { return value; }
 namespace native {
 extern "C" {
   mut c_int counter;
@@ -38,6 +40,9 @@ extern "C" {
   mut Callback callback;
   mut c_int* pointer;
   mut Record record;
+  mut Record other;
+  mut Wrapper wrapper;
+  Record relay_native(Record value);
   [[link_name("actual_epoch")]] mut c_int epoch;
   void mutate();
 }
@@ -53,6 +58,14 @@ int main() {
     native::mutate();
     native::pointer = address;
     native::record.value = native::limit;
+    mut Record copy = native::record;
+    native::record = copy;
+    native::record = native::other;
+    native::wrapper.record = native::record;
+    native::record = native::record;
+    copy = native::relay_native(native::record);
+    copy = relay(native::record);
+    native::record = copy;
     native::epoch = native::callback(previous);
     return int(native::counter + native::record.value + native::epoch);
   }
@@ -64,7 +77,7 @@ int main() {
          "foreign storage vertical fixture must lower");
   if (!result.canGenerateCode())
     return;
-  expect(result.mir.foreignStorageDeclarations().size() == 6,
+  expect(result.mir.foreignStorageDeclarations().size() == 8,
          "exact external declaration inventory");
   expect(result.mir.programInitializationPlan().steps.empty(),
          "external storage has no GTI initialization");
@@ -123,6 +136,61 @@ int main() {
     }
   }
   expect(accesses >= 6, "fixture exercises foreign loads and writes");
+  for (const auto &function : result.mir.functionInstances()) {
+    const auto foreign =
+        std::find_if(function.body.places.begin(), function.body.places.end(),
+                     [](const auto &place) { return place.foreignStorage; });
+    if (foreign == function.body.places.end())
+      continue;
+    for (int mutation = 0; mutation < 3; ++mutation) {
+      auto forged = result.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      auto &body = functions[function.id - 1].body;
+      std::string expected;
+      if (mutation == 0) {
+        body.loans.push_back(
+            {.id = body.loans.size() + 1, .source = foreign->id});
+        expected = "foreign storage cannot supply a checked owner loan";
+      } else if (mutation == 1) {
+        body.dropObligations.push_back(
+            {.id = body.dropObligations.size() + 1, .place = foreign->id});
+        expected = "foreign storage cannot have a GTI drop obligation";
+      } else {
+        body.places[foreign->id - 1].initiallyAvailable = false;
+        expected =
+            "MIR foreign storage place has invalid type, access, or lifetime";
+      }
+      const auto proof = lang::verifyMirProgram(forged);
+      expect(std::any_of(
+                 proof.errors.begin(), proof.errors.end(),
+                 [&](const auto &error) { return error.message == expected; }),
+             "verifier rejects forged foreign lifetime: " + expected);
+    }
+    break;
+  }
+  {
+    auto forged = result.mir;
+    auto &storage = const_cast<std::vector<lang::ForeignStorageInfo> &>(
+        forged.foreignStorageDeclarations());
+    storage.clear();
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "foreign places require declaration inventory");
+  }
+  for (const auto &function : result.mir.functionInstances())
+    for (const auto &place : function.body.places) {
+      const auto *storage = result.mir.findForeignStorage(place.symbol);
+      if (!place.foreignStorage || !storage ||
+          storage->access != lang::AccessMode::ReadOnly)
+        continue;
+      auto forged = result.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      functions[function.id - 1].body.places[place.id - 1].access =
+          lang::AccessMode::Mutable;
+      expect(!lang::verifyMirProgram(forged).valid(),
+             "foreign const objects cannot acquire mutable access");
+    }
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
                      lang::OptimizationLevel::O3}) {
     try {
@@ -133,6 +201,27 @@ int main() {
     } catch (const std::exception &error) {
       expect(false, error.what());
     }
+  }
+}
+void testInitializer() {
+  const auto result = analyze(R"(
+extern "C" { c_int limit; c_string* string_slots; }
+c_int initial = unsafe { limit };
+int main() { return int(initial); }
+)");
+  if (!result.canGenerateCode())
+    diagnostics(result);
+  expect(result.canGenerateCode(),
+         "GTI initializer may explicitly read foreign storage");
+  if (!result.canGenerateCode())
+    return;
+  expect(result.mir.programInitializationPlan().steps.size() == 1,
+         "only the owned GTI object receives a startup step");
+  try {
+    const auto cpp = gti_test::emitCppText(result);
+    expect(!cpp.empty(), "foreign initialization read emits native reference");
+  } catch (const std::exception &error) {
+    expect(false, error.what());
   }
 }
 void testRejections() {
@@ -180,5 +269,6 @@ void testRejections() {
 int main() {
   testStorage();
   testRejections();
+  testInitializer();
   return failures == 0 ? 0 : 1;
 }

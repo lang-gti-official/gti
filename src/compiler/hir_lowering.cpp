@@ -123,6 +123,8 @@ public:
       seedDeclarations(source.declarations(), std::nullopt);
     }
     output.program.foreignStorage_ = baseModel->foreignStorageDeclarations();
+    for (const auto &storage : output.program.foreignStorage_)
+      seedConcreteDeclarationType(storage.type);
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();
