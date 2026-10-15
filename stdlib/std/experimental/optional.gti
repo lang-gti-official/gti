@@ -38,7 +38,8 @@ public:
   /// Constructs an empty optional.
   optional() {}
 
-  /// Constructs an empty optional from the empty residual.
+  /// Constructs an empty optional from the empty residual, so a function
+  /// returning `optional<T>` can `return nullopt;`.
   implicit optional(nullopt_t empty) {}
 
   /// Moves one completed value into the optional.
@@ -124,7 +125,7 @@ public:
     case detail::optional_state<T>::engaged(auto& payload):
       return optional<T>(std::clone(payload));
     case detail::optional_state<T>::empty:
-      return optional<T>();
+      return nullopt;
     }
   }
 

@@ -1,14 +1,13 @@
-// std::experimental::optional: empty and engaged states, `?`, and a consuming
-// move-out of a move-only payload.
+// std::experimental::optional: empty and engaged states, `?`, a consuming
+// move-out of a move-only payload, `return std::experimental::nullopt;`, and
+// clone() of an engaged and an empty optional.
 #include <std/experimental/optional>
 #include <std/memory>
 #include <std/string>
 
 std::experimental::optional<std::unique_ptr<int>> boxed(int value) {
   if (value < 0) {
-    std::experimental::optional<std::unique_ptr<int>> none =
-        std::experimental::nullopt;
-    return none;
+    return std::experimental::nullopt;
   }
   return std::experimental::optional<std::unique_ptr<int>>(
       std::make_unique<int>(value));
@@ -25,8 +24,13 @@ int main() {
   mut std::experimental::optional<std::string> text{};
   std::println(std::to_string(text.emplace(std::string("kept")).size()));
   std::string taken = std::move(text).value();
+  // clone() duplicates an engaged value and returns `nullopt` when empty.
+  std::experimental::optional<int> copied = good.clone();
+  std::experimental::optional<int> still_empty = bad.clone();
   std::println(std::to_string(good.value()));
   std::println(bad.has_value() ? "value" : "empty");
   std::println(taken.view());
+  std::println(std::to_string(copied.value()));
+  std::println(still_empty.has_value() ? "value" : "empty");
   return 0;
 }

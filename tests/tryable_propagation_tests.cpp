@@ -117,7 +117,8 @@ int main() {
   // The residual returns as an ordinary `return residual;` of a fresh value
   // would: through an implicit conversion operator of the residual, to a
   // class or a scalar return type, or an implicit constructor with a trailing
-  // default, under ADR 027's one shared selection.
+  // default or a satisfied requirement, under ADR 027's one shared
+  // selection.
   accepted(R"gti(
 struct Rejected {
   int code;
@@ -147,6 +148,13 @@ struct Ledger {
   int bias;
   implicit Ledger(Rejected rejected, int extra = 100)
       : code(rejected.code), bias(extra) {}
+};
+struct Report<T> {
+  T code;
+  Report(T value) : code(value) {}
+  implicit Report(Rejected rejected)
+    requires std::integral<T>
+      : code(T(rejected.code)) {}
 };
 class Lease {
 public:
@@ -182,8 +190,13 @@ Outcome consumed(int failure) {
   int value = ?Claim(failure);
   return Outcome(value);
 }
+Report<int> constrained(int failure) {
+  int value = ?Attempt(failure);
+  return Report<int>(value);
+}
 int main() {
-  return scalar(0) + defaulted(3).bias + consumed(4).code;
+  return scalar(0) + defaulted(3).bias + consumed(4).code +
+         constrained(5).code;
 }
 )gti",
            "a residual must return through an implicit operator or a "

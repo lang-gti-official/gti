@@ -135,8 +135,9 @@ while canonical language documents continue to describe actual support.
   provenance and slot lifetimes, recoverable allocation, alignment and
   zero-size rules, and the arena/pool composition boundary.
 - [023: Bounded implicit return movement](decisions/023-implicit-return-movement.md)
-  — moves one exact whole noncopyable local or by-value parameter at return
-  while preserving copyable returns and explicit movement elsewhere.
+  — moves one exact whole noncopyable local or by-value parameter at return,
+  or into a return conversion that takes it by value, while preserving
+  copyable returns and explicit movement elsewhere.
 - [024: Explicit source module interfaces](decisions/024-source-module-interfaces.md)
   — package-registered interfaces, private declarations, imports
   and explicit re-exports while preserving legacy includes and whole-program compilation.
@@ -150,7 +151,8 @@ while canonical language documents continue to describe actual support.
 - [027: Explicit-by-default user-defined conversions](decisions/027-user-defined-conversions.md)
   — conversion operators called only by `Target(value)` unless declared
   `implicit`, one shared selection with constructors and no ranking, one
-  step, and member-call receivers.
+  step, and member-call receivers; declarations and returns convert through
+  `implicit` constructors and operators.
 - [028: Protocol concepts and conformance blocks](decisions/028-protocol-concepts.md)
 - [029: Prefix `?` through `std::tryable`](decisions/029-tryable-propagation.md)
   — concepts with associated types and operations, supplied for a type by a

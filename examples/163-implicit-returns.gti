@@ -1,0 +1,58 @@
+// `return value;` converts a value of another type to the declared return
+// type exactly as the declaration `R result = value;` would: through one
+// `implicit` constructor of `R` or one `implicit` conversion operator of the
+// value's class. A move-only local moves into a conversion that takes it by
+// value, so the return needs no `std::move`.
+#include <std/experimental/optional>
+#include <std/string>
+
+// A validated port number that an `int` converts to implicitly.
+struct Port {
+  int number;
+  implicit Port(int value) : number(value) {}
+};
+
+// A move-only message buffer. Its consuming conversion hands its storage to
+// the resulting string instead of copying it.
+class Draft {
+  mut std::string text;
+
+public:
+  Draft(std::string_view start) : text(start) {}
+  Draft(Draft& other) = delete;
+  Draft(Draft&& other) = default;
+  void append(std::string_view more) mut { this.text.append(more); }
+  implicit operator std::string() && { return std::move(this.text); }
+};
+
+// `optional(T)` is not implicit, so a found port is constructed explicitly;
+// the empty result uses the implicit `optional(nullopt_t)`.
+std::experimental::optional<Port> lookup_port(std::string_view scheme) {
+  if (scheme == "https") {
+    return std::experimental::optional<Port>(Port(443));
+  }
+  return std::experimental::nullopt;
+}
+
+Port default_port() { return 8080; }
+
+std::string greeting(std::string_view name) {
+  mut Draft draft{"Hello, "};
+  draft.append(name);
+  return draft;  // moves the draft into its consuming conversion
+}
+
+int main() {
+  std::experimental::optional<Port> secure = lookup_port("https");
+  std::experimental::optional<Port> unknown = lookup_port("gopher");
+  Port fallback = default_port();
+  std::string message = greeting("GTI");
+  // int raw = fallback; would be an error: Port has no conversion to int,
+  // and calls and assignment never convert implicitly.
+  if (secure.value().number == 443 and !unknown.has_value() and
+      fallback.number == 8080 and message == "Hello, GTI") {
+    std::println("returns convert like declarations");
+    return 0;
+  }
+  return 1;
+}

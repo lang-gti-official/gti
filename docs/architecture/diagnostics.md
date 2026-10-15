@@ -659,10 +659,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   the written source in an explicit-move hint. It has no fix-it because moving
   versus preserving the source requires programmer intent. A return of an
   exact whole named local or by-value parameter of the same move-only type is
-  an implicit move and produces no diagnostic. A named move-only value that
-  instead requires a return conversion, such as construction of an
-  `expected<T, E>` success, still names the rejected copy and spells `return
-  std::move(name);` in its hint. Field projections and other same-type
+  an implicit move and produces no diagnostic, as is one that a converted
+  return moves into an `implicit` constructor or consuming operator taking it
+  by value. A named move-only value that instead requires the built-in
+  `expected<T, E>` success conversion still names the rejected copy and
+  spells `return std::move(name);` in its hint. Field projections and other same-type
   move-only return expressions state the copy requirement without presenting
   identical source and destination types as a mismatch.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
@@ -953,8 +954,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
     suggesting `?std::move(name)`;
   - a borrowing operand, value type or residual type;
   - an enclosing callable without a declared return type, or a `void` one;
-  - a return type that is neither the residual type nor constructible from it
-    through exactly one `implicit` constructor;
+  - a return type that is neither the residual type nor converted from it by
+    the shared selection, through one `implicit` constructor or one
+    `implicit` conversion operator (a selection that finds a path but
+    rejects it, such as an ambiguity, keeps its own diagnostic);
   - use in a constexpr function;
   - an operand that is not a class or struct, such as a payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has

@@ -858,10 +858,12 @@ consumed, and a named place is copied. The block's `has_value` observes the
 operand. On success, `take_value` consumes it and produces the value of the
 expression, or nothing when `value_type` is `void`. Otherwise
 `take_residual` consumes it. The enclosing callable then returns the
-residual, initializing its declared return type as `R result = residual;`
-would: the residual is `R` itself, or `R` has exactly one `implicit`
-constructor taking it. The failure edge performs the same full-expression
-and lexical cleanup as an `expected` error. Each step is an ordinary call of
+residual as an ordinary `return residual;` would, initializing its declared
+return type as `R result = residual;` does: the residual is `R` itself, or it
+converts through one `implicit` constructor of `R` or one `implicit`
+conversion operator of its class, which runs as an ordinary call. The
+failure edge performs the same full-expression and lexical cleanup as an
+`expected` error. Each step is an ordinary call of
 the selected block function, so its own cleanup and defined failures follow
 the ordinary rules.
 

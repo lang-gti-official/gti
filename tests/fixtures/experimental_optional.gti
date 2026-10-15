@@ -21,8 +21,7 @@ public:
 
 std::experimental::optional<Tracked> find(int id) {
   if (id < 0) {
-    std::experimental::optional<Tracked> none = std::experimental::nullopt;
-    return none;
+    return std::experimental::nullopt;
   }
   return std::experimental::optional<Tracked>(Tracked(id));
 }
