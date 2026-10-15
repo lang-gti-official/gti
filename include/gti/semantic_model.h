@@ -93,6 +93,17 @@ struct SemanticBorrowDependencySet {
                          const SemanticBorrowDependencySet &) = default;
 };
 
+// The evaluated address of a stored reference is independent of the complete
+// set of external places that may own its referent. In particular a branch
+// join must not select the first dependency as though it were that address.
+struct SemanticReferenceSelection {
+  const Expr *source = nullptr;
+  const Expr *carrier = nullptr;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -126,6 +137,7 @@ struct SemanticLoanInfo {
   // additionalDependencies. An empty list denotes an unconditional path.
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
+  std::optional<SemanticReferenceSelection> referenceSelection;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -1061,11 +1073,43 @@ struct ResolvedPayloadConstructionInfo {
   std::vector<SemanticType> parameterTypes;
 };
 
+// The pattern selects ownership/borrowing semantics before HIR. A stored
+// reference designates an external object; extracting it must never move that
+// object or reinterpret the reference as borrowing the carrier's own storage.
+enum class PayloadExtractionKind {
+  CopyValue,
+  MoveValue,
+  BorrowValue,
+  CopyReference,
+  TransferReference,
+  ReborrowReference,
+};
+
+[[nodiscard]] constexpr bool
+isStoredReferenceExtraction(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::CopyReference ||
+         kind == PayloadExtractionKind::TransferReference ||
+         kind == PayloadExtractionKind::ReborrowReference;
+}
+
+[[nodiscard]] constexpr bool
+isConsumingPayloadExtraction(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::MoveValue ||
+         kind == PayloadExtractionKind::TransferReference;
+}
+
+[[nodiscard]] constexpr bool
+isReferencePayloadBinding(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::BorrowValue ||
+         isStoredReferenceExtraction(kind);
+}
+
 struct PayloadBindingInfo {
   const Token *name = nullptr;
   const Expr *source = nullptr;
   BindingInfo binding;
   std::size_t payloadIndex = 0;
+  PayloadExtractionKind extractionKind = PayloadExtractionKind::CopyValue;
 };
 
 struct ResolvedPayloadPatternInfo {

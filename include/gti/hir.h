@@ -135,6 +135,14 @@ struct HirBinding {
   std::optional<HirDropObligationId> dropObligation;
 };
 
+struct HirReferenceSelection {
+  HirValueId value = 0;
+  HirValueId carrier = 0;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+};
+
 struct HirLoan {
   SemanticLoanId semanticLoan = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -145,6 +153,7 @@ struct HirLoan {
   std::vector<SymbolId> designatedFields;
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
+  std::optional<HirReferenceSelection> referenceSelection;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
@@ -307,6 +316,7 @@ struct HirValue {
   std::optional<EnumConstant> enumValue;
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
+  std::optional<PayloadExtractionKind> payloadExtractionKind;
   std::optional<PlaceKey> place;
   std::optional<OwnershipEvent> ownership;
   HirFullExpressionId fullExpression = 0;

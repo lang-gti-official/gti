@@ -8347,9 +8347,19 @@ This checkpoint is work in progress. Prerequisite queries now share the existing
 established resource diagnostic instead of silently returning unknown. Exact
 active cycles remain unknown. A separate 64-result retention cache evicts only
 completed entries; eviction must cause recomputation, never different
-acceptance. Dedicated depth/eviction tests and the remaining instance-cache
-regressions are still required before integration. The memoized MIR observation
-path and coordinated schema pass the relinked focused summary target.
+acceptance. Dedicated depth/eviction and existing generic-discovery tests pass
+with the optimized compiler. The memoized MIR observation path and coordinated
+schema pass the relinked focused summary target; the combined entry-fact
+checkpoint still needs its own rebuild and validation.
+
+Dependency-free by-value payload-enum parameters now seed a complete set with
+every concrete alternative. Semantics derives it from the strict type inventory;
+MIR independently reconstructs it from exact formal bindings, types, available
+entry storage and sealed payload rows. This does not infer an empty set for an
+unknown reference parameter or after a mutable call. Optimized focused tests
+cover forwarding the complete entry inventory and reject substituted formal
+types/bindings, unavailable entry storage and omitted alternatives. Nonempty
+conditional entry loans remain a subsequent proof step.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
@@ -8394,6 +8404,18 @@ The follow-up separates two cooperating implementation regions:
   complete-set dataflow supplies producer/return evidence to both checks, so
   this does not introduce another ownership or liveness engine.
 
+The selected-reference scaffold records the exact projected expression and
+subject in semantics, then resolves them to one current-body HIR extraction
+value and carrier operand. This is address-production identity, not an owner
+dependency: the external dependency set remains separate and may contain
+several origins for the same field after a branch join. A strict alternative
+inventory also records dependency-free unit/error variants, rather than
+inferring them from the absence of a reference path. These records do not yet
+admit stored reference payloads; independent MIR publication/transfer proofs,
+all-origin access checks and producer/entry seeding remain required. Optimized
+C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
+claimed for it.
+
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The
@@ -8404,6 +8426,19 @@ ownership and MIR-verifier translation units; this is not language-test or
 runtime evidence. The initial focused remote run was canceled while queued to
 preserve another task's performance window and has been fetched and cleaned up.
 Optimized focused and full validation remain required before integration.
+
+The extraction prerequisite records a resolved structural mode for copying or
+moving an owned field, borrowing its storage, copying a shared stored reference,
+transferring a consumed stored reference, or reborrowing a stored reference.
+HIR/MIR preserve that selection instead of inferring it from the binding's
+reference type. The verifier checks the mode against the concrete alternative,
+operand and value category; missing or substituted modes are rejected. External
+reference extraction is still closed pending exact selected-address/dependency
+proof. Its implementation must preserve every possible external origin at a
+branch join, never pick the first origin or treat the carrier as the referent.
+Explicit reference patterns reborrow an unconsumed carrier; a plain binding on
+a consumed reference alternative transfers the reference without moving its
+external object. These prerequisites do not yet admit reference payloads.
 
 The usable end-to-end client is an ordinary source-defined result with borrowed
 success and owning failure, including shared and exclusive results, direct

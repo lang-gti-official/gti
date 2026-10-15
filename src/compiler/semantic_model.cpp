@@ -2113,6 +2113,9 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   std::size_t borrowedDependencies = 0;
   for (const auto &loan : retainedLoans) {
     borrowedDependencies += loan.conditions.size();
+    if (loan.referenceSelection)
+      borrowedDependencies += loan.referenceSelection->fields.size() +
+                              loan.referenceSelection->conditions.size();
     for (const auto &dependency : loan.additionalDependencies)
       borrowedDependencies += dependency.conditions.size();
   }
