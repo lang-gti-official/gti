@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.7 — Borrowed arguments before a nested call taking a class by value
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call passes a local by reference and
+  a later argument is a conditional whose test calls a function that takes a
+  class by value, such as `use(plain, owns(std::string("xy")) ? 0 : 2)`. The
+  by-value argument may be a new object, a local moved with `std::move` or
+  copied, or the argument of a method called on another local, and the call
+  may also be one arm of the conditional. If that call, the argument's
+  construction or a later argument fails, each object is destroyed once.
+- A class argument of the outer call that is built from a string, such as
+  `pick(plain, std::string("xy"), argc > 1 ? 0 : 2)`, no longer stops with
+  this error either.
+
 ## 0.439.6 — Borrowed arguments before a conditional whose test can fail
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
