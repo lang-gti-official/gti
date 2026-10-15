@@ -1,0 +1,63 @@
+// A protocol concept can relate several types. A block supplies the
+// operations for one combination of them, and generic code names the
+// combination it requires.
+#include <std/string>
+
+// Adding two quantities, where the result's type depends on both inputs.
+concept adds_to<Left, Right> {
+  typename sum_type;
+  sum_type add(Left& left, Right& right);
+};
+
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+
+struct Centimeters {
+  int value;
+  Centimeters(int amount) : value(amount) {}
+};
+
+class Tally<T> {
+public:
+  int count;
+  Tally(int amount) : count(amount) {}
+};
+
+// Mixed units sum in the finer one.
+for concept adds_to<Meters, Centimeters> {
+  using sum_type = Centimeters;
+  Centimeters add(Meters& left, Centimeters& right) {
+    return Centimeters(left.value * 100 + right.value);
+  }
+};
+
+// Tallies sum only with tallies of the same kind: the repeated parameter
+// must bind the same type on both sides.
+for <T> concept adds_to<Tally<T>, Tally<T>> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, Tally<T>& right) {
+    return Tally<T>(left.count + right.count);
+  }
+};
+
+// Generic code requires the pair and names its result through the concept.
+adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
+  requires adds_to<L, R> {
+  return adds_to<L, R>::add(left, right);
+}
+
+struct Apples {};
+
+int main() {
+  Meters length{2};
+  Centimeters extra{35};
+  Centimeters sum = total(length, extra);
+  std::println(std::to_string(sum.value));
+  Tally<Apples> morning{3};
+  Tally<Apples> evening{4};
+  Tally<Apples> day = total(morning, evening);
+  std::println(std::to_string(day.count));
+  return 0;
+}

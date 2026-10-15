@@ -5,9 +5,10 @@ The fixture traces a concrete and a generic conformance block in every mode:
 calls through a requirement in generic code, block functions calling each
 other, associated types used for locals and results, and operations that take
 ownership of an owning operand, which is released exactly once when the
-operation returns or fails. Example 157 runs as documented. A two-package workspace
-checks package coherence: a package may supply a block for a concept or a
-type it owns, and not for a dependency's concept and type together.
+operation returns or fails. Examples 157 and 158 run as documented. A
+two-package workspace checks package coherence: a package may supply a block
+for a concept it owns or one of whose argument types it owns, and not for a
+dependency's concept and types together.
 """
 
 import pathlib
@@ -37,6 +38,9 @@ public:
   int side;
   Square(int length) : side(length) {}
 };
+concept fits<Item, Space> {
+  bool holds(Space& space, Item& item);
+};
 """
 
 OWNED = """#include <lib/shapes>
@@ -59,10 +63,18 @@ for concept local<Square> {
   using item = int;
   int get(Square& value) { return value.side; }
 };
+// This package owns one of the argument types.
+for concept fits<Square, Circle> {
+  bool holds(Circle& space, Square& item) {
+    return item.side < space.radius * 2;
+  }
+};
 int main() {
   Circle circle{3};
   Square square{4};
-  return shaped<Circle>::size(circle) + local<Square>::get(square) - 7;
+  int fitted = fits<Square, Circle>::holds(circle, square) ? 0 : 100;
+  return shaped<Circle>::size(circle) + local<Square>::get(square) - 7 +
+         fitted;
 }
 """
 
@@ -70,6 +82,9 @@ FOREIGN = """#include <lib/shapes>
 for concept shaped<Square> {
   using size_type = int;
   int size(Square& value) { return value.side; }
+};
+for concept fits<Square, Square> {
+  bool holds(Square& space, Square& item) { return true; }
 };
 int main() { return 0; }
 """
@@ -99,7 +114,9 @@ def coherence(compiler, directory):
     rejected = subprocess.run([str(compiler), "check"], cwd=app,
                               capture_output=True, text=True, timeout=600)
     assert rejected.returncode != 0 and "GTI-S2123" in rejected.stderr and \
-        "owns neither the concept nor the type" in rejected.stderr, rejected.stderr
+        "owns neither the concept nor the type" in rejected.stderr and \
+        "owns neither the concept nor any of the argument types" in \
+        rejected.stderr, rejected.stderr
     print("protocol concepts: package coherence passed", flush=True)
 
 
@@ -107,7 +124,10 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     tests = pathlib.Path(__file__).parent
     source = tests / "fixtures" / "protocol_concepts.gti"
-    example = tests.parent / "examples" / "157-protocol-concepts.gti"
+    examples = [(tests.parent / "examples" / "157-protocol-concepts.gti",
+                 "a rope\na crate\n42\n"),
+                (tests.parent / "examples" / "158-multi-parameter-concepts.gti",
+                 "235\n7\n")]
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
@@ -124,12 +144,14 @@ def main():
                           result.stderr)
                 wanted = (code, trace, expected_report(source, report))
                 assert actual == wanted, (name, phase, actual, wanted)
-            demo = pathlib.Path(directory) / f"example-{name}"
-            built = run([str(compiler), str(example), *flags, "-o", str(demo), *native])
-            assert built.returncode == 0, (name, built.stdout, built.stderr)
-            shown = run([str(demo)])
-            assert (shown.returncode, shown.stdout) == (0, "a rope\na crate\n42\n"), \
-                (name, shown.returncode, shown.stdout, shown.stderr)
+            for example, output in examples:
+                demo = pathlib.Path(directory) / f"{example.stem}-{name}"
+                built = run([str(compiler), str(example), *flags, "-o", str(demo),
+                             *native])
+                assert built.returncode == 0, (name, built.stdout, built.stderr)
+                shown = run([str(demo)])
+                assert (shown.returncode, shown.stdout) == (0, output), \
+                    (example.name, name, shown.returncode, shown.stdout, shown.stderr)
             print(f"protocol concepts: {name} passed", flush=True)
         coherence(compiler, directory)
 
