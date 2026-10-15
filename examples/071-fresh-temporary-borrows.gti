@@ -14,6 +14,25 @@ public:
 
 Report make_report(int value) { return Report(value); }
 
+// A fresh receiver may also call a virtual member, an override or an
+// interface implementation. Dynamic dispatch still selects the body that runs;
+// the temporary is borrowed for the call and destroyed with the statement.
+interface Meter {
+  int record(int amount) mut;
+};
+
+class Doubling : public Meter {
+  mut int total;
+
+public:
+  Doubling(int start) : total(start) {}
+
+  int record(int amount) mut override {
+    this.total += 2 * amount;
+    return this.total;
+  }
+};
+
 int inspect(Report& report) { return report.code(); }
 
 int main() {
@@ -24,5 +43,8 @@ int main() {
   // for one call. The temporary is destroyed at the statement boundary.
   int observed = inspect(make_report(5));
 
-  return updated == 7 and observed == 5 ? 0 : 1;
+  // The mutable override runs on the fresh receiver.
+  int recorded = Doubling(1).record(3);
+
+  return updated == 7 and observed == 5 and recorded == 7 ? 0 : 1;
 }

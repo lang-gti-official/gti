@@ -1036,8 +1036,8 @@
       }
     },
     "071-fresh-temporary-borrows.gti": {
-      "declarations": 100,
-      "bodies": 12,
+      "declarations": 107,
+      "bodies": 19,
       "generated_items": 1,
       "generated_kinds": {
         "program_initialization": 0,
@@ -2402,8 +2402,8 @@
     }
   },
   "totals": {
-    "declarations": 121337,
-    "bodies": 17937,
+    "declarations": 121344,
+    "bodies": 17944,
     "generated_items": 11331
   }
 }

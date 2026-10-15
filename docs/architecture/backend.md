@@ -1273,7 +1273,12 @@ hidden slot and emits the selected method through the staged `BorrowRead` or
 `BorrowWrite` input. Verification and emission use the same MIR
 materialization query. The corresponding MIR drop remains the only destruction
 authority on normal and defined-failure paths. The backend does not infer
-mutability from a C++ rvalue or reselect the native member overload.
+mutability from a C++ rvalue or reselect the native member overload. A
+virtual member's call keeps its MIR dispatch: the slot is presented as the
+member's owner class (the temporary's own class or one of its bases) and the
+table selects the override, through the transformed status ABI when the family
+is failure-capable. The emitter allocates no storage for a by-value receiver
+here.
 
 For a verified read-only temporary argument input, the body emitter uses the
 same exact value-rooted lifetime slot and passes that slot to the selected
