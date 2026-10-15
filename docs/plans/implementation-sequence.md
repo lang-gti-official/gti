@@ -8433,6 +8433,18 @@ retirement mutations accompany this seam. Syntax checks establish only that
 the scaffold compiles; focused semantic/MIR tests and reference-payload runtime
 evidence remain pending for this checkpoint.
 
+The MIR bridge now retains the selected extraction's exact SSA value and
+physical carrier place separately from its possible external owner places.
+Lowering requires the unique current-body producer and the structural stored
+reference extraction mode; malformed selections cannot turn an ordinary
+storage borrow into reference transfer. This identity scaffold still does not
+admit reference payloads. The next proof compares its projected complete owner
+set with executable carrier flow at the extraction point, verifies every
+owner's access/liveness, and preserves the cached address after shell retirement.
+Same-referent aliases retain the original selection plus their checked parent.
+Projected aliases additionally require an exact typed runtime projection applied
+to every possible owner; no projection is admitted by choosing the first owner.
+
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The
@@ -8455,7 +8467,11 @@ proof. Its implementation must preserve every possible external origin at a
 branch join, never pick the first origin or treat the carrier as the referent.
 Explicit reference patterns reborrow an unconsumed carrier; a plain binding on
 a consumed reference alternative transfers the reference without moving its
-external object. These prerequisites do not yet admit reference payloads.
+external object. The backend caches the external address at extraction, before
+retiring a consumed carrier; later reference publication must not re-read a
+dead carrier's field. These paths remain unreachable until independent selected
+reference proofs are implemented and validated. The prerequisite syntax checks
+do not constitute runtime evidence or admit reference payloads.
 
 The usable end-to-end client is an ordinary source-defined result with borrowed
 success and owning failure, including shared and exclusive results, direct

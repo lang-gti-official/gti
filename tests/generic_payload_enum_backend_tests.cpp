@@ -102,6 +102,31 @@ int main() {
   }
   if (frontend.mir.payloadEnums().size() != 2)
     return 1;
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = frontend.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged)) {
+      for (auto &loan : function.body.loans) {
+        if (changed || loan.kind != lang::MirLoanKind::Local)
+          continue;
+        for (const auto &value : function.body.values) {
+          if (changed || value.info.category != lang::ValueCategory::Place)
+            continue;
+          lang::SemanticType reference{lang::SemanticType::Reference};
+          reference.arguments.push_back(value.info.type);
+          loan.referenceSelection = lang::MirReferenceSelection{
+              .value = mutation == 0 ? 0 : value.id,
+              .carrier = mutation == 1 ? 0 : loan.source,
+              .fields = {1},
+              .reference = reference};
+          changed = true;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "a missing or unrelated selected-reference producer cannot "
+           "reinterpret an ordinary storage borrow");
+  }
   const auto &left = frontend.mir.payloadEnums()[0];
   const auto &right = frontend.mir.payloadEnums()[1];
   expect(left.declaration == right.declaration && left.type != right.type &&
@@ -144,7 +169,7 @@ int main() {
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v20") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v107"),
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v108"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
