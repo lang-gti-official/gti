@@ -557,7 +557,7 @@ access-specifier       = ( "public" | "protected" | "private" ) ":" ;
    An attribute list may precede only a class, struct, or interface. Semantics
    accepts `no_transfer`, `no_share`, `unsafe_transfer`, and `unsafe_share` on
    ordinary classes/structs; interfaces instead accept `transfer` and `share`
-   requirements. A non-generic passive struct may use `c_abi` instead to opt
+   requirements. A non-generic passive struct or union may use `c_abi` instead to opt
    into the closed native C record contract. It then contains only public
    instance fields from the admitted scalar, recursive pointer, fixed-array,
    callback and nested native-record family, with no field initializers,
