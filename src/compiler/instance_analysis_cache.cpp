@@ -39,8 +39,10 @@ void hashType(std::size_t &seed, const SemanticType &type) {
     hashValue(seed, value);
 }
 
-struct KeyHash {
-  std::size_t operator()(const InstanceAnalysisKey &key) const {
+} // namespace
+
+std::size_t InstanceAnalysisKeyHash::operator()(
+    const InstanceAnalysisKey &key) const {
     std::size_t seed = static_cast<std::size_t>(key.kind);
     combine(seed, key.declaration);
     for (const auto *types : {&key.classTypes, &key.types}) {
@@ -54,10 +56,7 @@ struct KeyHash {
         hashValue(seed, value);
     }
     return seed;
-  }
-};
-
-} // namespace
+}
 
 class InstanceAnalysisGeneration final {
 public:
@@ -83,7 +82,8 @@ public:
 
   struct GenerationEntries {
     std::shared_ptr<const InstanceAnalysisGeneration> generation;
-    std::unordered_map<InstanceAnalysisKey, std::list<Entry>::iterator, KeyHash>
+    std::unordered_map<InstanceAnalysisKey, std::list<Entry>::iterator,
+                       InstanceAnalysisKeyHash>
         index;
     std::uint64_t lastUse = 0;
   };

@@ -8342,12 +8342,14 @@ publish result facts only on their successful edge. Synthetic early returns
 from propagation currently make the summary unknown until their selected
 residual operation's complete result contract can be instantiated.
 
-This checkpoint is work in progress. Before enabling nonempty contracts, replace
-the provisional per-query depth/entry limits with the existing generic-instance
-resource policy: cycles remain unknown, exhaustion reports the established
-resource diagnostic, and eviction of completed cache entries must only cause
-recomputation, never different acceptance. Recheck the memoized MIR observation
-path and the coordinated schema revision with all affected targets relinked.
+This checkpoint is work in progress. Prerequisite queries now share the existing
+64-level/16,384-distinct-instance resource policy with HIR discovery, with the
+established resource diagnostic instead of silently returning unknown. Exact
+active cycles remain unknown. A separate 64-result retention cache evicts only
+completed entries; eviction must cause recomputation, never different
+acceptance. Dedicated depth/eviction tests and the remaining instance-cache
+regressions are still required before integration. The memoized MIR observation
+path and coordinated schema pass the relinked focused summary target.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
