@@ -10025,6 +10025,23 @@ cleanupFreeClassJoinMove(const MirProgram &program, const MirBody &body,
   return move;
 }
 
+// The cleanup-free join whose single Move is `move`. Every writer of that
+// Move, whether it stages the joined object or publishes it as an arm of an
+// enclosing join, ends the emptied join's representation right after it, so
+// the storage is free again when a loop re-enters the conditional.
+[[nodiscard]] const MirPlace *
+cleanupFreeJoinMovedBy(const MirProgram &program, const MirBody &body,
+                       const MirInstruction &move) {
+  const MirPlace *join =
+      move.kind == MirInstructionKind::Move && move.operands.size() == 1
+          ? body.findPlace(move.operands.front().place)
+          : nullptr;
+  return join != nullptr &&
+                 cleanupFreeClassJoinMove(program, body, *join) == &move
+             ? join
+             : nullptr;
+}
+
 [[nodiscard]] const MirPlace *conditionalClassBindingJoinSlotForValue(
     const MirProgram &program, const MirBody &body, MirValueId valueId) {
   const ConditionalClassBindingJoinArm arm =
@@ -31114,16 +31131,9 @@ struct ClassSsaLifetimeSlot {
 [[nodiscard]] const MirPlace *
 stagedCleanupFreeJoinMove(const MirProgram &program, const MirBody &body,
                           const ClassSsaLifetimeSlot &slot) {
-  const MirInstruction *move = slot.producer;
-  const MirPlace *join = move != nullptr &&
-                                 move->kind == MirInstructionKind::Move &&
-                                 move->operands.size() == 1
-                             ? body.findPlace(move->operands.front().place)
-                             : nullptr;
-  return join != nullptr &&
-                 cleanupFreeClassJoinMove(program, body, *join) == move
-             ? join
-             : nullptr;
+  return slot.producer == nullptr
+             ? nullptr
+             : cleanupFreeJoinMovedBy(program, body, *slot.producer);
 }
 
 // A passive, unaliased error may remain in representation storage while MIR
@@ -41555,6 +41565,13 @@ private:
           writeIndent();
           output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *source)
                  << ".destroy(); // end prepared argument source shell\n";
+        }
+        // An arm moving out of a nested cleanup-free join empties it.
+        if (const MirPlace *join =
+                cleanupFreeJoinMovedBy(program, facts.body, instruction)) {
+          writeIndent();
+          output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *join)
+                 << ".destroy(); // end moved join representation\n";
         }
         return;
       }

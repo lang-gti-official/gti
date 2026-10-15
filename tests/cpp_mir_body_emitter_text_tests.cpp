@@ -5929,6 +5929,80 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testNestedCleanupFreeJoinMove() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-nested-cleanup-free-join.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+int32_t bound(bool left, int32_t one) {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    plain_value t =
+        left ? make_plain(i) : (i > one ? make_plain(one) : plain_value(i));
+    total += t.number;
+  }
+  return total;
+}
+
+int32_t viewed(bool left, int32_t one) {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1)
+    total += (left ? (i > one ? make_plain(one) : plain_value(i))
+                   : make_plain(i)).number;
+  return total;
+}
+
+int main() { return bound(false, 1) + viewed(true, 1) - 4; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the nested cleanup-free join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Each loop evaluates its conditional again. The outer arm that moves out
+  // of the nested join, and the staged move out of the viewed outer join,
+  // each end the emptied join's storage on the next line, so no iteration
+  // constructs an engaged representation.
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  std::size_t retirements = 0;
+  bool movedFirst = true;
+  for (std::size_t at = text.find(retire); at != std::string::npos;
+       at = text.find(retire, at + 1)) {
+    ++retirements;
+    const std::size_t lineStart = text.rfind('\n', at) + 1;
+    const std::size_t slotStart = text.find("__gti_mir_p_", lineStart);
+    const std::string slot =
+        slotStart < at ? text.substr(slotStart, at - slotStart) : std::string();
+    const std::size_t previousEnd = lineStart - 1;
+    const std::size_t previousStart = text.rfind('\n', previousEnd - 1) + 1;
+    const std::string previous =
+        text.substr(previousStart, previousEnd - previousStart);
+    const std::string moved = ".construct(std::move(" + slot + ".get()));";
+    movedFirst =
+        movedFirst && !slot.empty() && previous.size() > moved.size() &&
+        previous.compare(previous.size() - moved.size(), moved.size(), moved) ==
+            0;
+  }
+  expect(retirements == 3 && movedFirst,
+         "both nested joins and the viewed outer join should end their "
+         "storage right after the move that empties it");
+  // The bound outer join ends its storage at the binding, as before.
+  expect(text.find(".destroy(); // end passive conditional representation\n") !=
+             std::string::npos,
+         "the bound outer join should end its storage at the binding");
+}
+
 void testShortCircuitOwnedFieldView() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-short-circuit-field-view.gti", R"(
@@ -6324,6 +6398,7 @@ constexpr NamedTest kTests[] = {
      testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testNestedCleanupFreeJoinMove", testNestedCleanupFreeJoinMove},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
