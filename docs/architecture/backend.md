@@ -1625,9 +1625,17 @@ When cleanup such as the drop of a moved-from parameter runs between the call
 and the Return, the result stays in its value-rooted slot and the Return takes
 it out. A fallible cleanup in between reparents the result to its return-result
 obligation, and the failure path destroys that slot rather than the caller's
-never-constructed storage. A failure-free call returning a reference binds its
-call-result loan by address in either body form. A plain body returning a moved
-class, callable, owning array or `Expected<Class, E>` value stages it at the
+never-constructed storage. The call may be a consuming (`&&`) source member
+whose `Once` receiver passes the shared consuming-receiver proof, as in
+`return std::move(box).release();`. Its receiver is not transferred at the
+call, so the receiver's full-expression drop is one of those later cleanups.
+No other invocation capability is admitted. A cleanup-free receiver moved out
+of a binding is instead a prepared parameter that the call transfers out; the
+consuming-receiver proof does not admit that transport yet, so this proof
+refuses such a returned result. A failure-free call returning a
+reference binds its call-result loan by address in either body form. A plain
+body returning a moved class, callable, owning array or `Expected<Class, E>`
+value stages it at the
 Move, before any later drop of the moved-from source, and returns it from that
 slot; a moved class value that the Return wraps as the success alternative of
 an `Expected<Class, E>` result is staged the same way. A moved owning payload
@@ -2655,7 +2663,19 @@ closure object then replays the GTI copy exactly, and destroying it runs no
 source code. A closure has no native default state or assignment, so the field
 is copy-constructed in the member-initializer list and the body aliases the
 formal instead of copying it again. A class capture leaves a lexical drop on
-the formal; it stays in MIR and emits as a trivial drop. Every closure instance
+the formal; it stays in MIR and emits as a trivial drop. The body may use the
+formal again, as in `F spare = f;` or `call(f)`, and MIR can record that later
+read as another bare place of the formal's binding. The copy proof therefore
+names the formal by its binding: every bare place of it, for a class formal as
+for a closure, spells the one alias, and none declares a lifetime slot that
+nothing constructs. When the body can fail, the caller ends the native object
+after the failure, so the failure-form constructor accounts for every lexical
+field. A closure field has no native empty state, but the record-published
+copy constructs it in the member-initializer list and the copy proof has
+established that ending it runs no source code. A struct-capturing closure
+field is therefore retained as a passive shell, wherever it sits in the field
+order, exactly as a trivially dropped closure field needs no rollback. Every
+closure instance
 of a class shares one native constructor template, so a record-published
 closure copy keeps its sibling fields body-staged, as the owned-parameter form
 does. All instances then have one member-initializer list, and their bodies

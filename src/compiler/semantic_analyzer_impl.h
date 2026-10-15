@@ -1541,8 +1541,8 @@ private:
     std::vector<GenericParameterId> parameterIds;
     bool compilerPrivate = false;
     // A concept with a body is satisfied only through conformance blocks.
-    // Operation types are in the concept parameter's space, where an
-    // associated name types as a projection of that parameter.
+    // Operation types are in the concept parameters' space, where an
+    // associated name types as a projection of those parameters.
     struct ProtocolOperation {
       std::string name;
       const FunctionDecl *declaration = nullptr;
@@ -1554,9 +1554,9 @@ private:
     std::vector<ProtocolOperation> operations;
   };
 
-  // One `for <Parameters> concept Concept<Pattern>` block. Its pattern and
-  // associated types are in the block's parameter space; selecting the block
-  // for a concrete type binds those parameters.
+  // One `for <Parameters> concept Concept<Patterns...>` block. Its patterns
+  // and associated types are in the block's parameter space; selecting the
+  // block for concrete arguments binds those parameters.
   struct RegisteredConformance {
     ConceptId conceptId = 0;
     SourceUnitId sourceUnit = 0;
@@ -1566,10 +1566,11 @@ private:
     std::vector<std::string> namespaceScope;
     std::vector<std::string> functionScope;
     std::vector<GenericParameterInfo> genericParameters;
-    SemanticType pattern = SemanticType::Unknown;
-    // Nonzero when the pattern is a class template applied to every block
-    // parameter once; zero for a closed concrete pattern.
-    ClassId patternTemplate = 0;
+    // One pattern per concept parameter: a closed concrete type, or a class
+    // template applied to block parameters, whose template is then recorded
+    // in patternTemplates (zero for a concrete pattern).
+    std::vector<SemanticType> patterns;
+    std::vector<ClassId> patternTemplates;
     std::vector<SemanticType> associatedTypes;
     std::vector<Symbol> operations;
     bool operationsBound = false;
@@ -3602,18 +3603,25 @@ private:
                             std::vector<std::string> scope);
   void bindConformanceOperations();
   [[nodiscard]] std::optional<ConformanceMatch>
-  matchConformance(ConceptId id, const SemanticType &argument) const;
+  matchConformance(ConceptId id,
+                   const std::vector<SemanticType> &arguments) const;
+  [[nodiscard]] std::optional<std::vector<SemanticType>>
+  classTemplateArguments(const SemanticType &type, ClassId owner) const;
+  [[nodiscard]] bool
+  conformancePatternsOverlap(const RegisteredConformance &existing,
+                             const std::vector<SemanticType> &patterns,
+                             const std::vector<ClassId> &templates) const;
   [[nodiscard]] std::optional<ConceptId>
   protocolConceptOwner(const TypeRef &owner,
                        const std::vector<std::string> &fromScope) const;
   [[nodiscard]] SemanticType
   associatedTypeProjection(ConceptId id, std::uint32_t member,
-                           SemanticType argument) const;
+                           std::vector<SemanticType> arguments) const;
   [[nodiscard]] SemanticType
   reduceAssociatedTypeProjection(SemanticType projection) const;
   [[nodiscard]] SemanticType
   protocolOperationType(ConceptId id, const SemanticType &type,
-                        const SemanticType &argument) const;
+                        const std::vector<SemanticType> &arguments) const;
   [[nodiscard]] const RegisteredConformance *
   enclosingConformance(const std::vector<std::string> &fromScope) const;
   [[nodiscard]] SemanticType
@@ -3624,7 +3632,7 @@ private:
                       const std::vector<std::string> &fromScope) const;
   [[nodiscard]] std::optional<SemanticType>
   ownBlockProjection(ConceptId id, std::uint32_t member,
-                     const SemanticType &argument,
+                     const std::vector<SemanticType> &arguments,
                      const std::vector<std::string> &fromScope) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;

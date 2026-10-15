@@ -1626,6 +1626,20 @@ void SemanticModel::recordCollection(const ArrayInitializer &initializer,
   collections.insert_or_assign(&initializer, std::move(info));
 }
 
+const ProtocolConceptSpelling *
+SemanticModel::findProtocolConcept(ConceptId id) const {
+  const auto found = protocolConcepts.find(id);
+  if (found != protocolConcepts.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findProtocolConcept(id);
+}
+
+void SemanticModel::recordProtocolConcept(ConceptId id,
+                                          ProtocolConceptSpelling spelling) {
+  protocolConcepts.insert_or_assign(id, std::move(spelling));
+}
+
 [[nodiscard]] const ResolvedConstructorInitializerInfo *
 SemanticModel::findConstructorInitializer(
     const ConstructorInitializer &initializer) const {
@@ -1868,6 +1882,7 @@ void SemanticModel::clear() {
   contextualConstructions.clear();
   contextualConstructionSites.clear();
   collections.clear();
+  protocolConcepts.clear();
   constructorInitializers.clear();
   resolvedSymbols.clear();
   semanticDatabase.clear();

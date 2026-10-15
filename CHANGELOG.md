@@ -9,25 +9,84 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.435.0 — Borrowed results through callbacks
+## 0.436.0 — Borrowed results through callbacks
 
 - A lambda can return a read-only reference that borrows exactly one of its
   read-only reference parameters; every `return` must derive from that
   parameter, captures are never origins, and results derived from a mutable
-  parameter or an ambiguous parameter list are rejected (`GTI-S2017`). Direct invocation, a generic `F`/`F&` relay and a
-  signature-erased view all give the result the argument's borrow.
+  parameter or an ambiguous parameter list are rejected (`GTI-S2017`).
+  Direct invocation, a generic `F`/`F&` relay and a signature-erased view
+  all give the result the argument's borrow.
 - `std::function_ptr<R&(Args...)>` and `std::function_ref<R&(Args...)>`
   carry a result-origin contract inferred from the signature's one read-only
   reference parameter; the target must publish the same origin, and each call
   result borrows that argument. Erased objects never compete as origins.
 - `[[borrowed_from(name)]]` on a declaration whose result type is a generic
   parameter binds the instances whose result is a checked reference and may
-  name a final parameter pack. Example 158 and the
+  name a final parameter pack. Example 159 and the
   `checked_callable_result_origin` fixture accompany the feature.
 - Fixed: invoking a `std::function_ptr` or `std::function_ref` whose signature
   takes a scalar reference parameter (`int&`) failed in the backend with
   `GTI-B0001`; the invocation now drains that argument's staged borrow like a
   source call.
+
+## 0.435.0 — Protocol concepts over several types
+
+- A concept with a body can now take several type parameters, so it can
+  relate types to each other. An associated type then depends on all of
+  them:
+  `concept adds_to<Left, Right> { typename sum_type; sum_type add(Left& left, Right& right); };`.
+- A block gives one pattern per parameter. Each is a concrete type or one
+  class template over the block's parameters, such as
+  `for <T> concept adds_to<Tally<T>, Tally<T>> { ... }`. A parameter may
+  repeat, and every occurrence must be the same type, so that block applies
+  only to two tallies of the same kind.
+- Two blocks that some types could both match are rejected as overlapping,
+  as before. A package may write a block when it owns the concept or the
+  outermost type of any argument.
+- Generic code names the application it needs, as in
+  `adds_to<L, R>::sum_type total<L, R>(L& left, R& right) requires adds_to<L, R>`.
+- Diagnostics now spell an associated type through its concept, such as
+  `scaled<A, B>::factor_type`, instead of "type parameter".
+- Example 158 demonstrates a two-parameter concept.
+
+## 0.434.2 — Returning the result of a consuming method
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a function returns the result of a
+  consuming (`&&`) method directly, such as
+  `Tracked take(Single box) { return std::move(box).release(); }`. This
+  failed for every such method that cannot fail, because the receiver is
+  destroyed after the call and before the return. Receivers include by-value
+  parameters, locals and temporaries such as `return Single(1).release();`,
+  in ordinary and generic functions, methods and lambdas. The returned value
+  is destroyed exactly once, by the caller. If the receiver's destructor
+  fails after the call, the result is destroyed before the failure
+  propagates.
+- A consuming call still stops with this error in these cases:
+  - when it is returned this way and its receiver is moved out of a variable
+    whose class has no destructor and no fields that need one, such as
+    `return std::move(p).make();` for a class holding only an `int`
+  - when its result initializes a field in a constructor's member-initializer
+    list, such as `Holder(Single box) : kept(std::move(box).release()) {}`;
+    a member initializer that calls a method on a parameter, such as
+    `kept(source.make())`, fails the same way when the method cannot fail
+  - when its receiver is moved out of a variable inside a conditional
+    expression, such as `left ? std::move(a).release() : std::move(b).release()`
+
+## 0.434.1 — Constructors that reuse a copied parameter
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class copies a lambda
+  parameter into a field and its constructor body can fail, for example
+  `Keeper(F f) : callback(f), seen(0) { F spare = f; this.seen = call(std::move(spare)); }`,
+  and the lambda captures a struct. Lambdas capturing numbers or nothing
+  already worked; using both kinds of lambda with one class also failed.
+- Fix the native C++ compile failure (`no member named 'get'` in the saved
+  backend log) when a constructor copies a parameter into a field and then
+  passes the same parameter by value again, such as
+  `Stamp(Offset offset) : origin(offset), total(amount(offset)) {}` or
+  `call(f)` in the body of a constructor that also copied `f` into a field.
 
 ## 0.434.0 — Protocol concepts and conformance blocks
 
