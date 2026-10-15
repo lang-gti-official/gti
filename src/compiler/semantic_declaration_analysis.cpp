@@ -7836,6 +7836,14 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     if (updated.explicitReturnBorrowOrigin) {
       // A declaration contract is authoritative even when invalid (None).
       // Body-based inference must neither overwrite it nor rescue a typo.
+      // Resolve it again after concrete field metadata exists: a by-value
+      // carrier's external dependency cannot be known at initial inventory.
+      const auto contract = genericReturnBorrowContract(
+          *declaration, updated.returnType, updated.parameterTypes,
+          updated.ownerClass, updated.staticMember);
+      updated.returnBorrowOrigin = contract.origin;
+      updated.returnBorrowParameter = contract.parameter;
+      updated.returnBorrowAccess = contract.access;
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);

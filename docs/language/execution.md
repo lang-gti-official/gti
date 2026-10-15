@@ -863,7 +863,10 @@ would: the residual is `R` itself, or `R` has exactly one `implicit`
 constructor taking it. The failure edge performs the same full-expression
 and lexical cleanup as an `expected` error. Each step is an ordinary call of
 the selected block function, so its own cleanup and defined failures follow
-the ordinary rules.
+the ordinary rules. A reference success uses `take_value`'s declared
+`borrowed_from` contract to preserve the operand's external owner, not the
+lifetime of its consumed wrapper. Its loan remains live through the success
+reference's uses; the residual branch does not create that success loan.
 
 GTI does not provide language exceptions.
 

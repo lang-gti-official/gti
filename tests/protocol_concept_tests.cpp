@@ -94,6 +94,86 @@ int main() {
                            " times; expected once");
   };
 
+  const std::string borrowed = R"gti(
+concept observed<T> {
+  typename element;
+  [[borrowed_from(source)]] element get(T source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed<Reading> {
+  using element = int&;
+  [[borrowed_from(value)]] int& get(Reading value) {
+    return value.external;
+  }
+};
+)gti";
+  accepted(borrowed + R"gti(
+int main() {
+  int owner = 7;
+  Reading view{owner};
+  int& result = observed<Reading>::get(view);
+  return result - 7;
+}
+)gti",
+           "protocol result origins relay a by-value carrier's external owner");
+  rejected(R"gti(
+concept observed<T> {
+  [[borrowed_from(missing)]] int& get(T& source);
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "must name one of its parameters");
+  rejected(R"gti(
+concept observed<T> {
+  [[borrowed_from(source)]] int& get(T& source, T& other);
+};
+struct Reading { int value; };
+for concept observed<Reading> {
+  [[borrowed_from(other)]] int& get(Reading& source, Reading& other) {
+    return other.value;
+  }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "must preserve the concept's borrowed_from");
+  rejected(R"gti(
+class Reading {
+public:
+  int& external;
+  int owned;
+  Reading(int& owner) : external(owner), owned(3) {}
+};
+[[borrowed_from(value)]] int& invalid(Reading value) {
+  return value.owned;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2085", "by-value carrier shell");
+  rejected(R"gti(
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+[[borrowed_from(first)]] int& invalid(Reading first, Reading second) {
+  return second.external;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2085", "exact external owner dependency");
+  rejected(borrowed + R"gti(
+int& invalid() {
+  int local = 7;
+  return observed<Reading>::get(Reading(local));
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "return");
+
   const std::string measurable = R"gti(
 concept measurable<T> {
   typename unit_type;

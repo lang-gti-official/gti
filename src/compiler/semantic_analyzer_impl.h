@@ -1548,6 +1548,9 @@ private:
       const FunctionDecl *declaration = nullptr;
       SemanticType returnType = SemanticType::Unknown;
       std::vector<SemanticType> parameterTypes;
+      // A declaration-relative result origin. The contract is inert for
+      // concrete owned results and binds checked borrowed results.
+      std::optional<std::size_t> returnBorrowParameter;
     };
     bool protocol = false;
     std::vector<std::string> associatedTypes;

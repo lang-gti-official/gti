@@ -1,0 +1,45 @@
+// A source-defined fallible view can consume its wrapper while keeping the
+// success reference tied to the caller's owner. Its error owns its text.
+#include <std/string>
+
+class Reading {
+public:
+  int& value;
+  std::string error;
+
+  Reading(int& source, std::string failure)
+      : value(source), error(std::move(failure)) {}
+};
+
+for concept std::tryable<Reading> {
+  using value_type = int&;
+  using residual_type = std::string;
+
+  bool has_value(Reading& result) { return result.error.empty(); }
+  [[borrowed_from(result)]] int& take_value(Reading result) {
+    return result.value;
+  }
+  std::string take_residual(Reading result) {
+    return std::move(result.error);
+  }
+};
+
+struct Status {
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(std::string error) : code(int(error.size())) {}
+};
+
+Status inspect(int& owner, bool fail) {
+  Reading result{owner, std::string(fail ? "bad" : "")};
+  int& value = ?std::move(result);
+  // `result` has been consumed, but `owner` is still alive.
+  return Status(value);
+}
+
+int main() {
+  int owner = 42;
+  std::println(std::to_string(inspect(owner, false).code));
+  std::println(std::to_string(inspect(owner, true).code));
+  return 0;
+}

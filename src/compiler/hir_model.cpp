@@ -1027,7 +1027,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              !call.callPlan->receiver && call.callPlan->arguments.size() == 1 &&
              call.callPlan->arguments.front().value == call.operands.front() &&
              call.callPlan->arguments.front().kind == kind &&
-             (step == nullptr || call.info.type == step->returnType) &&
+             (step == nullptr ||
+              (call.info.type ==
+                   (step->returnType.kind == SemanticType::Reference
+                        ? step->returnType.arguments.front()
+                        : step->returnType) &&
+               call.borrowOrigin == step->borrowOrigin &&
+               call.borrowArgument == step->borrowArgument &&
+               call.borrowAccess == step->borrowAccess &&
+               call.borrowFields == step->borrowFields)) &&
              call.fullExpression == value.fullExpression;
     };
     const HirConstructorInstance *construction =
@@ -1062,7 +1070,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         plan.consumesOperand !=
             (operand->info.category == ValueCategory::Value) ||
         (plan.movedPlace != 0 && !movedTransport) ||
-        value.info.category != ValueCategory::Value ||
+        value.info.category != output->info.category ||
         !selectedCall(*test, selected ? &selected->test : nullptr, false) ||
         test->info.type != SemanticType::Bool ||
         !selectedCall(*output, selected ? &selected->output : nullptr, true) ||

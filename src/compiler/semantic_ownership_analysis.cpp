@@ -1881,31 +1881,13 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
       // Resolve source spelling to the existing declaration-relative origin.
       // Malformed contracts are diagnosed at the declaration, never inferred
       // afresh by HIR/MIR or the backend.
-      summary = {};
-      if (function.returnType.kind == SemanticType::Reference &&
-          attribute->argument) {
-        summary.access = function.returnType.referenceAccess;
-        if (attribute->argument->kind == TokenKind::THIS) {
-          if (function.ownerClass && !function.staticMember)
-            summary.origin = BorrowOriginKind::Receiver;
-        } else {
-          const auto &parameters = function.declaration->parameters();
-          for (std::size_t index = 0; index < parameters.size() &&
-                                      index < function.parameterTypes.size();
-               ++index) {
-            const auto &type = function.parameterTypes[index];
-            if (parameters[index].name.lexeme == attribute->argument->lexeme &&
-                type.kind == SemanticType::Reference &&
-                !parameters[index].pack &&
-                (summary.access == AccessMode::ReadOnly ||
-                 type.referenceAccess == AccessMode::Mutable)) {
-              summary.origin = BorrowOriginKind::Argument;
-              summary.parameter = index;
-              break;
-            }
-          }
-        }
-      }
+      (void)attribute;
+      const auto contract = genericReturnBorrowContract(
+          *function.declaration, function.returnType, function.parameterTypes,
+          function.ownerClass, function.staticMember);
+      summary = {.origin = contract.origin,
+                 .parameter = contract.parameter,
+                 .access = contract.access};
     }
   }
   function.returnBorrowOrigin = summary.origin;
@@ -1950,9 +1932,13 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
       for (std::size_t element = position;
            element < position + width && element < expanded.size(); ++element) {
         const SemanticType &type = expanded[element];
-        const bool eligible = type.kind == SemanticType::Reference &&
+        // A by-value carrier transfers its external dependency, never the
+        // lifetime of its own parameter storage. The executable return proof
+        // still requires the exact designated external referent.
+        const bool eligible = (type.kind == SemanticType::Reference ||
+                               storedReferencePath(type).has_value()) &&
                               (contract.access == AccessMode::ReadOnly ||
-                               type.referenceAccess == AccessMode::Mutable);
+                               borrowAccess(type) == AccessMode::Mutable);
         if (!eligible)
           continue;
         if (selected)
@@ -1996,9 +1982,11 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
                                             : syntax->name(),
            contract.ambiguous
                ? "The borrowed_from pack must expand to exactly one reference "
-                 "element with sufficient access in this instance."
-               : "The borrowed_from origin must be a reference parameter with "
-                 "sufficient access in this instance.",
+                 "or single-dependency carrier with sufficient access in "
+                 "this instance."
+               : "The borrowed_from origin must be a reference parameter or "
+                 "single-dependency carrier with sufficient access in this "
+                 "instance.",
            "GTI-S2017");
   }
 }
@@ -3146,6 +3134,12 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
     const SemanticType *operand = semanticModel.findType(*unary->right());
     if (operand != nullptr && isFallibleBorrowType(*operand))
       return &unary->right();
+    if (const auto *plan = semanticModel.findTryablePropagation(*unary);
+        plan != nullptr &&
+        plan->output.returnType.kind == SemanticType::Reference &&
+        plan->output.borrowOrigin == BorrowOriginKind::Argument &&
+        plan->output.borrowArgument == 0)
+      return &unary->right();
   }
   if (const auto *variable = exprAs<Variable>(expression.get())) {
     const Symbol *symbol = resolve(variable->name());
@@ -3528,6 +3522,12 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
     const SemanticType *operand = semanticModel.findType(*unary->right());
     if (operand != nullptr && isFallibleBorrowType(*operand))
+      return retainedLoanSource(unary->right());
+    if (const auto *plan = semanticModel.findTryablePropagation(*unary);
+        plan != nullptr &&
+        plan->output.returnType.kind == SemanticType::Reference &&
+        plan->output.borrowOrigin == BorrowOriginKind::Argument &&
+        plan->output.borrowArgument == 0)
       return retainedLoanSource(unary->right());
   }
   if (const ResolvedOperatorInfo *resolved =
@@ -4023,6 +4023,13 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
     const SemanticType *operand = semanticModel.findType(*unary->right());
     if (operand != nullptr && isFallibleBorrowType(*operand))
       return fromSource(unary->right(), AccessMode::ReadOnly, false, false);
+    if (const auto *plan = semanticModel.findTryablePropagation(*unary);
+        plan != nullptr &&
+        plan->output.returnType.kind == SemanticType::Reference &&
+        plan->output.borrowOrigin == BorrowOriginKind::Argument &&
+        plan->output.borrowArgument == 0)
+      return fromSource(unary->right(), plan->output.borrowAccess, false,
+                        false);
   }
 
   if (const ResolvedOperatorInfo *resolved =

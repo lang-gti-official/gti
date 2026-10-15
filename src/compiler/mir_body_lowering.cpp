@@ -8374,8 +8374,14 @@ private:
   void forwardBorrowResult(const HirValue &value, HirValueId source) {
     emitValue(source);
     const MirLoanId loan = loanForValue(source);
-    if (loan == 0 || value.info.category != ValueCategory::Place ||
-        value.info.access != AccessMode::ReadOnly) {
+    const MirLoan *authority = output.findLoan(loan);
+    const HirValue *producer = findValue(source);
+    if (authority == nullptr || producer == nullptr ||
+        value.info.category != ValueCategory::Place ||
+        producer->info.category != ValueCategory::Place ||
+        producer->info.type != value.info.type ||
+        producer->info.access != value.info.access ||
+        authority->access != value.info.access) {
       valid = false;
       return;
     }
@@ -8716,8 +8722,7 @@ private:
   // so far (newest first), performs lexical return cleanup and returns. Every
   // step is an ordinary call or construction verified like any other.
   void emitPropagation(const HirValue &value) {
-    if (!value.propagation || value.info.type == SemanticType::Unknown ||
-        value.info.category != ValueCategory::Value) {
+    if (!value.propagation || value.info.type == SemanticType::Unknown) {
       valid = false;
       return;
     }
@@ -8783,6 +8788,11 @@ private:
     // Cleanup on the residual path must not retire the success path's
     // carrier-to-owner mapping, just as it must not retire its scope loans.
     bindingLoans = evaluatedBindingLoans;
+    if (value.info.category == ValueCategory::Place) {
+      forwardBorrowResult(value, plan.output);
+      emittedValues.insert(value.id);
+      return;
+    }
     // The result is the take_value call's result itself, carrying the
     // propagation's own obligation, so consumers see an ordinary call result
     // rather than a join temporary that a class without a default

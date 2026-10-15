@@ -508,7 +508,11 @@ private:
               {.keyword = std::move(keyword), .name = std::move(name)});
           continue;
         }
-        StmtPtr operation = typedDeclaration(true);
+        StmtPtr operation =
+            check(TokenKind::LEFT_BRACKET) &&
+                    peekAt(1).kind == TokenKind::LEFT_BRACKET
+                ? bracketAttributedDeclaration(LanguageLinkage::Gti)
+                : typedDeclaration(true);
         const auto *function =
             dynamic_cast<const FunctionDecl *>(operation.get());
         if (function == nullptr || function->body() != nullptr ||
@@ -581,7 +585,10 @@ private:
         } else {
           conformanceGenericParameters = genericParameters;
           conformanceRequirement = blockRequirement;
-          member = typedDeclaration(true);
+          member = check(TokenKind::LEFT_BRACKET) &&
+                           peekAt(1).kind == TokenKind::LEFT_BRACKET
+                       ? bracketAttributedDeclaration(LanguageLinkage::Gti)
+                       : typedDeclaration(true);
           conformanceGenericParameters.reset();
           conformanceRequirement.reset();
           const auto *function =

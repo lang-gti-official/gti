@@ -1568,6 +1568,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (operand != nullptr && isFallibleBorrowType(*operand))
       return expressionInfo(std::move(type), ValueCategory::Place,
                             AccessMode::ReadOnly);
+    if (const auto *plan = semanticModel.findTryablePropagation(*unary);
+        plan != nullptr &&
+        plan->output.returnType.kind == SemanticType::Reference)
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            plan->output.borrowAccess);
   }
   if (kind == ExprKind::Binary) {
     const Binary &binary = static_cast<const Binary &>(expr);
