@@ -2160,6 +2160,20 @@ need no escaping loan inside the function; the dynamic alternatives still
 require the declared owner. Callers conservatively retain the summarized owner
 dependency for the whole result, even when a literal/null branch executes.
 
+A `std::string_view` or `c_string` field, or a fixed-array element of either
+type, holds only an ownerless view, because a dynamic view cannot be stored
+there. Returning such storage, as in `return this.name;`, `return name;`,
+`return this.label.text;`, `return this.aliases[index];` or
+`return label.text;` through a parameter, copies that independent value. It
+does not borrow the receiver or parameter, so a method returning only stored
+views has no owner dependency and its caller may mutate, move or destroy the
+receiver while the result remains live. Concrete generic instances apply the
+same rule after substitution. A stored view may also be a lifetime-independent
+alternative beside a dependent relay, like a literal. Only a direct field or
+element read qualifies: a reference field, a local copy or a call result keeps
+its ordinary origin rules. A shadowing local remains a local, and a dependent
+value it holds still needs an exact owner dependency.
+
 The receiver path may include indexing, including an overloaded subscript:
 `return records[index].text();` can relay the enclosing receiver's dependency
 when resolved body analysis proves that the selected element and text accessor
