@@ -2112,10 +2112,12 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
     occurrences += unit.size();
   std::size_t borrowedDependencies = 0;
   for (const auto &[_, complete] : expressionBorrowDependencies) {
-    borrowedDependencies += complete.dependencies.size();
-    for (const auto &dependency : complete.dependencies)
+    if (!complete)
+      continue;
+    borrowedDependencies += complete->dependencies.size();
+    for (const auto &dependency : complete->dependencies)
       borrowedDependencies += dependency.conditions.size();
-    for (const auto &alternative : complete.possibleAlternatives)
+    for (const auto &alternative : complete->possibleAlternatives)
       borrowedDependencies += alternative.conditions.size();
   }
   // Records hold nested types and vectors whose allocator footprint is not
@@ -2329,7 +2331,7 @@ const SemanticBorrowDependencySet *
 SemanticModel::findBorrowDependencySet(const Expr &expression) const {
   if (const auto found = expressionBorrowDependencies.find(&expression);
       found != expressionBorrowDependencies.end())
-    return &found->second;
+    return found->second ? &*found->second : nullptr;
   return base == nullptr ? nullptr : base->findBorrowDependencySet(expression);
 }
 
@@ -2351,6 +2353,10 @@ void SemanticModel::recordBorrowDependencySet(
     const Expr &expression, SemanticBorrowDependencySet dependencies) {
   expressionBorrowDependencies.insert_or_assign(&expression,
                                                 std::move(dependencies));
+}
+
+void SemanticModel::clearBorrowDependencySet(const Expr &expression) {
+  expressionBorrowDependencies.insert_or_assign(&expression, std::nullopt);
 }
 
 void SemanticModel::recordLoan(SemanticLoanInfo info) {

@@ -1395,6 +1395,7 @@ struct MirFunctionInstance {
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
