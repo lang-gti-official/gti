@@ -267,6 +267,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     // parameters; every block parameter appears in some argument. A repeated
     // parameter must bind the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
+    registeringConformanceParameters = &parameters;
     std::vector<SemanticType> patterns;
     std::vector<ClassId> patternTemplates;
     std::unordered_set<GenericParameterId> used;
@@ -416,6 +417,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
     endTypeParameterScope();
+    registeringConformanceParameters = nullptr;
     if (!valid) {
       continue;
     }

@@ -485,6 +485,20 @@ The current implemented foundation includes:
   construction and copy/move assignment are unavailable in this slice;
   replacement uses `reset()` or `emplace()`, and a moved source cannot be used
   under GTI's ordinary ownership rules; and
+- `<std/experimental/optional>` `std::experimental::optional<T>`, the
+  candidate successor of `std::optional`, defined entirely in GTI source over
+  a private payload enum with no compiler-private storage. It has the same
+  surface as `std::optional`, plus:
+  - a consuming `T value() &&` that moves the value out;
+  - move assignment, which destroys the current value, if any, first;
+  - `implicit optional(std::experimental::nullopt_t)` and the
+    `std::experimental::nullopt` value;
+  - a `std::tryable` block, so `?` on an optional moves its value out, or
+    returns an empty optional from a function returning one.
+
+  An empty access panics (`GTI-R0017`) rather than raising
+  `empty_owner_access`. It is excluded from `import std;` and is promoted
+  once its surface, failure behaviour and performance match;
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and

@@ -5540,6 +5540,10 @@ private:
       requestSession.catalog.exactClassSpecializations;
   std::vector<RegisteredConformance> &conformances =
       requestSession.catalog.conformances;
+  // The parameters of the conformance block being registered, so diagnostics
+  // can spell them before the block is in `conformances`.
+  const std::vector<GenericParameterInfo> *registeringConformanceParameters =
+      nullptr;
   std::vector<EnumInfo> &enums = requestSession.catalog.enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
       &typeParameterScopes = requestSession.typeParameterScopes;

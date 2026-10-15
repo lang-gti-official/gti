@@ -1,0 +1,152 @@
+// A source-defined optional value. A payload enum holds either nothing or one
+// live `T`, so GTI's generated movement and exactly-once cleanup apply to the
+// value directly and no compiler-private storage is involved. Prefix `?`
+// propagates an empty optional through `std::tryable`.
+//
+// This is the candidate successor of `std::optional`. It is promoted once its
+// surface, failure behaviour and performance match.
+#include <std/panic>
+#include <std/utility>
+
+namespace std::experimental {
+/// The residual of an empty optional: it carries no value.
+struct nullopt_t {};
+
+/// The empty residual as a value, such as `optional<int> none = nullopt;`.
+nullopt_t nullopt{};
+
+namespace detail {
+/// Either no value or one live `T`.
+enum class optional_state<T> {
+  empty,
+  engaged(T value),
+};
+}
+
+/// A move-only owner of an optional `T`, defined entirely in GTI source.
+///
+/// Empty construction does not allocate. Moving transfers engagement and the
+/// contained value; GTI then treats the source binding as moved. Move
+/// assignment destroys the current value, if any, before taking the source's.
+/// Access to an empty value panics after normal cleanup. Copy construction
+/// and copy assignment are absent; use `clone()` when `T` supports
+/// duplication.
+class optional<std::move_constructible T> {
+  mut detail::optional_state<T> state = detail::optional_state<T>::empty;
+
+public:
+  /// Constructs an empty optional.
+  optional() {}
+
+  /// Constructs an empty optional from the empty residual.
+  implicit optional(nullopt_t empty) {}
+
+  /// Moves one completed value into the optional.
+  optional(T value) : state(detail::optional_state<T>::engaged(std::move(value))) {}
+
+  optional(optional<T>& other) = delete;
+  optional(optional<T>&& other) = default;
+
+  /// Returns whether a value is live.
+  bool has_value() {
+    switch (this.state) {
+    case detail::optional_state<T>::engaged:
+      return true;
+    case detail::optional_state<T>::empty:
+      return false;
+    }
+  }
+
+  /// Equivalent to `has_value()`.
+  operator bool() {
+    return this.has_value();
+  }
+
+  /// Returns a read-only reference to the live value.
+  T& value() {
+    switch (this.state) {
+    case detail::optional_state<T>::engaged(auto& payload):
+      return payload;
+    case detail::optional_state<T>::empty:
+      std::panic("std::experimental::optional::value() on an empty optional");
+    }
+  }
+
+  /// Returns an exclusive reference to the live value.
+  mut T& value() mut {
+    switch (this.state) {
+    case detail::optional_state<T>::engaged(mut auto& payload):
+      return payload;
+    case detail::optional_state<T>::empty:
+      std::panic("std::experimental::optional::value() on an empty optional");
+    }
+  }
+
+  /// Moves the live value out of a consumed optional.
+  T value() && {
+    switch (std::move(this.state)) {
+    case detail::optional_state<T>::engaged(payload):
+      return payload;
+    case detail::optional_state<T>::empty:
+      std::panic("std::experimental::optional::value() on an empty optional");
+    }
+  }
+
+  T& operator*() {
+    return this.value();
+  }
+
+  mut T& operator*() mut {
+    return this.value();
+  }
+
+  T& operator->() {
+    return this.value();
+  }
+
+  mut T& operator->() mut {
+    return this.value();
+  }
+
+  /// Returns a copy of the live value, or moves `fallback` when empty.
+  T value_or(T fallback) requires std::copy_constructible<T> {
+    switch (this.state) {
+    case detail::optional_state<T>::engaged(payload):
+      return payload;
+    case detail::optional_state<T>::empty:
+      return std::move(fallback);
+    }
+  }
+
+  /// Duplicates an engaged payload using its explicit clone contract.
+  optional<T> clone() requires std::cloneable<T> {
+    switch (this.state) {
+    case detail::optional_state<T>::engaged(auto& payload):
+      return optional<T>(std::clone(payload));
+    case detail::optional_state<T>::empty:
+      return optional<T>();
+    }
+  }
+
+  /// Destroys the live value, if any, and becomes empty.
+  void reset() mut {
+    this.state = detail::optional_state<T>::empty;
+  }
+
+  /// Replaces the current value from `args`, remaining empty on failure.
+  mut T& emplace<Args...>(Args... args) mut {
+    this.reset();
+    this.state = detail::optional_state<T>::engaged(T(args...));
+    return this.value();
+  }
+};
+
+/// `?` on an optional produces its value or returns an empty optional.
+for <std::move_constructible T> concept std::tryable<optional<T>> {
+  using value_type = T;
+  using residual_type = nullopt_t;
+  bool has_value(optional<T>& value) { return value.has_value(); }
+  T take_value(optional<T> value) { return std::move(value).value(); }
+  nullopt_t take_residual(optional<T> value) { return nullopt_t(); }
+};
+}

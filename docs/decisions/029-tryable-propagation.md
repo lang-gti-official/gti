@@ -92,7 +92,9 @@ body, satisfied through `for concept` blocks outside the type.
   operand is copied as a whole.
 - `std::optional` gains a block only once a source-defined optional can move
   its value out. Its private storage slot has no move-out operation, and the
-  owner preferred not to add one as a workaround.
+  owner preferred not to add one as a workaround. The source-defined
+  `std::experimental::optional`, over a payload enum and consuming payload
+  matches, has the block, and is the planned replacement.
 - `?` through `std::tryable` is not available in constant evaluation yet.
 - The operand must be a class or struct type in this phase. A payload enum
   can have a block, but `?` on it is rejected until the propagation plan can

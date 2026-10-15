@@ -1,0 +1,75 @@
+// std::experimental::optional over a move-only, destructor-traced payload.
+// Construction prints a tracked id and destruction its negation, so each
+// phase's trace follows from this source alone: `?` and the consuming
+// `value() &&` move the payload out without a copy, reset, emplace and move
+// assignment end and start exactly one lifetime each, and an empty access
+// panics after cleanup.
+#include <std/experimental/optional>
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+std::experimental::optional<Tracked> find(int id) {
+  if (id < 0) {
+    std::experimental::optional<Tracked> none = std::experimental::nullopt;
+    return none;
+  }
+  return std::experimental::optional<Tracked>(Tracked(id));
+}
+
+// Each `?` moves its Tracked out of the optional; a failed one returns the
+// empty residual after destroying the values already taken.
+std::experimental::optional<int> total(int first, int second) {
+  Tracked left = ?find(first);
+  Tracked right = ?find(second);
+  return std::experimental::optional<int>(left.read() + right.read());
+}
+
+int run(int phase) {
+  if (phase == 0) {
+    std::experimental::optional<int> sum = total(1, 2);
+    std::println(std::to_string(sum.value()));
+    std::experimental::optional<int> none = total(3, -1);
+    std::println(std::to_string(none.has_value() ? 1 : 0));
+    mut std::experimental::optional<Tracked> slot{};
+    std::println(std::to_string(slot.emplace(4).read()));
+    slot.reset();
+    std::println(std::to_string(slot.emplace(5).read()));
+    Tracked taken = std::move(slot).value();
+    std::println(std::to_string(taken.read()));
+    return 0;
+  }
+  if (phase == 2) {
+    // Move assignment ends the destination's value, if any, exactly once.
+    mut std::experimental::optional<Tracked> held =
+        std::experimental::optional<Tracked>(Tracked(7));
+    std::experimental::optional<Tracked> other =
+        std::experimental::optional<Tracked>(Tracked(8));
+    held = std::move(other);
+    std::println(std::to_string(held.value().read()));
+    std::experimental::optional<Tracked> none{};
+    held = std::move(none);
+    std::println(std::to_string(held.has_value() ? 1 : 0));
+    held = std::experimental::optional<Tracked>(Tracked(9));
+    std::println(std::to_string(held.value().read()));
+    return 0;
+  }
+  Tracked guard{6};
+  std::experimental::optional<Tracked> empty{};
+  Tracked never = std::move(empty).value();
+  return never.read();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}
