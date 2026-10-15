@@ -9,6 +9,30 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.438.0 — Consuming payload-enum matches
+
+- A `switch` over a temporary or over an explicit `std::move(name)` now
+  consumes its payload enum. By-value bindings take ownership of their fields
+  by move, so move-only payloads such as strings and classes with destructors
+  bind directly, for example
+  `switch (std::move(this.slot)) { case state<T>::engaged(value): return value; ... }`
+  in a consuming accessor.
+- The consumed enum is retired at the selected arm's entry. A binding arm moves
+  every field of the alternative into its bindings; a tag-only or `default`
+  arm drops the enum, and so its payload, before its first statement.
+  Bindings drop at the arm's end like ordinary locals unless they are moved or
+  returned, and `return`, `break`, `continue` and defined failures drop every
+  live owner exactly once. A moved place stays moved after the switch.
+- A switch over a named enum is unchanged: its bindings copy, and `auto&` and
+  `mut auto&` borrow. Borrowed bindings on a consumed subject are rejected with
+  `GTI-S2067`, and the move-only binding diagnostic on a named subject now
+  points to consuming the enum instead.
+- Switching over a temporary enum whose payload has cleanup no longer fails in
+  native compilation, and copyable payloads bound from a consumed subject are
+  moved rather than copied.
+- Example 161 moves owned strings out of messages and takes a value out of a
+  source-defined optional.
+
 ## 0.437.2 — Consuming calls on plain classes in member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

@@ -4519,6 +4519,22 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   if (payloadEnum != nullptr && !payloadEnum->payload) {
     payloadEnum = nullptr;
   }
+  // A payload switch over a consumed value (a prvalue or an explicit
+  // std::move) consumes it: one hidden subject binding owns the enum until
+  // the selected arm's entry, where by-value bindings take their fields by
+  // move and any other arm drops it. A named place is only observed.
+  const ExpressionInfo *subjectInfo =
+      payloadEnum == nullptr ? nullptr
+                             : semanticModel.findExpression(*stmt.expression());
+  const bool consumedSubject = subjectInfo != nullptr &&
+                               subjectInfo->category == ValueCategory::Value &&
+                               subjectInfo->type == subjectType;
+  if (consumedSubject) {
+    // Like an immutable local initialized from the subject: arms move its
+    // fields out, but no source code can name or assign it.
+    semanticModel.recordConsumedSwitchSubject(
+        stmt, bindingInfo(subjectType, AccessMode::ReadOnly));
+  }
   const bool validSubject = isInteger(subjectType) ||
                             subjectType == SemanticType::Char ||
                             subjectType.kind == SemanticType::Enum;
@@ -4580,7 +4596,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         }
         scopes = beforeSwitch;
         std::optional<ResolvedPayloadPatternInfo> pattern =
-            analyzePayloadSwitchPattern(label.value, subjectType);
+            analyzePayloadSwitchPattern(label.value, subjectType,
+                                        consumedSubject);
         scopes = beforeSwitch;
         if (!pattern) {
           invalidPayloadPattern = true;
@@ -4707,8 +4724,20 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           const ExpressionInfo *subject =
               semanticModel.findExpression(*stmt.expression());
           SemanticLoanPlace place = retainedLoanPlace(stmt.expression());
-          if (subject == nullptr || subject->category != ValueCategory::Place ||
-              !place.valid()) {
+          if (consumedSubject) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2067", DiagnosticPhase::Semantics, *payload.name,
+                "A borrowed payload pattern requires a stable enum place, "
+                "but this switch consumes its subject.");
+            diagnostic.hints.emplace_back(
+                "Bind '" + payload.name->lexeme +
+                "' by value, without 'auto&', to move the payload out of the "
+                "consumed enum, or switch over a local variable to borrow "
+                "from it.");
+            diagnostics.emplace_back(std::move(diagnostic));
+          } else if (subject == nullptr ||
+                     subject->category != ValueCategory::Place ||
+                     !place.valid()) {
             report(*payload.name,
                    "A borrowed payload pattern requires a stable enum place; "
                    "bind the enum to a local variable before matching it.",
