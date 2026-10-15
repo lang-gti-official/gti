@@ -1,0 +1,253 @@
+// Prefix `?` on payload enums through `std::tryable`. Construction prints a
+// tracked id and destruction its negation, so each phase's trace follows from
+// this source alone: a temporary, named or moved enum operand is consumed
+// exactly once, a residual enum is returned as it is, a fresh variant returned
+// across fallible cleanup is published once, and a failing test destroys its
+// operand once before the enclosing scope.
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// A passive result whose residual is the enum itself.
+enum class parsed {
+  missing,
+  value(int number),
+};
+
+for concept std::tryable<parsed> {
+  using value_type = int;
+  using residual_type = parsed;
+  bool has_value(parsed& p) {
+    switch (p) {
+    case parsed::value:
+      return true;
+    case parsed::missing:
+      return false;
+    }
+  }
+  int take_value(parsed p) {
+    switch (p) {
+    case parsed::value(number):
+      return number;
+    case parsed::missing:
+      return 0;
+    }
+  }
+  parsed take_residual(parsed p) { return parsed::missing; }
+};
+
+parsed parse(int text) {
+  if (text < 0) {
+    return parsed::missing;
+  }
+  return parsed::value(text);
+}
+
+int number(parsed p) {
+  switch (p) {
+  case parsed::value(number):
+    return number;
+  case parsed::missing:
+    return -1;
+  }
+}
+
+// A named operand is copied, an explicit move consumes it, and a temporary is
+// borrowed for the test and then consumed.
+parsed passive(int first, int second) {
+  parsed held = parse(second);
+  int copied = ?held;
+  int moved = ?std::move(held);
+  int fresh = ?parse(first);
+  return parsed::value(fresh + copied + moved);
+}
+
+// A generic result through an enum-template block.
+enum class result<T, E> {
+  ok(T value),
+  failed(E error),
+};
+
+for <std::copyable T, std::copyable E> concept std::tryable<result<T, E>> {
+  using value_type = T;
+  using residual_type = result<T, E>;
+  bool has_value(result<T, E>& r) {
+    switch (r) {
+    case result<T, E>::ok:
+      return true;
+    case result<T, E>::failed:
+      return false;
+    }
+  }
+  T take_value(result<T, E> r) {
+    switch (r) {
+    case result<T, E>::ok(value):
+      return value;
+    case result<T, E>::failed(error):
+      std::panic("take_value on a failed result");
+    }
+  }
+  result<T, E> take_residual(result<T, E> r) { return r; }
+};
+
+result<int, int> half(int value) {
+  if (value % 2 != 0) {
+    return result<int, int>::failed(value);
+  }
+  return result<int, int>::ok(value / 2);
+}
+
+result<int, int> quarter(int value) {
+  int h = ?half(value);
+  int q = ?half(h);
+  return result<int, int>::ok(q);
+}
+
+int outcome(result<int, int> r) {
+  switch (r) {
+  case result<int, int>::ok(value):
+    return value;
+  case result<int, int>::failed(error):
+    return -error;
+  }
+}
+
+// An owning result: its payload has a destructor, and its residual is the
+// enum itself.
+enum class found {
+  missing(int code),
+  present(Tracked item),
+};
+
+for concept std::tryable<found> {
+  using value_type = Tracked;
+  using residual_type = found;
+  bool has_value(found& f) {
+    switch (f) {
+    case found::present:
+      return true;
+    case found::missing:
+      return false;
+    }
+  }
+  Tracked take_value(found f) {
+    switch (std::move(f)) {
+    case found::present(item):
+      return item;
+    case found::missing(code):
+      std::panic("take_value on a missing value");
+    }
+  }
+  found take_residual(found f) { return std::move(f); }
+};
+
+found lookup(int id) {
+  if (id < 0) {
+    return found::missing(-id);
+  }
+  return found::present(Tracked(id));
+}
+
+// Both values must exist. The fresh variant is returned after the fallible
+// cleanup of the two owning locals.
+found combined(int first, int second) {
+  Tracked left = ?lookup(first);
+  Tracked right = ?lookup(second);
+  return found::present(Tracked(left.read() + right.read()));
+}
+
+found relayed(int id) {
+  found held = lookup(id);
+  Tracked item = ?std::move(held);
+  return found::present(std::move(item));
+}
+
+int code_of(found f) {
+  switch (std::move(f)) {
+  case found::present(item):
+    return item.read();
+  case found::missing(code):
+    return -code;
+  }
+}
+
+// An ordinary call borrows a fresh payload-enum value as it borrows a fresh
+// class value; the temporary ends with its full expression.
+bool observed(found& f) {
+  switch (f) {
+  case found::present:
+    return true;
+  case found::missing:
+    return false;
+  }
+}
+
+// A test that fails: the defined failure destroys the operand once, then the
+// enclosing scope.
+enum class guarded {
+  closed,
+  open(Tracked item),
+};
+
+for concept std::tryable<guarded> {
+  using value_type = int;
+  using residual_type = guarded;
+  bool has_value(guarded& g) {
+    switch (g) {
+    case guarded::open(auto& item):
+      return 10 / (item.read() - 7) != 0;
+    case guarded::closed:
+      return false;
+    }
+  }
+  int take_value(guarded g) {
+    switch (std::move(g)) {
+    case guarded::open(item):
+      return item.read();
+    case guarded::closed:
+      return 0;
+    }
+  }
+  guarded take_residual(guarded g) { return guarded::closed; }
+};
+
+guarded probe(int id) {
+  Tracked outer{8};
+  int value = ?guarded::open(Tracked(id));
+  std::println(std::to_string(value));
+  return guarded::closed;
+}
+
+int run(int phase) {
+  if (phase == 0) {
+    std::println(std::to_string(number(passive(1, 2))));
+    std::println(std::to_string(number(passive(3, -4))));
+    std::println(std::to_string(outcome(quarter(12))));
+    std::println(std::to_string(outcome(quarter(6))));
+    return 0;
+  }
+  if (phase == 1) {
+    std::println(std::to_string(code_of(combined(1, 2))));
+    std::println(std::to_string(code_of(combined(3, -4))));
+    std::println(std::to_string(code_of(relayed(5))));
+    std::println(std::to_string(observed(lookup(6)) ? 1 : 0));
+    return 0;
+  }
+  guarded checked = probe(phase == 2 ? 9 : 7);
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}
