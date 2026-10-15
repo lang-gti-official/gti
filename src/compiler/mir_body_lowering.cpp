@@ -4763,8 +4763,10 @@ private:
       HirValueId id, AccessMode access, const SemanticType &stagedType,
       bool allowExpected = false, bool allowBorrowedCarrier = false) {
     const HirValue *temporary = findValue(id);
+    // Semantics admits fresh class, struct and payload-enum values here.
     if (temporary == nullptr ||
         (temporary->info.type.kind != SemanticType::Class &&
+         temporary->info.type.kind != SemanticType::Enum &&
          (!allowExpected ||
           temporary->info.type.kind != SemanticType::Expected)) ||
         temporary->info.category != ValueCategory::Value ||
@@ -5891,7 +5893,8 @@ private:
       if (type.kind != SemanticType::Reference ||
           type.referenceAccess != AccessMode::ReadOnly ||
           type.arguments.size() != 1 ||
-          type.arguments.front().kind != SemanticType::Class ||
+          (type.arguments.front().kind != SemanticType::Class &&
+           type.arguments.front().kind != SemanticType::Enum) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
           source->root != MirPlaceRootKind::Value ||
@@ -8804,6 +8807,19 @@ private:
         scopeBaseline == fullExpressionScopeBaselines.end()) {
       valid = false;
       return;
+    }
+    // A named operand that the consuming steps take by value, such as an
+    // enum without cleanup, is read once before the branch, so both steps
+    // receive that one dominating value; a copied class instead copies at
+    // each step's own input.
+    if (!plan.consumesOperand && success->callPlan &&
+        success->callPlan->arguments.size() == 1 &&
+        success->callPlan->arguments.front().kind == HirCallInputKind::Value) {
+      (void)valueOperand(plan.operand);
+      if (terminated()) {
+        emittedValues.insert(value.id);
+        return;
+      }
     }
     const MirOperand condition = valueOperand(plan.test);
     if (terminated()) {

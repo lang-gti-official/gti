@@ -6857,6 +6857,11 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
                                slot->root == MirPlaceRootKind::Temporary &&
                                (producer->kind == MirInstructionKind::Load ||
                                 producer->kind == MirInstructionKind::Move);
+  // A payload enum's alternative is its ordinary construction.
+  const bool payloadConstruction =
+      producer != nullptr && producer->kind == MirInstructionKind::Compute &&
+      producer->operation == MirOperation::PayloadConstruct &&
+      sourceType.kind == SemanticType::Enum;
   // The independent program verifier binds this targetless construction to
   // the exact owner's generated default constructor. Preserve its existing
   // explicit value-slot lifecycle just like a source-declared constructor.
@@ -6872,7 +6877,7 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (borrowedValueStage && value->id != stage.operands.front().value) ||
       (!ordinaryConstruction && !functionCall && !generatedDefault &&
-       !expectedExtraction && !joinedTemporary) ||
+       !expectedExtraction && !joinedTemporary && !payloadConstruction) ||
       value->sourceValue != stage.hirValue || value->info.type != sourceType ||
       !producer->result || *producer->result != value->id ||
       producer->hirValue != stage.hirValue ||
@@ -7024,7 +7029,8 @@ directTemporaryArgument(const MirBody &body, const MirInstruction &call,
       operand.type.kind != SemanticType::Reference ||
       operand.type.referenceAccess != AccessMode::ReadOnly ||
       operand.type.arguments.size() != 1 ||
-      operand.type.arguments.front().kind != SemanticType::Class) {
+      (operand.type.arguments.front().kind != SemanticType::Class &&
+       operand.type.arguments.front().kind != SemanticType::Enum)) {
     return {};
   }
   const MirValue *stageValue = body.findValue(operand.value);
@@ -7148,6 +7154,21 @@ directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
   const DirectTemporaryBorrow receiver =
       directTemporaryReceiverForValue(body, valueId);
   return receiver ? receiver : directTemporaryArgumentForValue(body, valueId);
+}
+
+// A cleanup-free enum value has no lifetime slot: its value-rooted place,
+// which a call borrows for that call's duration, is the value itself.
+[[nodiscard]] bool cleanupFreeEnumValuePlace(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value || !place.projections.empty() ||
+      place.type.kind != SemanticType::Enum) {
+    return false;
+  }
+  const MirPayloadEnum *enumeration = program.findPayloadEnum(place.type);
+  const MirValue *value = body.findValue(place.value);
+  return enumeration != nullptr && !enumeration->requiresActiveCleanup &&
+         value != nullptr && value->info.type == place.type;
 }
 
 [[nodiscard]] DirectTemporaryBorrow
@@ -24908,12 +24929,19 @@ expectedPayloadReturnSlot(const MirProgram &program,
                                                      const MirBody &body,
                                                      MirValueId valueId);
 
+[[nodiscard]] const MirPlace *
+returnedFreshPayloadSlot(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, MirValueId valueId);
+
 [[nodiscard]] bool
 lifetimeSlotPlace(const MirProgram &program,
                   const CppMirBodyEmissionMap &representations,
                   const MirBody &body, const MirPlace &place) {
   if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
-      returnedCallResultSlot(program, body, place.value) == &place) {
+      (returnedCallResultSlot(program, body, place.value) == &place ||
+       returnedFreshPayloadSlot(program, representations, body, place.value) ==
+           &place)) {
     return true;
   }
   if (place.root == MirPlaceRootKind::Value &&
@@ -28164,6 +28192,10 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
   return nullptr;
 }
 
+[[nodiscard]] const MirPlace *returnedValueSlot(
+    const MirBody &body, const MirValue &value, const MirInstruction &producer,
+    const MirDropObligation &dropObligation, const MirPlace &slotPlace);
+
 // A failure-free call's owning result returned after cleanup that return
 // fusion cannot cross, such as the drop of a moved-from parameter. The value's
 // drop identity keeps the result in its value-rooted slot from the call until
@@ -28209,12 +28241,29 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
   const MirPlace *slot =
       drop == nullptr ? nullptr : body.findPlace(drop->place);
   if (drop == nullptr || slot == nullptr ||
-      drop->kind != MirDropObligationKind::Value || drop->initiallyActive ||
-      slot->root != MirPlaceRootKind::Value || slot->value != valueId ||
-      !slot->projections.empty() || slot->type != value->info.type ||
       !plainCallActivates(body, *call, drop->id) ||
       !exactPreparedInputTransfers(body, *call,
                                    PreparedReceiverInput::Admitted))
+    return nullptr;
+  return returnedValueSlot(body, *value, *call, *drop, *slot);
+}
+
+// The value-rooted slot from which a Return publishes a result that waited
+// there through cleanup between its producer and the Return. `producer`
+// activates the value's drop identity; the slot is otherwise touched only by
+// at most one reparent into the unpublished return-result obligation, one
+// TransferOut, and failure-path cleanup that destroys the still-unpublished
+// result.
+[[nodiscard]] const MirPlace *returnedValueSlot(
+    const MirBody &body, const MirValue &value, const MirInstruction &producer,
+    const MirDropObligation &dropObligation, const MirPlace &slotPlace) {
+  const MirValueId valueId = value.id;
+  const MirDropObligation *drop = &dropObligation;
+  const MirPlace *slot = &slotPlace;
+  const MirInstruction *call = &producer;
+  if (drop->kind != MirDropObligationKind::Value || drop->initiallyActive ||
+      slot->root != MirPlaceRootKind::Value || slot->value != valueId ||
+      !slot->projections.empty() || slot->type != value.info.type)
     return nullptr;
   const std::vector<MirValueUse> uses = body.usesOf(valueId);
   bool rooted = false;
@@ -28308,6 +28357,52 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
   return transfers == 1 && reparents == (pending != nullptr ? 1u : 0u)
              ? slot
              : nullptr;
+}
+
+// A fresh owning variant returned after cleanup that the fused publication
+// cannot cross, such as a fallible drop of another local. Like a failure-free
+// call's result, it is constructed in its value-rooted slot and waits there
+// until the Return constructs the caller's result from it; a failure on the
+// way destroys the still-unpublished variant.
+[[nodiscard]] const MirPlace *
+returnedFreshPayloadSlot(const MirProgram &program,
+                         const CppMirBodyEmissionMap &representations,
+                         const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirInstruction *producer =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const MirPayloadEnum *enumeration =
+      value != nullptr && value->info.type.kind == SemanticType::Enum
+          ? program.findPayloadEnum(value->info.type)
+          : nullptr;
+  if (value == nullptr || producer == nullptr || enumeration == nullptr ||
+      !enumeration->requiresActiveCleanup ||
+      !cppMirOwningPayloadEnumPlacementResult(program, representations,
+                                              enumeration->type) ||
+      value->info.type != body.returnType ||
+      value->info.category != ValueCategory::Value ||
+      producer->kind != MirInstructionKind::Compute ||
+      producer->operation != MirOperation::PayloadConstruct ||
+      !producer->result || *producer->result != valueId ||
+      producer->destination || producer->receiver ||
+      !producer->definedFailure.empty() ||
+      !producer->localFailureSites.empty() ||
+      payloadEnumFreshReturnPublication(program, representations, body,
+                                        valueId))
+    return nullptr;
+  const MirDropObligation *drop =
+      uniqueValueDrop(body, valueId, value->info.type);
+  const MirPlace *slot =
+      drop == nullptr ? nullptr : body.findPlace(drop->place);
+  if (drop == nullptr || slot == nullptr ||
+      std::none_of(producer->lifecycle.begin(), producer->lifecycle.end(),
+                   [&](const MirLifecycleEvent &event) {
+                     return event.kind == MirLifecycleEventKind::Initialize &&
+                            event.source == 0 && event.target == drop->id &&
+                            !event.conditional && !event.failureCleanup;
+                   }))
+    return nullptr;
+  return returnedValueSlot(body, *value, *producer, *drop, *slot);
 }
 
 struct PassiveCAbiCallValueResult {
@@ -34247,6 +34342,8 @@ public:
       if (provenanceOnlyProjectedPlace(program, representations, facts.body,
                                        place))
         continue;
+      if (cleanupFreeEnumValuePlace(program, facts.body, place))
+        continue;
       if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
           sharedOwnerType(program, place.type)) {
         const auto *value = facts.body.findValue(place.value);
@@ -34615,7 +34712,9 @@ public:
         // invent default construction and cleanup of an unrelated referent.
         continue;
       }
-      if (returnedCallResultSlot(program, facts.body, value.id) != nullptr) {
+      if (returnedCallResultSlot(program, facts.body, value.id) != nullptr ||
+          returnedFreshPayloadSlot(program, representations, facts.body,
+                                   value.id) != nullptr) {
         // The result lives in its value-rooted slot until the Return.
         continue;
       }
@@ -38925,10 +39024,13 @@ private:
           return;
         }
         if (pendingPlace != nullptr &&
-            returnedCallResultSlot(program, facts.body, pendingPlace->value) ==
-                pendingPlace) {
-          // A failure-free call's returned result is still in its own slot;
-          // the caller's result storage was never constructed.
+            (returnedCallResultSlot(program, facts.body, pendingPlace->value) ==
+                 pendingPlace ||
+             returnedFreshPayloadSlot(program, representations, facts.body,
+                                      pendingPlace->value) == pendingPlace)) {
+          // A failure-free call's returned result or a fresh variant is still
+          // in its own slot; the caller's result storage was never
+          // constructed.
           if (failureDestructorTarget(program, facts.body, instruction)) {
             output << "__gti_mir_drop_success_" << instruction.id
                    << " = __gti_mir_p_"
@@ -46815,14 +46917,19 @@ private:
       if (failureForm || indirectResultForm) {
         writeIndent();
         output << "// GTI MIR return publication\n";
-        if (const MirPlace *returned =
-                terminator.value &&
-                        terminator.value->kind == MirOperandKind::Value
-                    ? returnedCallResultSlot(program, facts.body,
-                                             terminator.value->value)
-                    : nullptr) {
-          // The failure-free call's result left its slot only now, after the
-          // scheduled cleanup between the call and this Return.
+        const MirPlace *returnedSlot =
+            terminator.value && terminator.value->kind == MirOperandKind::Value
+                ? returnedCallResultSlot(program, facts.body,
+                                         terminator.value->value)
+                : nullptr;
+        if (returnedSlot == nullptr && terminator.value &&
+            terminator.value->kind == MirOperandKind::Value) {
+          returnedSlot = returnedFreshPayloadSlot(
+              program, representations, facts.body, terminator.value->value);
+        }
+        if (const MirPlace *returned = returnedSlot) {
+          // The failure-free call's result or fresh variant left its slot only
+          // now, after the scheduled cleanup between it and this Return.
           writeIndent();
           output << "::gti_internal::backend::construct_representation_at("
                     "__gti_mir_out_result, __gti_mir_p_"
@@ -47153,8 +47260,13 @@ private:
         return;
       }
       if (terminator.value && terminator.value->kind == MirOperandKind::Value) {
-        if (const MirPlace *returned = returnedCallResultSlot(
-                program, facts.body, terminator.value->value)) {
+        const MirPlace *returnedSlot = returnedCallResultSlot(
+            program, facts.body, terminator.value->value);
+        if (returnedSlot == nullptr) {
+          returnedSlot = returnedFreshPayloadSlot(
+              program, representations, facts.body, terminator.value->value);
+        }
+        if (const MirPlace *returned = returnedSlot) {
           writeIndent();
           output << "return __gti_mir_p_"
                  << canonicalSlotPlaceId(facts.body, *returned) << ".take();\n";
@@ -47369,6 +47481,10 @@ private:
 
   void emitPlaceExpression(const ScalarBodyFacts &facts,
                            const MirPlace &place) {
+    if (cleanupFreeEnumValuePlace(program, facts.body, place)) {
+      output << "__gti_mir_v_" << place.value;
+      return;
+    }
     if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
         sharedOwnerType(program, place.type)) {
       const auto *value = facts.body.findValue(place.value);
@@ -56140,6 +56256,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (producer && sharedOwnerResult(*producer) && typeRow(place.type))
         continue;
     }
+    if (cleanupFreeEnumValuePlace(program_, body, place) && typeRow(place.type))
+      continue;
     if (unreferencedValueRootedPlace(body, place)) {
       // A pure root record: the rooted value flows through its own uses
       // and the place spells nothing.
@@ -58197,6 +58315,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                ownedExpectedClassReturnBlock(body, place->value) == nullptr &&
                returnedCallResultSlot(program_, body, place->value) ==
                    nullptr &&
+               returnedFreshPayloadSlot(program_, representations_, body,
+                                        place->value) == nullptr &&
                !expectedPayloadReturnSlot(program_, representations_, body,
                                           place->value)))
             return false;
@@ -61930,20 +62050,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                   body,
                                                   block.terminator.value->value)
               : PayloadEnumFreshReturnPublication{};
-      if (directFreshPayloadReturn && freshPayload.returnBlock != &block) {
+      if (directFreshPayloadReturn && freshPayload.returnBlock != &block &&
+          returnedFreshPayloadSlot(program_, representations_, body,
+                                   block.terminator.value->value) == nullptr) {
         // This value has no C++ local: only the exact verified
         // PayloadConstruct -> TransferOut -> Return schedule may publish it
         // through the transformed callable's result pointer or, in a plain
-        // body, from its slot.
+        // body, from its slot, and a variant that waits in its slot through
+        // later cleanup is constructed into the result at the Return.
         return false;
       }
       if (failureForm && activePayloadEnumReturn && !directFreshPayloadReturn &&
           returnMoveDefinition(body, block.terminator.value->value) ==
               nullptr &&
           placementDirectReturnCall(program_, representations_, body,
-                                    block.terminator.value->value) == nullptr) {
-        // The caller passes uninitialized storage. Only a verified Move or
-        // a call constructing directly in that storage may publish another
+                                    block.terminator.value->value) == nullptr &&
+          returnedCallResultSlot(program_, body,
+                                 block.terminator.value->value) == nullptr) {
+        // The caller passes uninitialized storage. Only a verified Move, a
+        // call constructing directly in that storage, or a failure-free
+        // call's result constructed there from its slot may publish another
         // active value; assignment would overwrite a nonexistent object.
         return false;
       }

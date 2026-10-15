@@ -3675,7 +3675,10 @@ edges in every value position of a function, lambda, module, destructor, or
 hosted-startup body: eligibility is position-independent, a nested detector's
 failure edge drops the live temporaries and prepared owner stages recorded at
 that point, and a full-expression-root ordinary call may still initialize one
-cleanup-owning result on its success edge. A lexical result that is the direct
+cleanup-owning result on its success edge. Any call that arms a result drop on
+its success edge receives this failure control flow, whatever the result's
+drop kind: a cleanup-free payload enum materialized in a temporary slot for a
+call's read borrow arms its slot obligation there too. A lexical result that is the direct
 initializer of one binding may instead name that exact destination; its sole
 `Initialize` consumer is required on the normal successor. The original
 checked-scalar profile is not the
