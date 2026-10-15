@@ -2569,8 +2569,16 @@ the same constructor-initializer stages. A cleanup-free receiver moved out of
 a binding is instead a prepared parameter that the call transfers out. The
 consuming-receiver proof does not admit that transport yet, so this proof
 still refuses `kept(std::move(source).take())` when `source`'s class needs no
-cleanup. Both producers also require static dispatch, so a virtual member
-call's result has no constructor-field route.
+cleanup. A virtual member call, as in `kept(maker.make())` through a
+`Maker &` or `kept(factory.build(d))` through a `mut` interface reference,
+takes the transformed route through its exact virtual failure contract: MIR
+gives it `VirtualCall` propagation and an `Invoke` edge whose success edge
+activates the result. The proof requires the status callee that call emission
+selects (`virtualStatusCallee`), which may be a pure-virtual or interface
+contract root, and the same receiver proofs, including a consuming virtual
+member. MIR's failure effects never prove a virtual method returning an owning
+class failure-free, so such a call never takes the plain virtual route, and
+the failure-free producer keeps requiring static dispatch.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;
