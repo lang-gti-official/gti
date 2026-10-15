@@ -11676,20 +11676,23 @@ auto SemanticVisitor::Impl::baseTypeOf(
           std::find(conceptInfo.associatedTypes.begin(),
                     conceptInfo.associatedTypes.end(), type.name.last().lexeme);
       if (member == conceptInfo.associatedTypes.end() ||
-          type.qualifiedOwner->arguments.size() != 1 ||
+          type.qualifiedOwner->arguments.size() !=
+              conceptInfo.parameterIds.size() ||
           !type.arguments.empty()) {
         return SemanticType::Unknown;
       }
       const auto index = static_cast<std::uint32_t>(
           member - conceptInfo.associatedTypes.begin());
-      const SemanticType argument =
-          typeOf(type.qualifiedOwner->arguments.front(), fromScope);
+      std::vector<SemanticType> arguments;
+      for (const TypeRef &argument : type.qualifiedOwner->arguments) {
+        arguments.push_back(typeOf(argument, fromScope));
+      }
       if (const std::optional<SemanticType> own =
-              ownBlockProjection(*protocol, index, argument, fromScope)) {
+              ownBlockProjection(*protocol, index, arguments, fromScope)) {
         return *own;
       }
       return substituteType(
-          associatedTypeProjection(*protocol, index, argument),
+          associatedTypeProjection(*protocol, index, std::move(arguments)),
           GenericSubstitution{.types = instanceTypeSubstitution,
                               .values = instanceValueSubstitution});
     }

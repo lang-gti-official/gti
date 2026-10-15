@@ -671,22 +671,54 @@ measurable<T>::unit_type total<T>(T& item) requires measurable<T> {
 
 ### Declaring a concept with a body
 
-A concept with a body takes exactly one type parameter. Its member names are
-distinct from each other, from the parameter and from the concept.
+A concept with a body takes one or more type parameters. Its member names
+are distinct from each other, from the parameters and from the concept.
 
 An operation is a free function signature. It has no body, generic
 parameters, requires clause, defaults, packs, modifiers, attributes or
-receiver qualifier. Its types may name the parameter, the concept's
+receiver qualifier. Its types may name the parameters, the concept's
 associated names, and visible types.
+
+A concept with several parameters relates types to each other. An
+associated type then depends on all of them:
+
+```gti
+concept adds_to<Left, Right> {
+  typename sum_type;
+  sum_type add(Left& left, Right& right);
+};
+
+for concept adds_to<Meters, Centimeters> {
+  using sum_type = Centimeters;
+  Centimeters add(Meters& left, Centimeters& right) { ... }
+};
+
+for <T> concept adds_to<Tally<T>, Tally<T>> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, Tally<T>& right) { ... }
+};
+
+adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
+  requires adds_to<L, R> {
+  return adds_to<L, R>::add(left, right);
+}
+```
 
 ### Conformance blocks
 
-The block's pattern is either a concrete type, or one class template applied
-to each of the block's type parameters exactly once, in any order. The block
-defines every associated type with one `using`, and every operation with one
-function. Each function has exactly the concept's signature after
-substituting the pattern for the parameter and the block's types for the
-associated types. A block defines nothing else.
+The block applies the concept to one pattern per concept parameter. Each
+pattern is either a concrete type, or one class template applied to block
+type parameters, in any order, such as `Box<T>` or `Pair<K, V>`. A bare
+parameter, such as `T` on its own, and a nested pattern, such as
+`Box<Box<T>>`, are not patterns. Every block parameter appears in some
+pattern. A parameter may appear more than once, within one pattern or across
+several, and then every occurrence must bind the same type: `Tally<T>,
+Tally<T>` matches two tallies of the same kind only.
+
+The block defines every associated type with one `using`, and every
+operation with one function. Each function has exactly the concept's
+signature after substituting the patterns for the parameters and the block's
+types for the associated types. A block defines nothing else.
 
 A block function is an ordinary function definition. The block's parameters
 apply to it, and it cannot declare its own generic parameters or a requires
@@ -699,21 +731,26 @@ clause. Inside the block:
 ### Selection and coherence
 
 Selection is exact:
-- a concrete type matches at most one block of a concept, and overlapping
-  blocks are rejected;
+- concrete arguments match at most one block of a concept, and two blocks
+  that some arguments could both match are rejected as overlapping;
 - there is no specialization or ranking between blocks;
 - the block's type-parameter constraints must hold for the bound types.
 
-The declaring package must own the concept or the pattern's top-level
-nominal type, as for
+The declaring package must own the concept or the top-level nominal type of
+at least one pattern, as for
 [exact class specializations](../decisions/020-exact-qualified-class-specializations.md).
+Because no pattern is a bare parameter, overlapping blocks in two different
+packages would require each package to depend on the other, which package
+dependencies rule out.
 All blocks register before bodies are analyzed, so the block that applies
 does not depend on include order.
 
 ### Uses in generic code
 
 In generic code, `C<T>::name` and `C<T>::operation(...)` require `C<T>` as a
-conjunct of the enclosing `requires` clause, not inside a disjunction. The
+conjunct of the enclosing `requires` clause, not inside a disjunction. With
+several parameters the conjunct must name the same arguments in the same
+order: `requires adds_to<L, R>` does not provide `adds_to<R, L>`. The
 generic body sees the associated type as an opaque type and checks calls
 against the declared signature. Each concrete instance then resolves both to
 the selected block.
