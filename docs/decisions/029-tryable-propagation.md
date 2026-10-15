@@ -94,4 +94,8 @@ body, satisfied through `for concept` blocks outside the type.
   its value out. Its private storage slot has no move-out operation, and the
   owner preferred not to add one as a workaround.
 - `?` through `std::tryable` is not available in constant evaluation yet.
+- The operand must be a class or struct type in this phase. A payload enum
+  can have a block, but `?` on it is rejected until the propagation plan can
+  stage enum temporaries and places. Wrapping the enum in a class works, and
+  is how `std::experimental::optional` is meant to be built.
 - Violations are reported as `GTI-S2086`.
