@@ -36,8 +36,13 @@ Concrete class fields retain that analysis's exact binding type, traits and
 selected initializer, including checked owned value-expression substitution and
 nominal-field defaults. Open-primary lifecycle unavailability is not an explicit
 source `= delete`: the concrete structural trait query determines copy/move
-availability while preserving written policy. HIR does not ask a backend to
-evaluate generic arithmetic or synthesize missing field initialization.
+availability while preserving written policy. A declared default constructor
+whose requirements fail for the application's arguments, such as
+`box() requires std::default_initializable<T>` in `box<Tracked>`, is unavailable
+on that application, because construction overload resolution never selects
+it. Its concrete status is `Deleted`, while the open primary keeps `Declared`.
+HIR does not ask a backend to evaluate generic arithmetic or synthesize missing
+field initialization.
 `HirProgram::instanceSymbols` retains the exact ordered semantic symbol records
 introduced only by those concrete analyses. Their request-wide IDs are disjoint
 from primary and other instance symbols. HIR checks concrete binding types and
