@@ -894,6 +894,10 @@ private:
         row.semanticIdentity = info->symbol;
         row.payload = LoweredStorageDeclaration{
             .symbol = info->symbol,
+            .externalSymbol = semantics_.findForeignStorage(info->symbol)
+                                  ? semantics_.findForeignStorage(info->symbol)
+                                        ->externalSymbol
+                                  : std::string{},
             .ownerClass = ownerClass,
             .type = info->type,
             .access = info->access,
@@ -969,6 +973,9 @@ private:
       hir.executionProfile() != mir.executionProfile() ||
       semantics.programKind() != hir.programKind() ||
       hir.programKind() != mir.programKind() ||
+      semantics.foreignStorageDeclarations() !=
+          hir.foreignStorageDeclarations() ||
+      hir.foreignStorageDeclarations() != mir.foreignStorageDeclarations() ||
       hir.embeddingPlan().has_value() != mir.embeddingPlan().has_value() ||
       semantics.placeSnapshot() != hir.module().placeDomain.snapshot ||
       hir.module().placeDomain != mir.module().placeDomain ||

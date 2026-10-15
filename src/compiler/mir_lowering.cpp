@@ -214,6 +214,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   bool valid = verifyFailureMetadata(failureMetadata).valid();
   result.program.executionProfile_ = source.executionProfile();
   result.program.programKind_ = source.programKind();
+  result.program.foreignStorage_ = source.foreignStorageDeclarations();
   result.program.target_ = source.analysisSeal().target;
   result.program.failureMetadata_ = failureMetadata;
   for (const HirEnum &enumeration : source.enumDeclarations()) {

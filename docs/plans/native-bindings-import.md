@@ -60,8 +60,17 @@ An id/arena IR in the repository's MIR style: `NativeType` nodes (void, bool,
 char, sized integers, floatings, pointers with const-pointee, record/enum/
 alias references, function shapes, fixed arrays, and an explicit
 `Unsupported` node carrying its reason) plus one `NativeDeclaration` struct
-tagged by kind (record, enum, typedef, function). Every declaration carries a
-`SourceOrigin` and a `NativeScopeId`.
+tagged by kind (record, enum, typedef, function, variable, macro constant).
+Every declaration carries a `SourceOrigin` and a `NativeScopeId`. Type uses
+retain top-level const/volatile qualification and the native address space,
+separately from each pointer's pointee qualification.
+
+Variable declarations retain exact object type, external symbol, linkage,
+TLS kind, object constness/volatility, and separate full-definition and
+tentative-definition facts. Redeclarations share one canonical identity and
+accumulate their definition facts; these facts never become a GTI initializer.
+A later in-policy redeclaration can admit an earlier system declaration while
+keeping one binding and the admitting source location.
 
 Function typedefs retain their function node and function-pointer typedefs
 retain the pointer node; typedef handling no longer strips the latter. This
@@ -99,7 +108,8 @@ references from pointer uses), fields with pointer declarators and one or
 more concrete array extents (nested `Array` model nodes, outermost first),
 `enum` definitions — anonymous ones retained by name adoption or as bare
 constants (an `Enum` declaration with an empty name) — object and
-function/function-pointer `typedef`s, and function prototypes (named or unnamed
+function/function-pointer `typedef`s, native object declarations and definitions,
+and function prototypes (named or unnamed
 parameters, `void` lists, `...` recorded as variadic, parameter array decay
 with `const` preserved, and multi-level pointers with `const` qualifiers
 read faithfully; `restrict` never reaches the model because it does not
@@ -123,7 +133,9 @@ its native error surfaced verbatim — Clang's recovery types are never
 imported, because recovery would bind the wrong ABI. ABI-affecting native
 facts are model data (C-06): an assembler label that renames the link symbol
 and a non-C calling convention are recorded on the function declaration and
-printed by the model printer. The planner emits a portable assembler label as
+printed by the model printer. Variables preserve assembler labels through their
+exact external symbol, along with internal/external linkage, TLS, qualifiers and
+definition facts even when the planner cannot admit their storage. The planner emits a portable assembler label as
 `[[link_name]]`; it rejects a non-identifier label and every non-C calling
 convention explicitly with its reason. A record bearing a layout attribute
 degrades to an opaque handle carrying its reason exactly as before.
@@ -157,13 +169,18 @@ unparseable declaration must not cost the rest of the header.
 Policy lives here, split from parsing so C++ mapping policy (namespaces,
 methods, overloads) lands without touching the reader. Two passes:
 
-1. Record classification. A complete record whose every field maps to the
+1. Record classification. Named passive unions now import with `[[c_abi]] union`,
+   preserving overlapping field layout and ordinary unsafe member access.
+   The reader publishes complete named inline record definitions before their
+   containing records; stable IDs are reserved earlier for pointer recursion.
+   Anonymous promoted members degrade the entire containing record explicitly.
+   A complete record whose every field maps to the
    GTI `[[c_abi]]` field surface binds as a record; any other record —
-   incomplete, union, bitfield-bearing, or with an inexpressible field —
+   incomplete, bitfield-bearing, or with an inexpressible field —
    *degrades to an `[[c_opaque]]` handle with a recorded reason* rather than
    disappearing, so every pointer-based API through it stays importable.
    Only by-value uses of a degraded record skip.
-2. Entity mapping. Functions, enums (alias to the compatible C integer plus `constexpr`
+2. Entity mapping. Functions, variables, enums (alias to the compatible C integer plus `constexpr`
    enumerators; a bare anonymous enum contributes constants only), object
    typedefs, and callback typedefs map through one
    shared type-mapping authority implementing the documented ABI allowlist:
@@ -182,7 +199,8 @@ methods, overloads) lands without touching the reader. Two passes:
    use binds through a *synthesized named callback alias* — the language's
    own admitted form — deduplicated by shape, named deterministically from
    the first committing declaration (`<owner>_<member>_fn`, ordinals on
-   collision, header names pre-reserved), emitted before its first use, and
+   collision, header names and configured rename destinations pre-reserved),
+   emitted before its first use, and
    rolled back when its only use skips. Imported integer macros plan as
    `constexpr int32_t`/`int64_t` constants by value range; floating and text
    forms plan as `double` and `std::string_view` respectively. Three shapes real
@@ -202,8 +220,32 @@ methods, overloads) lands without touching the reader. Two passes:
    instead of leaving a dangling alias. This expands import policy using
    existing GTI facilities, with no new frontend or backend exception.
    Remaining inexpressible shapes — variadics, pointers to whole arrays,
-   zero-length array extensions, native variables, reserved or GTI-invalid identifiers — become a
+   zero-length array extensions, unsupported variable storage (TLS, volatile,
+   internal linkage or top-level arrays), non-default address spaces,
+   reserved or GTI-invalid identifiers — become a
    `SkippedItem{origin, name, reason}`.
+
+Foreign objects use the same scalar, qualified raw-pointer, named callback and
+passive-record type mapping as the other admitted ABI positions. Non-const
+objects emit `mut` bindings; const objects emit immutable bindings. Pointer
+slot constness remains separate from pointee constness. Full and tentative C
+definitions import only declarations: the generated source allocates no storage,
+copies no initializer and creates no cleanup obligation. Variable renames and
+assembler labels use the same checked `link_name` policy as functions.
+
+The qualifier parity audit revised two historical lossy mappings. Const C
+record fields now emit immutable GTI fields, including const pointer slots and
+array elements. As specified by ADR 013, field mutability controls source access
+and does not change the record representation or add native header field
+qualifiers. Ordinary local ABI-record copies and assignment retain that rule;
+whole-record writes into foreign storage reject records containing readonly
+fields recursively, so they cannot overwrite native readonly subobjects.
+Object-level foreign-variable constness is emitted exactly in native headers.
+Volatile qualifiers and non-default native address spaces are
+retained by the reader and rejected wherever an emitted type would erase them;
+a record with such exposed fields degrades to an opaque handle. An ordinary
+pointer to that opaque record remains importable because it exposes no field
+access contract.
 
 The plan is an ordered, inspectable and testable value type. Implemented
 manifest imports use the same planner, with driver-owned generation/reuse;
@@ -211,8 +253,9 @@ metadata projection remains a separate unimplemented presentation step.
 
 ### The writer (`gti_writer.h`)
 
-A pure function from plan to GTI text: a generated-file banner, non-function
-bindings in header declaration order, one `extern "C"` block, then the skip
+A pure function from plan to GTI text: a generated-file banner, type and constant
+bindings in header declaration order, one `extern "C"` block containing functions
+and declaration-only foreign objects, then the skip
 report as trailing comments so the user sees exactly what the tool could not
 express and why. An optional namespace option wraps the source names while C
 symbols stay global, which is exactly the language's own namespace contract
@@ -316,6 +359,16 @@ selection and invalid-target rejection. The external acceptance client is
 SQLite: generated bindings must admit the ordinary open/prepare/step/column/
 finalize/close workflow without a SQLite-specific parser or planner rule.
 
+`native_variable_bindgen` owns the runnable `examples/native-variable-bindings`
+project: manifest generation and cache reuse, deterministic CLI regeneration,
+C17 and C++20/C++23 generated-header type checks (including both C++ namespace
+modes), and independently compiled C storage used at O0/O1/O3 plus ASan/UBSan.
+Its program reads/writes scalar, pointer, callback and passive-record objects,
+checks readonly data and exact symbol renaming, and observes mutations by C
+across an ordinary foreign call. `bindgen_pipeline` additionally checks
+canonical redeclarations, tentative/full definitions, storage skips, qualifiers,
+provenance, rename collisions and real frontend rejection of const-field writes.
+
 ## Numbered Delivery Milestones
 
 **Native enum follow-up (implemented).** The C-02/C-06 representation goals now
@@ -396,7 +449,7 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
      in as an opaque handle.
    - **rename** gives a declaration a usable GTI source name. This makes
      reserved-spelling records such as `__sFILE` (and every function taking
-     one) importable. A renamed function emits
+     one) importable. A renamed function or foreign variable emits
      `[[link_name("original_symbol")]]`, so GTI lookup uses the configured
      name without changing the ABI. A portable assembler label uses the same
      representation without requiring a configured rename.
@@ -426,8 +479,9 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
 
 Status: C-08A native indirect invocation and the native-scalar/nested-pointer
 family are implemented. Bindgen now preserves callback slots and composable
-typedefs through those facilities. C-08B foreign-variable declarations remain
-planned.
+typedefs through those facilities. C-08B provides ordinary foreign-object
+declarations and access; TLS, volatile and top-level array objects remain
+separate extensions.
 This is a follow-on language campaign, not permission for the importer to emit
 declarations the frontend rejects. Target-correct native scalar identity and
 general nested raw pointers have their own implemented contract; reuse its
@@ -452,16 +506,17 @@ The current compiler already provides the important foundation:
 - Native invocation now has a distinct semantic/HIR/MIR signature identity,
   ordered callee value and verified production emission. A callback value does
   not manufacture a static GTI declaration target from its signature alone.
-- `externCDeclaration` admits only bodyless functions. The native reader warns
-  about `CXCursor_VarDecl` and does not retain a foreign-storage declaration;
-  there is no compiler external-global storage identity today.
+- `externCDeclaration` admits bodyless functions and declaration-only foreign
+  variables. Native variable facts survive reader/planner policy, and resolved
+  external-storage identities survive HIR/MIR through verified native access.
 
 `native_callback_pipeline` checks exact field/parameter/result transport and
 local, field, call-result and concrete generic invocation without an invented
 GTI adapter. Missing unsafe, signature mismatch and forged MIR remain rejected.
-Scalar/const/callback foreign-variable declarations remain frontend negatives
-until C-08B establishes the external-storage identity; those negatives are not
-a permanent language prohibition.
+`foreign_variable_pipeline`, `foreign_variable_borrow` and
+`native_variable_bindgen` cover ordinary scalar/const/pointer/callback/record
+foreign objects, their unsafe accesses and raw address formation. Unsupported
+storage and forbidden writes remain focused negatives.
 
 ### C-08A: Call native function-pointer values
 
@@ -516,6 +571,11 @@ compiler-owned hover/call tooling with the new resolved call family.
 
 ### C-08B: Declare and access actual foreign variables
 
+Implemented in the ordinary non-TLS, non-volatile object slice. See the
+[current contract](../language/native-c-interop.md#foreign-variables) and
+[runnable example](../../examples/native-variable-bindings/README.md).
+The requirements below remain the acceptance contract.
+
 Introduce a real external-storage declaration identity, never an ordinary GTI
 global initialized with a placeholder. Retain exact link symbol, resolved ABI
 type, mutability/constness, source origin and target storage facts. A declaration
@@ -557,8 +617,8 @@ renaming/collision behavior, unsupported TLS/volatile diagnostics, no emitted
 definition or destructor, generated C17/C++20/C++23 header compatibility,
 optimizer effects, MIR mutations, tooling and a runnable registered example.
 
-C-08A is delivered; C-08B remains an independent vertical slice with the
-prerequisites and acceptance above. Groundwork for foreign storage alone does
-not claim that capability is usable, require a version bump, or satisfy its
-future executable-example gate. Revise the canonical native interop
-contract only as implementation lands.
+C-08A and the ordinary-object C-08B slice are delivered. Remaining storage
+families require general volatile/TLS operations and target lowering, or an
+array-object address/transport contract; they are not approximated as ordinary
+objects. Acceptance for each extension includes exact import facts, native
+execution and header evidence, and the same ownership/effect verification.

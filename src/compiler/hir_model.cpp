@@ -1939,6 +1939,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             !instance.type.lambdaEnclosingFunctionTypes.empty() ||
             !instance.type.lambdaEnclosingFunctionValues.empty());
   }
+  if (program.foreignStorageDeclarations() !=
+      semantics.foreignStorageDeclarations())
+    result.errors.emplace_back(
+        "HIR foreign storage differs from semantic declarations");
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();
   const HirProgramInitializationPlan &initialization =

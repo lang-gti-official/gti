@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v104`, `mir-body-v85`).
+instruction, body, and caller-assignment facts (`mir-v105`, `mir-body-v86`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,8 +318,10 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v104`/`mir-body-v85`,
-with `lowered-program-v17` declaration metadata. Version 104/body 85 records
+The combined deterministic serialization is currently `mir-v105`/`mir-body-v86`,
+with `lowered-program-v20` declaration metadata. Version 105/body 86 adds
+foreign-storage inventories and place identity; the declaration format also
+retains exact external storage names. Earlier versions record
 checked borrowing capture modes, each concrete environment's invocation
 capability, per-dependency loan parents, and exact stateless GTI function-pointer
 targets. Reference captures retain ordinary checked-reference storage and
@@ -422,7 +424,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v104`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v105`/`lowered-program-v20`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -491,6 +493,27 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+Checked references to primitive text views use the same two-dependency model.
+Their abstract `Stored` entry has no nominal field path: it represents the
+opaque caller-owned text and grants read-only access only. Semantic analysis
+creates that entry separately from the physical reference loan; HIR preserves
+both identities and MIR lowering seeds both before body execution. Verification
+requires the exact text-reference formal, independently checks every local
+publication, and rejects missing, substituted or prematurely retired owner
+dependencies. An empty field list is not evidence for an arbitrary carrier or
+permission to omit the external dependency.
+Reference-returning helpers preserve the physical view address and its stored
+owner separately, including when their result is immediately used to construct
+a cursor or another source-defined adapter. A retained adapter keeps the exact
+accessor-result chain alive; a read-only chain may terminate at the matching
+live reference formal with the same verified external dependency. When an
+adapter stores a named reference, semantics retains that reference as its parent
+even for shared access; its endpoint must outlive the adapter and dependent
+copies. MIR preserves this parent separately from the backing owner. Literal-backed
+locals may omit an external owner only when verification proves their literal
+initialization through write-free copies or read-only local reference aliases.
+For an alias, both its supplied address and its loan origin must prove that
+same static-lifetime property; clearing borrowed-state flags is not proof.
 Checked restoration of an opaque reference has a separate explicit proof:
 the concrete restored field paths and access must match a verified restore
 operation or body-proven helper summary. Its hidden dependencies remain bounded
@@ -2388,7 +2411,16 @@ production emission and hosted containment consume that same schedule.
 `MirClassInstance` carries the selected `[[c_abi]]` record size, alignment, and
 ordered field offsets. Program verification checks that this metadata is
 structurally complete and within the record bounds; deterministic printing
-exposes it for audits. MIR does not contain a native-layout instruction.
+exposes it for audits. C ABI unions retain zero offsets and a union-layout view
+derived from the same semantic computation; verification rejects disagreement
+in size, alignment, field identities, types or field layouts between those
+views. Existing verified union field places and load/store operations own
+execution; ABI opt-in adds no new body operation or recursive emitter path.
+Passive ABI result copies include unions inside source wrappers. When a call
+result has a verified placement slot, publication uses that slot even when the
+result is also a passive ABI value; raw value assignment and placement-factory
+publication are mutually exclusive emission choices.
+MIR does not contain a native-layout instruction.
 
 Floating literals lower as ordinary `MirOperation::Literal` values tagged by
 their semantic `float` or `double` type. The verifier requires the retained
