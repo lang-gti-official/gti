@@ -321,6 +321,7 @@ add_library(
   "src/compiler/semantic_constexpr.cpp"
   "src/compiler/semantic_call_resolution.cpp"
   "src/compiler/semantic_protocol_concepts.cpp"
+  "src/compiler/semantic_tryable_propagation.cpp"
   "src/compiler/semantic_declaration_analysis.cpp"
   "src/compiler/semantic_embedding.cpp"
   "src/compiler/semantic_flow_analysis.cpp"
