@@ -1580,6 +1580,59 @@ int main() { return parse().code - 7; }
 }
 
 void testFreshClassPayloadOperandStaging() {
+  const auto native = analyze("native-payload-call-staging.gti", R"gti(
+[[c_abi]] struct NativeValue { int stamp; };
+extern "C" { NativeValue produce(int stamp); }
+enum NativeResult { pair(NativeValue first, NativeValue second), empty };
+int main() {
+  unsafe {
+    auto result = NativeResult::pair(produce(1), produce(2));
+    switch (result) {
+      case NativeResult::pair(first, second):
+        return first.stamp + second.stamp - 3;
+      case NativeResult::empty: return 1;
+    }
+  }
+}
+)gti");
+  expect(native.canGenerateCode(), "direct native payload calls must lower");
+  if (native.canGenerateCode()) {
+    const lang::CppMirBodyEmissionMap rows(buildRows(native, native.mir));
+    const lang::CppMirBodyEmitter backend(native.mir, rows);
+    expect(backend.analyzeProgram().ready(),
+           "native payload calls must reuse exact passive SSA staging");
+    for (const auto &function : native.mir.functionInstances()) {
+      if (function.entryKind == lang::ProgramEntryKind::None)
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto malformed = native.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        bool changed = false;
+        for (auto &block : body->blocks) {
+          for (auto &instruction : block.instructions) {
+            if (instruction.operation != lang::MirOperation::PayloadConstruct)
+              continue;
+            if (mutation == 0)
+              instruction.localFailureSites.push_back(1);
+            else if (mutation == 1)
+              instruction.operands.front().type = lang::SemanticType::Int32;
+            else if (mutation == 2)
+              instruction.enumVariant = 1;
+            else
+              instruction.operands.back() = instruction.operands.front();
+            changed = true;
+          }
+        }
+        const lang::CppMirBodyEmitter forged(malformed, rows);
+        expect(changed && !forged.supportsBodyText(address) &&
+                   !forged.supportsFailureBodyText(address),
+               "native payload staging rejects failure, wrong type/tag and "
+               "duplicated result use");
+      }
+    }
+  }
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/payload_fresh_class_operands.gti";
   std::ifstream input(path);
