@@ -11086,11 +11086,50 @@ struct CompleteBorrowFlow {
     }
     return edges;
   };
+  State initial{.values = std::vector<Fact>(body.values.size()),
+                .places = std::vector<Fact>(body.places.size())};
+  const auto *function = body.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(owner)
+                             : nullptr;
+  const auto *lambda =
+      body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
+  const auto *constructor = body.kind == MirBodyKind::Constructor
+                                ? program.findConstructorInstance(owner)
+                                : nullptr;
+  const auto *parameters = function      ? &function->parameterBindings
+                           : lambda      ? &lambda->parameterBindings
+                           : constructor ? &constructor->parameterBindings
+                                         : nullptr;
+  const auto *types = function      ? &function->parameterTypes
+                      : lambda      ? &lambda->parameterTypes
+                      : constructor ? &constructor->parameterTypes
+                                    : nullptr;
+  if (parameters && types && parameters->size() == types->size())
+    for (std::size_t parameter = 0; parameter < parameters->size();
+         ++parameter) {
+      const auto &type = (*types)[parameter];
+      if (type.kind != SemanticType::Enum)
+        continue;
+      const auto inventory = findStoredCarrierReferenceInventory(program, type);
+      const auto *enumeration = program.findPayloadEnum(type);
+      if (!inventory || !inventory->empty() || !enumeration)
+        continue;
+      MirBorrowDependencySet complete;
+      for (std::size_t variant = 0; variant < enumeration->variants.size();
+           ++variant)
+        complete.possibleAlternatives.push_back(
+            {.conditions = {{.enumeration = type, .variant = variant}}});
+      // An unknown entry tag admits every typed alternative. The complete
+      // empty inventory comes from the concrete parameter and sealed layout,
+      // never a value annotation or the absence of an attached loan.
+      for (const auto &place : body.places)
+        if (place.root == MirPlaceRootKind::Binding &&
+            place.binding == (*parameters)[parameter] && place.type == type &&
+            place.projections.empty() && place.initiallyAvailable)
+          initial.places[place.id - 1] = complete;
+    }
   auto flow = runMirForwardDataflow(
-      body,
-      State{.values = std::vector<Fact>(body.values.size()),
-            .places = std::vector<Fact>(body.places.size())},
-      transfer,
+      body, std::move(initial), transfer,
       [&](State &target, const State &incoming,
           const MirDataflowMergeContext &) {
         bool changed = false;

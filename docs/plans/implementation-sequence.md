@@ -8342,6 +8342,15 @@ publish result facts only on their successful edge. Synthetic early returns
 from propagation currently make the summary unknown until their selected
 residual operation's complete result contract can be instantiated.
 
+Dependency-free by-value payload-enum parameters now seed a complete set with
+every concrete alternative. Semantics derives it from the strict type inventory;
+MIR independently reconstructs it from exact formal bindings, types, available
+entry storage and sealed payload rows. This does not infer an empty set for an
+unknown reference parameter or after a mutable call. Optimized focused tests
+cover forwarding the complete entry inventory and reject substituted formal
+types/bindings, unavailable entry storage and omitted alternatives. Nonempty
+conditional entry loans remain a subsequent proof step.
+
 This checkpoint is work in progress. Before enabling nonempty contracts, replace
 the provisional per-query depth/entry limits with the existing generic-instance
 resource policy: cycles remain unknown, exhaustion reports the established

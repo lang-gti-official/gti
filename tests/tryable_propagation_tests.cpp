@@ -375,7 +375,7 @@ int main() {
     }
   }
   for (const std::string source :
-       {"Token unknown(Token input) { return input; }",
+       {"Token unknown(Token& input) { return input; }",
         "void replace(mut Token& input) { input = Token::item(9); } "
         "Token unknown() { mut auto value = Token::empty; replace(value); "
         "return value; }"}) {
