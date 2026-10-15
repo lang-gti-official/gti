@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.3 — Reproducible generated names and conformance diagnostics
+## 0.440.5 — Reproducible generated names and conformance diagnostics
 
 - Generated C++ identifiers remain the same when a project or its standard
   library moves to another directory. Distinct source units retain distinct
@@ -17,6 +17,28 @@ for what minor and patch releases mean.
 - Conformance block header errors are reported once, independently of the
   number of operations. An indirectly included concept retains its declaration
   location and direct-include suggestion even when the block has no operations.
+
+## 0.440.4 — Member calls on conditional values without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called directly on a `?:`
+  whose arms produce a class without a destructor, such as
+  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
+  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
+  methods (including ones that can fail or that consume a moved value), arms
+  that copy a variable or construct the class, and mixtures of these.
+
+## 0.440.3 — Conditional results with checked arm arguments
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:` evaluates an input that
+  can fail before producing a class result without a destructor, such as
+  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
+  is overflow-checked. Arguments computed by calls that can fail, `?`
+  operands, and nested conditionals or `&&`/`||` inside an argument work the
+  same way, whether the result is bound, returned, assigned, passed on, read
+  through a field or used to initialize a field. A failing input ends its
+  arm before the call, with the usual cleanup.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
