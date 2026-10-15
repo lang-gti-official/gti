@@ -4275,6 +4275,113 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
                                  const MirConstructorInstance &constructor,
                                  MirInstructionId move);
 
+// The entry-block records before `position` publish exactly initializers
+// [0, initializer) without effects or failure: passive scalar siblings and
+// record-published closure copies, or stored-reference bindings. A native
+// member-initializer publication at `position` therefore crosses no body work.
+// Arbitrary computations, calls, borrows, cleanup and reads of an owned
+// parameter are outside this prefix.
+[[nodiscard]] bool effectFreeInitializerPrefix(
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const MirBlock &entry, std::vector<MirInstruction>::const_iterator position,
+    std::size_t initializer) {
+  const MirBody &body = constructor.body;
+  // Scalar copies and literals are effect-free; the native owned-field move
+  // cannot observe those fields or raise, and the scalar stores still execute
+  // in the MIR body. A record-published closure copy is equally effect-free
+  // and publishes natively first.
+  const auto scalarPrefix = [&]() {
+    auto cursor = entry.instructions.begin();
+    std::size_t initializerIndex = 0;
+    while (cursor != position) {
+      if (const auto closure = recordPublishedClosureCopy(program, constructor,
+                                                          initializerIndex)) {
+        if (std::distance(cursor, position) < 2 ||
+            cursor->id != closure->loadInstruction ||
+            std::next(cursor)->id != closure->boundaryInstruction)
+          return false;
+        std::advance(cursor, 2);
+        ++initializerIndex;
+        continue;
+      }
+      const auto scalar =
+          passiveScalarFieldSibling(program, constructor, initializerIndex);
+      if (!scalar || std::distance(cursor, position) < 3 ||
+          cursor->id != scalar->producerInstruction ||
+          std::next(cursor)->id != scalar->initializeInstruction ||
+          std::next(cursor, 2)->id != scalar->boundaryInstruction)
+        return false;
+      std::advance(cursor, 3);
+      ++initializerIndex;
+    }
+    return initializerIndex == initializer;
+  };
+  if (scalarPrefix())
+    return true;
+  // A stored-reference prefix has no runtime construction or ownership
+  // transfer. Claim only its exact parameter Load/Borrow/boundary triples;
+  // their native reference bindings precede the owned-field move too.
+  const auto references = cppMirStoredReferenceBindings(program, constructor);
+  if (!references || references->empty())
+    return false;
+  auto cursor = entry.instructions.begin();
+  std::size_t initializerIndex = 0;
+  while (cursor != position) {
+    if (initializerIndex >= constructor.initializers.size())
+      return false;
+    const auto &reference = constructor.initializers[initializerIndex];
+    const auto binding = std::find_if(
+        references->begin(), references->end(), [&](const auto &candidate) {
+          return candidate.initializer == initializerIndex;
+        });
+    if (binding == references->end() || !reference.storesReference ||
+        reference.arguments.size() != 1 || reference.ownedParameter ||
+        initializerIndex >= initializer)
+      return false;
+    const auto &load = *cursor++;
+    if (load.kind != MirInstructionKind::Load || !load.result ||
+        load.hirValue != reference.arguments.front() ||
+        load.operands.size() != 1 ||
+        load.operands.front().kind != MirOperandKind::Copy ||
+        !body.usesOf(*load.result).empty() || load.destination ||
+        load.receiver || !load.lifecycle.empty() ||
+        !load.localFailureSites.empty() || !load.definedFailure.empty() ||
+        cursor == position)
+      return false;
+    const auto &borrow = *cursor++;
+    const auto *loan = borrow.loan ? body.findLoan(*borrow.loan) : nullptr;
+    if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
+        loan->kind != MirLoanKind::Stored ||
+        loan->storedField != reference.field ||
+        loan->source != load.operands.front().place ||
+        loan->producedBy != reference.arguments.front() ||
+        borrow.hirValue != load.hirValue || borrow.result ||
+        borrow.destination || borrow.receiver || borrow.operands.size() != 1 ||
+        borrow.operands.front().place != loan->source ||
+        !borrow.lifecycle.empty() || !borrow.localFailureSites.empty() ||
+        !borrow.definedFailure.empty() || cursor == position)
+      return false;
+    const auto &boundary = *cursor++;
+    const auto expression =
+        std::find_if(body.fullExpressions.begin(), body.fullExpressions.end(),
+                     [&](const auto &candidate) {
+                       return candidate.id == boundary.fullExpressionEnd;
+                     });
+    if (boundary.kind != MirInstructionKind::Lifecycle ||
+        boundary.fullExpressionEnd == 0 || boundary.result ||
+        boundary.destination || boundary.receiver ||
+        !boundary.operands.empty() || !boundary.lifecycle.empty() ||
+        !boundary.localFailureSites.empty() ||
+        !boundary.definedFailure.empty() ||
+        expression == body.fullExpressions.end() ||
+        expression->constructorInitializer != initializerIndex + 1 ||
+        expression->roots != reference.arguments)
+      return false;
+    ++initializerIndex;
+  }
+  return initializerIndex == initializer;
+}
+
 [[nodiscard]] const MirConstructorInitializer *
 ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
                                HirConstructorInstanceId constructorId,
@@ -4354,107 +4461,8 @@ ownedParameterFieldInitializer(const MirProgram &program, const MirBody &body,
   if (movePosition == entry->instructions.begin()) {
     return matched;
   }
-  // A prefix of exact scalar parameter-to-field copies is effect-free. The
-  // native owned-field move cannot observe those fields or raise, and the
-  // scalar stores still execute in the MIR body. A record-published closure
-  // copy is equally effect-free and publishes natively before the move. Do
-  // not admit arbitrary computations, calls, borrows, cleanup, or reads of
-  // the moved parameter.
-  const auto scalarPrefix = [&]() {
-    auto cursor = entry->instructions.begin();
-    std::size_t initializerIndex = 0;
-    while (cursor != movePosition) {
-      if (const auto closure = recordPublishedClosureCopy(program, *constructor,
-                                                          initializerIndex)) {
-        if (std::distance(cursor, movePosition) < 2 ||
-            cursor->id != closure->loadInstruction ||
-            std::next(cursor)->id != closure->boundaryInstruction)
-          return false;
-        std::advance(cursor, 2);
-        ++initializerIndex;
-        continue;
-      }
-      const auto scalar =
-          passiveScalarFieldSibling(program, *constructor, initializerIndex);
-      if (!scalar || std::distance(cursor, movePosition) < 3 ||
-          cursor->id != scalar->producerInstruction ||
-          std::next(cursor)->id != scalar->initializeInstruction ||
-          std::next(cursor, 2)->id != scalar->boundaryInstruction)
-        return false;
-      std::advance(cursor, 3);
-      ++initializerIndex;
-    }
-    return initializerIndex + 1 == initialize->constructorInitializer;
-  };
-  if (scalarPrefix())
-    return matched;
-  // A stored-reference prefix has no runtime construction or ownership
-  // transfer. Claim only its exact parameter Load/Borrow/boundary triples;
-  // their native reference bindings precede the owned-field move too.
-  const auto referencePrefix = [&] {
-    const auto references =
-        cppMirStoredReferenceBindings(program, *constructor);
-    if (!references || references->empty())
-      return false;
-    auto cursor = entry->instructions.begin();
-    std::size_t initializerIndex = 0;
-    while (cursor != movePosition) {
-      if (initializerIndex >= constructor->initializers.size())
-        return false;
-      const auto &reference = constructor->initializers[initializerIndex];
-      const auto binding = std::find_if(
-          references->begin(), references->end(), [&](const auto &candidate) {
-            return candidate.initializer == initializerIndex;
-          });
-      if (binding == references->end() || !reference.storesReference ||
-          reference.arguments.size() != 1 || reference.ownedParameter ||
-          initializerIndex + 1 >= initialize->constructorInitializer)
-        return false;
-      const auto &load = *cursor++;
-      if (load.kind != MirInstructionKind::Load || !load.result ||
-          load.hirValue != reference.arguments.front() ||
-          load.operands.size() != 1 ||
-          load.operands.front().kind != MirOperandKind::Copy ||
-          !body.usesOf(*load.result).empty() || load.destination ||
-          load.receiver || !load.lifecycle.empty() ||
-          !load.localFailureSites.empty() || !load.definedFailure.empty() ||
-          cursor == movePosition)
-        return false;
-      const auto &borrow = *cursor++;
-      const auto *loan = borrow.loan ? body.findLoan(*borrow.loan) : nullptr;
-      if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
-          loan->kind != MirLoanKind::Stored ||
-          loan->storedField != reference.field ||
-          loan->source != load.operands.front().place ||
-          loan->producedBy != reference.arguments.front() ||
-          borrow.hirValue != load.hirValue || borrow.result ||
-          borrow.destination || borrow.receiver ||
-          borrow.operands.size() != 1 ||
-          borrow.operands.front().place != loan->source ||
-          !borrow.lifecycle.empty() || !borrow.localFailureSites.empty() ||
-          !borrow.definedFailure.empty() || cursor == movePosition)
-        return false;
-      const auto &boundary = *cursor++;
-      const auto expression =
-          std::find_if(body.fullExpressions.begin(), body.fullExpressions.end(),
-                       [&](const auto &candidate) {
-                         return candidate.id == boundary.fullExpressionEnd;
-                       });
-      if (boundary.kind != MirInstructionKind::Lifecycle ||
-          boundary.fullExpressionEnd == 0 || boundary.result ||
-          boundary.destination || boundary.receiver ||
-          !boundary.operands.empty() || !boundary.lifecycle.empty() ||
-          !boundary.localFailureSites.empty() ||
-          !boundary.definedFailure.empty() ||
-          expression == body.fullExpressions.end() ||
-          expression->constructorInitializer != initializerIndex + 1 ||
-          expression->roots != reference.arguments)
-        return false;
-      ++initializerIndex;
-    }
-    return initializerIndex + 1 == initialize->constructorInitializer;
-  };
-  if (referencePrefix())
+  if (effectFreeInitializerPrefix(program, *constructor, *entry, movePosition,
+                                  initialize->constructorInitializer - 1))
     return matched;
   // Owned/scalar initializers receive a complete ordered-prefix proof in
   // cppMirOwnedParameterFieldBindings. A singleton has no such later proof:
@@ -14946,6 +14954,26 @@ failureConstructorPassiveBoundField(const MirProgram &program,
          nativeCopyClosure(program, field.type, copied->info.traits);
 }
 
+// A closure moved from its formal publishes the same way: the owned proof
+// admits its record-published move ahead of every failure edge, with no value
+// or rollback obligation, so the native member-initializer list constructs
+// the field in both constructor forms. A passive closure moves exactly as its
+// native closure object (nativeCopyClosure), and ending the moved field with
+// the caller's object runs no source code either.
+[[nodiscard]] bool failureConstructorPassiveClosureMove(
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const MirClassFieldInfo &field,
+    const CppMirOwnedParameterFieldBinding &binding) {
+  const MirValue *moved = constructor.body.findValue(binding.movedValue);
+  return field.type.kind == SemanticType::Lambda &&
+         field.dropKind == DropKind::Lexical && !field.requiresActiveCleanup &&
+         binding.field == field.symbol && binding.initializeInstruction == 0 &&
+         binding.fieldTransferInstruction == 0 && binding.valueDrop == 0 &&
+         binding.fieldDrop == 0 && moved != nullptr &&
+         moved->info.type == field.type &&
+         nativeCopyClosure(program, field.type, moved->info.traits);
+}
+
 [[nodiscard]] const MirInstruction *
 storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
 
@@ -15428,12 +15456,18 @@ failureConstructorBoundaryEligible(const MirProgram &program,
                              binding.valueDrop == 0 && binding.fieldDrop == 0;
                     });
     const bool passiveClosureField =
-        copiedParameters &&
-        std::any_of(copiedParameters->begin(), copiedParameters->end(),
-                    [&](const auto &binding) {
-                      return failureConstructorPassiveClosureCopy(
-                          program, constructor, field, binding);
-                    });
+        (copiedParameters &&
+         std::any_of(copiedParameters->begin(), copiedParameters->end(),
+                     [&](const auto &binding) {
+                       return failureConstructorPassiveClosureCopy(
+                           program, constructor, field, binding);
+                     })) ||
+        (ownedParameters &&
+         std::any_of(ownedParameters->begin(), ownedParameters->end(),
+                     [&](const auto &binding) {
+                       return failureConstructorPassiveClosureMove(
+                           program, constructor, field, binding);
+                     }));
     const bool retainedPassiveField =
         passiveNativeField || passiveClosureField ||
         ((failureConstructorPassiveBoundField(program, field) ||
@@ -53134,12 +53168,45 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
       // Other passive carrier forms can still have no distinct field stage.
       // Non-borrowing cleanup-free classes now require Initialize in program
       // verification; active-cleanup fields require the rollback schedule.
-      // Failure records are admitted only where a native constructed-field
-      // schedule proves every failure impossible and claims this move.
+      // Failure records are admitted where a native constructed-field
+      // schedule proves every failure impossible and claims this move, or
+      // where the move publishes ahead of every failure edge: only the
+      // effect-free prefix of earlier initializers precedes it and its own
+      // full-expression boundary follows it. The native member-initializer
+      // list then publishes the field exactly where MIR moves the formal, in
+      // both constructor forms; whether ending the published field with the
+      // caller's object is observation-free remains the failure-form proof's
+      // separate per-field question.
+      const auto prologueMove = [&] {
+        const MirBlock *entry =
+            constructor.body.findBlock(constructor.body.entry);
+        if (entry == nullptr)
+          return false;
+        const auto position =
+            std::find_if(entry->instructions.begin(), entry->instructions.end(),
+                         [&](const MirInstruction &instruction) {
+                           return instruction.id == move->id;
+                         });
+        if (position == entry->instructions.end() ||
+            std::next(position) == entry->instructions.end())
+          return false;
+        const MirInstruction &boundary = *std::next(position);
+        return boundary.kind == MirInstructionKind::Lifecycle &&
+               boundary.fullExpressionEnd == fullExpression->id &&
+               boundary.cleanupBoundaryEnd == 0 && !boundary.result &&
+               !boundary.destination && !boundary.receiver &&
+               boundary.operands.empty() && boundary.lifecycle.empty() &&
+               boundary.localFailureSites.empty() &&
+               boundary.definedFailure.empty() &&
+               (position == entry->instructions.begin() ||
+                effectFreeInitializerPrefix(program, constructor, *entry,
+                                            position, initializerIndex));
+      };
       if (field->requiresActiveCleanup || !move->lifecycle.empty() ||
           !onlyRootRecordUses(constructor.body, movedValue->id) ||
           (!constructor.body.failureRecords.empty() &&
-           !constructedFieldOwnedSiblingMove(program, constructor, move->id))) {
+           !constructedFieldOwnedSiblingMove(program, constructor, move->id) &&
+           !prologueMove())) {
         return std::nullopt;
       }
     }
