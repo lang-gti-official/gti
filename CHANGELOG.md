@@ -17,6 +17,9 @@ for what minor and patch releases mean.
   Counted input, decimal and hexadecimal formats, exact consumed positions,
   allocation-free conversion, and unchanged output on error retain the existing
   public parsing contract.
+- Avoid a native optimization barrier when retiring trivial lifetime slots,
+  preserving conditional-result loop performance without relaxing slot guards
+  or changing nontrivial cleanup.
 
 ## 0.442.1 — Conditional and lambda class results
 
