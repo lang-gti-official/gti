@@ -957,7 +957,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   - a return type that is neither the residual type nor converted from it by
     the shared selection, through one `implicit` constructor or one
     `implicit` conversion operator (a selection that finds a path but
-    rejects it, such as an ambiguity, keeps its own diagnostic);
+    rejects it, such as an ambiguity, keeps its own diagnostic), including
+    one that only a built-in scalar or `expected` conversion would
+    initialize, which a residual does not take;
   - use in a constexpr function;
   - an operand that is not a class or struct, such as a payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has
