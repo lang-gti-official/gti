@@ -42,6 +42,23 @@ public:
   int read() { return this.id; }
 };
 
+// Destructors that cannot fail keep the returning body in the plain form. A
+// result destroyed too early would read back as 0.
+class Quiet {
+  mut int id;
+public:
+  Quiet(int value) : id(value) {}
+  ~Quiet() { this.id = 0; }
+  int read() { return this.id; }
+};
+
+class QuietBox {
+  mut Quiet item;
+public:
+  QuietBox(int value) : item(Quiet(value)) {}
+  Quiet release() && { return std::move(this.item); }
+};
+
 // The receiver's destructor runs after release() has produced the result.
 class Guarded {
   mut Fragile item;
@@ -70,6 +87,8 @@ Tracked take_either(bool left, Single a, Single b) {
   }
   return std::move(b).release();
 }
+
+Quiet take_quiet(QuietBox box) { return std::move(box).release(); }
 
 Fragile take_guarded(Guarded box) { return std::move(box).release(); }
 
@@ -105,8 +124,13 @@ int main(int argc, std::vector<std::string> argv) {
     Tracked chosen = take_either(false, std::move(left), std::move(right));
     total += chosen.read();
   }
+  {
+    QuietBox box{10};
+    Quiet quiet = take_quiet(std::move(box));
+    total += quiet.read();
+  }
   Guarded guarded{9, argc == 3 ? 0 : 1, argc >= 2 ? 0 : 1};
   Fragile kept = take_guarded(std::move(guarded));
   std::println("kept");
-  return total + kept.read() - 35;
+  return total + kept.read() - 45;
 }
