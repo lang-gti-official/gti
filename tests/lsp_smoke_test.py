@@ -12342,7 +12342,8 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         "  int inspect() mut { return 2; }\n"
         "};\n"
         "int main() {\n"
-        "  Probe().reset();\n"
+        "  Probe probe = Probe();\n"
+        "  probe.reset();\n"
         "  return 0;\n"
         "}\n"
     )
@@ -12350,7 +12351,7 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         "class Probe {\n"
         "public:\n"
         "  Probe() {}\n"
-        "  void reset() mut {}\n"
+        "  virtual void reset() mut {}\n"
         "  int inspect() { return 1; }\n"
         "  int inspect() mut { return 2; }\n"
         "};\n"
@@ -12398,7 +12399,11 @@ def test_mutable_temporary_receiver_tooling(executable, root):
             and message["params"].get("version") == 1
         )
         diagnostics = invalid["params"]["diagnostics"]
-        assert any(item.get("code") == "GTI-S2081" for item in diagnostics), diagnostics
+        # Virtual calls on owned temporaries are supported, but this named
+        # read-only receiver still cannot call a mutating method.
+        assert any(item.get("code") == "GTI-S2000" and
+                   "requires a mutable receiver" in item.get("message", "")
+                   for item in diagnostics), diagnostics
 
         session.send(
             {
