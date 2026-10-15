@@ -570,6 +570,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testVirtualTemporaryReceivers",
+      "suite": "ownership"
+    },
+    {
       "name": "testTemporaryArgumentBorrows",
       "suite": "ownership"
     },

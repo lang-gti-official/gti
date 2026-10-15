@@ -4859,6 +4859,144 @@ int main() { return take(Maker(1), 1) - 2; }
   }
 }
 
+// A cleanup-free class result needs no obligation, so both arms of its
+// conditional publish into one representation-only join. A member call arm
+// keeps the receiver identity ordinary call admission proves (its exact
+// borrow, or a moved receiver staged as a prepared input), and a call that
+// consumes prepared inputs transfers each one out and records nothing else.
+// Removed, duplicated or conditional transfers, a forged result activation
+// and a forged consuming capability on a borrowed receiver are refused.
+void testCleanupFreeConditionalCallArms() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-cleanup-free-conditional-call-arms.gti", R"(
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  int get() { return this.base; }
+  Pod make() && { return Pod(this.base); }
+  Pod peek() { return Pod(this.base + 10); }
+};
+Pod build(Maker maker) { return Pod(maker.get()); }
+int bound(bool left, Maker a, Maker b) {
+  Pod kept = left ? std::move(a).make() : build(std::move(b));
+  return kept.read();
+}
+Pod returned(bool left, Maker a, Maker b) {
+  return left ? build(std::move(a)) : std::move(b).make();
+}
+int borrowed(bool left, Maker a, Maker b) {
+  Pod kept = left ? a.peek() : b.peek();
+  return kept.read() + a.get();
+}
+int main() {
+  return bound(true, Maker(1), Maker(2)) +
+         returned(false, Maker(3), Maker(4)).read() +
+         borrowed(true, Maker(5), Maker(6)) - 25;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "cleanup-free conditional call arms verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t transferring = 0;
+  std::size_t borrowing = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arm calls returning the cleanup-free class: each transfers its
+    // one prepared input, or borrows its receiver and records nothing.
+    std::vector<lang::MirInstructionId> transfers;
+    std::vector<lang::MirInstructionId> borrows;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.result ||
+            instruction.info.type.kind != lang::SemanticType::Class)
+          continue;
+        if (instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle[0].kind ==
+                lang::MirLifecycleEventKind::TransferOut)
+          transfers.push_back(instruction.id);
+        else if (instruction.receiver && instruction.lifecycle.empty() &&
+                 !instruction.callableInvocation)
+          borrows.push_back(instruction.id);
+      }
+    if (transfers.size() + borrows.size() != 2 ||
+        (!transfers.empty() && !borrows.empty()))
+      continue;
+    transferring += transfers.size() == 2;
+    borrowing += borrows.size() == 2;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    // A raising callee selects the caller's failure form.
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional admits its member-call and "
+           "input-consuming arms");
+    const auto refused = [&](auto &&mutate, bool verifierRejects,
+                             const std::string &what) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          mutate(instruction);
+      if (verifierRejects)
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a forged cleanup-free conditional arm fails MIR "
+               "verification: " +
+                   what);
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(!rejected.analyze(address).ready() ||
+                 !supportsSelectedBodyText(malformed, map, function.id),
+             "a forged cleanup-free conditional arm cannot enter backend "
+             "emission: " +
+                 what);
+    };
+    for (const lang::MirInstructionId call : transfers) {
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        refused(
+            [&](lang::MirInstruction &instruction) {
+              if (instruction.id != call)
+                return;
+              const auto transfer = instruction.lifecycle[0];
+              if (mutation == 0)
+                instruction.lifecycle.clear();
+              else if (mutation == 1)
+                instruction.lifecycle.push_back(transfer);
+              else if (mutation == 2)
+                instruction.lifecycle[0].conditional = true;
+              else
+                instruction.lifecycle.push_back(
+                    {.kind = lang::MirLifecycleEventKind::Initialize,
+                     .target = transfer.source});
+            },
+            true, "transfer " + std::to_string(mutation));
+      }
+    }
+    for (const lang::MirInstructionId call : borrows) {
+      refused(
+          [&](lang::MirInstruction &instruction) {
+            if (instruction.id == call)
+              instruction.callableInvocation =
+                  lang::CallableInvocationCapability::Once;
+          },
+          false, "consuming capability on a borrowed receiver");
+    }
+  }
+  expect(transferring == 2 && borrowing == 1,
+         "the bound and returned transferring conditionals and the borrowed "
+         "one were exercised: " +
+             std::to_string(transferring) + ", " + std::to_string(borrowing));
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -6170,6 +6308,7 @@ constexpr NamedTest kTests[] = {
     {"testPreparedConsumingReceiverLaterFailure",
      testPreparedConsumingReceiverLaterFailure},
     {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
+    {"testCleanupFreeConditionalCallArms", testCleanupFreeConditionalCallArms},
     {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
