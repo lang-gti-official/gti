@@ -15,7 +15,7 @@ for what minor and patch releases mean.
   generating a representation") when a consuming (`&&`) method is called on a
   generic class value moved out of a local or parameter, such as
   `int t = std::move(m).probe();`. It happened when the class declares a
-  default constructor, leaves its copy constructor undeclared, and is
+  default constructor, does not delete its copy constructor, and is
   instantiated with a type that needs cleanup. Examples are `maybe<Tracked>`
   with an owning payload-enum field `mut state<T> slot;` or a plain
   `mut T item;` field, where `Tracked` has a destructor.
