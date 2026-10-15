@@ -32065,11 +32065,14 @@ classSsaLifetimeSlot(const MirProgram &program,
   // same consumers. Its invocation publishes through the slot whichever ABI
   // the enclosing body selects: the transformed form constructs at the slot's
   // address on its success edge, and the plain form constructs from the
-  // returned value.
+  // returned value. A result the invocation constructs directly in the
+  // caller's placement storage needs no slot.
   const bool callableClassProducer =
       callee == nullptr && producer != nullptr &&
       callableClassResultInvocation(body, *producer, valueId) &&
-      stagedCallConsumer();
+      stagedCallConsumer() &&
+      placementDirectReturnCall(program, representations, body, valueId) ==
+          nullptr;
   const MirConstructorInstance *constructor =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
               producer->constructorTarget
