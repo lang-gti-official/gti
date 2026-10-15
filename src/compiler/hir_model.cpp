@@ -1023,9 +1023,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       return call.kind == HirValueKind::Call && call.source == nullptr &&
              call.intrinsic == IntrinsicKind::None && target != nullptr &&
              (step == nullptr || target->declaration == step->function) &&
-             argument &&
-             !call.receiver && call.callPlan && !call.callPlan->receiver &&
-             call.callPlan->arguments.size() == 1 &&
+             argument && !call.receiver && call.callPlan &&
+             !call.callPlan->receiver && call.callPlan->arguments.size() == 1 &&
              call.callPlan->arguments.front().value == call.operands.front() &&
              call.callPlan->arguments.front().kind == kind &&
              (step == nullptr || call.info.type == step->returnType) &&
@@ -1036,9 +1035,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             ? program.findConstructorInstance(
                   *residualReturn->constructorTarget)
             : nullptr;
-    const bool constructsReturn =
-        selected != nullptr ? selected->returnConstruction.has_value()
-                            : plan.residualReturn != 0;
+    const bool constructsReturn = selected != nullptr
+                                      ? selected->returnConstruction.has_value()
+                                      : plan.residualReturn != 0;
     const bool returnsResidual =
         constructsReturn
             ? residualReturn != nullptr &&
