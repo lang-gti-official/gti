@@ -1,5 +1,15 @@
 #include <events/bindings>
 
+// Safe policy lives outside the ABI declaration; copying the complete union
+// preserves the alternative selected by the native factory.
+native::EventData relay(native::EventData value) { return value; }
+struct NumberEvent {
+  native::EventData data;
+  // Caller establishes that the number alternative is active.
+  unsafe NumberEvent(native::EventData value) : data(value) {}
+  uint64_t number() { unsafe { return this.data.number; } }
+};
+
 int main() {
   if (sizeof(native::Event) != native::event_size() ||
       alignof(native::EventData) != native::data_alignment()) { return 1; }
@@ -8,7 +18,9 @@ int main() {
   // requires unsafe for every untagged union member access.
   unsafe {
     if (event.kind != c_uint(1) || event.data.number != uint64_t(42)) { return 2; }
-    auto copied = native::roundtrip_data(event.data);
+    auto copied = relay(native::roundtrip_data(event.data));
+    NumberEvent wrapped{copied};
+    if (wrapped.number() != uint64_t(42)) { return 8; }
     if (copied.number != uint64_t(42)) { return 3; }
     event.kind = c_uint(2);
     event.data.position.x = 3.0;

@@ -82,7 +82,6 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
     }
     return selected != nullptr && selected->cAbiRecord &&
            selected->cAbiLayout.has_value() &&
-           !selected->unionLayout.has_value() &&
            !selected->requiresActiveDropState &&
            !selected->requiresActiveCleanup;
   };

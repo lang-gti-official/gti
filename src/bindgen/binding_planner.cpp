@@ -879,7 +879,6 @@ private:
       }
       if (!declaration->complete) {
         // A genuinely opaque handle; no degradation note.
-
       } else if (!declaration->layoutReason.empty()) {
         reason = declaration->layoutReason;
       } else if (declaration->fields.empty()) {

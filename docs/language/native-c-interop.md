@@ -229,7 +229,7 @@ paths, and explicit definitions have their native meaning before declaration
 import. The host target is used by default; an explicit supported 64-bit
 target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
-passive records become `[[c_abi]]` structs, incomplete or inexpressible
+passive records become `[[c_abi]]` structs or unions, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
 enums become aliases to their native-compatible C integer family plus exact
 `constexpr` constants, a bare anonymous enum contributes those constants alone, function-pointer
