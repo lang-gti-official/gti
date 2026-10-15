@@ -306,6 +306,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testConcreteApplicationSpecialMembers",
+      "suite": "declarations"
+    },
+    {
       "name": "testDefaultParameters",
       "suite": "declarations"
     },

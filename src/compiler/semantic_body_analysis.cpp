@@ -605,6 +605,9 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           classCanUseStructuralDefaultConstruction(concreteType)
               ? SpecialMemberStatus::Generated
               : SpecialMemberStatus::Deleted;
+    else if (concrete.defaultConstructor == SpecialMemberStatus::Declared &&
+             !declaredDefaultConstructorApplies(concreteType))
+      concrete.defaultConstructor = SpecialMemberStatus::Deleted;
     // Absence of an open-primary operation is not an explicit '= delete'.
     // The ordinary concrete structural trait query owns availability.
     concrete.copyConstructor = concrete.traits.copyable
