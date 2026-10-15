@@ -770,6 +770,11 @@ including evaluation order, ownership transfer and failure cleanup.
 Violations are reported as `GTI-S2123`; an unsatisfied requirement at a call
 is `GTI-S2029`. See [ADR 028](../decisions/028-protocol-concepts.md).
 
+The prelude's `std::tryable<T>` is the protocol of prefix `?` for every type
+except built-in `expected`. A type propagates with `?` once a block supplies
+its `value_type`, `residual_type`, `has_value`, `take_value` and
+`take_residual` ([ADR 029](../decisions/029-tryable-propagation.md)).
+
 ## Deliberate exclusions and extension rule
 
 The implemented language does not provide general C++ requires-expressions,
