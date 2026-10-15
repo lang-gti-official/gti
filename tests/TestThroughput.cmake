@@ -33,9 +33,12 @@ if(Python3_Interpreter_FOUND)
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
     borrowed_argument_fallible_condition_runtime
     borrowed_argument_nested_owning_argument_runtime
+    borrowed_argument_inner_temporary_runtime
     conditional_cleanup_free_call_result_runtime
     conditional_checked_arm_input_runtime
     conditional_cleanup_free_receiver_runtime
+    moved_local_field_read_runtime
+    conditional_moved_local_join_runtime
     conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime
@@ -102,6 +105,7 @@ if(Python3_Interpreter_FOUND)
     raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
     constructor_borrow_replacement_runtime
+    constructor_text_reference_runtime
     allocation_default_argument_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime

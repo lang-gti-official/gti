@@ -104,7 +104,7 @@ is a teaching helper, not a production server.
 | `023-direct-initialization.gti` | exact construction, field replacement, generated and nominal-field defaults, designated defaults and finite value-generic layouts |
 | `024-static.gti` | source-local storage and type-owned class members |
 | `025-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
-| `026-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
+| `026-stored-references.gti` | owner-tied iterators and text adapters retaining both a view binding and its character owner |
 | `027-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
 | `028-callable-parameters.gti` | confined generic operations, borrowed stateful/lambda callables, reference forwarding and inferred conditional results |
 | `029-callable-predicates.gti` | exact bool predicate results from confined generic callables |

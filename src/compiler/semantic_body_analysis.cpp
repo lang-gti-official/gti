@@ -1159,6 +1159,12 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
                "' is not writable here (the field is immutable or the owner "
                "is read-only).",
            "GTI-S2112");
+  } else if (mutableAccess) {
+    // The writable place required above is a mutable use of the owner's
+    // binding for GTI-S2096, even when the access only reads the field.
+    if (const SemanticPlace place = semanticPlace(&alias);
+        place.root != nullptr)
+      recordMutableBindingUse(toolingSymbolFor(*place.root));
   }
   currentType = result;
   // No borrow origin: the call *is* the place its alias denotes, and every
@@ -1959,6 +1965,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                            classSubstitution(openClassType(owner.id)));
   bool initializedBase = false;
   bool sawFieldInitializer = false;
+  const auto ownerlessInputs = ownerlessTextConstructorInputs(
+      openClassType(owner.id), &stmt, parameterTypes);
   for (const ConstructorInitializer &initializer : stmt.initializers()) {
     semanticModel.recordFullExpression(initializer);
     const Token &target = initializer.target.name.last();
@@ -2080,6 +2088,16 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                             true, fieldType.kind != SemanticType::Reference);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
+    if (field != nullptr && initializer.arguments.size() == 1 &&
+        (fieldType.kind == SemanticType::StringView ||
+         fieldType.kind == SemanticType::CString) &&
+        isOwnerDependentTextExpression(initializer.arguments.front()) &&
+        std::none_of(
+            ownerlessInputs.begin(), ownerlessInputs.end(),
+            [&](const auto &input) { return input.second == &initializer; })) {
+      reportOwnerDependentTextStorage(initializer.arguments.front(),
+                                      "stored in a constructor field");
+    }
     if (field != nullptr && initializer.arguments.size() == 1 &&
         fieldType.kind == SemanticType::Reference) {
       forceProgramStorageBoundaryAccess(initializer.arguments.front());
@@ -5405,6 +5423,28 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                      : "A dynamic std::string_view cannot be stored "
                        "in a field in the single-owner view model.",
              "GTI-S2045");
+    } else if (derivesFromTextReference(initializer)) {
+      // A local copy publishes the reference's external text owner. MIR can
+      // prove that publication only for an exact reference formal; reads
+      // through a reference field or a relaying call need their own proof.
+      const ExprPtr *source = &initializer;
+      while (const auto *group = exprAs<Grouping>(source->get()))
+        source = &group->expression();
+      const auto *variable = exprAs<Variable>(source->get());
+      const Symbol *symbol =
+          variable == nullptr ? nullptr : resolve(variable->name());
+      if (symbol == nullptr || symbol->parameterDeclaration == nullptr) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2045", DiagnosticPhase::Semantics, stmt.name(),
+            std::string(cString ? "An owner-dependent c_string"
+                                : "A dynamic std::string_view") +
+                " read through a checked text reference field or relaying "
+                "call cannot be copied into a local binding yet.");
+        diagnostic.hints.emplace_back(
+            "Use the reference directly, return it, or copy it from the "
+            "reference parameter itself.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
     updated.traits = initializerInfo->traits;
@@ -7500,7 +7540,9 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   }
 
   const SemanticTypeTraits traits = typeTraits(currentType);
-  if (traits.containsBorrowedState) {
+  if (traits.containsBorrowedState ||
+      isOwnerDependentTextExpression(expr.thenExpression()) ||
+      isOwnerDependentTextExpression(expr.elseExpression())) {
     report(expr.question(),
            "Conditional expressions cannot yet produce a value of type '" +
                typeSpelling(currentType) +

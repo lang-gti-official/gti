@@ -2104,6 +2104,40 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                 selected.constructor->declaration->parameters(),
                 arguments.size());
   recordDefaultArgumentDependencies(defaultArguments);
+  if (selected.constructor != nullptr) {
+    for (const auto &[index, initializer] : ownerlessTextConstructorInputs(
+             constructedType, selected.constructor->declaration,
+             selected.parameterTypes)) {
+      const ExprPtr *argument = nullptr;
+      bool potentialPackView = false;
+      if (index < arguments.size()) {
+        // A concrete by-value pack element is a callee parameter, so its text
+        // storage may be dynamic even though the pack expression has no single
+        // text-owner trait. Open packs never reach constructor selection.
+        potentialPackView = arguments[index].forwardedPackElement;
+        argument = arguments[index].expression;
+      } else if (index <
+                 selected.constructor->declaration->parameters().size()) {
+        const auto &parameter =
+            selected.constructor->declaration->parameters()[index];
+        if (parameter.defaultArgument)
+          argument = &parameter.defaultArgument->expression;
+      }
+      if (argument == nullptr || !*argument ||
+          (!potentialPackView && !isOwnerDependentTextExpression(*argument)))
+        continue;
+      reportOwnerDependentTextStorage(
+          *argument, "passed to a constructor that stores it in a field");
+      diagnostics.back().related.push_back(
+          {tokenSpan(initializer->target.name.last()),
+           "This initializer stores the view by value and requires an "
+           "ownerless argument."});
+      diagnostics.back().hints.clear();
+      diagnostics.back().hints.emplace_back(
+          "Pass a literal-backed value, store owned text instead, or use a "
+          "checked reference field to retain the view and its owner.");
+    }
+  }
   std::optional<std::size_t> storedParameter =
       selected.constructor == nullptr ? std::nullopt
                                       : selected.constructor->borrowParameter;

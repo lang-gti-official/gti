@@ -102,6 +102,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testConstructorTextStorageContracts",
+      "suite": "declarations"
+    },
+    {
       "name": "testContainerScaffoldSurfaces",
       "suite": "declarations"
     },
@@ -574,6 +578,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testConditionalTemporaryArgumentBorrows",
+      "suite": "ownership"
+    },
+    {
       "name": "testRetainedBorrowedCallResults",
       "suite": "ownership"
     },
@@ -639,6 +647,10 @@
     },
     {
       "name": "testMirConstantRecords",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprConditionalTemporaries",
       "suite": "constexpr"
     },
     {

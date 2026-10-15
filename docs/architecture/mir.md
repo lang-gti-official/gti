@@ -129,7 +129,14 @@ frames may initialize receiver fields. After those writes, a constructor body
 or mutable method may edit a mutable field under the ordinary loan rules.
 Materialized result receivers read the exact MIR `Value` root; their passive
 storage is retired at the represented move/drop, not reconstructed as a binding
-or kept alive independently of full-expression cleanup.
+or kept alive independently of full-expression cleanup. A temporary produced
+only in a conditional arm or a `&&`/`||` operand lives instead in its
+CFG-promoted hidden `Temporary` slot. Its producer, as the shared
+materialization query resolves it, publishes the result into that slot when it
+completes, whether MIR retargeted the producer there or arms the slot's
+obligation on its `Invoke` success edge. Argument and receiver borrows of the
+slot therefore read the produced value, and the post-merge drop retires only a
+slot that its operand produced.
 Entry string-view dependencies are backed by immutable constant bytes.
 Checked read-only and mutable reference parameters, automatic bindings, and
 returned projections use verified MIR loans. An executor-local location retains
@@ -491,6 +498,15 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+Checked references to primitive text views use the same two-dependency model.
+Their abstract `Stored` entry has no nominal field path: it represents the
+opaque caller-owned text and grants read-only access only. Semantic analysis
+creates that entry separately from the physical reference loan; HIR preserves
+both identities and MIR lowering seeds both before body execution. Verification
+requires the exact text-reference formal, independently checks every local
+publication, and rejects missing, substituted or prematurely retired owner
+dependencies. An empty field list is not evidence for an arbitrary carrier or
+permission to omit the external dependency.
 Checked restoration of an opaque reference has a separate explicit proof:
 the concrete restored field paths and access must match a verified restore
 operation or body-proven helper summary. Its hidden dependencies remain bounded
@@ -1607,8 +1623,15 @@ not a requirement to invent an owner for static storage. A read-only summarized
 function may return a literal-backed text view or a null C-string alternative
 without an escaping loan. Program verification independently requires the exact
 typed string/null literal producer, with no borrowed state, input operands,
-loan, side effects or lifecycle events. Clearing a borrowed-state flag or a
-return loan does not establish that witness. All dynamic alternatives still
+loan, side effects or lifecycle events. A copied stored view is the other
+witness: semantics rejects storing a dynamic view in a field or fixed-array
+element, so one exact `Load` copying a place whose final `Field` or `Index`
+projection has the returned view type, with no borrowed state, loan,
+destination, receiver or lifecycle events, is also lifetime independent. A
+reference field ends in a dereference and never qualifies. Clearing a
+borrowed-state flag or a return loan does not establish either witness. A
+function whose returns are all stored views or literals summarizes no owner
+dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 The success loan always uses read-only access, including when the enclosing
@@ -1908,7 +1931,12 @@ A `MirBody` owns:
 - a field projection from a class-valued SSA temporary is rooted in that
   producer value, never in the projected load result. The producer dominates
   the place-root use and the following `Load`, so verification cannot admit a
-  self-use-before-definition cycle;
+  self-use-before-definition cycle. Place formation materializes the producer
+  first: a call, construction, direct initializer, propagation, conditional,
+  or a `Move` out of a place. `std::move(a).x` therefore moves `a` into a
+  temporary (leaving `a` moved-from) and reads the field of that temporary;
+  an owning class arms the temporary's full-expression obligation with the
+  Move's lifecycle event;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,
@@ -2412,7 +2440,23 @@ once. Whole-value move construction and the adjacent Move -> Replace -> Drop
 assignment schedule transfer that obligation without copying or duplicating
 active state. A switch or extraction over a named place read-borrows the owning
 enum place, and its extracted fields are immutable copies, so move-only fields
-admit tag-only matching or a borrowed binding there.
+admit tag-only matching or a borrowed binding there. The borrow applies to an
+enum that owns cleanup, to one whose folded traits forbid copying, and to one
+an arm binds by reference. A cleanup-free alternative can still hold a
+move-only field, which makes the enum move-only without giving it cleanup.
+Only a copyable passive enum is read through a copied subject value.
+Program verification rejects any `Copy` operand, in an instruction or a
+terminator, that names a payload enum whose folded traits forbid copying, so
+such an enum is only ever borrowed or moved.
+
+The read-borrow transports only the place's address, so when that place selects
+a fixed-array element no `Load` performs the bounds check. Subject lowering
+therefore finishes each selection at its checked `AddressOf` prefix, with the
+exact semantic bounds origin and `Invoke`, before the `Switch`, as for an
+address-only call argument. Program verification requires, for every `Index` in
+a read-borrowed switch subject's place, that the successful edge of the checked
+`AddressOf` over the place prefix ending at that index dominates the reachable
+switch.
 
 A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the
@@ -3476,17 +3520,26 @@ it does not reclassify this carrier as a fresh owning temporary.
 
 An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
 input names an exact fresh class/struct producer and its selected parameter is
-read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
-place, emits `BorrowRead`, and attaches one `CallArgument` loan to the
-`CallInput`. The loan is active while later arguments are prepared and ends in
+read-only `T&`. Lowering materializes the producer's exact mutable place,
+emits `BorrowRead`, and attaches one `CallArgument` loan to the `CallInput`.
+As for receiver inputs, a linear value uses its value-rooted place. A call
+evaluated only in a conditional arm or a `&&`/`||` operand borrows the one
+hidden temporary slot that carries the producer's conditional drop through
+the CFG merge. The merge retargets the producer to that slot, and the loan,
+which already ended inside the arm, names it. Both the loan rule and the input
+rule admit only those two forms through the shared materialization query.
+The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
 of both normal and failure successors for an `Invoke`. The producer's one
-full-expression drop remains independent and follows the loan end. Verification
-rejects a mutable/projected/wrong-type place, a native or declaration-only
-producer/target, borrowed state, an escaping result, producer/input reordering,
-premature or missing loan ending, and a missing or duplicate drop. The backend
-therefore consumes a complete schedule rather than relying on C++ reference
-lifetime rules.
+full-expression drop remains independent and follows the loan end; for a
+branch-only value it is the conditional drop after the merge, and failure
+edges inside the arm drop the definitely active slot. Verification rejects a
+mutable/projected/wrong-type place, a hidden slot detached from the exact
+producer identity or naming another temporary's slot, a native or
+declaration-only producer/target, borrowed state, an escaping result,
+producer/input reordering, premature or missing loan ending, and a missing,
+duplicate or unconditional post-merge drop. The backend therefore consumes a
+complete schedule rather than relying on C++ reference lifetime rules.
 
 An ordinary-call or constructor argument may use `MoveBorrowedTemporary` only
 for the corresponding HIR input: one exact fresh GTI call result of the same

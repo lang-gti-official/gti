@@ -751,11 +751,15 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   receiver. Mutable-reference parameters of the selected constructor count as
   uses just as ordinary function parameters do, including when the constructor
   stores that reference in a carrier. Read-only constructor parameters do not
-  suppress the warning. It does not inspect compiler-trusted standard-library
-  implementation locals or infer warnings for generated/range/reference
-  bindings. It carries group `unused-mut`, the LSP `Unnecessary` tag, and one
-  preferred fix that removes exactly the `mut` token without consuming nearby
-  comments or whitespace.
+  suppress the warning. An explicit `std::move` of a field or constant-index
+  element place and a reflected `get_mut` access require a writable owning
+  binding (`GTI-S2018` and `GTI-S2112`), so each counts as a use of that
+  binding even when the access only reads; moving a whole binding needs no
+  `mut` and does not count. It does not inspect compiler-trusted
+  standard-library implementation locals or infer warnings for
+  generated/range/reference bindings. It carries group `unused-mut`, the LSP
+  `Unnecessary` tag, and one preferred fix that removes exactly the `mut` token
+  without consuming nearby comments or whitespace.
   Mutable operator receiver selection records the same source use as method
   selection, including overloaded dereference stores. Symbolic pack folds
   record fixed mutable-reference prefix arguments, and deferred callable calls
@@ -863,9 +867,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
   temporary receiver capability. Point at the call/operator token and
   distinguish an explicit move from existing storage, an unsupported producer,
-  unstable stored owner dependencies, borrowed or pointer-like results,
-  non-concrete record, and virtual dispatch. Multiple proven stable dependencies
-  do not themselves reject an immediate ordinary receiver. Relate the selected
+  unstable stored owner dependencies, borrowed or pointer-like results, and a
+  non-concrete record. A virtual selected member is not a failure condition,
+  and multiple proven stable dependencies do not themselves reject an immediate
+  ordinary receiver. Relate the selected
   method/operator declaration and suggest a named carrier, or keeping its owner
   in longer-lived named storage when that is the failed condition. Do not offer
   a fix-it because binding name, scope, and

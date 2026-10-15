@@ -2050,6 +2050,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(consuming_payload_patterns_runtime PROPERTIES TIMEOUT 900)
   add_test(
+    NAME move_only_payload_transport_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/move_only_payload_transport_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(move_only_payload_transport_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME tryable_propagation_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_runtime_test.py"
@@ -3328,6 +3335,14 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(borrowed_argument_nested_owning_argument_runtime
                        PROPERTIES TIMEOUT 600)
   add_test(
+    NAME borrowed_argument_inner_temporary_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_argument_inner_temporary_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(borrowed_argument_inner_temporary_runtime PROPERTIES
+                       TIMEOUT 600)
+  add_test(
     NAME conditional_converted_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/conditional_converted_receiver_runtime_test.py"
@@ -3398,6 +3413,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conditional_cleanup_free_receiver_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME moved_local_field_read_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/moved_local_field_read_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(moved_local_field_read_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME conditional_moved_local_join_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_moved_local_join_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_moved_local_join_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME consuming_generic_owner_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3815,6 +3844,13 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(constructor_borrow_replacement_runtime PROPERTIES TIMEOUT 240)
     add_test(
+      NAME constructor_text_reference_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/constructor_text_reference_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(constructor_text_reference_runtime PROPERTIES TIMEOUT 240)
+    add_test(
       NAME allocation_default_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/allocation_default_argument_runtime_test.py"
@@ -3859,6 +3895,14 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(short_circuit_class_temporary_runtime
+                       PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME short_circuit_temporary_argument_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/short_circuit_temporary_argument_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(short_circuit_temporary_argument_runtime
                        PROPERTIES TIMEOUT 300)
   add_test(
     NAME nested_reference_return_runtime

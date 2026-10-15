@@ -300,6 +300,31 @@ lifetime without GTI cleanup; its moved-from fields are already disarmed. MIR's
 operand kind and lifecycle event select both spellings; the backend does not
 infer consumption from the subject's representation.
 
+A cleanup-free value whose folded traits forbid copying, such as a payload enum
+whose alternative holds a move-only class without a destructor, has no lifetime
+slot: it lives in a plain local. When MIR records exactly one executable use of
+that SSA value, the use consumes it, and the backend spells the local as an
+rvalue there. The use may be a by-value call stage, the invocation operand that
+receives the stage, an aggregate element, a store, a join argument or a
+failure-form result publication. A plain `return` of a local of the result type
+keeps the plain spelling, which C++ already moves and may elide. With more than
+one use the local keeps its plain spelling, which the native compiler rejects
+rather than copying. The rule comes from MIR's value traits and use list, not
+from the representation, and copyable passive values keep their copy spelling.
+
+An observing switch whose subject is an enum held by a fixed-array element
+read-borrows that element in place. The element may belong to a local, a
+global or an array field, possibly through nested arrays, or the enum may be a
+field of an element at a constant index. MIR first finishes the element's
+checked selection at an `AddressOf` whose `Invoke` reports the bound, and
+program verification requires the check of every index in the subject place
+to dominate the switch. The backend spells the discriminant, every borrowed
+payload binding and every copied payload field over that one element
+subscription, without copying the enum or checking the index again. Admission
+and the text step accept these places through one shared predicate. A field
+of an element at a runtime index, as in `records[i].state`, has no element
+spelling for any read yet, so such a switch still stops with `GTI-B0001`.
+
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
 local declaration planning and operand emission use the same view predicate.
@@ -920,11 +945,17 @@ passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
 (`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. A nested join is proved on its own, and the
-nested arm's region starts at that inner join's branch block. A passive arm may
-also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
-with overflow-checked additions, a call that can fail, a `?` operand, or scalar
-control flow inside an argument. Without an exact diamond, the branch is the
+events stay outside this form. An arm may also move a whole named local out,
+as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
+obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
+ownership event that takes the local's key to `Moved`, and the local keeps its
+passive binding drop. That drop ends the moved-from shell after the join on
+the path that moved it, and the live object on the other. A nested join is
+proved on its own, and the nested arm's region starts at that inner join's
+branch block. A passive arm may also evaluate its inputs before that entry, as
+in `c ? f(a + 1) : f(b + 2)` with overflow-checked additions, a call that can
+fail, a `?` operand, or scalar control flow inside an argument. Without an
+exact diamond, the branch is the
 nearest common dominator of the two arm entries, and its two successors start
 the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
 (`exactConditionalArmRegion`): the branch enters it once and nothing else
@@ -950,11 +981,12 @@ has no use. Each arm's `Initialize` activates the temporary's obligation
 directly, because a cleanup-free arm result has none of its own. A
 construction arm already constructed the temporary at that `Initialize`.
 `classValueDestinationSlot` also names the temporary for a call arm with no
-lifecycle event beyond its prepared input transfers, and for a copied place,
-when the `Initialize` follows the producer directly or opens its Invoke
-success block. Each constructs the temporary directly, a call that can fail
-only on success, and the receiver borrows it as `directTemporaryReceiver`
-borrows a fresh result's slot. A nested-join arm and a moved named local are
+lifecycle event beyond its prepared input transfers, for a copied place, and
+for a whole named local moved out by the same ownership and passive-drop facts
+as the arm above, when the `Initialize` follows the producer directly or opens
+its Invoke success block. Each constructs the temporary directly, a call that
+can fail only on success, and the receiver borrows it as
+`directTemporaryReceiver` borrows a fresh result's slot. A nested-join arm is
 not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
@@ -1342,8 +1374,11 @@ is failure-capable. The emitter allocates no storage for a by-value receiver
 here.
 
 For a verified read-only temporary argument input, the body emitter uses the
-same exact value-rooted lifetime slot and passes that slot to the selected
-reference parameter. Its `CallArgument` loan is representation-erased only
+same exact materialization, the value-rooted lifetime slot or the CFG-promoted
+hidden slot of a call in a conditional arm or `&&`/`||` operand, and passes
+that slot to the selected reference parameter. The hidden slot's MIR drop
+after the merge is emitted as its conditional `destroy_if_engaged()`. Its
+`CallArgument` loan is representation-erased only
 after preflight proves the matching `BorrowRead`, call input, immediate
 loan-end schedule, and full-expression drop. Failure successors use the MIR
 cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers
@@ -1631,8 +1666,10 @@ nested call can participate in an ordinary constructor full expression.
 
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
-An admitted GTI call or ordinary `Construct` publishes once into the slot, and
-the load spells through its verified field chain. The constructor form also
+An admitted GTI call or ordinary `Construct` publishes once into the slot, as
+does a failure-free `Move` of a whole object out of a place, as in
+`std::move(a).x`, which constructs the slot from its source, and the load
+spells through its verified field chain. The constructor form also
 requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
@@ -1640,12 +1677,18 @@ non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
-slot. The result may come from a call, as in `make_tracked(7).number`, or from
-an ordinary `Construct`, as in `tracked(7).number`. A failure-free constructor
+slot. The result may come from a call, as in `make_tracked(7).number`, from
+an ordinary `Construct`, as in `tracked(7).number`, or from a `Move` out of an
+available place, as in `std::move(a).number` on a local or by-value parameter.
+A failure-free constructor
 constructs the slot in place and arms the result's obligation with its own
 `Initialize`. A raising one places the object at the slot's construction
-address and arms the obligation on its Invoke success edge. Either way the
-construction's only other uses must be field views. Views cover nested fields
+address and arms the obligation on its Invoke success edge. A `Move` with no
+failure of its own move-constructs the slot from its source; its one lifecycle
+event transfers the source's obligation to the result (or arms it when the
+source had none), and the source's later Drop ends only the moved-from shell.
+Either way the
+construction's or move's only other uses must be field views. Views cover nested fields
 and a field lent to one member call as in `make_named().text.size()`, in
 function bodies as well as field defaults, member initializers and base
 argument preparations, whose carrier holds the slot. A view is a pure field
@@ -1658,10 +1701,13 @@ result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
-Inside a short-circuit operand or a conditional arm, the producer, a call or a
-construction, instead constructs the result in a conditional temporary that
+Inside a short-circuit operand or a conditional arm, the producer, a call, a
+construction or a `Move` out of a place (as in `c ? std::move(a).number : 0`),
+instead constructs the result in a conditional temporary that
 holds the result's own obligation. A failure-free producer does so at its
-destination; a transformed one arms the temporary on its Invoke success edge.
+destination; a transformed one arms the temporary on its Invoke success edge;
+a `Move` names the temporary as its destination and arms it with its one
+lifecycle event.
 Either may also transfer out the prepared inputs it consumes, as the moved
 receiver in `c ? std::move(p).loud().id : 0` is; the proof admits exactly
 those transfers beside the result's activation.
@@ -3766,21 +3812,23 @@ the consumer moves from the slot and retires its passive representation.
 Unused passive constructor tags retain their exact
 lexical cleanup without preventing other fields' verified initialization.
 
-A borrowed bare-local call input may remain representation-erased across a
-conditional scalar or text-view argument. Its stage must dominate the unique
-consuming call, and every normal path through the acyclic argument region must
-reach that call. Scalar and text-view computations, loads, input stages and
-expression temporaries may intervene. A nested function or method call may run
-wholly inside the region, for example as the conditional's test, one arm's
-value, or a direct scalar argument. Its inputs are scalar or text-view values,
-borrows staged for it alone, and class arguments prepared in its own parameter
-slots: the receiver and arguments may borrow binding-rooted places through
-fields and reference dereferences, and a mutable borrow never names the
-borrowed place's root. Its scalar or text-view result has no loan, its only
-lifecycle effect is the handoff of its prepared arguments, and any region
-instruction may consume it: a branch, a computation, a temporary or an input
-stage. The call keeps its MIR position and its own Invoke failure edge, which
-leaves the region before the outer call. The proof also covers a nested
+A borrowed call input may remain representation-erased across a conditional
+scalar or text-view argument when it names a bare local, a binding-rooted path
+of field selections and reference dereferences, the exact full-expression slot
+of a temporary, or a field view inside an owned result's slot. Its stage must
+dominate the unique consuming call, and every normal path through the acyclic
+argument region must reach that call. Scalar and text-view computations, loads,
+input stages and expression temporaries may intervene. A nested function or
+method call may run wholly inside the region, for example as the conditional's
+test, one arm's value, or a direct scalar argument. Its inputs are scalar or
+text-view values, borrows staged for it alone, and class arguments prepared in
+its own parameter slots: the receiver and arguments may borrow binding-rooted
+places through fields and reference dereferences, and a mutable borrow never
+names the borrowed place's root. Its scalar or text-view result has no loan,
+its only lifecycle effect is the handoff of its prepared arguments, and any
+region instruction may consume it: a branch, a computation, a temporary or an
+input stage. The call keeps its MIR position and its own Invoke failure edge,
+which leaves the region before the outer call. The proof also covers a nested
 read-receiver or free function call, or an exact constructor, with scalar or
 text-view inputs and a cleanup-free nominal result whose sole consumer is an
 exact prepared argument slot for the outer call or a nested call. Its failure
@@ -3792,12 +3840,26 @@ Invoke success edge or at a construction that cannot fail, or another local
 moved or copied into its exact prepared argument slot. The outer and nested
 calls share one prepared-slot proof: the slot's activation, its sole
 TransferOut to the consuming call, and a Drop of the slot on every failure edge
-between preparation and that call. No prepared slot is the borrowed place.
-Whether the receiver is a method object or a local lambda does not change
-this proof. Other user-call shapes, other owning transfers, raw memory, loans,
-and arbitrary stores remain outside this proof. Thus the deferred local
-address denotes the same object that was selected before argument evaluation;
-the backend does not reorder an observable address computation across a branch.
+between preparation and that call. No prepared slot is the borrowed place. A
+nested call's receiver or read-only reference argument may also be a class
+object created in the region, such as `make(2)` in
+`use(make(1), skip || make(2).ready())`. A function or constructor call
+materializes it in its own full-expression slot: the value-rooted lifetime slot
+or, in a conditional arm or `&&`/`||` operand, the CFG-promoted hidden slot.
+The direct-temporary proof that spells such a borrow owns the slot's
+activation, the stage borrowing it, and its drop at the end of the full
+expression, after the outer call and conditional when the operand may be
+skipped. The producer keeps its MIR position and its own Invoke failure edge
+unless it cannot fail. Its only lifecycle effect is that slot's activation, its
+inputs are those of a nested call without owning arguments, and its receiver,
+if any, is read-borrowed. An argument borrow's call-argument loan may end
+inside the region, but the staged input's own loan may not. No such slot is the
+borrowed place. Whether the receiver is a method object or a local lambda does
+not change this proof. Other user-call shapes, other owning transfers, raw
+memory, other loans, and arbitrary stores remain outside this proof. Thus the
+deferred local address denotes the same object that was selected before
+argument evaluation; the backend does not reorder an observable address
+computation across a branch.
 
 An owned class result returned directly from an erased virtual call or a stored
 lambda invocation may use the caller's placement output. Admission requires the

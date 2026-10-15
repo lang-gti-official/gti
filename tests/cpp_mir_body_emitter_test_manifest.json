@@ -106,6 +106,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testBorrowedArgumentInnerTemporaryAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalExpectedArgumentReceiverAdmission",
       "suite": "preflight"
     },
@@ -387,6 +391,10 @@
     },
     {
       "name": "testCleanupFreeConditionalCallArms",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeConditionalMovedLocalArms",
       "suite": "text"
     },
     {
@@ -699,6 +707,10 @@
     },
     {
       "name": "testOwningConstructionFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testMovedPlaceFieldView",
       "suite": "lifecycle"
     },
     {

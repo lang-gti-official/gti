@@ -1772,6 +1772,15 @@ private:
       if (*instruction.result < frame.valueReferences.size())
         frame.valueReferences[*instruction.result] = reference;
     }
+    if (instruction.result && evaluated.value && !reference &&
+        (instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::Construct)) {
+      if (const MirPlaceId slot = hiddenSlot(frame.body, instruction)) {
+        const auto published = writePlace(frame, slot, *evaluated.value, true);
+        if (!published)
+          return fail(frame, published.failure);
+      }
+    }
     if (instruction.loan && instruction.kind != MirInstructionKind::Borrow) {
       const auto *loan = frame.body.findLoan(*instruction.loan);
       if (!loan)
@@ -1958,9 +1967,29 @@ private:
     }
     for (const auto &loan : body.loans) {
       const auto *source = body.findPlace(loan.source);
-      if (loan.storedDependency != 0 || !loan.additionalSources().empty() ||
-          loan.lifecycleBound || source == nullptr ||
-          !observedStorageType(source->type)) {
+      const auto *dependency = body.findLoan(loan.storedDependency);
+      // A constant text value owns its literal bytes in ConstantValue. A
+      // checked reference formal still carries the ordinary MIR's separate
+      // owner witness, but needs no transient allocation or stored-reference
+      // object to execute. Keep both entry loans and their verified endpoints;
+      // this does not admit nominal stored carriers or runtime text storage.
+      const bool constantTextDependency =
+          source && source->root == MirPlaceRootKind::Binding &&
+          source->initiallyAvailable && source->projections.empty() &&
+          source->type.kind == SemanticType::Reference &&
+          source->type.referenceAccess == AccessMode::ReadOnly &&
+          source->type.arguments.size() == 1 &&
+          source->type.arguments.front().kind == SemanticType::StringView &&
+          loan.access == AccessMode::ReadOnly && dependency &&
+          dependency->entry && dependency->kind == MirLoanKind::Stored &&
+          dependency->access == AccessMode::ReadOnly &&
+          dependency->source == loan.source &&
+          dependency->storedDependency == 0 &&
+          dependency->designatedFields.empty() &&
+          dependency->additionalDependencies.empty();
+      if ((loan.storedDependency != 0 && !constantTextDependency) ||
+          !loan.additionalSources().empty() || loan.lifecycleBound ||
+          source == nullptr || !observedStorageType(source->type)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType,
                     "Constant MIR only admits checked loans to supported "
                     "values, without stored reference carriers.");
@@ -2190,11 +2219,42 @@ private:
     return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
   }
 
+  // A temporary produced only inside a conditional arm or a `&&`/`||`
+  // operand lives in the one hidden Temporary slot that carries its value
+  // obligation through the CFG merge. MIR retargets its producer there or
+  // arms the obligation on the producer's Invoke success edge; either way the
+  // producer publishes its result into that slot. Index each slot by the
+  // producer the shared materialization query resolves.
+  MirPlaceId hiddenSlot(const MirBody &body, const MirInstruction &producer) {
+    auto [slots, inserted] = hiddenSlots.try_emplace(&body);
+    if (inserted) {
+      for (const auto &obligation : body.dropObligations) {
+        const auto *place = body.findPlace(obligation.place);
+        if (obligation.kind != MirDropObligationKind::Value ||
+            place == nullptr || place->root != MirPlaceRootKind::Temporary ||
+            place->sourceValue != obligation.value)
+          continue;
+        const auto *source =
+            findMirTemporaryMaterialization(body, *place, obligation.value)
+                .producer;
+        if (source != nullptr &&
+            (source->kind == MirInstructionKind::Call ||
+             source->kind == MirInstructionKind::Construct))
+          slots->second.emplace(source->id, place->id);
+      }
+    }
+    const auto found = slots->second.find(producer.id);
+    return found == slots->second.end() ? 0 : found->second;
+  }
+
   const MirProgram &program;
   MirConstantLimits limits;
   std::size_t steps = 0;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::size_t heapUnits = 0;
+  std::unordered_map<const MirBody *,
+                     std::unordered_map<MirInstructionId, MirPlaceId>>
+      hiddenSlots;
 };
 } // namespace
 

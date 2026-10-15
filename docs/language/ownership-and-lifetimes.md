@@ -2150,6 +2150,34 @@ Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
 
+Constructor field initializers obey the same storage rule. A constructor that
+directly stores a by-value text parameter in a text field requires an ownerless
+argument at each selected call. This includes generic fields after substitution,
+parenthesized inputs, and explicit movement: moving a view does not move its
+owner. Literal-backed inputs and ownerless defaults remain valid. A computed
+dynamic initializer such as `text(owner.view())` is rejected at its initializer;
+an ordinary view parameter forwarded to a storing constructor is potentially
+dynamic, even if some callers happen to pass literals. Conditional expressions
+cannot erase a dynamic operand's dependency.
+
+An adapter that needs to retain dynamic input can instead declare a checked
+`std::string_view&` or `c_string&` field and accept the same reference type in its
+constructor. The adapter borrows the view object and retains its underlying
+text dependency separately. Both must outlive its uses: neither invalidating the
+text owner nor replacing the borrowed view is permitted while the adapter is
+live. This does not enable by-value dynamic views in arbitrary aggregates, and
+does not copy or allocate the input text. JSON's private scanning adapters use
+this checked-reference form.
+
+A view read through such a reference, as in `this.text`, is dynamic: it keeps
+the external text owner. It may be inspected, indexed, passed to a parameter or
+returned from a method under that method's receiver dependency, and a local
+copy may be taken directly from a reference parameter. It cannot be passed to a
+constructor that stores it by value, stored in a field, or escape the owner,
+including through a relaying call. A local copy read through a reference field
+or a relaying call is not yet supported and is rejected with `GTI-S2045`
+(tracked by lang-gti-official/gti#200).
+
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain
 the same enclosing receiver dependency when `text` names an instance field.
@@ -2167,6 +2195,20 @@ relay may similarly return `nullptr`. These lifetime-independent alternatives
 need no escaping loan inside the function; the dynamic alternatives still
 require the declared owner. Callers conservatively retain the summarized owner
 dependency for the whole result, even when a literal/null branch executes.
+
+A `std::string_view` or `c_string` field, or a fixed-array element of either
+type, holds only an ownerless view, because a dynamic view cannot be stored
+there, including through a constructor initializer. Returning such storage, as in `return this.name;`, `return name;`,
+`return this.label.text;`, `return this.aliases[index];` or
+`return label.text;` through a parameter, copies that independent value. It
+does not borrow the receiver or parameter, so a method returning only stored
+views has no owner dependency and its caller may mutate, move or destroy the
+receiver while the result remains live. Concrete generic instances apply the
+same rule after substitution. A stored view may also be a lifetime-independent
+alternative beside a dependent relay, like a literal. Only a direct field or
+element read qualifies: a checked `std::string_view&` or `c_string&` reference
+field, a local copy or a call result keeps its ordinary origin rules. A shadowing local remains a local, and a dependent
+value it holds still needs an exact owner dependency.
 
 The receiver path may include indexing, including an overloaded subscript:
 `return records[index].text();` can relay the enclosing receiver's dependency

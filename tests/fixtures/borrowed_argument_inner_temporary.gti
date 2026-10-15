@@ -1,0 +1,110 @@
+// A borrowed argument stays valid while a later conditional argument, an arm
+// of `?:` or the right operand of `&&` or `||`, creates a class object that a
+// nested call borrows as its receiver or as a reference argument. That object
+// is destroyed once at the end of the full expression, after the outer call,
+// when its operand ran, and never when the operand was skipped. A failing
+// producer publishes nothing; a failing nested call or later argument
+// destroys the object and each live local once.
+#include <std/string>
+#include <std/vector>
+
+// How many times `flag` was passed.
+int32_t seen(std::vector<std::string>& argv, std::string_view flag) {
+  mut int32_t found = 0;
+  for (std::string& item : argv) {
+    if (item == flag) {
+      found = found + 1;
+    }
+  }
+  return found;
+}
+
+// One, or a failure once `flag` was passed twice.
+int32_t check(std::vector<std::string>& argv, std::string_view flag) {
+  return 2 / (2 - seen(argv, flag));
+}
+
+// Reports its identity when constructed and its negation when destroyed.
+class Tracked {
+  mut int32_t identity;
+public:
+  Tracked(int32_t identity) : identity(identity) { std::println(identity); }
+  ~Tracked() { std::println(-this.identity); }
+  int32_t read() { return this.identity; }
+  bool positive() { return this.identity > 0; }
+  bool raise() mut {
+    this.identity = this.identity + 100;
+    return this.identity > 0;
+  }
+  // Fails once `flag` was passed twice.
+  bool checked(std::vector<std::string>& argv, std::string_view flag) {
+    return check(argv, flag) + this.identity > 0;
+  }
+};
+
+// Nothing to destroy.
+class Point {
+  int32_t x;
+public:
+  Point(int32_t x) : x(x) {}
+  bool positive() { return this.x > 0; }
+};
+
+Tracked made(int32_t identity) { return Tracked(identity); }
+
+// Fails once `flag` was passed twice, before constructing anything.
+Tracked fragile(int32_t identity, std::vector<std::string>& argv,
+                std::string_view flag) {
+  return Tracked(identity * check(argv, flag));
+}
+
+bool holds(Tracked& tracked) { return tracked.read() > 0; }
+
+// Fails once `flag` was passed twice.
+bool judged(Tracked& tracked, std::vector<std::string>& argv,
+            std::string_view flag) {
+  return check(argv, flag) + tracked.read() > 0;
+}
+
+bool near(Point& point) { return point.positive(); }
+
+bool keeps(Point& point, bool flag) { return point.positive() && flag; }
+
+// Nothing in this body can fail.
+bool calm(bool skip) {
+  return keeps(Point(1), skip || Point(2).positive()) &&
+         keeps(Point(3), skip ? false : near(Point(4)));
+}
+
+int32_t combine(Tracked& tracked, bool flag) {
+  return tracked.read() * 10 + (flag ? 1 : 0);
+}
+
+int32_t tally(Tracked& tracked, bool flag, int32_t extra) {
+  return tracked.read() * 10 + (flag ? 1 : 0) + extra;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  bool skip = seen(argv, "skip") > 0;
+  bool run = !skip;
+  Tracked first{1};
+  // Receivers: a function result and a construction.
+  std::println(combine(made(2), skip || made(3).positive()));
+  std::println(combine(made(4), run && Tracked(5).positive()));
+  // A `mut` receiver in one arm, a reference argument in the other.
+  std::println(combine(made(6), run ? made(7).raise() : holds(made(8))));
+  // The borrowed argument is a local.
+  std::println(combine(first, skip || holds(Tracked(9))));
+  // Objects with nothing to destroy, also in a body that cannot fail.
+  std::println(combine(made(10), skip || Point(11).positive()));
+  std::println(combine(made(12), run && near(Point(13))));
+  std::println(calm(skip) ? 1 : 0);
+  // The producer, the nested call or a later argument can fail.
+  std::println(
+      combine(made(14), skip || fragile(15, argv, "make").positive()));
+  std::println(combine(made(16), skip || made(17).checked(argv, "receiver")));
+  std::println(combine(made(18), skip || judged(made(19), argv, "argument")));
+  std::println(
+      tally(made(20), skip || made(21).positive(), check(argv, "later")));
+  return 0;
+}

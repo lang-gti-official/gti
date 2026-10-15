@@ -1,5 +1,104 @@
 # Compiler Verification
 
+## Move-only payload enums without cleanup (0.441.1)
+
+`sum_type_pipeline` adds `testCleanupFreeMoveOnlyPayloads`. A payload enum
+whose alternative holds a move-only class without a destructor is cleanup-free
+and move-only in verified MIR. Observing switches over a named local and a
+parameter, and the consuming switch's hidden owner, read-borrow their places,
+and no MIR operand copies the enum. Two program-verifier mutations restore a
+copy. One rebuilds the schedule an observing switch had before this change: a
+`Load` copying the named place under the subject's read event, a switch over
+that copy, and re-derived effect summaries. The other turns a switch's
+borrowed subject into a `Copy` operand. With the new payload-enum rule disabled
+both forgeries verify; with it both fail with "move-only payload enum is
+copied". The emitted C++ moves both staged by-value arguments into their calls
+and switches on the observed parameter in place.
+
+`move_only_payload_transport_runtime` compiles its fixture in C++20/C++23 at
+O0/O3 and under ASan/UBSan. Phase 0 runs these shapes:
+
+- It passes the cleanup-free enum by value to free functions, a `mut` method, a
+  constructor that stores it in a field, a lambda and a generic relay.
+- It returns a binding from a consuming arm, which is the reported program,
+  also through a declared local, and returns the enum from a function that can
+  fail.
+- It observes a named local, a parameter and a field in place.
+- It moves the enum through a fixed array, a `std::vector` and a loop, and its
+  payload class through `std::experimental::optional`.
+
+Each token prints its id when constructed and its id plus 1000 when consumed.
+The same shapes over an owning enum print construction and destruction, and
+every payload is destroyed exactly once. Phases 1 and 2 fail with `GTI-R0002`
+inside a consuming arm reached through a by-value argument, for the
+cleanup-free and the owning enum, and release each live owner once. Main
+`9400ad48` fails the fixture in the native compiler.
+
+A differential `--emit-cpp` against an exact build of main `9400ad48`, with
+one `GTI_STDLIB_PATH` for both compilers, covered 1733 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
+fixture's text changed; every existing program emits identical C++. Two
+same-name module probes under `probe-i04-bad-module-mapping` reported a status
+change only because the harness's output file name exceeded 255 bytes; rerun
+by hand, both compilers emit identical text for them.
+
+One shape remains outside this slice: success extraction from
+`expected<T, E>` for such a `T` is still a native error for `?` and
+`GTI-B0001` for `std::move(r).value()`. Observing switches over fixed-array
+elements of such an enum are covered by the next section.
+
+## Switches over fixed-array elements (0.441.1)
+
+`sum_type_pipeline` adds `testFixedArrayElementSubjects`. Observing switches
+read-borrow fixed-array elements of a passive payload enum: a runtime and a
+constant index into a local, an element of `this.items`, nested arrays, a
+global array, an enum field of a constant-index element, and a `mut auto&`
+update that a second switch reads back. For every `Index` in each subject
+place, the test finds the checked `AddressOf` over that place prefix, with its
+single `IndexOutOfBounds/FixedArray` origin and failure site, whose `Invoke`
+success edge dominates the switch: nine checks for eight switches. All ten
+payload extractions, borrowed and copied, share their switch's subject
+operand. Two program-verifier mutations turn a check's `Invoke` into a `Goto`,
+for a single index and for the outer index of the nested selection. With the
+new switch-subject rule disabled both forgeries verify; with it both fail with
+"switch subject reads a fixed-array element before its checked selection".
+Reverting subject lowering to its unchecked place dependencies makes MIR
+construction fail under the same rule. Removing the emitter's shared element
+predicate makes C++ emission fail with the reported "scalar-CFG operand is
+not a proven value". The emitted C++ calls `mir_checked_array_bound_v1`, then
+switches on and reads payload fields from the element subscription.
+
+`borrowed_payload_pattern_runtime` adds the `borrowed_payload_element` fixture
+with the same shapes and checks their values in each of its native modes. Run
+with an argument, the fixture indexes past the end of an array: it reports
+`GTI-R0007` at that switch before any arm runs, exits with status 70 and
+releases the live guard once. Main `911fd4ca` stops the reported program with
+`GTI-B0001`. With the installed 0.439.5 toolchain the local, nested, global,
+array-field and element-field switches stop the same way, and the `this.items`
+switch fails in the native compiler with an undeclared place alias.
+
+## Constructor text-view lifetimes (0.441.1)
+
+`compiler_pipeline` covers direct, generic, defaulted and constexpr ownerless
+constructor inputs, rejected dynamic field storage and computed initializers,
+and diagnostic source relationships. `carrier_shell_references` checks the
+independent physical-view and external-owner dependencies, rejects missing or
+forged authority and early retirement, and exercises production C++ emission.
+The owner-dependent-view selection in `lsp_protocol` verifies the same diagnostic
+and related initializer span, including UTF-16 offsets and unsaved corrections.
+
+`constructor_text_reference_runtime` observes successful resource cleanup and
+constructor rollback across C++20/C++23 at O0/O1/O3, disabled copy elision and
+ASan/UBSan. `json_runtime` and the two production corpus sweeps cover the
+source-defined JSON adapters and example 026. A text reference does not turn a
+dynamic view into ownerless storage: its character-owner dependency must remain
+live until the last dependent reference retires. A literal exception requires
+independent MIR proof, not merely a cleared borrowed-state trait.
+The existing constexpr reference-observer suite also retains its text-owner
+witnesses: literal bytes are owned by the constant value, while ordinary MIR
+verification still rejects a missing owner link before execution. Nominal
+stored-reference objects remain outside that constant-execution profile.
+
 ## Consuming payload-enum matches (0.438.0)
 
 `sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
@@ -5343,7 +5442,7 @@ not a substitute for the combined production suite:
 | Construction, replacement and partial cleanup | `mir_backend_owned_lifecycle`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `optional_compiler_contract`, `optional_runtime`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
 | Borrow/reference composition | `compiler_ownership`, `borrowing_composition_pipeline`, `ordered_borrow_composition_runtime`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
 | Eligible container/value-wrapper consistency | `optional_runtime`, `vector_construction_only_runtime`, `generic_clone_runtime`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
-| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, exact transport and partial cleanup. |
+| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, `move_only_payload_transport_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, move-only transport without cleanup, exact transport and partial cleanup. |
 
 The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
 after a full Release/Ninja rebuild on macOS arm64 (AppleClang 21, LLVM 22.1.8,
@@ -6576,6 +6675,21 @@ removed, conditional, duplicated or retargeted activation, and an arm result
 that activates the obligation itself, all of which MIR verification also
 rejects. A differential `--emit-cpp` of every source under `tests/fixtures`
 and `examples` at O0 and O3 changed only the new fixture.
+`conditional_moved_local_join_runtime` runs the same eight configurations over
+a cleanup-free class value that each arm of a conditional moves out of a whole
+named local, a by-value parameter included. Each shape runs through both arms,
+bound, assigned, passed on, read through a field, used as a member-call
+receiver (also for a class holding a view) and returned, in plain and
+failure-form bodies, beside a construction, copy, call or nested-join arm, with
+the moved-from locals reassigned afterwards, the join assigned back into a
+moved local, both arms moving one local, and inside a loop. Failures after a
+bound join, before a returned join and in the joined value's member call
+destroy only what was constructed. `testCleanupFreeConditionalMovedLocalArms`
+in the emitter text suite checks that each moved local's binding drop ends its
+shell exactly once, and that the arm proofs themselves refuse a removed,
+weakened or retargeted ownership event, a lifecycle event on the `Move`, forged
+cleanup on the moved-from local and a conditional activation, all of which MIR
+verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
@@ -6952,6 +7066,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `virtual_temporary_receiver_runtime` | non-consuming virtual member calls on fresh temporary receivers across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a generated-default producer in a function body, a member initializer, a field declaration default and a constructor-body assignment, an override, an inherited virtual and an inherited non-virtual member on a derived temporary, a virtual `operator()`, receivers in conditional arms and a conditional-joined receiver, a mutable interface override and a raising override in a function body and in a member initializer; every receiver is destroyed once at the end of its full expression in reverse construction order, and a failing override destroys its receiver and publishes nothing |
 | `borrowed_argument_fallible_condition_runtime` | a borrowed argument or receiver kept across a later conditional argument whose test or arm is a call that can fail, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a free function, a constructor, a method on the borrowed receiver and a local lambda consume the arguments; the test borrows another local, reads the borrowed local itself, runs a read or `mut` method on another receiver, or compares a returned text view; arms that select a text view; a `mut` borrowed argument and two borrowed arguments; a failing test or arm destroys each live local once, in reverse order, and nothing that was not yet constructed |
 | `borrowed_argument_nested_owning_argument_runtime` | a borrowed argument kept across a later conditional argument whose test or arm calls a function that takes a class argument by value, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a user class constructed from a nested call's result, a standard string built from a text view, a moved or copied local, the argument of a method on another local, and a construction followed by an argument that can fail, plus an owning argument of the outer call built from a text view; a failing nested call destroys its argument once, a failing construction publishes nothing, a later failing argument destroys the prepared argument, and each live local is destroyed once, in reverse order; `cpp_mir_body_emitter_preflight` rejects a doubled handoff and an abandoned failure-edge cleanup |
+| `borrowed_argument_inner_temporary_runtime` | a borrowed argument kept across a later conditional argument, an arm of `?:` or the right operand of `&&` or `||`, that creates a class object for a nested call to borrow, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a function result and a construction as receivers, a `mut` receiver and a reference argument in the arms of `?:`, a borrowed local before a construction passed by reference, objects with nothing to destroy, also in a body that cannot fail, a producer that can fail and calls that can fail, and a later argument that fails; each object is destroyed once after the outer call, before the borrowed temporary, and never when its operand was skipped, a failing producer publishes nothing, and each live local is destroyed once; `cpp_mir_body_emitter_preflight` rejects such a producer that also takes the borrowed object and an operand that ends the outer borrow |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
@@ -7532,7 +7647,9 @@ outside the temporary's class hierarchy.
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
 receiver cleanup and that producer failure does not activate a receiver drop.
-The LSP smoke matrix owns `GTI-S2081` publication and clearing plus
+The LSP smoke matrix publishes `GTI-S2081` at the call token for a `mut`
+member that returns a reference from a fresh temporary, clears it once a newer
+snapshot accepts a virtual `mut` member on a fresh temporary, and checks
 hover/signature selection.
 
 `temporary_constructor_argument_runtime` composes an owning constructed
@@ -7624,7 +7741,20 @@ ending. Negative cases retain rejection of mutable references, local bindings,
 explicit moves, compound and borrowed-state producers, escaping results, and
 fallback-tier ambiguity. `temporary_argument_borrow_runtime` runs successful
 and defined-failure cases at O0/O3 under C++20/C++23, including failure before
-production, in a later argument, and in the selected body. The LSP smoke gate
+production, in a later argument, and in the selected body.
+`testConditionalTemporaryArgumentBorrows` covers calls in `&&`/`||` operands
+and `?:` arms. Each branch-only argument must borrow its exact CFG-promoted
+hidden slot, end its loan in the arm, and drop conditionally after the merge.
+Mutations aim a borrow at a sibling's slot, detach the slot from its producer,
+unnumber it, and make the post-merge drop unconditional.
+`short_circuit_temporary_argument_runtime` traces taken and skipped operands
+with and without destructors, nested operators and a loop condition, and
+defined failure in the borrowing callee, a later argument, the producer, and
+after the merge with the temporary engaged or skipped, under C++20/C++23
+O0/O1/O3, no-elide and ASan/UBSan. `testConstexprConditionalTemporaries`
+runs argument and receiver borrows of such slots, one destructor-bearing,
+through exactly four staged MIR executions with exact results; a wrong
+assertion fails as `GTI-S2079`, not as an unsupported read. The LSP smoke gate
 proves `GTI-S2017` publication/clearing and exact borrowed versus by-value
 signature selection.
 
@@ -8080,7 +8210,14 @@ and parameter text relays with literal/null branches, plus an unsafe raw-receive
 relay used by editor previews. It rejects missing or forged literal witnesses,
 cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
 O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
-adding runtime lifetime state.
+adding runtime lifetime state. The stored-view return fixture covers view and
+`c_string` fields returned through `this`, an implicit field, a nested field, a
+fixed-array element, reference and by-value parameters and a concrete generic
+instance, all without an owner summary, and a stored alternative beside a
+receiver relay. It requires the specific missing-escaping-loan rejection for a
+borrowed loaded value, a dereference-ending or mistyped stored place, and a
+cleared dependent loan. A shadowing local and a local-owner escape beside a
+stored view fail in semantics.
 
 ### Operator-place composition focused gates
 

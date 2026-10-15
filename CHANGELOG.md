@@ -9,6 +9,134 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.441.1 — Compiler fixes for moved values, borrows and payload switches
+
+### No `mut` warning for moved fields and elements
+
+- `warning[GTI-S2096]` ("Mutable binding '…' is never used mutably") no
+  longer appears for a `mut` local whose field or constant-index array element
+  is moved out, such as `mut std::string[2] pair = …;` followed by
+  `std::string taken = std::move(pair[0]);`. Such a move requires a writable
+  binding, so removing the `mut` as the warning suggested turned the program
+  into `error[GTI-S2018]`. Moving an element through a consuming call, as in
+  `std::move(tokens[1]).take()`, and moves inside generic functions count the
+  same way. Reading a field through reflected `field.get_mut(owner)`, which
+  requires a writable owner (`GTI-S2112`), also counts as a mutable use.
+- Moving a whole local with `std::move` does not need `mut`, so an otherwise
+  unused `mut` on that local still receives the warning and its quick fix.
+
+### Reading a field of a moved local
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR") when a field is read straight off a local or by-value parameter moved
+  with `std::move`, as in `return std::move(a).x;`, `(std::move(a)).x` or
+  `int v = std::move(a).x;`, including for a field of a generic class. The
+  move leaves `a` moved-from and the field is read from the moved value, which
+  is destroyed at the end of the full expression; a class with a destructor
+  runs it exactly once, also when a later part of the expression fails, inside
+  a `?:` arm or `&&`/`||` operand, or in a member initializer.
+
+### Conditional moves of locals without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` move a local whose
+  class has no destructor, as in
+  `Pod t = c ? std::move(a) : std::move(b);`. Binding, returning, reading a
+  field of, calling a method on, assigning and passing on the result all
+  work now, in functions that can fail too, as do by-value parameters and an
+  arm that moves a local beside one that constructs, copies or calls.
+
+### Move-only payloads without a destructor
+
+- Fix native C++ compile errors ("copy assignment operator is implicitly
+  deleted", "call to implicitly-deleted copy constructor") for a payload enum
+  whose alternative holds a move-only class without a destructor, such as
+  `enum class Choice { none, some(Token token) }` where `Token` deletes its
+  copy constructor. Passing such an enum by value now moves it, whether to a
+  function, method, constructor, lambda or generic function. This covers
+  `Token pick(Choice choice)` whose `switch (std::move(choice))` arm returns
+  its binding. It also moves through fixed-array and `std::vector` elements,
+  both arms of `?:`, and results of functions that can fail.
+- A `switch` that observes a named enum, a parameter or a field of such a type
+  now reads it in place instead of copying it, so tag-only matches compile.
+- `std::experimental::optional<T>` now compiles for such a `T`.
+
+### Temporary arguments in short-circuit operands
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR. call-argument loan ... must be one exact non-escaping temporary input
+  loan") when a call that borrows a new object through a read-only reference
+  parameter runs only in some cases: in the right operand of `&&` or `||`,
+  or in one arm of `?:`. Examples are `ok && observe(make(-1))`,
+  `skip || observe(box(3))` and `left ? observe(make(1)) : observe(box(2))`,
+  and the same calls in `if` and `while` conditions. The object is destroyed
+  once at the end of the full expression when its operand ran, and never
+  when the operand was skipped, also when the call, a later argument or the
+  rest of the expression fails.
+- Compile-time evaluation (`constexpr`, `static_assert`) now runs a method
+  called on such a temporary, as in `ok && make(1).positive()`, which
+  failed with `GTI-S2057` ("reads a binding that is not constexpr"). The
+  temporary's class may also have a destructor there.
+
+### String view storage and stored view returns
+
+- Reject constructor initializers that store a dynamic `std::string_view` or
+  `c_string` by value without retaining its owner, including generic holders
+  and forwarded constructor arguments. Literal-backed constructor inputs remain
+  valid. The diagnostic identifies the initializer and suggests owned text or
+  an explicit checked reference instead of allowing dangling storage.
+- Preserve both the view object's lifetime and its external character owner's
+  lifetime when a field stores a checked text-view reference. JSON decoding uses
+  these checked references without copying the input or its member index.
+- Verify missing, forged, mutable and prematurely retired owner dependencies;
+  preserve exactly-once resource cleanup when a constructor also owns fields.
+- A view read through a checked text reference, such as `this.text`, keeps its
+  external owner. A method can return it, and a local copy can be taken
+  directly from a reference parameter. It cannot be passed to a constructor
+  that stores it by value. Copying it into a local binding through a reference
+  field or a relaying call reports `GTI-S2045` for now.
+- Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
+  missing its escaping loan") when a method or function returns a
+  `std::string_view` or `c_string` field, as in
+  `std::string_view read() { return this.name; }`. The same fix covers an
+  implicit field (`return name;`), a nested field (`return this.label.text;`),
+  a fixed-array element, a field read through a parameter, and a generic
+  holder such as `Box<std::string_view>`.
+- A view field can only hold an ownerless view, so the returned view is
+  independent of the object it was read from. The caller may mutate, move or
+  destroy that object while the view is still in use.
+- A stored view may also be one branch of a function whose other branch
+  returns a view tied to its receiver, in the same way a string literal can.
+
+### Switches over fixed-array elements
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a `switch` observes an element of a
+  fixed array of a payload enum and an arm borrows a payload field, as in
+  `switch (items[i]) { case Choice::some(auto& t): return t.id; ... }`. The
+  index is checked first, so an index out of range still stops with
+  `index_out_of_bounds` before any arm runs. The switch, `auto&` and
+  `mut auto&` bindings and copied fields then all read the element itself.
+  Arrays held in locals, globals and class fields, nested arrays such as
+  `grid[r][c]`, and an enum field of an element at a constant index, such as
+  `records[1].state`, work the same way. An array field read through
+  `this`, as in `switch (this.items[i])`, failed in the native C++ compiler
+  instead and now works too.
+
+### Borrowed arguments before a conditional that creates an object
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call borrows an argument, a new object
+  or a local passed by reference, and a later argument creates another object
+  in the right operand of `&&` or `||` or in one arm of `?:`, then calls a
+  method on it or passes it to a function by reference. Examples are
+  `both(make(1), off || make(2).positive())`,
+  `both(make(1), on && Tracked(2).positive())` and
+  `both(local, on ? seen(make(2)) : false)`. That object is destroyed once
+  after the call, at the end of the full expression, when its operand ran, and
+  never when the operand was skipped, also when its construction, the call
+  that uses it or a later argument fails.
+
 ## 0.441.0 — `?` on payload enums
 
 - `?` works directly on a payload enum that has a `std::tryable` block, such

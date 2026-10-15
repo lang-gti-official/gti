@@ -1355,6 +1355,153 @@ int main() {
              countDiagnosticCode(payloadBorrow.diagnostics, "GTI-S2096") == 0,
          "a mutable payload borrow requires its enum owner's mut qualifier "
          "and must not offer an invalid removal fix");
+
+  // Moving a field or constant-index element, and reflected get_mut, require
+  // a writable owning binding. A whole-binding move does not.
+  const auto analyzeWithLibrary = [](const std::string &name,
+                                     const std::string &source) {
+    return lang::Frontend().analyze(name, source, {standardLibraryPrelude()},
+                                    {}, {standardLibraryRoot()});
+  };
+  const std::string projectedTypes = R"(
+struct Record {
+  mut int value = 4;
+};
+struct Holder {
+  mut Record record = Record();
+  mut Record slots[2] = {Record(), Record()};
+};
+struct Token {
+  mut int value = 2;
+  int take() && { return this.value; }
+};
+)";
+  struct RequiredWritableBinding {
+    std::string_view binding;
+    std::string_view requirement;
+    std::string source;
+  };
+  const std::vector<RequiredWritableBinding> requiredWritableBindings{
+      {"mut Record records", "GTI-S2018", projectedTypes + R"(
+int main() {
+  mut Record records[2] = {Record(), Record()};
+  Record taken = std::move(records[1]);
+  return taken.value;
+}
+)"},
+      {"mut Holder holder", "GTI-S2018", projectedTypes + R"(
+int main() {
+  mut Holder holder = Holder();
+  Record taken = std::move(holder.record);
+  return taken.value;
+}
+)"},
+      {"mut Holder holder", "GTI-S2018", projectedTypes + R"(
+int main() {
+  mut Holder holder = Holder();
+  Record taken = std::move(holder.slots[0]);
+  return taken.value;
+}
+)"},
+      {"mut Token tokens", "GTI-S2018", projectedTypes + R"(
+int main() {
+  mut Token tokens[2] = {Token(), Token()};
+  return std::move(tokens[1]).take();
+}
+)"},
+      {"mut T values", "GTI-S2018", projectedTypes + R"(
+T first<T>(T left, T right) {
+  mut T values[2] = {left, right};
+  return std::move(values[0]);
+}
+int main() { return first(Record(), Record()).value; }
+)"},
+      {"mut Point point", "GTI-S2112", R"(#include <std/meta>
+struct Point {
+  mut int x = 1;
+  mut int y = 2;
+};
+int main() {
+  mut Point point = Point();
+  mut int total = 0;
+  constexpr for (auto field : std::meta::fields_of<Point>()) {
+    total += field.get_mut(point);
+  }
+  return total;
+}
+)"}};
+  for (const auto &[binding, requirement, source] : requiredWritableBindings) {
+    const auto required =
+        analyzeWithLibrary("required-writable-binding.gti", source);
+    const std::size_t keyword = source.find(binding);
+    std::string immutable = source;
+    if (keyword != std::string::npos)
+      immutable.erase(keyword, 4);
+    const auto rejected =
+        analyzeWithLibrary("immutable-writable-binding.gti", immutable);
+    const bool retained =
+        required.canGenerateCode() &&
+        countDiagnosticCode(required.diagnostics, "GTI-S2096") == 0;
+    const bool enforced =
+        keyword != std::string::npos &&
+        source.find(binding, keyword + 1) == std::string::npos &&
+        !rejected.canGenerateCode() &&
+        findDiagnosticByCode(rejected.diagnostics, std::string(requirement)) !=
+            nullptr;
+    if (!retained || !enforced) {
+      std::cerr << "Required writable binding: " << binding << '\n';
+      for (const auto *result : {&required, &rejected})
+        for (const auto &diagnostic : result->diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(retained, "a projected move or reflected mutable access is a "
+                     "mutable use of its owning binding");
+    expect(enforced, "removing a mut that a writable place requires must "
+                     "remain an error rather than an advisory fix");
+  }
+
+  const std::string wholeMoveSource = projectedTypes + R"(
+int main() {
+  mut Record whole = Record();
+  mut Record kept[2] = {Record(), Record()};
+  mut Record moved[2] = {Record(), Record()};
+  Record transferred = std::move(whole);
+  Record element = std::move(moved[0]);
+  return transferred.value + element.value + kept[0].value;
+}
+)";
+  const auto wholeMove =
+      analyzeWithLibrary("whole-binding-move-advisory.gti", wholeMoveSource);
+  std::vector<const lang::Diagnostic *> unused;
+  for (const auto &diagnostic : wholeMove.diagnostics) {
+    if (diagnostic.code == "GTI-S2096")
+      unused.push_back(&diagnostic);
+  }
+  std::sort(unused.begin(), unused.end(),
+            [](const auto *left, const auto *right) {
+              return left->primary.start < right->primary.start;
+            });
+  expect(wholeMove.canGenerateCode() && unused.size() == 2 &&
+             unused[0]->primary.start ==
+                 wholeMoveSource.find("mut Record whole") &&
+             unused[1]->primary.start ==
+                 wholeMoveSource.find("mut Record kept") &&
+             unused[0]->fixes.size() == 1 && unused[1]->fixes.size() == 1,
+         "a whole-binding move and an unused sibling keep the unnecessary mut "
+         "warning while a projected move does not");
+  if (unused.size() == 2) {
+    std::string corrected = wholeMoveSource;
+    for (auto warning = unused.rbegin(); warning != unused.rend(); ++warning) {
+      const lang::FixIt &fix = (*warning)->fixes.front();
+      corrected.replace(fix.span.start, fix.span.end - fix.span.start,
+                        fix.replacement);
+    }
+    const auto fixed =
+        analyzeWithLibrary("whole-binding-move-advisory.gti", corrected);
+    expect(fixed.canGenerateCode() && fixed.diagnostics.empty(),
+           "removing the unnecessary mut from a wholly moved binding keeps the "
+           "program valid");
+  }
 }
 
 void testPrintIsAnIdentifier() {

@@ -4385,8 +4385,11 @@ private:
       }
     }
     // A direct-initialized class temporary is a fresh SSA value like a call
-    // result: materialize it before a projection roots a place at it.
+    // result: materialize it before a projection roots a place at it. So is
+    // a value moved out of a place: the Move leaves its source moved-from and
+    // the projection reads the moved temporary, not the source place.
     if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
+        value->kind == HirValueKind::Move ||
         value->kind == HirValueKind::ExpectedPropagation ||
         value->kind == HirValueKind::Propagation ||
         value->kind == HirValueKind::Conditional) {
@@ -4595,8 +4598,7 @@ private:
       }
       if (const MirLoan *loan = output.findLoan(existing);
           loan != nullptr && loan->kind == MirLoanKind::Stored &&
-          runtimePlace != 0 && resolved->type.kind == SemanticType::Class &&
-          resolved->traits.containsBorrowedState) {
+          runtimePlace != 0 && resolved->traits.containsBorrowedState) {
         // Pass the shell's checked address. Its binding retains the separate
         // Stored authority; passing that loan as the reference itself would
         // substitute the external referent for the source object.
@@ -10402,16 +10404,26 @@ private:
       if (!loan.entry) {
         continue;
       }
-      const bool abstractStored = loan.kind == SemanticLoanKind::StoredValue &&
-                                  !loan.designatedFields.empty();
+      const MirPlaceId sourcePlace = placeForLoan(loan);
+      if (sourcePlace == 0) {
+        continue;
+      }
+      const MirPlace *entryPlace = output.findPlace(sourcePlace);
+      const bool textReference =
+          entryPlace && entryPlace->root == MirPlaceRootKind::Binding &&
+          entryPlace->projections.empty() &&
+          entryPlace->type.kind == SemanticType::Reference &&
+          entryPlace->type.arguments.size() == 1 &&
+          (entryPlace->type.arguments.front().kind ==
+               SemanticType::StringView ||
+           entryPlace->type.arguments.front().kind == SemanticType::CString);
+      const bool abstractStored =
+          loan.kind == SemanticLoanKind::StoredValue &&
+          (!loan.designatedFields.empty() || textReference);
       const bool capturedEntry = lambdaCaptures.contains(loan.place.root);
       if (loan.semanticLoan == 0 || loan.parent != 0 ||
           (loan.carriers.empty() && !abstractStored && !capturedEntry)) {
         valid = false;
-        continue;
-      }
-      const MirPlaceId sourcePlace = placeForLoan(loan);
-      if (sourcePlace == 0) {
         continue;
       }
       const MirLoanKind kind = loan.kind == SemanticLoanKind::StoredValue
@@ -12566,10 +12578,15 @@ private:
     } else if (statement.value) {
       const HirValue *sourceValue = findValue(*statement.value);
       const MirPlaceId sourcePlace = placeForValue(*statement.value);
+      // A named subject is observed. An enum that owns cleanup, that cannot
+      // be copied (a cleanup-free alternative may still hold a move-only
+      // field), or that an arm binds by reference is read-borrowed in place;
+      // only a copyable passive enum is read through a copy.
       if (sourceValue != nullptr && sourcePlace != 0 &&
           sourceValue->info.category == ValueCategory::Place &&
           sourceValue->info.type.kind == SemanticType::Enum &&
           (sourceValue->info.traits.drop == DropKind::Lexical ||
+           !sourceValue->info.traits.copyable ||
            std::any_of(
                statement.switchArms.begin(), statement.switchArms.end(),
                [&](const HirSwitchArm &arm) {
@@ -12581,7 +12598,10 @@ private:
                                                         SemanticType::Reference;
                      });
                }))) {
-        emitPlaceDependencies(*statement.value);
+        // The read-borrow transports only the subject's address, so no Load
+        // performs a selected fixed-array element's bounds check. Finish that
+        // selection at its checked AddressOf before the switch observes it.
+        emitPlaceDependencies(*statement.value, true);
         subject = {.kind = MirOperandKind::BorrowRead,
                    .place = sourcePlace,
                    .type = sourceValue->info.type};
@@ -13152,9 +13172,14 @@ private:
         const HirValue *value = findValue(*statement.value);
         if (value != nullptr && value->info.traits.containsBorrowedState) {
           MirLoanId retained = loanForValue(*statement.value);
-          if (retained == 0 && output.returnType.kind == SemanticType::Class &&
+          const bool textReturn =
+              output.returnType.kind == SemanticType::StringView ||
+              output.returnType.kind == SemanticType::CString;
+          if (retained == 0 &&
+              (output.returnType.kind == SemanticType::Class || textReturn) &&
               value->info.traits.copyable) {
-            // A copied nested member has no separate local carrier binding.
+            // A copied nested member, or a text view read through a checked
+            // text reference field, has no separate local carrier binding.
             // Its caller-owned receiver/reference entry supplies the external
             // authority; the exact returned Load remains executable evidence.
             retained =
