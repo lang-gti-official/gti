@@ -1299,6 +1299,20 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
     if (!typeTraits(current).containsBorrowedState ||
         !requiresActiveCleanupFor(current))
       return false;
+    if (current.kind == SemanticType::Expected ||
+        current.kind == SemanticType::Unexpected) {
+      const std::size_t arity = current.kind == SemanticType::Expected ? 2 : 1;
+      if (current.arguments.size() != arity)
+        return true;
+      // Generated alternative cleanup only retains a dependency when one of
+      // the actual components can use or release it during destruction. An
+      // unrelated owning error does not extend a borrowed success's loan.
+      return std::any_of(current.arguments.begin(), current.arguments.end(),
+                         [&](const auto &component) {
+                           return component.kind == SemanticType::Unknown ||
+                                  self(self, component);
+                         });
+    }
     if (current.kind == SemanticType::Enum) {
       const auto enumeration = enumTypeFor(current);
       if (!enumeration || !enumeration->payload ||
