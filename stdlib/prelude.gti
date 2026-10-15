@@ -168,6 +168,22 @@ namespace std {
       std::addable<T> && std::subtractable<T> && std::negatable<T> &&
       std::scalable_by<T, Scalar> && std::copyable<T>;
 
+  /// The protocol of prefix `?` for every type except built-in `expected`.
+  ///
+  /// A type takes part through a `for concept std::tryable<T>` block. For
+  /// `?operand`, the operand is evaluated once and passed like a by-value
+  /// argument. `has_value` decides whether evaluation continues. On success,
+  /// `take_value` consumes the operand and produces the result of `?`. Otherwise
+  /// `take_residual` consumes it, and the enclosing function returns the
+  /// residual, initializing its return type as `R result = residual;` would.
+  concept tryable<T> {
+    typename value_type;
+    typename residual_type;
+    bool has_value(T& value);
+    value_type take_value(T value);
+    residual_type take_residual(T value);
+  };
+
   /// A counted, read-only view over character storage.
   using string_view = gti_internal::text_view;
   using size_t = uint64_t;

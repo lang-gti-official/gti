@@ -1,0 +1,39 @@
+// `?` through `std::tryable` on an unrelated user result type.
+#include <std/string>
+
+struct Missing {
+  int code;
+  Missing(int value) : code(value) {}
+};
+
+class Lookup {
+public:
+  int value;
+  int code;
+  Lookup(int payload, int failure) : value(payload), code(failure) {}
+};
+
+for concept std::tryable<Lookup> {
+  using value_type = int;
+  using residual_type = Missing;
+  bool has_value(Lookup& lookup) { return lookup.code == 0; }
+  int take_value(Lookup lookup) { return lookup.value; }
+  Missing take_residual(Lookup lookup) { return Missing(lookup.code); }
+};
+
+class Report {
+public:
+  int code;
+  Report(int value) : code(value) {}
+  implicit Report(Missing missing) : code(missing.code) {}
+};
+
+Report sum(int failure) {
+  int total = ?Lookup(20, 0) + ?Lookup(22, failure);
+  std::println(std::to_string(total));
+  return Report(0);
+}
+
+int main() {
+  return sum(0).code + sum(3).code - 3;
+}

@@ -833,6 +833,22 @@ dependency; it does not copy or move the referent. The error follows the same
 copy/move rule above. Retention and forwarding remain subject to the exact
 borrow-origin contract in [Expected values](expected.md#fallible-borrows).
 
+An operand of any other type propagates through the prelude's protocol
+concept `std::tryable`
+([ADR 029](../decisions/029-tryable-propagation.md)), satisfied by a
+`for concept std::tryable<T>` block. The operand is evaluated once and
+passed like a by-value argument: a temporary or `std::move(place)` is
+consumed, and a named place is copied. The block's `has_value` observes the
+operand. On success, `take_value` consumes it and produces the value of the
+expression, or nothing when `value_type` is `void`. Otherwise
+`take_residual` consumes it. The enclosing callable then returns the
+residual, initializing its declared return type as `R result = residual;`
+would: the residual is `R` itself, or `R` has exactly one `implicit`
+constructor taking it. The failure edge performs the same full-expression
+and lexical cleanup as an `expected` error. Each step is an ordinary call of
+the selected block function, so its own cleanup and defined failures follow
+the ordinary rules.
+
 GTI does not provide language exceptions.
 
 ## 4.9 Concurrency Boundary
