@@ -2165,6 +2165,15 @@ live. This does not enable by-value dynamic views in arbitrary aggregates, and
 does not copy or allocate the input text. JSON's private scanning adapters use
 this checked-reference form.
 
+A view read through such a reference, as in `this.text`, is dynamic: it keeps
+the external text owner. It may be inspected, indexed, passed to a parameter or
+returned from a method under that method's receiver dependency, and a local
+copy may be taken directly from a reference parameter. It cannot be passed to a
+constructor that stores it by value, stored in a field, or escape the owner,
+including through a relaying call. A local copy read through a reference field
+or a relaying call is not yet supported and is rejected with `GTI-S2045`
+(tracked by lang-gti-official/gti#200).
+
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain
 the same enclosing receiver dependency when `text` names an instance field.

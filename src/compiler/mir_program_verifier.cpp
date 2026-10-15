@@ -4357,6 +4357,13 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
   }
   if (projected != carrierType)
     return std::nullopt;
+  // A text view has no nominal reference path: the exact dereferenced formal
+  // is the borrowed view itself, and copying it publishes the entry's
+  // external text owner unchanged.
+  if (reference && prefix.empty() &&
+      (carrierType.kind == SemanticType::StringView ||
+       carrierType.kind == SemanticType::CString))
+    return HirBindingId{0};
   const auto paths = findStoredCarrierReferences(program, carrierType);
   if (paths.empty())
     return std::nullopt;

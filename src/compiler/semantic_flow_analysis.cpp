@@ -1546,6 +1546,15 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
   };
+  // A checked text-view reference field names a view whose characters belong
+  // to an external owner. Reading through it yields that dynamic view, never
+  // an ownerless value that could then be stored by value or returned free.
+  const auto textReferenceField = [&](const Symbol &field) {
+    return field.bindingKind == SemanticBindingKind::Field &&
+           !field.staticMember && field.type.kind == SemanticType::Reference &&
+           field.type.arguments.size() == 1 &&
+           borrowedTextType(field.type.arguments.front());
+  };
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
     if (borrowedTextType(type) && sourceInfo != nullptr &&
@@ -1595,7 +1604,7 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
     if (borrowedTextType(type) && symbol != nullptr &&
-        symbol->retainedLoan != 0) {
+        (symbol->retainedLoan != 0 || textReferenceField(*symbol))) {
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
@@ -1735,6 +1744,12 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                         : objectInfo != nullptr &&
                               objectInfo->category == ValueCategory::Place &&
                               objectInfo->access == AccessMode::Mutable));
+    if (borrowedTextType(type) && member != nullptr &&
+        textReferenceField(member->symbol)) {
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);

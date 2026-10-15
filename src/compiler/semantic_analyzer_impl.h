@@ -1860,6 +1860,7 @@ private:
 
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
+  [[nodiscard]] bool derivesFromTextReference(const ExprPtr &expression) const;
 
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
