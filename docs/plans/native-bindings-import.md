@@ -157,9 +157,11 @@ unparseable declaration must not cost the rest of the header.
 Policy lives here, split from parsing so C++ mapping policy (namespaces,
 methods, overloads) lands without touching the reader. Two passes:
 
-1. Record classification. A complete record whose every field maps to the
+1. Record classification. Named passive unions now import with `[[c_abi]] union`,
+   preserving overlapping field layout and ordinary unsafe member access.
+   A complete record whose every field maps to the
    GTI `[[c_abi]]` field surface binds as a record; any other record —
-   incomplete, union, bitfield-bearing, or with an inexpressible field —
+   incomplete, bitfield-bearing, or with an inexpressible field —
    *degrades to an `[[c_opaque]]` handle with a recorded reason* rather than
    disappearing, so every pointer-based API through it stays importable.
    Only by-value uses of a degraded record skip.

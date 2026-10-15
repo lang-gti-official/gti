@@ -8304,6 +8304,7 @@ def test_native_record_tooling(executable, root):
         "  mut float y;\n"
         "};\n"
         "[[c_abi]] struct NativeBytes { mut uint8_t bytes[4]; };\n"
+        "[[c_abi]] union NativePayload { mut uint64_t bits; mut double real; };\n"
         "extern \"C\" { NativeHandle* native_open(); "
         "void native_close(NativeHandle* handle); "
         "NativePoint point_roundtrip(NativePoint value); "
@@ -8387,6 +8388,14 @@ def test_native_record_tooling(executable, root):
         assert hover and "[[c_abi]]" in json.dumps(hover), hover
         assert "size 8 bytes" in json.dumps(hover), hover
         assert "ABI alignment 4 bytes" in json.dumps(hover), hover
+
+        session.send({"jsonrpc": "2.0", "id": 200, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": uri},
+                                 "position": lsp_position(source, source.index("NativePayload") + 1)}})
+        union_hover = session.receive_until(lambda message: message.get("id") == 200)["result"]
+        assert "union NativePayload" in json.dumps(union_hover), union_hover
+        assert "size 8 bytes" in json.dumps(union_hover), union_hover
+        assert "ABI alignment 8 bytes" in json.dumps(union_hover), union_hover
 
         session.send(
             {

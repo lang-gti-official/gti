@@ -349,6 +349,8 @@ struct Packed { int flags : 3; };
 union Overlay { int whole; float parts; };
 struct Holder { struct Packed *packed; union Overlay *overlay; };
 struct Plain { int value; };
+struct Anonymous { int tag; union { int whole; float real; }; };
+union AnonymousStruct { struct { int first; int second; }; double whole; };
 int use_pointer(struct Packed *packed);
 int use_value(struct Packed packed);
 int use_plain(struct Plain plain);
@@ -365,6 +367,13 @@ int use_plain(struct Plain plain);
              overlay->kind == lang::bindgen::BindingItemKind::Record &&
              overlay->recordIsUnion,
          "a passive union should import its overlapping record kind");
+  for (const std::string name : {"Anonymous", "AnonymousStruct"}) {
+    const auto *anonymous = findItem(plan, name);
+    expect(anonymous != nullptr &&
+               anonymous->kind == lang::bindgen::BindingItemKind::Opaque &&
+               contains(anonymous->reason, "anonymous"),
+           "anonymous promoted fields must never silently lose storage");
+  }
   const lang::bindgen::BindingItem *holder = findItem(plan, "Holder");
   expect(holder != nullptr &&
              holder->kind == lang::bindgen::BindingItemKind::Record,
