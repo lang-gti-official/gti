@@ -32,10 +32,11 @@ if(Python3_Interpreter_FOUND)
     conditional_capability_runtime conditional_converted_receiver_runtime
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
     borrowed_argument_fallible_condition_runtime
+    conditional_cleanup_free_call_result_runtime
     conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime
-    constructor_virtual_call_field_runtime
+    constructor_virtual_call_field_runtime virtual_temporary_receiver_runtime
     constructor_null_native_runtime constructor_passive_field_rollback_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
