@@ -1,6 +1,7 @@
 #include "gti/hir.h"
 
 #include "diagnostic_registry.h"
+#include "gti/generic_instantiation_limits.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -239,8 +240,10 @@ private:
   // These are compilation resource bounds, not a termination proof or a
   // semantic restriction on exact recursive calls. Existing canonical
   // instances never consume another step in the discovery chain.
-  static constexpr std::size_t maximumDiscoveryDepth = 64;
-  static constexpr std::size_t maximumDiscoveredInstances = 16384;
+  static constexpr std::size_t maximumDiscoveryDepth =
+      GenericInstantiationLimits::maximumDepth;
+  static constexpr std::size_t maximumDiscoveredInstances =
+      GenericInstantiationLimits::maximumDistinctInstances;
 
   struct InstanceDiscovery {
     std::size_t depth;

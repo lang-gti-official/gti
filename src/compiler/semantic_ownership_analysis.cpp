@@ -1673,7 +1673,8 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
 auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     const CallableCandidate &function,
     const std::vector<SemanticType> &typeArguments,
-    const std::vector<CompileTimeValue> &valueArguments)
+    const std::vector<CompileTimeValue> &valueArguments,
+    const SourceSpan &site)
     -> std::optional<FunctionBorrowDependencySummary> {
   if (function.virtualMethod ||
       function.returnType.kind != SemanticType::Enum ||
@@ -1711,16 +1712,35 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
                                     function.dispatchOwner.valueArguments,
                                 .types = typeArguments,
                                 .values = valueArguments};
-  for (const auto &entry : state->entries)
-    if (entry->key == key)
-      return entry->complete ? entry->result : std::nullopt;
-  // An unbounded expanding generic recursion has no finite result proof.
-  // Resource exhaustion remains unknown, never a vacuous complete-empty set.
-  if (state->depth >= 32 || state->entries.size() >= 2048)
+  if (const auto found = state->entries.find(key); found != state->entries.end())
+    return found->second->complete ? found->second->result : std::nullopt;
+  const bool discovered = state->discovered.contains(key);
+  const bool depthLimit =
+      state->depth >= GenericInstantiationLimits::maximumDepth;
+  const bool instanceLimit =
+      !discovered && state->discovered.size() >=
+                         GenericInstantiationLimits::maximumDistinctInstances;
+  if (depthLimit || instanceLimit) {
+    auto diagnostic = makeDiagnostic(
+        DiagnosticId::GenericInstantiationLimit, site,
+        {depthLimit ? "result-summary-depth" : "result-summary-instance",
+         std::to_string(depthLimit
+                            ? GenericInstantiationLimits::maximumDepth
+                            : GenericInstantiationLimits::maximumDistinctInstances)});
+    diagnostic.related.push_back(
+        {tokenSpan(function.declaration->name()),
+         "Declaration requiring this concrete result summary."});
+    diagnostic.hints.emplace_back(
+        "Ensure type/value-changing generic recursion terminates through a "
+        "selected compile-time branch or exact specialization; runtime "
+        "conditions do not limit instantiation.");
+    diagnostics.push_back(std::move(diagnostic));
     return std::nullopt;
+  }
   auto entry = std::make_shared<CompleteReturnQuery>();
   entry->key = key;
-  state->entries.push_back(entry);
+  state->entries.emplace(key, entry);
+  state->discovered.insert(key);
   ++state->depth;
   auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
                                        sources, rawPointerAudit);
@@ -1752,10 +1772,23 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     if (analyzed && analyzed->returnType == function.returnType &&
         analyzed->parameterTypes == function.parameterTypes)
       entry->result = analyzed->completeReturnBorrow;
+  } else {
+    // A worker's resource exhaustion is a compilation diagnostic, not an
+    // unproved-but-otherwise-valid result. Preserve its original source span
+    // while unwinding the demanded query chain.
+    for (const auto &diagnostic : analysis.diagnostics)
+      if (diagnostic.code == "GTI-S2105")
+        diagnostics.push_back(diagnostic);
   }
   state->idleCatalogs.push_back(std::move(worker->catalog));
   entry->complete = true;
   --state->depth;
+  state->completed.push_back(key);
+  while (state->completed.size() >
+         CompleteReturnQueryState::maximumRetainedResults) {
+    state->entries.erase(state->completed.front());
+    state->completed.erase(state->completed.begin());
+  }
   return entry->result;
 }
 
