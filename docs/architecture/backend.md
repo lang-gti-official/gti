@@ -2478,9 +2478,11 @@ representation-only storage. Its success edge must dominate the sole
 must record no value-rooted place or drop for it. The alternative moves the
 completed value, and the moved-from shell is destroyed immediately afterward.
 
-Owning enum rows use backend-private `payload_variant`: a recursive native
+Payload enum rows use backend-private `payload_variant`: a recursive native
 union and compact active tag, with direct tag-dispatched native retirement.
-Passive rows retain trivial `std::variant` transport. Both are accessed through
+Constrained-default special members preserve trivial copy/move/assignment and
+destruction for passive members, including inert byte transport. Ordinary
+integer enums are unchanged. Payload enums are accessed through
 `payload_get<Index>` selected from the sealed variant inventory, under the
 existing MIR active-tag proof. This is not a public layout/ABI guarantee or
 a source-visible unchecked access operation. It removes standard-library

@@ -1972,8 +1972,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
        .spelling = "cpp_deduced_callable_v1"});
   // Payload names the variant record representation the artifact ships
   // for payload enums: a struct wrapping a tagged carrier of per-enumerator
-  // __gti_variant_<index> records. Owning rows use the backend union carrier;
-  // passive rows retain trivial std::variant transport. payload_get accesses
+  // __gti_variant_<index> records. The backend union carrier preserves trivial
+  // transport for passive rows. payload_get accesses
   // only the proven alternative. The sealed row supplies exact variants,
   // traits and cleanup requirements; native traits never admit a GTI operation.
   builder.rows.capabilities.push_back(

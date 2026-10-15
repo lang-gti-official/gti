@@ -60,6 +60,14 @@ struct alignas(128) aligned {
   int value;
 };
 struct unit {};
+struct trivial_move_only {
+  int value;
+  explicit trivial_move_only(int input) : value(input) {}
+  trivial_move_only(const trivial_move_only &) = delete;
+  trivial_move_only(trivial_move_only &&) = default;
+  trivial_move_only &operator=(const trivial_move_only &) = delete;
+  trivial_move_only &operator=(trivial_move_only &&) = default;
+};
 struct partial {
   tracked first;
   tracked second;
@@ -70,6 +78,19 @@ struct partial {
   partial() : first(31), second(fail_input()) {}
 };
 using carrier = payload_variant<std::monostate, tracked, tracked, unit>;
+using passive = payload_variant<std::monostate, int, unit>;
+static_assert(std::is_trivially_copy_constructible_v<passive>);
+static_assert(std::is_trivially_move_constructible_v<passive>);
+static_assert(std::is_trivially_copy_assignable_v<passive>);
+static_assert(std::is_trivially_move_assignable_v<passive>);
+static_assert(std::is_trivially_destructible_v<passive>);
+static_assert(std::is_trivially_copyable_v<passive>);
+using passive_move_only = payload_variant<std::monostate, trivial_move_only>;
+static_assert(!std::is_copy_constructible_v<passive_move_only>);
+static_assert(std::is_trivially_move_constructible_v<passive_move_only>);
+static_assert(!std::is_copy_assignable_v<passive_move_only>);
+static_assert(std::is_trivially_move_assignable_v<passive_move_only>);
+static_assert(std::is_trivially_destructible_v<passive_move_only>);
 static_assert(!std::is_copy_constructible_v<
               payload_variant<std::monostate, std::unique_ptr<int>>>);
 static_assert(std::is_move_constructible_v<
@@ -130,11 +151,10 @@ void test_failure() {
   assert(tracked::live == live && *payload_get<2>(source).value == 11);
   tracked::failure = 2;
   throws([&] { target = source; });
-  assert(target.index() == std::variant_npos && tracked::live == live - 1);
+  assert(target.index() == 255 && tracked::live == live - 1);
   carrier vacantCopy(target);
   carrier vacantMove(std::move(vacantCopy));
-  assert(vacantCopy.index() == std::variant_npos &&
-         vacantMove.index() == std::variant_npos);
+  assert(vacantCopy.index() == 255 && vacantMove.index() == 255);
   target = source; // Reconstruct after failed cross-alternative publication.
   assert(target.index() == 2 && tracked::live == live);
   tracked::failure = 4;
@@ -146,7 +166,7 @@ void test_failure() {
   target = carrier(std::in_place_index<3>);
   tracked::failure = 3;
   throws([&] { target = std::move(source); });
-  assert(target.index() == std::variant_npos);
+  assert(target.index() == 255);
   target = std::move(source);
   assert(target.index() == 2 && *payload_get<2>(target).value == 11);
   const int beforePartial = tracked::live;
@@ -158,6 +178,11 @@ void test_failure() {
 }
 
 void test_nested_and_alignment() {
+  passive_move_only one(std::in_place_index<1>, 37);
+  passive_move_only two(std::move(one));
+  passive_move_only three;
+  three = std::move(two);
+  assert(payload_get<1>(three).value == 37);
   payload_variant<std::monostate, aligned> wide(std::in_place_index<1>, 17);
   assert(reinterpret_cast<std::uintptr_t>(&payload_get<1>(wide)) % 128 == 0);
   assert(payload_get<1>(wide).value == 17);
