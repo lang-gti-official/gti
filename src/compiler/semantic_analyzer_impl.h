@@ -1028,6 +1028,9 @@ private:
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
     bool deferredConstexprSelection = false;
+    // A synthetic early return needs its own complete result evidence;
+    // explicit ReturnStmt facts alone cannot describe the callable's result.
+    bool unknownImplicitResultReturn = false;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
@@ -1149,6 +1152,17 @@ private:
     // request catalog is sealed and asserted unchanged across every instance
     // analysis, so each snapshot has the same content; a later worker takes a
     // released one instead of re-registering every callable declaration.
+    std::vector<SemanticCatalog> idleCatalogs;
+  };
+
+  struct CompleteReturnQuery {
+    InstanceAnalysisKey key;
+    std::optional<FunctionBorrowDependencySummary> result;
+    bool complete = false;
+  };
+  struct CompleteReturnQueryState {
+    std::vector<std::shared_ptr<CompleteReturnQuery>> entries;
+    std::size_t depth = 0;
     std::vector<SemanticCatalog> idleCatalogs;
   };
 
@@ -1774,9 +1788,21 @@ private:
 
   [[nodiscard]] bool expressionNeverReturns(const Expr *expression) const;
 
-  [[nodiscard]] FlowSummary summarizeFlow(const StmtList &statements) const;
+  [[nodiscard]] FlowSummary
+  summarizeFlow(const StmtList &statements,
+                std::vector<const ReturnStmt *> *normalReturns = nullptr,
+                bool structural = false) const;
 
-  [[nodiscard]] FlowSummary summarizeFlow(const Stmt *statement) const;
+  [[nodiscard]] FlowSummary
+  summarizeFlow(const Stmt *statement,
+                std::vector<const ReturnStmt *> *normalReturns = nullptr,
+                bool structural = false) const;
+
+  void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
+  std::optional<FunctionBorrowDependencySummary> completeFunctionReturnBorrow(
+      const CallableCandidate &function,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the
@@ -5517,6 +5543,7 @@ private:
     std::vector<CThreadCallUse> cThreadCallUses;
     std::vector<RawBorrowCallUse> rawBorrowCallUses;
     std::shared_ptr<RawResultQueryState> rawResultQueries;
+    std::shared_ptr<CompleteReturnQueryState> completeReturnQueries;
     std::shared_ptr<RawResultQuery> collectingRawResult;
     std::size_t rawAccessObservation = 0;
     bool hasCThreadRequirements = false;

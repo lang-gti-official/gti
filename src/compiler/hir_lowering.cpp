@@ -626,6 +626,7 @@ private:
          .returnBorrowAccess = declaration.returnBorrowAccess,
          .returnBorrowParameters = declaration.returnBorrowParameters,
          .returnBorrowFields = declaration.returnBorrowFields,
+         .completeReturnBorrow = declaration.completeReturnBorrow,
          .returnBorrowPlace = declaration.returnBorrowPlace,
          .restoresReferenceResult = declaration.restoresReferenceResult,
          .restoredBorrowFields = declaration.restoredBorrowFields,
@@ -2066,6 +2067,8 @@ private:
           concrete->returnBorrowParameters;
       output.program.functions[index].returnBorrowFields =
           concrete->returnBorrowFields;
+      output.program.functions[index].completeReturnBorrow =
+          concrete->completeReturnBorrow;
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =

@@ -606,6 +606,18 @@ public:
       borrowOriginPlace(instance.returnBorrowPlace);
       output << " return-borrow-fields=";
       borrowFields(instance.returnBorrowFields);
+      output << " complete-return-borrow=";
+      if (!instance.completeReturnBorrow) {
+        output << "absent";
+      } else {
+        output << "complete";
+        borrowFields(instance.completeReturnBorrow->dependencies);
+        output << " alternatives=[";
+        for (const auto &alternative :
+             instance.completeReturnBorrow->possibleAlternatives)
+          borrowConditions(alternative.conditions);
+        output << ']';
+      }
       output << " restores-reference=" << instance.restoresReferenceResult
              << " restored-fields=";
       restoredFields(instance.restoredBorrowFields);
