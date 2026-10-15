@@ -8152,15 +8152,66 @@ private:
     return result;
   }
 
+  // The parameter an argument-origin reference result borrows from, for a
+  // function or a lambda body; a lambda's contract lives on its instance.
+  [[nodiscard]] std::optional<mir_detail::MirReturnOriginFormal>
+  returnBorrowOriginFormal() const {
+    if (function != nullptr) {
+      return function->returnBorrowOrigin == BorrowOriginKind::Argument
+                 ? mir_detail::returnOriginFormal(
+                       function->parameterTypes, function->parameterBindings,
+                       function->returnBorrowParameter)
+                 : std::nullopt;
+    }
+    if (lambda != nullptr) {
+      return lambda->returnBorrowOrigin == BorrowOriginKind::Argument
+                 ? mir_detail::returnOriginFormal(lambda->parameterTypes,
+                                                  lambda->parameterBindings,
+                                                  lambda->returnBorrowParameter)
+                 : std::nullopt;
+    }
+    return std::nullopt;
+  }
+  [[nodiscard]] std::optional<HirBindingId>
+  returnBorrowParameterBinding() const {
+    const auto formal = returnBorrowOriginFormal();
+    return formal ? std::optional<HirBindingId>{formal->binding} : std::nullopt;
+  }
+  // Whether a loan's source place is exactly the summarized formal: the
+  // whole binding, or the one pack element the contract names.
+  [[nodiscard]] bool sourceIsReturnOriginFormal(const MirPlace &source) const {
+    const auto formal = returnBorrowOriginFormal();
+    if (!formal || source.root != MirPlaceRootKind::Binding ||
+        source.binding != formal->binding)
+      return false;
+    if (source.projections.empty())
+      return source.type.kind != SemanticType::TypePack;
+    return source.projections.size() == 1 &&
+           source.projections.front().kind == MirProjectionKind::PackElement &&
+           source.projections.front().constantIndex &&
+           static_cast<std::size_t>(
+               *source.projections.front().constantIndex) ==
+               formal->elementWithinBinding;
+  }
+  [[nodiscard]] BorrowOriginKind bodyReturnBorrowOrigin() const {
+    return function != nullptr ? function->returnBorrowOrigin
+           : lambda != nullptr ? lambda->returnBorrowOrigin
+                               : BorrowOriginKind::None;
+  }
+  [[nodiscard]] AccessMode bodyReturnBorrowAccess() const {
+    return function != nullptr ? function->returnBorrowAccess
+           : lambda != nullptr ? lambda->returnBorrowAccess
+                               : AccessMode::ReadOnly;
+  }
+
   [[nodiscard]] bool mustReachBorrowedReturn(MirLoanId loan) const {
-    if (loan == 0 || loan > output.loans.size() || function == nullptr ||
-        function->returnBorrowOrigin != BorrowOriginKind::Argument ||
-        function->returnBorrowParameter >= function->parameterBindings.size()) {
+    const std::optional<HirBindingId> summarized =
+        returnBorrowParameterBinding();
+    if (loan == 0 || loan > output.loans.size() || !summarized) {
       return false;
     }
     const MirLoan &candidate = output.loans[loan - 1];
-    const HirBindingId parameter =
-        function->parameterBindings[function->returnBorrowParameter];
+    const HirBindingId parameter = *summarized;
     return candidate.entry &&
            std::find(candidate.carriers.begin(), candidate.carriers.end(),
                      parameter) != candidate.carriers.end();
@@ -10424,25 +10475,45 @@ private:
   }
 
   void seedReturnBorrow() {
-    if (function == nullptr ||
-        function->returnBorrowOrigin != BorrowOriginKind::Argument ||
-        function->source == nullptr || function->source->body() == nullptr) {
+    if (function != nullptr &&
+        (function->source == nullptr || function->source->body() == nullptr)) {
       return;
     }
-    if (function->returnBorrowParameter >= function->parameterBindings.size()) {
+    const std::optional<mir_detail::MirReturnOriginFormal> summarized =
+        returnBorrowOriginFormal();
+    if (!summarized) {
       return;
     }
-    const HirBindingId binding =
-        function->parameterBindings[function->returnBorrowParameter];
+    const HirBindingId binding = summarized->binding;
     if (bindingLoans.contains(binding)) {
       return;
     }
-    const MirPlaceId sourcePlace = placeForBinding(binding);
+    MirPlaceId sourcePlace = placeForBinding(binding);
+    const MirPlace *root =
+        sourcePlace != 0 ? output.findPlace(sourcePlace) : nullptr;
+    if (root != nullptr && root->type.kind == SemanticType::TypePack) {
+      // The contract names one element of a concrete pack: seed the entry
+      // loan on that element's place, as every other element access does.
+      const std::size_t element = summarized->elementWithinBinding;
+      if (!root->type.concretePack || !root->key ||
+          element >= root->type.arguments.size()) {
+        return;
+      }
+      MirPlace projected = *root;
+      projected.id = 0;
+      projected.projections.push_back(
+          {.kind = MirProjectionKind::PackElement, .constantIndex = element});
+      projected.key->projections.push_back(
+          {.kind = PlaceProjectionKind::ConstantIndex, .index = element});
+      projected.type = root->type.arguments[element];
+      projected.traits = resolvedTraits(projected.type);
+      sourcePlace = appendPackElementPlace(std::move(projected));
+    }
     if (sourcePlace == 0 || scopes.empty()) {
       return;
     }
     const MirLoanId loan = createLoan(MirLoanKind::Parameter, sourcePlace,
-                                      function->returnBorrowAccess, 0, binding);
+                                      bodyReturnBorrowAccess(), 0, binding);
     output.loans[loan - 1].entry = true;
     bindingLoans.insert_or_assign(binding, loan);
     scopes.front().loans.push_back(loan);
@@ -12641,19 +12712,14 @@ private:
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
           MirLoanId referenceParameterEntry = 0;
-          if (function != nullptr &&
-              function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-              function->returnBorrowParameter <
-                  function->parameterBindings.size() &&
-              borrow.loan <= output.loans.size()) {
-            const HirBindingId parameter =
-                function->parameterBindings[function->returnBorrowParameter];
+          if (const std::optional<HirBindingId> summarized =
+                  returnBorrowParameterBinding();
+              summarized && borrow.loan <= output.loans.size()) {
+            const HirBindingId parameter = *summarized;
             const MirLoan &candidate = output.loans[borrow.loan - 1];
             const MirPlace *source = output.findPlace(candidate.source);
             const bool carriedByParameter =
-                source != nullptr &&
-                source->root == MirPlaceRootKind::Binding &&
-                source->binding == parameter && source->projections.empty() &&
+                source != nullptr && sourceIsReturnOriginFormal(*source) &&
                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
                           parameter) != candidate.carriers.end();
             if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
@@ -12755,7 +12821,7 @@ private:
                         .type = value->info.type};
             }
           } else if (function != nullptr &&
-                     function->returnBorrowOrigin != BorrowOriginKind::None &&
+                     bodyReturnBorrowOrigin() != BorrowOriginKind::None &&
                      borrow.loan <= output.loans.size() &&
                      output.loans[borrow.loan - 1].kind ==
                          MirLoanKind::CallResult) {
@@ -12781,11 +12847,9 @@ private:
               transient = candidate.parent;
             }
             MirLoanId summarizedEntry = 0;
-            if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-                function->returnBorrowParameter <
-                    function->parameterBindings.size()) {
-              const auto found = bindingLoans.find(
-                  function->parameterBindings[function->returnBorrowParameter]);
+            if (const std::optional<HirBindingId> summarized =
+                    returnBorrowParameterBinding()) {
+              const auto found = bindingLoans.find(*summarized);
               summarizedEntry = found == bindingLoans.end() ? 0 : found->second;
             }
             MirLoanId mappedEntry = summarizedEntry;

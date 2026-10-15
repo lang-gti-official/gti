@@ -24897,8 +24897,20 @@ loanReferentType(const MirProgram &program, const MirBody &body,
         target->returnType.arguments.size() == 1) {
       return target->returnType.arguments.front();
     }
+    // A closure's reference result names its referent the same way.
+    const MirLambdaInstance *lambdaTarget =
+        producer != nullptr && !producer->functionTarget &&
+                producer->lambdaTarget
+            ? program.findLambda(*producer->lambdaTarget)
+            : nullptr;
+    if (lambdaTarget != nullptr &&
+        lambdaTarget->returnType.kind == SemanticType::Reference &&
+        lambdaTarget->returnType.arguments.size() == 1) {
+      return lambdaTarget->returnType.arguments.front();
+    }
     if (producer != nullptr &&
-        (producer->intrinsic == IntrinsicKind::MutexGuardRead ||
+        (producer->intrinsic == IntrinsicKind::FunctionPointerInvoke ||
+         producer->intrinsic == IntrinsicKind::MutexGuardRead ||
          producer->intrinsic == IntrinsicKind::MutexGuardReadMut ||
          producer->intrinsic == IntrinsicKind::PolymorphicStorageRead ||
          producer->intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
@@ -32921,7 +32933,7 @@ loanProducingReferenceCall(const MirProgram &program, const MirBody &body,
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind != MirInstructionKind::Call ||
           instruction.hirValue != loan.producedBy ||
-          !instruction.functionTarget ||
+          (!instruction.functionTarget && !instruction.lambdaTarget) ||
           instruction.intrinsic != IntrinsicKind::None) {
         continue;
       }
@@ -32933,6 +32945,17 @@ loanProducingReferenceCall(const MirProgram &program, const MirBody &body,
   }
   if (found == nullptr) {
     return nullptr;
+  }
+  if (!found->functionTarget) {
+    // A closure's reference result publishes through the same `T **`
+    // channel as a function's; its owner is the lambda's argument-origin
+    // contract.
+    const MirLambdaInstance *lambda = program.findLambda(*found->lambdaTarget);
+    return lambda != nullptr &&
+                   lambda->returnType.kind == SemanticType::Reference &&
+                   lambda->returnBorrowOrigin == BorrowOriginKind::Argument
+               ? found
+               : nullptr;
   }
   const MirFunctionInstance *target =
       program.findFunctionInstance(*found->functionTarget);
@@ -36000,9 +36023,19 @@ private:
       if (failureForm) {
         if (!closure.lambda->parameterTypes.empty())
           output << ", ";
-        if (closure.lambda->returnType != SemanticType::Void)
+        if (closure.lambda->returnType.kind == SemanticType::Reference &&
+            closure.lambda->returnType.arguments.size() == 1) {
+          // A reference result publishes its loan pointer through the
+          // `T **` channel shared with function bodies (ADR 018 §5).
+          if (closure.lambda->returnType.referenceAccess ==
+              AccessMode::ReadOnly)
+            output << "const ";
+          output << typeSpelling(closure.lambda->returnType.arguments.front())
+                 << " **__gti_mir_out_result, ";
+        } else if (closure.lambda->returnType != SemanticType::Void) {
           output << typeSpelling(closure.lambda->returnType)
                  << " *__gti_mir_out_result, ";
+        }
         output << "::gti_failure_record_v2 *__gti_mir_failure_record";
       } else if (indirectLambda) {
         if (!closure.lambda->parameterTypes.empty())
@@ -36969,7 +37002,13 @@ private:
       if (!lambda->parameterTypes.empty()) {
         output << ", ";
       }
-      if (lambda->returnType != SemanticType::Void) {
+      if (lambda->returnType.kind == SemanticType::Reference &&
+          lambda->returnType.arguments.size() == 1) {
+        if (lambda->returnType.referenceAccess == AccessMode::ReadOnly)
+          output << "const ";
+        output << typeSpelling(lambda->returnType.arguments.front())
+               << " **__gti_mir_out_result, ";
+      } else if (lambda->returnType != SemanticType::Void) {
         output << typeSpelling(lambda->returnType)
                << " *__gti_mir_out_result, ";
       }
@@ -43155,8 +43194,15 @@ private:
       }
       if (!parameters.empty())
         output << ", ";
-      if (result != SemanticType::Void)
+      if (result.kind == SemanticType::Reference &&
+          result.arguments.size() == 1) {
+        if (result.referenceAccess == AccessMode::ReadOnly)
+          output << "const ";
+        output << typeSpelling(result.arguments.front())
+               << " **__gti_mir_out_result, ";
+      } else if (result != SemanticType::Void) {
         output << typeSpelling(result) << " *__gti_mir_out_result, ";
+      }
       output << "::gti_failure_record_v2 *__gti_mir_failure_record) -> bool ";
       ScalarBodyTextEmitter thunk(program, representations, indentation, true,
                                   indentationPlaceholder,
@@ -43191,9 +43237,17 @@ private:
       if (instruction.info.type != SemanticType::Void) {
         if (comma)
           output << ", ";
+        const MirLoan *paired =
+            instruction.info.category == ValueCategory::Place
+                ? producedCallResultLoan(facts.body, instruction)
+                : nullptr;
         if (slot)
           output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
                  << ".construction_address()";
+        else if (paired != nullptr)
+          // A reference result publishes its loan pointer into the caller's
+          // loan local (ADR 018 §5).
+          output << "&__gti_mir_loan_" << paired->id;
         else if (instruction.result)
           output << "&__gti_mir_v_" << *instruction.result;
         else
@@ -43349,6 +43403,13 @@ private:
               output << "__gti_mir_discard_" << instruction.id
                      << ".construction_address()";
             }
+          } else if (const MirLoan *paired =
+                         instruction.info.category == ValueCategory::Place
+                             ? producedCallResultLoan(facts.body, instruction)
+                             : nullptr) {
+            // A reference result publishes its loan pointer into the
+            // caller's loan local (ADR 018 §5), never a value slot.
+            output << "&__gti_mir_loan_" << paired->id;
           } else {
             output << '&';
             if (instruction.result) {
@@ -54251,7 +54312,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           returnKind && *returnKind == CppMirTypeRepresentationKind::Expected &&
           cppMirPassiveExpectedBoundaryResult(program_, representations_,
                                               function->returnType);
-      if ((!function->mayRaiseDefinedFailure && !failureFreeVirtualOverride) ||
+      // An invocation-pointer thunk inlines its target in the failure form
+      // regardless of whether the target may raise (the pointer ABI always
+      // carries the record). The same form must therefore be admitted
+      // standalone, so the inlined text and the general text step agree.
+      const bool invocationPointerTarget = !function->mayRaiseDefinedFailure &&
+                                           functionPointerTarget(function->id);
+      if ((!function->mayRaiseDefinedFailure && !failureFreeVirtualOverride &&
+           !invocationPointerTarget) ||
           !returnKind ||
           (*returnKind != CppMirTypeRepresentationKind::Scalar &&
            !exactPointerResult &&
@@ -54436,6 +54504,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const bool exactOwningPayloadEnumResult =
           cppMirOwningPayloadEnumPlacementResult(program_, representations_,
                                                  lambda->returnType);
+      // A reference result publishes its loan pointer through the `T **`
+      // out-parameter exactly like a function result; its owner is the
+      // lambda's argument-origin contract, verified in MIR.
+      const bool exactReferenceResult =
+          lambda->returnType.kind == SemanticType::Reference &&
+          lambda->returnType.arguments.size() == 1 &&
+          lambda->returnBorrowOrigin == BorrowOriginKind::Argument &&
+          std::any_of(
+              representations_.types().begin(), representations_.types().end(),
+              [&](const CppMirTypeRepresentation &row) {
+                return row.type == lambda->returnType.arguments.front() &&
+                       !row.spelling.empty();
+              });
       const bool exactPassiveExpectedResult =
           returnKind && *returnKind == CppMirTypeRepresentationKind::Expected &&
           cppMirPassiveExpectedBoundaryResult(program_, representations_,
@@ -54445,7 +54526,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (*returnKind == CppMirTypeRepresentationKind::Void ||
            *returnKind == CppMirTypeRepresentationKind::Scalar ||
            exactClassResult || exactExpectedClassResult ||
-           exactOwningPayloadEnumResult ||
+           exactOwningPayloadEnumResult || exactReferenceResult ||
            (*returnKind == CppMirTypeRepresentationKind::RawPointer &&
             ((lambda->returnType.kind == SemanticType::RawPointer &&
               lambda->returnType.arguments.size() == 1) ||
@@ -54753,26 +54834,58 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
     } else if (referenceCall != nullptr) {
       // The pointer local declares from the callee's return element row;
-      // the receiver staging still spells the source place separately.
+      // the receiver staging still spells the source place separately. A
+      // lambda target publishes its reference result the same way.
       const MirFunctionInstance *referenceTarget =
           referenceCall->functionTarget
               ? program_.findFunctionInstance(*referenceCall->functionTarget)
               : nullptr;
+      const MirLambdaInstance *referenceLambda =
+          referenceTarget == nullptr && referenceCall->lambdaTarget
+              ? program_.findLambda(*referenceCall->lambdaTarget)
+              : nullptr;
+      const SemanticType *referenceResult =
+          referenceTarget != nullptr   ? &referenceTarget->returnType
+          : referenceLambda != nullptr ? &referenceLambda->returnType
+                                       : nullptr;
       const bool elementRow =
-          referenceTarget != nullptr &&
-          !referenceTarget->returnType.arguments.empty() &&
-          std::any_of(
-              representations_.types().begin(), representations_.types().end(),
-              [&](const CppMirTypeRepresentation &row) {
-                return row.type ==
-                           referenceTarget->returnType.arguments.front() &&
-                       !row.spelling.empty();
-              });
+          referenceResult != nullptr && !referenceResult->arguments.empty() &&
+          std::any_of(representations_.types().begin(),
+                      representations_.types().end(),
+                      [&](const CppMirTypeRepresentation &row) {
+                        return row.type == referenceResult->arguments.front() &&
+                               !row.spelling.empty();
+                      });
       if (producedCallResultLoan(body, *referenceCall) == nullptr ||
           !elementRow) {
         {
           return false;
         }
+      }
+    } else if (const MirInstruction *invokeCall =
+                   [&]() -> const MirInstruction * {
+                 // A GTI invocation pointer's reference result publishes
+                 // its loan pointer through the shared `T **` channel into
+                 // this call-result loan.
+                 for (const MirBlock &block : body.blocks)
+                   for (const MirInstruction &instruction : block.instructions)
+                     if (instruction.kind == MirInstructionKind::Call &&
+                         instruction.intrinsic ==
+                             IntrinsicKind::FunctionPointerInvoke &&
+                         instruction.hirValue == loan.producedBy &&
+                         loan.producedBy != 0)
+                       return &instruction;
+                 return nullptr;
+               }();
+               invokeCall != nullptr) {
+      const bool elementRow = std::any_of(
+          representations_.types().begin(), representations_.types().end(),
+          [&](const CppMirTypeRepresentation &row) {
+            return row.type == invokeCall->info.type && !row.spelling.empty();
+          });
+      if (producedCallResultLoan(body, *invokeCall) == nullptr || !elementRow ||
+          !mir_detail::functionPointerOperation(program_, *invokeCall)) {
+        return false;
       }
     } else {
       {
@@ -58841,6 +58954,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            }))
             return false;
           if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke) {
+            // The invocation spells every borrow-staged argument place
+            // directly, exactly like a source call: the pointer's own
+            // class-typed stage drains through the storage rule, and a
+            // scalar reference argument's stage (the referent place) drains
+            // here or arrives through the unique invoke-success chain.
+            for (const MirOperand &operand : instruction.operands) {
+              const MirInstruction *stage =
+                  borrowStagedCallInput(body, operand);
+              if (stage == nullptr || !stage->result ||
+                  storageStagedPlace(body, operand) != nullptr)
+                continue;
+              const auto pending = std::find(
+                  pendingStaged.begin(), pendingStaged.end(), *stage->result);
+              if (pending != pendingStaged.end())
+                pendingStaged.erase(pending);
+              else if (!stagedAcrossInvokeSuccessChain(*stage->result,
+                                                       block.id))
+                return false;
+            }
             if (!failureForm ||
                 !std::all_of(instruction.operands.begin(),
                              instruction.operands.end(), consumeStorageStage))
@@ -61349,6 +61481,40 @@ CppMirBodyEmitter::emitFailureBodyText(const CppMirBodyEmissionPlan &plan,
                                        std::size_t indentation) const {
   return CppMirBodyTextWriter::write(plan, CppMirBodyTextForm::Failure,
                                      familyLabel, indentation);
+}
+
+bool CppMirBodyEmitter::functionPointerTarget(HirFunctionInstanceId id) const {
+  if (!functionPointerTargets_) {
+    functionPointerTargets_.emplace();
+    const auto scan = [&](const MirBody &body) {
+      for (const MirBlock &block : body.blocks)
+        for (const MirInstruction &instruction : block.instructions)
+          if (!instruction.tombstone &&
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem &&
+              instruction.functionPointerFunctionTarget)
+            functionPointerTargets_->push_back(
+                *instruction.functionPointerFunctionTarget);
+    };
+    scan(program_.module());
+    if (const MirBody *startup = program_.hostedStartup())
+      scan(*startup);
+    for (const auto &owner : program_.classInstances()) {
+      scan(owner.fieldInitializers);
+      scan(owner.staticFieldInitializers);
+    }
+    for (const auto &function : program_.functionInstances())
+      scan(function.body);
+    for (const auto &constructor : program_.constructorInstances())
+      scan(constructor.body);
+    for (const auto &destructor : program_.destructorInstances())
+      scan(destructor.body);
+    for (const auto &lambda : program_.lambdaInstances())
+      scan(lambda.body);
+  }
+  return std::find(functionPointerTargets_->begin(),
+                   functionPointerTargets_->end(),
+                   id) != functionPointerTargets_->end();
 }
 
 bool CppMirBodyEmitter::supportsNativeContainedBaseConstruction(
