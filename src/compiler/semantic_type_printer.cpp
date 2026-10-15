@@ -81,6 +81,9 @@ public:
     case SemanticType::SharedPointer:
       return unaryType("std::shared_ptr", type);
     case SemanticType::TypeParameter:
+      if (type.isAssociatedTypeProjection()) {
+        return projection(type);
+      }
       return genericParameter(type.genericParameterId, false);
     case SemanticType::TypePack:
       return genericParameter(type.genericParameterId, true);
@@ -235,6 +238,20 @@ private:
     return '(' + valueExpression(*expression.left) + ' ' +
            expression.token.lexeme + ' ' + valueExpression(*expression.right) +
            ')';
+  }
+
+  [[nodiscard]] std::string projection(const SemanticType &type) const {
+    const ProtocolConceptSpelling *spelling =
+        semantics.findProtocolConcept(type.projectionConcept);
+    if (spelling == nullptr ||
+        type.projectionMember >= spelling->associatedTypes.size()) {
+      return "associated type";
+    }
+    std::string result = spelling->qualifiedName + "<";
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      result += (index == 0 ? "" : ", ") + print(type.arguments[index]);
+    }
+    return result + ">::" + spelling->associatedTypes[type.projectionMember];
   }
 
   [[nodiscard]] std::string genericParameter(GenericParameterId id,
