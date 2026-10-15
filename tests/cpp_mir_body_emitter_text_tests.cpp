@@ -4380,6 +4380,116 @@ int main() { Tracked kept = take(Maker(1)); return kept.read() - 1; }
   }
 }
 
+// Once a later argument can fail, the same prepared receiver occupies its
+// slot from the stage: the call consumes that slot, and the failure edge
+// destroys it once. Removed, duplicated or ordinary failure-edge Drops must not
+// reach emission.
+void testPreparedConsumingReceiverLaterFailure() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-prepared-consuming-receiver-later-failure.gti", R"(
+class Tracked {
+  mut int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { this.id = 0; }
+  int read() { return this.id; }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  Tracked add(int value) && { return Tracked(this.base + value); }
+};
+int take(Maker maker, int divisor) {
+  Tracked made = std::move(maker).add(1 / divisor);
+  return made.read();
+}
+int main() { return take(Maker(1), 1) - 2; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a consuming member may take a later fallible argument");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::MirBodyAddress address{};
+  lang::MirInstructionId stage = 0;
+  lang::MirInstructionId cleanup = 0;
+  lang::MirPlaceId slot = 0;
+  lang::MirDropObligationId prepared = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Receiver &&
+            instruction.preparedParameterDrop && instruction.destination) {
+          address = {.kind = lang::MirBodyKind::Function, .owner = function.id};
+          stage = instruction.id;
+          slot = *instruction.destination;
+          prepared = *instruction.preparedParameterDrop;
+        }
+        if (instruction.kind == lang::MirInstructionKind::Drop &&
+            instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle.front().failureCleanup &&
+            instruction.lifecycle.front().source == prepared && prepared != 0)
+          cleanup = instruction.id;
+      }
+  expect(stage != 0 && cleanup != 0,
+         "the later argument's failure edge drops the prepared receiver");
+  if (stage == 0 || cleanup == 0)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "the prepared receiver is materialized ahead of the later argument");
+  const std::string text =
+      emitter.emitFailureBodyText(address, "prepared-receiver-test-v0", 1).text;
+  const std::string name = "__gti_mir_p_" + std::to_string(slot);
+  std::size_t destroys = 0;
+  for (std::size_t at = text.find(name + ".destroy();");
+       at != std::string::npos; at = text.find(name + ".destroy();", at + 1))
+    ++destroys;
+  expect(text.find(name + ".construct(std::move(") != std::string::npos &&
+             text.find("std::move(" + name + ".get()).") != std::string::npos &&
+             destroys == 2,
+         "the call consumes the receiver slot; it is retired after the call "
+         "and destroyed once on the failure edge:\n" +
+             text);
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const auto &instruction) { return instruction.id == cleanup; });
+      if (found == block.instructions.end())
+        continue;
+      if (mutation == 0) {
+        block.instructions.erase(found);
+      } else if (mutation == 1) {
+        auto duplicate = *found;
+        duplicate.id = 0;
+        for (const auto &other : body->blocks)
+          for (const auto &instruction : other.instructions)
+            duplicate.id = std::max(duplicate.id, instruction.id + 1);
+        block.instructions.insert(std::next(found), duplicate);
+      } else {
+        found->lifecycle.front().failureCleanup = false;
+      }
+      break;
+    }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "a forged prepared receiver cleanup fails MIR verification " +
+               std::to_string(mutation));
+    const lang::CppMirBodyEmitter rejected(malformed, map);
+    expect(!rejected.analyze(address).ready() ||
+               !rejected.supportsFailureBodyText(address),
+           "a forged prepared receiver cleanup cannot enter backend "
+           "emission " +
+               std::to_string(mutation));
+  }
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -5686,6 +5796,8 @@ constexpr NamedTest kTests[] = {
     {"testExpectedConsumingMemberReturn", testExpectedConsumingMemberReturn},
     {"testPreparedConsumingReceiverReturn",
      testPreparedConsumingReceiverReturn},
+    {"testPreparedConsumingReceiverLaterFailure",
+     testPreparedConsumingReceiverLaterFailure},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},

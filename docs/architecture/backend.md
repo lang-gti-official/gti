@@ -319,7 +319,15 @@ stages it as a prepared parameter on a mutable temporary: the receiver's
 the callee, exactly like an owning argument's. The receiver proof names the
 prepared slot as the consumed object, whatever the access of the moved-from
 binding, and the call spells the moved source in its place as it does for a
-staged by-value argument. The value-rooted result slot of a discarded,
+staged by-value argument. When a later argument can fail, as in
+`std::move(maker).make(1 / d)`, MIR's failure edge drops that prepared
+obligation. The receiver then occupies its prepared lifetime slot from the
+stage onward, like a by-value argument before a fallible one: the call
+consumes `std::move(<slot>)` and retires the slot, and the failure edge
+destroys the still-engaged slot once, without running the member. The receiver
+proof (`preparedReceiverStage`) admits exactly those failure-cleanup Drops as
+the slot's other users, so each result proof below covers this form unchanged.
+The value-rooted result slot of a discarded,
 replacing or field-read result already counts every prepared input. Other
 result proofs that count prepared argument transfers count this handoff too
 where their schedule admits it: the returned-result slot, an
@@ -2591,7 +2599,13 @@ a binding is instead a prepared parameter that the call transfers like an
 owning argument, as in `kept(std::move(source).take())` where `source`'s class
 needs no cleanup. Both producers count that transfer among the call's
 prepared inputs (`preparedReceiverStage`), so no receiver drop follows the
-field `Initialize`. A virtual member call, as in `kept(maker.make())` through
+field `Initialize`. A later fallible argument, as in
+`kept(std::move(source).take(1 / d))`, materializes that receiver in its
+prepared slot, and a moved or copied argument such as
+`kept(build(std::move(source), 1 / d))` in its own. The failure constructor
+boundary admits their failure-edge Drops as ordinary prepared-argument
+cleanup, as it does for a fresh argument result, rather than as rollback of an
+object field. A virtual member call, as in `kept(maker.make())` through
 a `Maker &` or `kept(factory.build(d))` through a `mut` interface reference,
 takes the transformed route through its exact virtual failure contract: MIR
 gives it `VirtualCall` propagation and an `Invoke` edge whose success edge
