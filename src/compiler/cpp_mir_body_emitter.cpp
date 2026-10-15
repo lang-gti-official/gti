@@ -3168,6 +3168,18 @@ packElementParameterIndex(const MirProgram &program, const MirBody &body,
   return uses;
 }
 
+// A cleanup-free move-only value, such as a payload enum whose alternative
+// holds a move-only field without a destructor, lives in a plain local with
+// no lifetime slot. Its one executable MIR use consumes it: a by-value call
+// stage, an invocation operand, an aggregate element or a store. C++ cannot
+// copy it, so that use spells the local as an rvalue.
+[[nodiscard]] bool consumedPlainMoveOnlyValue(const MirBody &body,
+                                              const MirValue &value) {
+  return value.info.traits.drop == DropKind::Trivial &&
+         value.info.traits.movable && !value.info.traits.copyable &&
+         nonRootRecordUses(body, value.id).size() == 1;
+}
+
 // An address calculation can exist solely to perform a checked projection.
 // Its later element uses already carry the complete MIR place; they need not
 // consume the intermediate row pointer. Preserve evaluation and failure edges,
@@ -36795,6 +36807,11 @@ private:
         output << "(*__gti_mir_loan_" << referent->id << ')';
         return;
       }
+      if (value != nullptr && !isTypedThreadJoinValue(operand.value) &&
+          consumedPlainMoveOnlyValue(*currentBody, *value)) {
+        output << "std::move(__gti_mir_v_" << operand.value << ')';
+        return;
+      }
       const bool passiveCopy =
           producer != nullptr &&
           passiveCopiedCallInput(program, *currentBody, *producer);
@@ -40424,12 +40441,14 @@ private:
         instruction.operands.front().kind == MirOperandKind::Value
             ? facts.body.findValue(instruction.operands.front().value)
             : nullptr;
+    // A plain cleanup-free local already spells its consuming use as a move.
     const bool moveOnlyValueInitialization =
         (instruction.kind == MirInstructionKind::Initialize ||
          instruction.kind == MirInstructionKind::Assign) &&
         storedValue != nullptr && storedValue->info.traits.movable &&
         !storedValue->info.traits.copyable &&
-        storedValue->info.type == instruction.operands.front().type;
+        storedValue->info.type == instruction.operands.front().type &&
+        !consumedPlainMoveOnlyValue(facts.body, *storedValue);
     const bool movedOperand =
         instruction.operands.front().type.kind == SemanticType::UniqueOwner ||
         moveOnlyValueInitialization ||

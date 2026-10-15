@@ -6229,13 +6229,39 @@ verifyMirPayloadEnums(const MirProgram &program) {
     }
   }
 
+  // A payload enum whose folded traits forbid copying has no copy operation,
+  // even when it needs no cleanup: a switch observing a named place
+  // read-borrows it, and every transfer moves.
+  const auto copiesMoveOnlyEnum = [&](const MirOperand &operand) {
+    const MirPayloadEnum *copied = operand.kind == MirOperandKind::Copy
+                                       ? program.findPayloadEnum(operand.type)
+                                       : nullptr;
+    return copied != nullptr && !copied->traits.copyable;
+  };
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
       continue;
     }
     for (const MirBlock &block : body->blocks) {
+      if (block.terminator.value && copiesMoveOnlyEnum(*block.terminator.value))
+        result.errors.push_back({.bodyKind = address.kind,
+                                 .owner = address.owner,
+                                 .block = block.id,
+                                 .message = "move-only payload enum is "
+                                            "copied by its terminator"});
       for (const MirInstruction &instruction : block.instructions) {
+        if (std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(), copiesMoveOnlyEnum)) {
+          result.errors.push_back({.bodyKind = address.kind,
+                                   .owner = address.owner,
+                                   .block = block.id,
+                                   .instruction = instruction.id,
+                                   .message = "move-only payload enum is "
+                                              "copied instead of borrowed or "
+                                              "moved"});
+          continue;
+        }
         if (instruction.operation != MirOperation::PayloadConstruct &&
             instruction.operation != MirOperation::PayloadExtract) {
           continue;
