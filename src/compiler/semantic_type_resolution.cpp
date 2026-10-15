@@ -6766,7 +6766,8 @@ auto SemanticVisitor::Impl::resolveRequirements(
     if (reportCompilerPrivatePath(application.name)) {
       continue;
     }
-    recordQualifiedPathUses(application.name);
+    if (!restated)
+      recordQualifiedPathUses(application.name);
     const std::optional<ConceptId> resolved =
         resolveConceptPath(application.name, scope);
     if (!resolved) {
@@ -6790,13 +6791,14 @@ auto SemanticVisitor::Impl::resolveRequirements(
     }
 
     RegisteredConcept &conceptInfo = concepts[*resolved - 1];
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(application.name.last()),
-         .kind = SemanticOccurrenceKind::Symbol,
-         .symbol = conceptInfo.symbol,
-         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
-         .name = application.name.last().lexeme});
+    if (!restated)
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(application.name.last()),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = conceptInfo.symbol,
+           .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+           .name = application.name.last().lexeme});
     (void)resolveConcept(*resolved, &application.name.last());
     if (conceptInfo.resolution != ConceptResolution::Resolved) {
       continue;

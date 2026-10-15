@@ -237,6 +237,14 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
       continue;
     }
+    recordQualifiedPathUses(target.name);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(site),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = concepts[*conceptId - 1].symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+         .name = site.lexeme});
     (void)resolveConcept(*conceptId, &site);
     const RegisteredConcept &conceptInfo = concepts[*conceptId - 1];
     if (!conceptInfo.protocol) {

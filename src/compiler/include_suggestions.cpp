@@ -372,7 +372,11 @@ void addIncludeSuggestions(
       diagnostic.code = "GTI-S2089";
     for (auto &fix : diagnostic.fixes) {
       fix.preferred = diagnostic.fixes.size() == 1;
-      diagnostic.hints.push_back(fix.message + " to this source file.");
+      const std::string hint = fix.message + " to this source file.";
+      if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(), hint) ==
+          diagnostic.hints.end()) {
+        diagnostic.hints.push_back(hint);
+      }
     }
   }
   std::sort(result.includeSuggestionInputs.begin(),

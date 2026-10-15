@@ -5260,6 +5260,21 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
   }
   if (requester != nullptr && target != nullptr) {
     diagnostic.missingIncludeName = use.lexeme;
+    // The defining unit is known even when adding it would expose other
+    // errors (for example, missing operations in a conformance block). Give
+    // that information as a hint; automatic edits still require a successful
+    // include-suggestion trial.
+    const std::string relative =
+        target->path.lexically_relative(requester->path.parent_path())
+            .generic_string();
+    if (!relative.empty() &&
+        relative.find_first_of("\r\n\"") == std::string::npos) {
+      const std::string spelling =
+          target->standardLibraryName ? "<" + *target->standardLibraryName + ">"
+                                      : "\"" + relative + "\"";
+      diagnostic.hints.push_back("Add #include " + spelling +
+                                 " to this source file.");
+    }
   }
   diagnostics.push_back(std::move(diagnostic));
   return true;

@@ -38,9 +38,10 @@ public:
 enum class State<T> { empty, value(T item) };
 static int inspect<T>(T item) { return item.value; }
 int main() {
-  Box<Outer::Inner> box(Outer::Inner{.value = 7});
+  Outer::Inner inner{.value = 7};
+  Box<Outer::Inner> box{inner};
   State<int> state = State<int>::empty;
-  return box.read() + inspect<Outer::Inner>(Outer::Inner{.value = 7})
+  return box.read() + inspect<Outer::Inner>(inner)
     + left() + right() - 47;
 }
 """),
