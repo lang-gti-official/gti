@@ -3320,6 +3320,14 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(borrowed_argument_fallible_condition_runtime PROPERTIES
                        TIMEOUT 600)
   add_test(
+    NAME borrowed_argument_nested_owning_argument_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_argument_nested_owning_argument_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(borrowed_argument_nested_owning_argument_runtime
+                       PROPERTIES TIMEOUT 600)
+  add_test(
     NAME conditional_converted_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/conditional_converted_receiver_runtime_test.py"
@@ -3369,6 +3377,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conditional_prepared_input_result_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME conditional_cleanup_free_call_result_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_cleanup_free_call_result_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_cleanup_free_call_result_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME conditional_checked_arm_input_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_checked_arm_input_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_checked_arm_input_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME consuming_generic_owner_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3548,6 +3570,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(constructor_virtual_call_field_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME virtual_temporary_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/virtual_temporary_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(virtual_temporary_receiver_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME fresh_callable_later_argument_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"

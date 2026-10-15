@@ -6528,6 +6528,37 @@ the merge, and a failure while cleanup destroys a bound result reports the
 secondary failure. `testConditionalPreparedInputResult` in the emitter text
 suite refuses removed, duplicated and conditional input transfers and a second
 result activation, which MIR verification also rejects.
+`conditional_cleanup_free_call_result_runtime` runs the same eight
+configurations over a cleanup-free class result that each arm of a
+conditional makes by a member call, borrowing its receiver read-only or
+mutably or consuming it, or by a call that consumes a moved by-value
+argument. Each shape runs through both arms, bound, assigned, passed on,
+read through a field, and returned, in plain and failure-form bodies. The
+arms come from failure-free and raising callees, an arm beside an ordinary
+call, two moved arguments, a nested conditional, a generic receiver and a
+generic callee, and receivers and arguments with cleanup of their own. A
+returned join of ordinary raising calls, which earlier read an unwritten
+result, is covered too. A failing callee in an arm leaves no result.
+`testCleanupFreeConditionalCallArms` in the emitter text suite refuses
+removed, duplicated and conditional input transfers and a forged result
+activation, which MIR verification also rejects, and a forged consuming
+capability on a borrowed receiver.
+`conditional_checked_arm_input_runtime` runs the same eight configurations
+over a cleanup-free class result whose arms first evaluate inputs that can
+fail: overflow-checked arguments, a call computing an argument, a raising
+callee, a `?` operand, a scalar conditional or `&&` inside an argument, a
+nested conditional with a checked condition, and a temporary with cleanup in
+an argument. Each shape runs through both arms, bound, returned, assigned,
+passed on, read through a field, copied from a named place, used to
+initialize a field and re-entered in a loop. Failing inputs (an overflow in a
+bound arm, a failing argument call in a returned arm, a failing callee after a
+checked argument, an overflow in a nested condition) end their arm before its
+call, and cleanup destroys only what was constructed before. The
+`conditional_cleanup_free_call_result_runtime` fixture computes its call
+arms' checked arguments inside the arms as well.
+`testCheckedConditionalArmInputs` in the emitter text suite admits the bound,
+returned and `?` forms and refuses a failure edge or the other arm's edge
+forged into an arm, which MIR verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
@@ -6901,7 +6932,9 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, owning-field replacement, local cleanup failure, and secondary destructor failure, with exact cleanup order and source sites in 70 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
 | `constructor_member_call_field_runtime` | member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: failure-free borrowed receivers (by-value, read-only reference and `mut` reference parameters), consuming receivers moved from a parameter (including a cleanup-free one, which the call transfers) or a fresh temporary, a generic owner, field declaration defaults, and two member-call fields; a failing consuming call publishes nothing and cleans up its named or fresh receiver, a failing call on a transferred cleanup-free receiver rolls back the earlier published field, a later initializer failure rolls the published field back, and a consumed receiver whose destructor fails after publication rolls the field back, with the secondary failure reported when that rollback fails too |
 | `constructor_virtual_call_field_runtime` | virtual member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan through the transformed status ABI: a family no member of which fails, a base and a derived override through a base reference, an override selected through a derived reference, an interface contract root through a `mut` reference, a raising override, consuming members on a moved parameter, a moved cleanup-free parameter (a prepared input) and a fresh temporary, a generic owner, a field declaration default on a namespace-scope object, and two virtual-call fields; a failing override publishes nothing and a later initializer failure rolls the published field back |
+| `virtual_temporary_receiver_runtime` | non-consuming virtual member calls on fresh temporary receivers across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a generated-default producer in a function body, a member initializer, a field declaration default and a constructor-body assignment, an override, an inherited virtual and an inherited non-virtual member on a derived temporary, a virtual `operator()`, receivers in conditional arms and a conditional-joined receiver, a mutable interface override and a raising override in a function body and in a member initializer; every receiver is destroyed once at the end of its full expression in reverse construction order, and a failing override destroys its receiver and publishes nothing |
 | `borrowed_argument_fallible_condition_runtime` | a borrowed argument or receiver kept across a later conditional argument whose test or arm is a call that can fail, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a free function, a constructor, a method on the borrowed receiver and a local lambda consume the arguments; the test borrows another local, reads the borrowed local itself, runs a read or `mut` method on another receiver, or compares a returned text view; arms that select a text view; a `mut` borrowed argument and two borrowed arguments; a failing test or arm destroys each live local once, in reverse order, and nothing that was not yet constructed |
+| `borrowed_argument_nested_owning_argument_runtime` | a borrowed argument kept across a later conditional argument whose test or arm calls a function that takes a class argument by value, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a user class constructed from a nested call's result, a standard string built from a text view, a moved or copied local, the argument of a method on another local, and a construction followed by an argument that can fail, plus an owning argument of the outer call built from a text view; a failing nested call destroys its argument once, a failing construction publishes nothing, a later failing argument destroys the prepared argument, and each live local is destroyed once, in reverse order; `cpp_mir_body_emitter_preflight` rejects a doubled handoff and an abandoned failure-edge cleanup |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
@@ -7473,7 +7506,12 @@ mutable-only, paired-overload, and reusable `operator()` cases. It asserts the
 semantic receiver mode, HIR temporary-borrow role, exact MIR producer/place,
 `BorrowRead`/`BorrowWrite` stage, target qualifier, and single full-expression
 drop, then forges read-only storage, a mismatched qualifier, and a missing drop
-marker. `mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
+marker. `testVirtualTemporaryReceivers` covers virtual, override,
+interface-override, inherited and virtual `operator()` members with the same
+semantic/HIR/MIR assertions, then forges a statically dispatched virtual
+member, a table-dispatched non-virtual member, and a member whose owner lies
+outside the temporary's class hierarchy.
+`mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
 receiver cleanup and that producer failure does not activate a receiver drop.

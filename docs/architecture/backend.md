@@ -910,12 +910,37 @@ transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
 A passive arm may also be a static source call, publishing plainly or on its
 Invoke success edge, a copy of a named place, or the move out of a nested
-passive join. A nested join is proved on its own, and the nested arm's region
-starts at that inner join's branch block. When a passive join's single move
-reaches neither the binding nor the prepared argument terminal, the moved value
-is staged in its own representation-only slot and the join's representation
-ends right after. That staged slot then serves a return, field read,
-assignment or field initializer exactly as a fresh result's slot does.
+passive join. A member call arm keeps the receiver identity that ordinary call
+admission proves: its exact read-only or mutable borrow
+(`exactMemberBorrowReceiver`), or a consumed receiver
+(`exactMemberConsumingReceiver`), where a cleanup-free receiver moved out of a
+place is staged as a prepared input. A call arm may also consume prepared
+inputs, as in `Pod t = c ? std::move(a).pod() : make(std::move(b));`. The
+passive result has no obligation, so the arm call's lifecycle must be exactly
+one unconditional `TransferOut` per prepared input, the schedule
+`exactPreparedInputTransfers` proves, and no activation of its own
+(`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
+events stay outside this form. A nested join is proved on its own, and the
+nested arm's region starts at that inner join's branch block. A passive arm may
+also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
+with overflow-checked additions, a call that can fail, a `?` operand, or scalar
+control flow inside an argument. Without an exact diamond, the branch is the
+nearest common dominator of the two arm entries, and its two successors start
+the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
+(`exactConditionalArmRegion`): the branch enters it once and nothing else
+enters it or its arm's entry; its blocks are ordinary code dominated by the
+region's start; and their ordinary edges stay inside or reach the entry. An
+Invoke's failure edge leaves through its own failure record's cleanup and a
+`Return` leaves the body (a propagated `?` residual), both before the arm
+publishes anything. An owning join whose arms evaluate inputs first keeps the
+ordinary owned-temporary publication it already has. When a passive join's
+single move reaches neither the binding nor the prepared argument
+terminal, the moved value is staged in its own representation-only slot and
+the join's representation ends right after. That staged slot then serves a
+return, field read, assignment or field initializer exactly as a fresh
+result's slot does. In the failure form too, a Return of that staged value
+publishes the caller's result from the slot; the staging Move does not
+publish it.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
@@ -1294,7 +1319,12 @@ hidden slot and emits the selected method through the staged `BorrowRead` or
 `BorrowWrite` input. Verification and emission use the same MIR
 materialization query. The corresponding MIR drop remains the only destruction
 authority on normal and defined-failure paths. The backend does not infer
-mutability from a C++ rvalue or reselect the native member overload.
+mutability from a C++ rvalue or reselect the native member overload. A
+virtual member's call keeps its MIR dispatch: the slot is presented as the
+member's owner class (the temporary's own class or one of its bases) and the
+table selects the override, through the transformed status ABI when the family
+is failure-capable. The emitter allocates no storage for a by-value receiver
+here.
 
 For a verified read-only temporary argument input, the body emitter uses the
 same exact value-rooted lifetime slot and passes that slot to the selected
@@ -3732,26 +3762,30 @@ consuming call, and every normal path through the acyclic argument region must
 reach that call. Scalar and text-view computations, loads, input stages and
 expression temporaries may intervene. A nested function or method call may run
 wholly inside the region, for example as the conditional's test, one arm's
-value, or a direct scalar argument. Its inputs are scalar or
-text-view values and borrows staged for it alone: the receiver and arguments
-may borrow binding-rooted places through fields and reference dereferences,
-and a mutable borrow never names the borrowed place's root. Its scalar or
-text-view result has no loan or lifecycle, and any region instruction may
-consume it: a branch, a computation, a temporary or an input stage. The call
-keeps its MIR position and its own Invoke failure edge, which leaves the
-region before the outer call. The proof also covers a nested read-receiver or
-free function call, or an exact constructor, with scalar inputs and a cleanup-free nominal result whose
-sole consumer is an exact prepared argument slot for the outer call. Its
-failure edge precedes publication; result preparation does not change the
-borrowed local's address. An owning class argument for the same call may also
-be prepared before the conditional. It is either an exact constructor with
-scalar inputs, activated on its checked Invoke success edge or at a
-construction that cannot fail, or another local moved or copied into its exact
-prepared argument slot. Each prepared slot keeps its own failure-edge cleanup
-and sole handoff to the call, and none is the borrowed place. Whether the
-receiver is a method object or a local lambda does not change this proof.
-Other user-call shapes, other owning transfers, raw memory, loans, and
-arbitrary stores remain outside this proof. Thus the deferred local
+value, or a direct scalar argument. Its inputs are scalar or text-view values,
+borrows staged for it alone, and class arguments prepared in its own parameter
+slots: the receiver and arguments may borrow binding-rooted places through
+fields and reference dereferences, and a mutable borrow never names the
+borrowed place's root. Its scalar or text-view result has no loan, its only
+lifecycle effect is the handoff of its prepared arguments, and any region
+instruction may consume it: a branch, a computation, a temporary or an input
+stage. The call keeps its MIR position and its own Invoke failure edge, which
+leaves the region before the outer call. The proof also covers a nested
+read-receiver or free function call, or an exact constructor, with scalar or
+text-view inputs and a cleanup-free nominal result whose sole consumer is an
+exact prepared argument slot for the outer call or a nested call. Its failure
+edge precedes publication; result preparation does not change the borrowed
+local's address. An owning class argument of either call may also be prepared
+in the region, and one of the outer call before the conditional. It is either
+an exact constructor with scalar or text-view inputs, activated on its checked
+Invoke success edge or at a construction that cannot fail, or another local
+moved or copied into its exact prepared argument slot. The outer and nested
+calls share one prepared-slot proof: the slot's activation, its sole
+TransferOut to the consuming call, and a Drop of the slot on every failure edge
+between preparation and that call. No prepared slot is the borrowed place.
+Whether the receiver is a method object or a local lambda does not change
+this proof. Other user-call shapes, other owning transfers, raw memory, loans,
+and arbitrary stores remain outside this proof. Thus the deferred local
 address denotes the same object that was selected before argument evaluation;
 the backend does not reorder an observable address computation across a branch.
 

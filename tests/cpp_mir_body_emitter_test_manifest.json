@@ -102,6 +102,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testBorrowedArgumentNestedOwningArgumentAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalExpectedArgumentReceiverAdmission",
       "suite": "preflight"
     },
@@ -382,6 +386,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeConditionalCallArms",
+      "suite": "text"
+    },
+    {
       "name": "testMovedGenericOwnerReceiverStage",
       "suite": "text"
     },
@@ -423,6 +431,10 @@
     },
     {
       "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
+      "name": "testCheckedConditionalArmInputs",
       "suite": "text"
     },
     {
