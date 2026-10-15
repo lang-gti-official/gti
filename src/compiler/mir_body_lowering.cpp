@@ -129,7 +129,7 @@ public:
     // Every `?` propagation is an exit too, and a body whose last statement
     // is not a return may also complete by reaching its end.
     for (const HirValue &value : source.values) {
-      if (value.expectedPropagation) {
+      if (value.expectedPropagation || value.propagation) {
         ++exitCount;
       }
     }
@@ -3092,7 +3092,15 @@ private:
     MirDropObligationId sourceObligation = 0;
     MirLifecycleEventKind transition = MirLifecycleEventKind::Initialize;
     bool sourceRemainsTemporary = false;
-    if (value.kind == HirValueKind::Move && !value.operands.empty()) {
+    if (value.kind == HirValueKind::Move && !value.operands.empty() &&
+        temporarySlot(value.operands.front()) != 0) {
+      // Moving a materialized temporary hands its value to the result. As for
+      // a moved binding, the moved slot's obligation stays scheduled, and its
+      // full-expression Drop retires it.
+      sourceObligation = dropObligationForValue(value.operands.front());
+      transition = MirLifecycleEventKind::Move;
+      sourceRemainsTemporary = true;
+    } else if (value.kind == HirValueKind::Move && !value.operands.empty()) {
       sourceObligation = exactBindingDropObligation(value.operands.front());
       transition = MirLifecycleEventKind::Move;
       sourceRemainsTemporary = temporaryIsActive(sourceObligation);
@@ -3884,6 +3892,7 @@ private:
       break;
     case HirValueKind::Call:
     case HirValueKind::ExpectedPropagation:
+    case HirValueKind::Propagation:
     case HirValueKind::Conditional:
       place = loanOrValuePlace(*value);
       break;
@@ -4193,6 +4202,10 @@ private:
       emitPlaceDependencies(value->operands.front());
       MirPlaceId sourcePlace = placeForValue(value->operands.front());
       const HirValue *source = findValue(value->operands.front());
+      if (sourcePlace == 0) {
+        // A materialized temporary moves out of its value slot.
+        sourcePlace = temporarySlot(value->operands.front());
+      }
       if (source != nullptr && (source->kind == HirValueKind::Variable ||
                                 source->kind == HirValueKind::QualifiedName)) {
         const auto local = localSymbols.find(source->symbol);
@@ -4301,6 +4314,7 @@ private:
     switch (kind) {
     case HirValueKind::Call:
     case HirValueKind::ExpectedPropagation:
+    case HirValueKind::Propagation:
     case HirValueKind::Conditional:
     case HirValueKind::Grouping:
     case HirValueKind::Index:
@@ -4374,6 +4388,7 @@ private:
     // result: materialize it before a projection roots a place at it.
     if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
         value->kind == HirValueKind::ExpectedPropagation ||
+        value->kind == HirValueKind::Propagation ||
         value->kind == HirValueKind::Conditional) {
       emitValue(id);
       return;
@@ -4697,6 +4712,27 @@ private:
                  (candidate.expectedPropagation->successExtraction == valueId ||
                   candidate.expectedPropagation->errorExtraction == valueId);
         });
+  }
+
+  // The value-rooted slot of a materialized temporary whose obligation is
+  // still active, or zero.
+  [[nodiscard]] MirPlaceId temporarySlot(HirValueId id) {
+    const HirValue *temporary = findValue(id);
+    const MirDropObligationId obligation =
+        temporary == nullptr || temporary->info.category != ValueCategory::Value
+            ? 0
+            : dropObligationForValue(id);
+    const MirDropObligation *drop =
+        obligation == 0 ? nullptr : output.findDropObligation(obligation);
+    const MirPlace *slot =
+        drop == nullptr ? nullptr : output.findPlace(drop->place);
+    if (drop == nullptr || !temporaryIsActive(obligation) ||
+        drop->kind != MirDropObligationKind::Value || drop->value != id ||
+        slot == nullptr || slot->root != MirPlaceRootKind::Value ||
+        !slot->projections.empty()) {
+      return 0;
+    }
+    return slot->id;
   }
 
   [[nodiscard]] MirOperand temporaryBorrowOperand(
@@ -8621,6 +8657,142 @@ private:
     emittedValues.insert(value.id);
   }
 
+  // Prefix `?` through `std::tryable`: the operand and its block's has_value
+  // call complete on the incoming path, then one branch selects either the
+  // take_value call or the residual exit. The exit evaluates take_residual
+  // and, unless the residual already is the return type, the return type's
+  // implicit construction; it ends the full expression's temporaries created
+  // so far (newest first), performs lexical return cleanup and returns. Every
+  // step is an ordinary call or construction verified like any other.
+  void emitPropagation(const HirValue &value) {
+    if (!value.propagation || value.info.type == SemanticType::Unknown ||
+        value.info.category != ValueCategory::Value) {
+      valid = false;
+      return;
+    }
+    const HirPropagationPlan &plan = *value.propagation;
+    const HirValue *test = findValue(plan.test);
+    const HirValue *success = findValue(plan.output);
+    const HirValueId returnedValue =
+        plan.residualReturn != 0 ? plan.residualReturn : plan.residual;
+    const HirValue *returned = findValue(returnedValue);
+    if (test == nullptr || success == nullptr || returned == nullptr ||
+        test->info.type != SemanticType::Bool ||
+        success->info.type != value.info.type ||
+        returned->info.type != output.returnType) {
+      valid = false;
+      return;
+    }
+    const auto temporaryBaseline =
+        fullExpressionTemporaryBaselines.find(value.fullExpression);
+    const auto scopeBaseline =
+        fullExpressionScopeBaselines.find(value.fullExpression);
+    if (value.fullExpression == 0 ||
+        temporaryBaseline == fullExpressionTemporaryBaselines.end() ||
+        scopeBaseline == fullExpressionScopeBaselines.end()) {
+      valid = false;
+      return;
+    }
+    const MirOperand condition = valueOperand(plan.test);
+    if (terminated()) {
+      emittedValues.insert(value.id);
+      return;
+    }
+    const std::vector<Scope> evaluatedScopes = scopes;
+    const std::vector<TemporaryDrop> evaluatedTemporaryDrops = temporaryDrops;
+    const auto evaluatedBindingLoans = bindingLoans;
+    const MirBlockId successBlock = appendBlock();
+    const MirBlockId residualBlock = appendBlock();
+    terminate({.kind = MirTerminatorKind::Branch,
+               .hirValue = value.id,
+               .value = condition,
+               .target = successBlock,
+               .elseTarget = residualBlock});
+
+    current = residualBlock;
+    scopes = evaluatedScopes;
+    temporaryDrops = evaluatedTemporaryDrops;
+    const MirOperand result = valueOperand(returnedValue);
+    if (!terminated()) {
+      const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
+      prepareReturnOwnership(returnedValue, result);
+      endReturnExpressionLoans(scopeBaseline->second);
+      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
+      emitScopeExit(0);
+      publishReturnOwnership(returnedValue);
+      pendingReturnDrop = enclosingPendingReturnDrop;
+      terminate({.kind = MirTerminatorKind::Return,
+                 .hirValue = value.id,
+                 .value = result});
+    }
+
+    current = successBlock;
+    scopes = evaluatedScopes;
+    temporaryDrops = evaluatedTemporaryDrops;
+    // Cleanup on the residual path must not retire the success path's
+    // carrier-to-owner mapping, just as it must not retire its scope loans.
+    bindingLoans = evaluatedBindingLoans;
+    if (value.info.type == SemanticType::Void || !value.dropObligation) {
+      // The result is the take_value call's result itself, so consumers see
+      // an ordinary call rather than a join temporary that a class without
+      // a default constructor could not declare.
+      HirValue call = *success;
+      call.id = value.id;
+      call.fullExpression = value.fullExpression;
+      call.dropObligation.reset();
+      emitCall(call);
+      if (!terminated()) {
+        endAddedLoans(evaluatedScopes);
+      }
+      emittedValues.insert(value.id);
+      return;
+    }
+    const MirOperand produced = valueOperand(plan.output);
+    if (terminated()) {
+      emittedValues.insert(value.id);
+      return;
+    }
+    const MirPlaceId temporary = conditionalTemporary(value);
+    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                              .hirValue = value.id,
+                              .destination = temporary,
+                              .operands = {produced},
+                              .info = {.type = value.info.type,
+                                       .category = ValueCategory::Place,
+                                       .access = AccessMode::Mutable,
+                                       .traits = value.info.traits}};
+    const MirDropObligationId resultObligation =
+        dropObligationForValue(value.id, temporary);
+    const MirDropObligationId sourceObligation =
+        dropObligationForValue(plan.output);
+    if (resultObligation != 0) {
+      if (temporaryIsActive(sourceObligation)) {
+        appendReparentOrTypedTransfer(initialize, sourceObligation,
+                                      resultObligation);
+        (void)removeTemporary(sourceObligation);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                     .target = resultObligation});
+      }
+      registerTemporary(resultObligation);
+    }
+    (void)appendInstruction(std::move(initialize));
+    const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
+                            !value.info.traits.copyable;
+    (void)appendInstruction(
+        {.kind =
+             moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
+         .hirValue = value.id,
+         .result = resultFor(value),
+         .operands = {{.kind = moveResult ? MirOperandKind::Move
+                                          : MirOperandKind::Copy,
+                       .place = temporary,
+                       .type = value.info.type}},
+         .info = value.info});
+    endAddedLoans(evaluatedScopes);
+    emittedValues.insert(value.id);
+  }
+
   // An ordered compound update reads its place once, checks the arithmetic,
   // and commits the result. Representing those stages explicitly keeps the
   // schedule inside MIR's primitive vocabulary instead of one opaque
@@ -9064,6 +9236,10 @@ private:
 
     if (value->kind == HirValueKind::ExpectedPropagation) {
       emitExpectedPropagation(*value);
+      return;
+    }
+    if (value->kind == HirValueKind::Propagation) {
+      emitPropagation(*value);
       return;
     }
 
