@@ -1,0 +1,113 @@
+// A borrowed argument stays valid while a later argument's conditional tests
+// a call that can fail. The test borrows another local, reads the borrowed
+// local itself, runs a read or `mut` method on another receiver, or compares
+// a text view the call returns. A function, a constructor, a method on the
+// borrowed receiver and a local lambda consume the arguments, and the failing
+// call may also be one arm's value.
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int32_t identity;
+  mut int32_t uses = 0;
+public:
+  Tracked(int32_t identity) : identity(identity) {}
+  ~Tracked() { std::println(this.identity); }
+  int32_t read() { return this.identity + this.uses; }
+  int32_t plus(int32_t offset) { return this.read() + offset; }
+  void use() mut { this.uses = this.uses + 1; }
+};
+
+class Pair {
+  int32_t sum;
+public:
+  Pair(Tracked& tracked, int32_t offset) : sum(tracked.read() + offset) {}
+  ~Pair() { std::println(this.sum); }
+};
+
+// Whether `flag` was passed once; passing it twice makes the test fail.
+bool has(std::vector<std::string>& argv, std::string_view flag) {
+  mut int32_t seen = 0;
+  for (std::string& item : argv) {
+    if (item == flag) {
+      seen = seen + 1;
+    }
+  }
+  return 2 / (2 - seen) == 2;
+}
+
+// Ten divided by two less the number of `flag` arguments; passing it twice
+// makes the count fail.
+int32_t count(std::vector<std::string>& argv, std::string_view flag) {
+  mut int32_t found = 0;
+  for (std::string& item : argv) {
+    if (item == flag) {
+      found = found + 1;
+    }
+  }
+  return 10 / (2 - found);
+}
+
+class Gate {
+  std::string name;
+public:
+  Gate(std::string_view name) : name(name) {}
+  ~Gate() { std::println(7); }
+  bool open(std::vector<std::string>& argv) {
+    return has(argv, this.name.view());
+  }
+};
+
+// The destructor reports how many steps ran.
+class Counter {
+  mut int32_t steps = 0;
+public:
+  Counter() {}
+  ~Counter() { std::println(this.steps + 80); }
+  bool step(std::vector<std::string>& argv) mut {
+    this.steps = this.steps + 1;
+    return has(argv, "step");
+  }
+};
+
+std::string_view label(std::vector<std::string>& argv) {
+  return has(argv, "view") ? "view" : "none";
+}
+
+bool sees(Tracked& tracked, std::vector<std::string>& argv) {
+  return has(argv, "same") && tracked.read() > 0;
+}
+
+int32_t combine(Tracked& tracked, int32_t offset) {
+  return tracked.read() + offset;
+}
+
+int32_t both(Tracked& left, Tracked& right, int32_t offset) {
+  return left.read() * 10 + right.read() + offset;
+}
+
+int32_t advance(mut Tracked& tracked, int32_t offset) {
+  tracked.use();
+  return tracked.read() + offset;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Tracked first{1};
+  Tracked second{2};
+  mut Tracked third{3};
+  Gate gate{"method"};
+  mut Counter counter{};
+  auto join = [](Tracked& tracked, int32_t offset) -> int32_t {
+    return tracked.read() + offset;
+  };
+  std::println(combine(first, has(argv, "free") ? 10 : 20));
+  Pair pair{second, has(argv, "construct") ? 30 : 40};
+  std::println(combine(first, sees(first, argv) ? 50 : 60));
+  std::println(combine(second, gate.open(argv) ? 70 : 80));
+  std::println(advance(third, has(argv, "mut") ? 90 : 100));
+  std::println(combine(first, argc > 1 ? count(argv, "arm") : 0));
+  std::println(first.plus(has(argv, "receiver") ? 110 : 120));
+  std::println(both(first, second, counter.step(argv) ? 130 : 140));
+  std::println(join(third, label(argv) == "view" ? 150 : 160));
+  return 0;
+}

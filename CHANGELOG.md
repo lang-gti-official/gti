@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.2 — Borrowed arguments before a conditional whose test can fail
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call passes a local by reference and
+  a later argument is a conditional whose test calls a function that can
+  fail, such as `use(plain, has(argv, "split") ? 0 : 2)` or
+  `User user{plain, has(argv, "split") ? 0 : 2};`. The same fix covers a
+  test that is a method call (including a `mut` method on another local),
+  that reads the borrowed local itself, or that compares a returned
+  `std::string_view`; a call in one arm, as in `argc > 1 ? count(argv) : 0`;
+  a `mut` reference argument; a borrowed method receiver; and a local lambda
+  as the called function. If the test or arm fails, each live local is
+  destroyed once, as before.
+
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
