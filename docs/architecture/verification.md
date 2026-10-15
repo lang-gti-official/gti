@@ -6564,8 +6564,8 @@ configurations over loops that evaluate a cleanup-free conditional nested in
 another one's arm again on every iteration. The nested conditional sits in
 either arm, in both, or two levels deep. The result is bound, read through a
 field, passed on, assigned and returned. Its arms are failure-free and raising
-calls, constructions, borrowed and consuming member calls, and a generic
-class. Earlier, the second iteration aborted because the nested join's storage
+calls, constructions, borrowed and consuming member calls, a generic class, and
+arms that compute overflow-checked arguments first. Earlier, the second iteration aborted because the nested join's storage
 was still engaged. A raising callee in a nested arm fails the last iteration
 and leaves no result. `testNestedCleanupFreeJoinMove` in the emitter text
 suite checks that both nested joins and a viewed outer join end their storage

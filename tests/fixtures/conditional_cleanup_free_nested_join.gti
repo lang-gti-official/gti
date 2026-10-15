@@ -5,8 +5,9 @@
 // conditional, evaluated again by a loop. The enclosing arm moves the inner
 // join's object into the outer join's storage, which empties the inner
 // storage; the next iteration constructs both again. The nested conditional
-// may sit in either arm or in both, nest again, and be bound, read through a
-// field, passed on, assigned or returned.
+// may sit in either arm or in both, nest again, compute checked arguments in
+// its arms, and be bound, read through a field, passed on, assigned or
+// returned.
 //
 // Pod has no destructor. Tracked inputs print the negated id when destroyed.
 // Nothing else prints outside main and run, which keeps the shape functions
@@ -51,8 +52,6 @@ Pod divide(int a, int b) { return Pod(a / b); }
 
 int consume(Pod input) { return input.read(); }
 
-// Arm arguments are computed before the conditional: an arm whose argument
-// can fail before its call is not this join's shape.
 int nested_right(bool left, int one, int two) {
   mut int total = 0;
   for (mut int i = 0; i < 4; i += 1) {
@@ -135,6 +134,17 @@ int generic_box(bool left, int one) {
   return total;
 }
 
+// Nested arms that compute overflow-checked arguments first.
+int nested_checked(bool left, int one, int two) {
+  mut int total = 0;
+  for (mut int i = 0; i < 4; i += 1) {
+    Pod t = left ? (i > one ? fresh(i + 1) : Pod(i * 2))
+                 : (i > two ? fresh(two + 1) : Pod(i + 5));
+    total = total * 10 + t.x;
+  }
+  return total;
+}
+
 // A raising callee in a nested arm leaves no result.
 int raising(bool left, int one, int dividend, int last) {
   mut int total = 0;
@@ -155,6 +165,7 @@ int run(bool left) {
   std::println(nested_returned(left, 1));
   std::println(member_arms(left, 1));
   std::println(generic_box(left, 1));
+  std::println(nested_checked(left, 1, 2));
   return raising(left, 1, 12, 7);
 }
 
