@@ -2184,7 +2184,9 @@ public:
       // this state exists only so a transformed failure-capable constructor
       // can default-create its observation-free native shell, publish fields
       // in verified MIR order, and destroy an unpublished shell safely.
-      output << "std::variant<std::monostate";
+      output << (enumeration.requiresActiveCleanup
+                     ? "::gti_internal::backend::payload_variant<std::monostate"
+                     : "std::variant<std::monostate");
       for (std::size_t index = 0; index < enumeration.enumerators.size();
            ++index) {
         output << ", __gti_variant_"

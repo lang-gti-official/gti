@@ -20,6 +20,21 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Bytes",
       "Align",
       "Payload",
+      "Head",
+      "Tail",
+      "payload_union",
+      "payload_variant",
+      "payload_get",
+      "payload_equal_v",
+      "storage_",
+      "tag_",
+      "vacant",
+      "tag_type",
+      "dispatch",
+      "head",
+      "tail",
+      "tag",
+      "equal",
       "operations",
       "payload",
       "object",
@@ -526,6 +541,185 @@ void writeCppSupportPreamble(std::ostream &output,
 struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
+
+// Owning payload-enum carrier. MIR, not this native type, selects legal
+// alternatives, transfers GTI obligations and runs source cleanup. The union
+// only retires the resulting native member lifetimes. Unlike std::variant,
+// destruction is a direct tag branch rather than a visitor-table call.
+template <typename... Values> union payload_union;
+template <> union payload_union<> {
+  payload_union() noexcept {}
+  ~payload_union() noexcept {}
+};
+template <typename Head, typename... Tail>
+union payload_union<Head, Tail...> {
+  Head head;
+  payload_union<Tail...> tail;
+  payload_union() noexcept {}
+  ~payload_union() noexcept {}
+
+  template <std::size_t Index, typename... Args>
+  void construct(Args &&...args) {
+    if constexpr (Index == 0) {
+      std::construct_at(std::addressof(head), std::forward<Args>(args)...);
+    } else {
+      std::construct_at(std::addressof(tail));
+      tail.template construct<Index - 1>(std::forward<Args>(args)...);
+    }
+  }
+  template <std::size_t Index> void destroy() noexcept {
+    if constexpr (Index == 0) {
+      std::destroy_at(std::addressof(head));
+    } else {
+      tail.template destroy<Index - 1>();
+      std::destroy_at(std::addressof(tail));
+    }
+  }
+  template <std::size_t Index> decltype(auto) get() & noexcept {
+    if constexpr (Index == 0) return (head);
+    else return tail.template get<Index - 1>();
+  }
+  template <std::size_t Index> decltype(auto) get() const & noexcept {
+    if constexpr (Index == 0) return (head);
+    else return tail.template get<Index - 1>();
+  }
+};
+
+template <typename T>
+inline constexpr bool payload_equal_v = requires(const T &left, const T &right) {
+  bool(left == right);
+};
+
+template <typename... Values> class payload_variant {
+  static_assert(sizeof...(Values) != 0);
+  using tag_type = std::conditional_t<(sizeof...(Values) < 256), std::uint8_t,
+      std::conditional_t<(sizeof...(Values) < 65536), std::uint16_t, std::size_t>>;
+  static constexpr tag_type vacant = static_cast<tag_type>(-1);
+  payload_union<Values...> storage_;
+  tag_type tag_ = vacant;
+
+  template <std::size_t Index = 0, typename Callable>
+  static void dispatch(std::size_t tag, Callable &&callable) {
+    if constexpr (Index < sizeof...(Values)) {
+      if (tag == Index) callable.template operator()<Index>();
+      else dispatch<Index + 1>(tag, std::forward<Callable>(callable));
+    }
+  }
+  template <std::size_t Index, typename... Args>
+  void construct(Args &&...args) {
+    static_assert(Index < sizeof...(Values));
+    // Publish only after complete construction. If native construction throws,
+    // no alternative is live; any active recursive tails contain no resource.
+    storage_.template construct<Index>(std::forward<Args>(args)...);
+    tag_ = static_cast<tag_type>(Index);
+  }
+  void destroy_active() noexcept {
+    dispatch(tag_, [this]<std::size_t Index>() {
+      storage_.template destroy<Index>();
+    });
+    tag_ = vacant;
+  }
+public:
+  payload_variant() noexcept(std::is_nothrow_default_constructible_v<
+      std::tuple_element_t<0, std::tuple<Values...>>>) { construct<0>(); }
+  template <std::size_t Index, typename... Args>
+  explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
+    construct<Index>(std::forward<Args>(args)...);
+  }
+  payload_variant(const payload_variant &other)
+      requires (std::is_copy_constructible_v<Values> && ...) {
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(other.storage_.template get<Index>());
+    });
+  }
+  payload_variant(payload_variant &&other)
+      noexcept((std::is_nothrow_move_constructible_v<Values> && ...))
+      requires (std::is_move_constructible_v<Values> && ...) {
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(std::move(other.storage_.template get<Index>()));
+    });
+  }
+  payload_variant &operator=(const payload_variant &other)
+      requires ((std::is_copy_constructible_v<Values> && ...) &&
+                (std::is_copy_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    if (tag_ != other.tag_) {
+      destroy_active();
+      dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+        construct<Index>(other.storage_.template get<Index>());
+      });
+    } else {
+      dispatch(tag_, [this, &other]<std::size_t Index>() {
+        storage_.template get<Index>() = other.storage_.template get<Index>();
+      });
+    }
+    return *this;
+  }
+  payload_variant &operator=(payload_variant &&other)
+      noexcept((std::is_nothrow_move_constructible_v<Values> && ...) &&
+               (std::is_nothrow_move_assignable_v<Values> && ...))
+      requires ((std::is_move_constructible_v<Values> && ...) &&
+                (std::is_move_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    if (tag_ != other.tag_) {
+      destroy_active();
+      dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+        construct<Index>(std::move(other.storage_.template get<Index>()));
+      });
+    } else {
+      dispatch(tag_, [this, &other]<std::size_t Index>() {
+        storage_.template get<Index>() = std::move(other.storage_.template get<Index>());
+      });
+    }
+    return *this;
+  }
+  ~payload_variant() noexcept { destroy_active(); }
+  std::size_t index() const noexcept {
+    return tag_ == vacant ? std::variant_npos : std::size_t(tag_);
+  }
+  // Access is selected only by a sealed MIR alternative and dominated by its
+  // tag proof. No public GTI unchecked accessor or layout promise is created.
+  template <std::size_t Index> decltype(auto) get() & noexcept {
+    return storage_.template get<Index>();
+  }
+  template <std::size_t Index> decltype(auto) get() const & noexcept {
+    return storage_.template get<Index>();
+  }
+  friend bool operator==(const payload_variant &left, const payload_variant &right)
+      requires (payload_equal_v<Values> && ...) {
+    if (left.tag_ != right.tag_) return false;
+    bool equal = true;
+    dispatch(left.tag_, [&]<std::size_t Index>() {
+      equal = left.storage_.template get<Index>() == right.storage_.template get<Index>();
+    });
+    return equal;
+  }
+};
+
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(payload_variant<Values...> &value) noexcept {
+  return value.template get<Index>();
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(const payload_variant<Values...> &value) noexcept {
+  return value.template get<Index>();
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(payload_variant<Values...> &&value) noexcept {
+  return std::move(value.template get<Index>());
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(const payload_variant<Values...> &&value) noexcept {
+  return std::move(value.template get<Index>());
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(std::variant<Values...> &value) { return std::get<Index>(value); }
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(const std::variant<Values...> &value) { return std::get<Index>(value); }
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(std::variant<Values...> &&value) { return std::get<Index>(std::move(value)); }
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(const std::variant<Values...> &&value) { return std::get<Index>(std::move(value)); }
 
 // A union's implicit copy/move copies its object representation, rather than
 // evaluating its pointer member ([class.copy.ctor], [class.copy.assign]).

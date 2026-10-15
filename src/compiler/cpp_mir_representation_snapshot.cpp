@@ -1971,13 +1971,14 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       {.kind = CppMirEmissionCapabilityKind::CallableDispatch,
        .spelling = "cpp_deduced_callable_v1"});
   // Payload names the variant record representation the artifact ships
-  // for payload enums: a struct wrapping std::variant of per-enumerator
-  // __gti_variant_<index> records, constructed by wrapping the variant
-  // record and read by std::get over the proven alternative. The enum
-  // row's copied variant inventory carries the exact spellings.
+  // for payload enums: a struct wrapping a tagged carrier of per-enumerator
+  // __gti_variant_<index> records. Owning rows use the backend union carrier;
+  // passive rows retain trivial std::variant transport. payload_get accesses
+  // only the proven alternative. The sealed row supplies exact variants,
+  // traits and cleanup requirements; native traits never admit a GTI operation.
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Payload,
-       .spelling = "cpp_variant_record_v1"});
+       .spelling = "cpp_tagged_payload_record_v2"});
   // VirtualDispatch names the C++ virtual member representation: a
   // virtual or override method's emitted in-class definition carries the
   // language's own dispatch, and a virtual call spells the ordinary
