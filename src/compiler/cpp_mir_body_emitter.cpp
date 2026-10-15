@@ -16937,15 +16937,29 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   const MirDropObligation *valueDrop =
       value == nullptr ? nullptr
                        : uniqueValueDrop(body, valueId, value->info.type);
+  // A source member call's receiver is either its exact borrow or, for a
+  // consuming (`&&`) member, its exact materialized receiver. Neither is a
+  // transfer at Call: the receiver keeps its own obligation, whose
+  // full-expression Drop MIR schedules after the field Initialize, so a
+  // failure there already rolls the published field back.
+  const auto consumingReceiver = [&]() {
+    return producer != nullptr && functionTarget != nullptr &&
+           exactMemberConsumingReceiver(program, body, *producer,
+                                        *functionTarget);
+  };
   const auto exactMemberReceiver = [&]() {
     return producer != nullptr && functionTarget != nullptr &&
-           exactMemberBorrowReceiver(program, body, *producer, *functionTarget);
+           (exactMemberBorrowReceiver(program, body, *producer,
+                                      *functionTarget) ||
+            consumingReceiver());
   };
   const bool commonProducer =
       value != nullptr && producer != nullptr && producer->result &&
       *producer->result == valueId && !producer->destination &&
       !producer->bodyTarget && !producer->lambdaTarget &&
-      !producer->callableInvocation &&
+      // The only callable invocation admitted is a consuming member's `Once`
+      // receiver, proved by the shared consuming-receiver gate.
+      (!producer->callableInvocation || consumingReceiver()) &&
       (producer->intrinsic == IntrinsicKind::None ||
        (producer->intrinsic == IntrinsicKind::SharedOwnerEmpty &&
         sharedOwnerType(program, value->info.type))) &&
@@ -17048,16 +17062,19 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   // A failure-free source call likewise publishes its owning result with its
   // own Initialize event, after any prepared input transferred out, rather
   // than on an Invoke edge. The field Initialize still reparents that exact
-  // obligation into the field's rollback.
+  // obligation into the field's rollback. A member receiver uses the same
+  // exact receiver proof as the failure-capable call above.
   const bool successfulFunctionProducer =
       commonProducer && producer->kind == MirInstructionKind::Call &&
       producer->functionTarget && !producer->constructorTarget &&
-      !producer->receiver && producer->dispatch == CallDispatch::Static &&
+      producer->dispatch == CallDispatch::Static &&
       producer->definedFailure.empty() && !producer->successResultDrop &&
       functionTarget != nullptr && !functionTarget->mayRaiseDefinedFailure &&
       functionTarget->returnType == value->info.type &&
       functionTarget->parameterTypes == producer->parameterTypes &&
-      (!functionTarget->owner || functionTarget->staticMember) &&
+      ((!producer->receiver &&
+        (!functionTarget->owner || functionTarget->staticMember)) ||
+       exactMemberReceiver()) &&
       functionTarget->definitionKind == MirDefinitionKind::Source &&
       functionTarget->linkage == LanguageLinkage::Gti && valueDrop != nullptr &&
       plainCallActivates(body, *producer, valueDrop->id) &&
