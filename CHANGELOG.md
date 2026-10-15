@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.3 — Class results of lambda calls
+## 0.440.4 — Class results of lambda calls
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a lambda call returns a class without a
@@ -27,6 +27,18 @@ for what minor and patch releases mean.
   when its body passes a temporary that cannot be copied, or whose class has
   a destructor, by value to a constructor, as in
   `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
+
+## 0.440.3 — Conditional results with checked arm arguments
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:` evaluates an input that
+  can fail before producing a class result without a destructor, such as
+  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
+  is overflow-checked. Arguments computed by calls that can fail, `?`
+  operands, and nested conditionals or `&&`/`||` inside an argument work the
+  same way, whether the result is bound, returned, assigned, passed on, read
+  through a field or used to initialize a field. A failing input ends its
+  arm before the call, with the usual cleanup.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
