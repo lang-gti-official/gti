@@ -318,7 +318,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v106`/`mir-body-v87`,
+The combined deterministic serialization is currently `mir-v107`/`mir-body-v88`,
 with `lowered-program-v20` declaration metadata. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
 and place identity; the declaration format also retains exact external storage
@@ -330,6 +330,21 @@ carrier origins; mutable captures make the environment non-copyable and require
 exclusive invocation. Composed carriers retain every dependency and ancestor,
 including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
+
+Function rows retain optional declaration-relative complete result dependency
+contracts. For the initial known-empty enum slice, MIR independently validates
+each declared alternative's exact concrete type, tag and dependency-free
+payload layout, then reconstructs facts at every reachable normal return. The
+actual alternatives must be covered by the declaration contract; additional
+well-typed dependency-free cases are conservative, so optimizer narrowing does
+not change caller lifetime obligations. Unknown return facts and a function
+with no normal return cannot prove this contract. A program-local memoized
+query treats recursive/in-progress callees as unknown; declarations cannot
+justify one another cyclically. Exact direct calls use only independently
+verified target contracts, and failure successors receive no result fact.
+Value-annotation and return-contract checks share the same producer/storage
+dataflow reconstruction. These facts neither establish nor replace ordinary
+loan, access, escape, movement or cleanup proofs.
 
 Version 105/body 86 additionally distinguishes absent borrow-set evidence
 from a complete producer-attached set, including a proven empty set. An empty

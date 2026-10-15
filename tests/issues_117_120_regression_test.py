@@ -113,7 +113,7 @@ def main() -> int:
         if emitted.returncode != 0:
             return fail("emit fixed-array cleanup MIR", emitted)
         mir = mir_path.read_text(encoding="utf8")
-        if not mir.startswith("mir-v106 ") or not all(
+        if not mir.startswith("mir-v107 ") or not all(
             marker in mir
             for marker in (
                 "fixed-array=schedule(extents=[3]",

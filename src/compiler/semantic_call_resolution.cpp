@@ -881,6 +881,7 @@ auto SemanticVisitor::Impl::analyzeFunctionItemCall(
                             .dispatch = CallDispatch::Static,
                             .receiverMode = CallReceiverMode::None};
   semanticModel.record(call, resolved);
+  semanticModel.clearBorrowDependencySet(call);
   recordSelectedCallOccurrence(call, std::move(resolved));
   currentType = callExpressionType(target->returnType);
 }
@@ -7278,6 +7279,15 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .callableArguments = std::move(callableArguments),
       .argumentReceiver = argumentReceiver};
   semanticModel.record(call, resolved);
+  // Complete dependency facts are body-derived, not overload properties.
+  // Read the exact declaration after the order-independent body demand above;
+  // never reuse an open primary's facts for a different concrete instance.
+  if (const auto complete = completeFunctionReturnBorrow(
+          function, resolved.typeArguments, resolved.valueArguments);
+      complete && complete->dependencies.empty()) {
+    semanticModel.recordBorrowDependencySet(
+        call, {.possibleAlternatives = complete->possibleAlternatives});
+  }
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 

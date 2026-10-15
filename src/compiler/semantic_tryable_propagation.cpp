@@ -328,6 +328,10 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   if (!selectResidualReturn(expr, returnType, residualType, construction)) {
     return SemanticType::Unknown;
   }
+  // This path returns from the enclosing callable even though its source is
+  // an expression, not a ReturnStmt. Until the selected residual operation's
+  // complete result contract is instantiated here, it contributes unknown.
+  loanFlow.unknownImplicitResultReturn = true;
   semanticModel.recordTryablePropagation(
       expr, {.operandType = operandType,
              .resultType = resultType,
