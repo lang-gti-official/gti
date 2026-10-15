@@ -13085,8 +13085,9 @@ int main() {
       cleanupTypes.size() == 1 ? *cleanupTypes.begin() : std::string();
   expect(
       cleanupType != nullptr && !concreteCleanup.empty() &&
-          artifact.contents.find("~" + concreteCleanup + "() noexcept { " +
-                                 cleanupName + "(); }") != std::string::npos &&
+          artifact.contents.find("~" + concreteCleanup + "() noexcept { if (" +
+                                 activeName + ") { " + cleanupName +
+                                 "(); } }") != std::string::npos &&
           artifact.contents.find("bool " + activeName + " = true;") !=
               std::string::npos &&
           artifact.contents.find("if (!" + activeName + ") { return true; }") !=
@@ -13103,8 +13104,8 @@ int main() {
               std::string::npos &&
           hasMirIntrinsicKind(frontend, lang::IntrinsicKind::ObjectDestroy) &&
           artifact.contents.find("mir_prefix_pop_v1") == std::string::npos,
-      "the backend should lower declared cleanup through an active drop state "
-      "and generated safe moves");
+      "the backend should guard native retirement with the same initialized "
+      "active drop state while retaining declared cleanup and safe moves");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-destructor.gti", R"(
