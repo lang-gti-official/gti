@@ -2130,11 +2130,13 @@ be implemented as a public-name case or backend expression probe.
 A concept with a body ([ADR 028](../decisions/028-protocol-concepts.md))
 resolves to `RegisteredConcept::protocol` state:
 - its associated names, in declaration order;
-- its operations' signatures, in the concept parameter's space.
+- its operations' signatures, in the concept parameters' space.
 
 While the operations are typed, each associated name maps to a projection of
-the parameter. The concept has no atomic or structural facts, so an inline
-constraint cannot express it and is rejected.
+the parameters. The concept has no atomic or structural facts, so an inline
+constraint cannot express it and is rejected. The concept's name and
+associated names are also recorded in the `SemanticModel`, so the type
+printer spells a projection as `C<A, B>::name`.
 
 **Parser desugar.** The parser rewrites each `for concept` block into a
 namespace whose generated `__gti_conformance_<digest>` name no source can
@@ -2153,8 +2155,13 @@ identity, which includes the generated namespace.
 
 **Registration** happens in two stages before the catalog is sealed:
 1. `registerConformances` runs right after concept resolution. It resolves
-   the concept from the block's enclosing namespace, then checks the pattern
-   shape, ADR 020 package coherence and overlap with earlier blocks. It
+   the concept from the block's enclosing namespace, then checks each
+   argument's pattern shape, that every block parameter appears, ADR 020
+   package coherence over the concept and every pattern's top-level type, and
+   overlap with earlier blocks. Overlap unifies two blocks' patterns
+   position by position: a union-find over both blocks' parameters, where
+   each class may hold one closed type. Patterns are flat, so parameters only
+   ever bind closed types or each other, and no occurs check is needed. It
    records each `using` type in the block's parameter space. A block with
    missing or extra associated types still registers, so its operations are
    still checked and its uses do not report a second error.
@@ -2166,18 +2173,20 @@ identity, which includes the generated namespace.
 `SemanticCatalog::conformances` is copied into instance-analysis snapshots and
 included in the instance-reuse fingerprint.
 
-**Selection.** `matchConformance` canonicalizes a concrete argument and
-returns the block whose pattern it matches, with the block's parameters bound
-from the class arguments. Satisfaction of an application of a concept with a
+**Selection.** `matchConformance` canonicalizes concrete arguments and
+returns the block whose patterns they match, position by position, with the
+block's parameters bound from the class arguments. A repeated parameter binds
+on its first occurrence and must agree at the others. Satisfaction of an application of a concept with a
 body first uses the ordinary forwarded proof from active requirement scopes.
 Otherwise it requires a matching block whose parameter constraints hold for
 the binding.
 
-**Projections.** A dependent `C<T>::name` is an opaque `TypeParameter` with
-no parameter identity. It carries `projectionConcept`, `projectionMember` and
-`T` as its only argument. `substituteType` substitutes the argument, and
+**Projections.** A dependent `C<T, U>::name` is an opaque `TypeParameter`
+with no parameter identity. It carries `projectionConcept`,
+`projectionMember` and the concept's arguments as its arguments.
+`substituteType` substitutes the arguments, and
 `selectExactClassSpecialization`, which ends every type resolution and
-substitution, reduces the projection once its argument is concrete. Reduction
+substitution, reduces the projection once its arguments are concrete. Reduction
 is depth-limited, so a cyclic block cannot recurse without bound.
 
 Inside a block's function, a bare associated name and a projection of the
