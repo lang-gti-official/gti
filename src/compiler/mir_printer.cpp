@@ -1421,7 +1421,9 @@ private:
       separator(index);
       output << value.designatedFields[index];
     }
-    output << "] lifecycle-bound=" << value.lifecycleBound
+    output << "] conditions=";
+    borrowConditions(value.conditions);
+    output << " lifecycle-bound=" << value.lifecycleBound
            << " additional-dependencies=[";
     for (std::size_t index = 0; index < value.additionalDependencies.size();
          ++index) {

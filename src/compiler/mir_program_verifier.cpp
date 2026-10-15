@@ -33,7 +33,12 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
 struct MirStoredCarrierReference {
   std::vector<SymbolId> fields;
   SemanticType reference = SemanticType::Unknown;
+  std::vector<BorrowDependencyCondition> conditions;
 };
+
+[[nodiscard]] std::optional<std::vector<MirStoredCarrierReference>>
+findStoredCarrierReferenceInventory(const MirProgram &program,
+                                    const SemanticType &type);
 
 [[nodiscard]] std::vector<MirStoredCarrierReference>
 findStoredCarrierReferences(const MirProgram &program,
@@ -2497,7 +2502,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
     std::vector<MirLoanDependency> result{
         {.source = loan.source,
          .designatedFields = loan.designatedFields,
-         .access = loan.access}};
+         .access = loan.access,
+         .conditions = loan.conditions}};
     for (const auto &dependency : loan.additionalDependencies)
       if (dependency.source != 0 || (fields && loan.entry))
         result.push_back(dependency);
@@ -4192,44 +4198,90 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
 [[nodiscard]] std::vector<MirStoredCarrierReference>
 findStoredCarrierReferences(const MirProgram &program,
                             const SemanticType &type) {
+  // The legacy query asks only for unconditional reference paths; its empty
+  // answer is never completeness evidence. Retain the cheap sealed class
+  // trait path for existing callers, while the proof query below walks fields.
+  if (type.kind == SemanticType::Class) {
+    const auto *instance = uniqueMirClassInstanceForType(program, type);
+    if (instance && !instance->traits.containsBorrowedState)
+      return {};
+  }
+  auto inventory = findStoredCarrierReferenceInventory(program, type);
+  if (!inventory ||
+      std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); }))
+    return {};
+  return std::move(*inventory);
+}
+
+[[nodiscard]] std::optional<std::vector<MirStoredCarrierReference>>
+findStoredCarrierReferenceInventory(const MirProgram &program,
+                                    const SemanticType &type) {
   std::vector<SemanticType> visiting;
   const auto visit = [&](const auto &self, const SemanticType &current)
-      -> std::vector<MirStoredCarrierReference> {
+      -> std::optional<std::vector<MirStoredCarrierReference>> {
+    if (current.kind == SemanticType::Unknown ||
+        current.kind == SemanticType::TypeParameter)
+      return std::nullopt;
     if (std::find(visiting.begin(), visiting.end(), current) !=
         visiting.end()) {
-      return {};
+      return std::nullopt;
     }
+    const auto childInventory = [&](const SemanticType &field)
+        -> std::optional<std::vector<MirStoredCarrierReference>> {
+      if (field.kind == SemanticType::Reference) {
+        if (field.arguments.size() != 1 ||
+            field.arguments.front().kind == SemanticType::Unknown ||
+            field.arguments.front().kind == SemanticType::TypeParameter)
+          return std::nullopt;
+        return std::vector<MirStoredCarrierReference>{{.reference = field}};
+      }
+      return self(self, field);
+    };
+    const auto prepend = [](MirStoredCarrierReference &path, SymbolId field) {
+      path.fields.insert(path.fields.begin(), field);
+      for (auto &condition : path.conditions)
+        condition.subobject.insert(condition.subobject.begin(), field);
+    };
     visiting.push_back(current);
     if (current.kind == SemanticType::Lambda) {
       const auto instance = std::find_if(
           program.lambdaInstances().begin(), program.lambdaInstances().end(),
           [&](const auto &row) { return row.type == current; });
       std::vector<MirStoredCarrierReference> paths;
-      if (instance != program.lambdaInstances().end() &&
+      bool invalid = instance == program.lambdaInstances().end();
+      if (!invalid &&
           instance->captureSymbols.size() == instance->captureTypes.size()) {
         for (std::size_t index = 0; index < instance->captureTypes.size();
              ++index) {
           const auto &field = instance->captureTypes[index];
-          auto children =
-              field.kind == SemanticType::Reference
-                  ? std::vector<MirStoredCarrierReference>{{.reference = field}}
-                  : self(self, field);
-          for (auto &child : children) {
-            child.fields.insert(child.fields.begin(),
-                                instance->captureSymbols[index]);
+          auto children = childInventory(field);
+          if (!children || instance->captureSymbols[index] == 0) {
+            invalid = true;
+            continue;
+          }
+          for (auto &child : *children) {
+            prepend(child, instance->captureSymbols[index]);
             paths.push_back(std::move(child));
           }
         }
-      }
+      } else
+        invalid = true;
       visiting.pop_back();
-      return paths;
+      return invalid ? std::nullopt : std::optional{std::move(paths)};
     }
     if (current.kind == SemanticType::Enum) {
       const auto *enumeration = program.findPayloadEnum(current);
       std::vector<MirStoredCarrierReference> paths;
+      if (enumeration == nullptr && program.findIntegralEnum(current)) {
+        visiting.pop_back();
+        return paths;
+      }
       bool invalid = enumeration == nullptr;
       if (enumeration != nullptr)
-        for (const auto &variant : enumeration->variants) {
+        for (std::size_t alternative = 0;
+             alternative < enumeration->variants.size(); ++alternative) {
+          const auto &variant = enumeration->variants[alternative];
           if (variant.payloadTypes.size() != variant.payloadSymbols.size()) {
             invalid = true;
             continue;
@@ -4237,81 +4289,71 @@ findStoredCarrierReferences(const MirProgram &program,
           for (std::size_t index = 0; index < variant.payloadTypes.size();
                ++index) {
             const auto &field = variant.payloadTypes[index];
-            auto children =
-                field.kind == SemanticType::Reference
-                    ? std::vector<MirStoredCarrierReference>{{.reference =
-                                                                  field}}
-                    : self(self, field);
-            for (auto &child : children) {
-              if (variant.payloadSymbols[index] == 0 ||
-                  child.reference.arguments.size() != 1) {
-                invalid = true;
-                continue;
-              }
-              child.fields.insert(child.fields.begin(),
-                                  variant.payloadSymbols[index]);
+            auto children = childInventory(field);
+            if (!children || variant.payloadSymbols[index] == 0) {
+              invalid = true;
+              continue;
+            }
+            for (auto &child : *children) {
+              prepend(child, variant.payloadSymbols[index]);
+              child.conditions.insert(
+                  child.conditions.begin(),
+                  {.enumeration = current, .variant = alternative});
               paths.push_back(std::move(child));
             }
           }
         }
       visiting.pop_back();
-      return invalid ? std::vector<MirStoredCarrierReference>{} : paths;
+      return invalid ? std::nullopt : std::optional{std::move(paths)};
     }
     if (current.kind != SemanticType::Class) {
       visiting.pop_back();
-      return {};
+      const auto traits = storagePayloadTraits(program, current);
+      return traits && !traits->containsBorrowedState
+                 ? std::optional{std::vector<MirStoredCarrierReference>{}}
+                 : std::nullopt;
     }
     const auto instance = std::find_if(program.classInstances().begin(),
                                        program.classInstances().end(),
                                        [&](const MirClassInstance &candidate) {
                                          return candidate.type == current;
                                        });
-    if (instance == program.classInstances().end() ||
-        !instance->traits.containsBorrowedState) {
+    if (instance == program.classInstances().end()) {
       visiting.pop_back();
-      return {};
+      return std::nullopt;
     }
     std::vector<MirStoredCarrierReference> references;
     bool invalid = false;
     const auto containsBorrow = [&](const SemanticType &candidateType) {
-      if (semanticTraits(candidateType).containsBorrowedState) {
-        return true;
-      }
-      const auto candidate = std::find_if(program.classInstances().begin(),
-                                          program.classInstances().end(),
-                                          [&](const MirClassInstance &row) {
-                                            return row.type == candidateType;
-                                          });
-      return candidate != program.classInstances().end() &&
-             candidate->traits.containsBorrowedState;
+      const auto traits = storagePayloadTraits(program, candidateType);
+      return !traits || traits->containsBorrowedState;
     };
-    if (instance->kind == ClassKind::Union || instance->cAbiRecord ||
-        (instance->destructor && !instance->lifecycleBoundBorrowCarrier)) {
+    if (instance->traits.containsBorrowedState &&
+        (instance->kind == ClassKind::Union || instance->cAbiRecord ||
+         (instance->destructor && !instance->lifecycleBoundBorrowCarrier))) {
       invalid = true;
     }
     for (const HirBaseInstance &base : instance->structuralBases) {
       invalid = invalid || (!base.interface && containsBorrow(base.type));
     }
     for (const MirClassFieldInfo &field : instance->declaredFields) {
-      std::vector<MirStoredCarrierReference> children;
-      if (field.type.kind == SemanticType::Reference) {
-        children.push_back(MirStoredCarrierReference{.reference = field.type});
-      } else {
-        children = self(self, field.type);
-        invalid = invalid || (children.empty() && containsBorrow(field.type));
+      auto children = childInventory(field.type);
+      if (!children) {
+        invalid = true;
+        continue;
       }
-      for (auto &child : children) {
+      for (auto &child : *children) {
         if (field.symbol == 0 || child.reference.arguments.size() != 1) {
           invalid = true;
           continue;
         }
-        child.fields.insert(child.fields.begin(), field.symbol);
+        prepend(child, field.symbol);
         references.push_back(std::move(child));
       }
     }
     visiting.pop_back();
     if (invalid) {
-      return {};
+      return std::nullopt;
     }
     return references;
   };
@@ -5771,7 +5813,8 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       std::vector<MirLoanDependency> actual{
           {.source = loan->source,
            .designatedFields = loan->designatedFields,
-           .access = loan->access}};
+           .access = loan->access,
+           .conditions = loan->conditions}};
       actual.insert(actual.end(), loan->additionalDependencies.begin(),
                     loan->additionalDependencies.end());
       if (actual.size() != instance.returnBorrowFields.size())
@@ -11260,12 +11303,18 @@ private:
       return verificationFailure(body, owner,
                                  "conditional result dependencies require an "
                                  "implemented complete-set contract proof");
-  for (const auto &loan : body.loans)
+  for (const auto &loan : body.loans) {
+    if (!loan.conditions.empty())
+      return verificationFailure(
+          body, owner,
+          "conditional primary loan dependencies require "
+          "an implemented active-alternative proof");
     for (const auto &dependency : loan.additionalDependencies)
       if (!dependency.conditions.empty())
         return verificationFailure(body, owner,
                                    "conditional loan dependencies require "
                                    "an implemented active-alternative proof");
+  }
   std::unordered_map<MirValueId, const MirInstruction *> producers;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {

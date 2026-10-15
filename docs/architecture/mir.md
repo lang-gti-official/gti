@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v106`, `mir-body-v87`).
+instruction, body, and caller-assignment facts (`mir-v107`, `mir-body-v88`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -365,6 +365,14 @@ Conditional nonempty loans, loop-carried conditional dependency contracts and
 declaration-owned result-summary proofs remain implementation goals. This
 infrastructure does not admit reference-bearing enum payloads yet.
 
+Version 107/body 88 preserves typed active-alternative conditions on the primary
+loan dependency as well as each additional dependency. Conditions retain exact
+enum identities and nested subobject paths across semantic, HIR and MIR records;
+they are not qualified as body-local origin places. Until the active-alternative
+proof is implemented, the verifier rejects conditional primary and additional
+loans symmetrically rather than silently treating the first field as
+unconditional.
+
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. Restoration is explicitly unsafe and retains its
 checked lifetime witness. The GTI function-pointer operation records either one
@@ -459,7 +467,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v106`/`lowered-program-v20`, preserving
+The combined serialization is `mir-v107`/`lowered-program-v20`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

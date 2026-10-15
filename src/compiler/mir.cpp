@@ -4125,7 +4125,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         accesses.insert(accesses.begin(),
                         {.source = loan.source,
                          .designatedFields = loan.designatedFields,
-                         .access = loan.access});
+                         .access = loan.access,
+                         .conditions = loan.conditions});
         std::vector<std::pair<MirCanonicalPlace, AccessMode>> taskAccesses;
         for (const auto &access : accesses) {
           auto origin =

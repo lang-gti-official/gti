@@ -3691,6 +3691,11 @@ private:
       return;
     }
     lowered.designatedFields = loan.designatedFields;
+    if (!lowered.conditions.empty() && lowered.conditions != loan.conditions) {
+      valid = false;
+      return;
+    }
+    lowered.conditions = loan.conditions;
     const auto previousDependencies = lowered.additionalDependencies;
     std::erase_if(lowered.additionalDependencies, [](const auto &dependency) {
       return dependency.source == 0;
@@ -3724,7 +3729,8 @@ private:
                            ? semanticLoans.at(dependency.parent)
                            : 0,
              .designatedFields = dependency.designatedFields,
-             .access = dependency.access});
+             .access = dependency.access,
+             .conditions = dependency.conditions});
         if (dependency.parent != 0 &&
             lowered.additionalDependencies.back().parent == 0)
           valid = false;
