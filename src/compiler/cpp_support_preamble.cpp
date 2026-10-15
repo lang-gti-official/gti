@@ -208,6 +208,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "function_item",
       "function_pointer",
       "function_pointer_parameter",
+      "function_pointer_result",
       "expected_result",
       "forward_pack_argument",
       "fresh",
@@ -916,11 +917,18 @@ template <typename T>
 using function_pointer_parameter = std::conditional_t<
     !std::is_reference_v<T> && byte_transport<std::remove_cvref_t<T>>::value,
     const T &, T>;
+// A reference result publishes its loan pointer through the `T **` channel
+// shared with every verified GTI function body (ADR 018 §5).
+template <typename Result>
+using function_pointer_result =
+    std::conditional_t<std::is_reference_v<Result>,
+                       std::remove_reference_t<Result> *, Result>;
 template <typename Signature> struct function_pointer;
 template <typename Result, typename... Arguments>
 struct function_pointer<Result(Arguments...)> final {
   using pointer = bool (*)(function_pointer_parameter<Arguments>...,
-                           Result *, ::gti_failure_record_v2 *);
+                           function_pointer_result<Result> *,
+                           ::gti_failure_record_v2 *);
   pointer target;
 };
 template <typename... Arguments>

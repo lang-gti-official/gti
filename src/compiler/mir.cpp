@@ -10794,10 +10794,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           loan.kind == MirLoanKind::Parameter && loan.semanticLoan != 0 &&
           loan.producedBy == 0 && loan.parent == 0 && !loan.escapes &&
           loan.carriers.empty();
+      // A summarized return origin seeds its own Parameter entry without a
+      // semantic loan, on the whole formal or on the one pack element the
+      // contract names; the function summary verifies that formal.
+      const bool seededReferenceEntry =
+          loan.kind == MirLoanKind::Parameter && loan.producedBy == 0 &&
+          loan.parent == 0 && !loan.carriers.empty();
       const bool packElement =
           source != nullptr && source->projections.size() == 1 &&
           source->projections.front().kind == MirProjectionKind::PackElement &&
-          loan.semanticLoan != 0 &&
+          (loan.semanticLoan != 0 || seededReferenceEntry) &&
           ((source->type.kind == SemanticType::Reference &&
             source->type.referenceAccess == loan.access &&
             loan.kind == MirLoanKind::Parameter) ||

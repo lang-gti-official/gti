@@ -451,6 +451,9 @@ struct HirLambda {
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};
+  BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  std::size_t returnBorrowParameter = 0;
+  AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   HirBody body;
 };
 
