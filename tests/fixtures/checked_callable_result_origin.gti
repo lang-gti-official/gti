@@ -1,0 +1,42 @@
+#include <std/functional>
+
+// A reference result relays its one read-only reference parameter through a
+// lambda, a generic relay, an invocation pointer and a signature-erased view.
+// Every result must alias the argument it was formed from.
+class Record {
+public:
+  int first;
+  int second;
+  Record(int first, int second) : first(first), second(second) {}
+};
+
+int& larger(int& left, int right) { return left; }
+
+[[borrowed_from(value)]]
+int& relay<F>(F& callback, int& value) { return callback(value); }
+
+int& pick_first(Record& record) { return record.first; }
+
+int main() {
+  int cell = 4;
+  auto same = [](int& value) -> int& { return value; };
+  int& direct = same(cell);
+  if (direct != 4) return 1;
+
+  int& relayed = relay(same, cell);
+  if (relayed != 4) return 2;
+
+  std::function_ptr<int&(int&, int)> pointer{larger};
+  int& pointed = pointer(cell, 9);
+  if (pointed != 4) return 3;
+
+  std::function_ref<int&(int&)> view{same};
+  int& viewed = view(cell);
+  if (viewed != 4) return 4;
+
+  Record record{7, 8};
+  std::function_ptr<int&(Record&)> field{pick_first};
+  int& first = field(record);
+  if (first != 7 || record.second != 8) return 5;
+  return 0;
+}

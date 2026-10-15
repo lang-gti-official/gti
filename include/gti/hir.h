@@ -127,6 +127,10 @@ struct HirBinding {
   const Parameter *parameter = nullptr;
   const Token *payloadPattern = nullptr;
   const StructuredBindingDecl *structuredSource = nullptr;
+  // The hidden owner of a consumed payload-enum switch subject. It holds the
+  // enum from the end of the subject's full expression to the selected arm's
+  // entry, where the arm's by-value bindings take its fields or it is dropped.
+  const SwitchStmt *switchSubject = nullptr;
   BindingInfo info;
   std::optional<HirDropObligationId> dropObligation;
 };
@@ -470,6 +474,9 @@ struct HirLambda {
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};
+  BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  std::size_t returnBorrowParameter = 0;
+  AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   HirBody body;
 };
 

@@ -1777,6 +1777,24 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
+    // A lambda value or generic callable invocation with a reference result
+    // denotes the referent place exactly like a function call result.
+    if (resolved == nullptr) {
+      const SemanticType *callableResult = nullptr;
+      if (const ResolvedLambdaCallInfo *lambdaCall =
+              semanticModel.findLambdaCall(call)) {
+        callableResult = &lambdaCall->returnType;
+      } else if (const DeferredCallableCallInfo *deferred =
+                     semanticModel.findDeferredCallableCall(call)) {
+        callableResult = &deferred->returnType;
+      }
+      if (callableResult != nullptr &&
+          callableResult->kind == SemanticType::Reference &&
+          callableResult->arguments.size() == 1) {
+        return expressionInfo(std::move(type), ValueCategory::Place,
+                              callableResult->referenceAccess);
+      }
+    }
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
@@ -5840,8 +5858,8 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
 }
 
 auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
-    const ExprPtr &expression, const SemanticType &subjectType)
-    -> std::optional<ResolvedPayloadPatternInfo> {
+    const ExprPtr &expression, const SemanticType &subjectType,
+    bool consumingSubject) -> std::optional<ResolvedPayloadPatternInfo> {
   const Call *call = exprAs<Call>(expression.get());
   const auto *qualified = exprAs<QualifiedName>(
       call == nullptr ? expression.get() : call->callee().get());
@@ -5872,7 +5890,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
   ResolvedPayloadPatternInfo result{.owner = subjectType.enumId,
                                     .type = subjectType,
                                     .declaration = enumerator->declaration,
-                                    .variantIndex = enumerator->variantIndex};
+                                    .variantIndex = enumerator->variantIndex,
+                                    .consuming = consumingSubject};
   if (call == nullptr) {
     return result;
   }
@@ -5912,7 +5931,30 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       return std::nullopt;
     }
     const SemanticType &payloadType = enumerator->payloadTypes[index];
-    if (!binding->isReferencePattern() && !typeTraits(payloadType).copyable) {
+    const std::string tagOnlyPattern =
+        "'case " + typeSpelling(subjectType) +
+        "::" + enumerator->declaration->name.lexeme + ":'";
+    // A by-value binding owns its field. When the switch consumes its subject
+    // (a prvalue or an explicit std::move) the field moves out of the active
+    // alternative; when it observes a named place the binding is a copy.
+    const SemanticTypeTraits payloadTraits = typeTraits(payloadType);
+    if (!binding->isReferencePattern() && consumingSubject &&
+        !payloadTraits.movable && !payloadTraits.copyable) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
+          "Payload field " + std::to_string(index + 1) + " of variant '" +
+              enumerator->declaration->name.lexeme + "' has type '" +
+              typeSpelling(payloadType) +
+              "', which can be neither moved nor copied into a match "
+              "binding.");
+      diagnostic.hints.emplace_back("Match the variant without payload "
+                                    "bindings (for example " +
+                                    tagOnlyPattern + ").");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return std::nullopt;
+    }
+    if (!binding->isReferencePattern() && !consumingSubject &&
+        !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -5920,10 +5962,13 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
               typeSpelling(payloadType) +
               "' and cannot be copied into a non-consuming match binding.");
       diagnostic.hints.emplace_back(
-          "Match the variant without payload bindings (for example 'case " +
-          typeSpelling(subjectType) +
-          "::" + enumerator->declaration->name.lexeme +
-          ":'), or borrow it with 'auto& " + binding->name().lexeme + "'.");
+          "Match the variant without payload bindings (for example " +
+          tagOnlyPattern + "), or borrow it with 'auto& " +
+          binding->name().lexeme + "'.");
+      diagnostic.hints.emplace_back(
+          "A switch over a consumed enum, such as a temporary or "
+          "'std::move' of an owned local, moves the payload into a "
+          "by-value binding instead.");
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }

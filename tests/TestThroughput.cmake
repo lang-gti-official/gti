@@ -32,7 +32,8 @@ if(Python3_Interpreter_FOUND)
     conditional_capability_runtime conditional_converted_receiver_runtime
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
-    constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
+    constructor_field_publication_runtime constructor_member_call_field_runtime
+    constructor_null_native_runtime constructor_passive_field_rollback_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
@@ -42,7 +43,7 @@ if(Python3_Interpreter_FOUND)
     construction_assignment_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
     consuming_receiver_runtime consuming_retained_field_replace_runtime
-    consuming_returned_result_runtime
+    consuming_conditional_receiver_runtime consuming_returned_result_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime

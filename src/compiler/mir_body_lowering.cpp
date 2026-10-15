@@ -8152,15 +8152,66 @@ private:
     return result;
   }
 
+  // The parameter an argument-origin reference result borrows from, for a
+  // function or a lambda body; a lambda's contract lives on its instance.
+  [[nodiscard]] std::optional<mir_detail::MirReturnOriginFormal>
+  returnBorrowOriginFormal() const {
+    if (function != nullptr) {
+      return function->returnBorrowOrigin == BorrowOriginKind::Argument
+                 ? mir_detail::returnOriginFormal(
+                       function->parameterTypes, function->parameterBindings,
+                       function->returnBorrowParameter)
+                 : std::nullopt;
+    }
+    if (lambda != nullptr) {
+      return lambda->returnBorrowOrigin == BorrowOriginKind::Argument
+                 ? mir_detail::returnOriginFormal(lambda->parameterTypes,
+                                                  lambda->parameterBindings,
+                                                  lambda->returnBorrowParameter)
+                 : std::nullopt;
+    }
+    return std::nullopt;
+  }
+  [[nodiscard]] std::optional<HirBindingId>
+  returnBorrowParameterBinding() const {
+    const auto formal = returnBorrowOriginFormal();
+    return formal ? std::optional<HirBindingId>{formal->binding} : std::nullopt;
+  }
+  // Whether a loan's source place is exactly the summarized formal: the
+  // whole binding, or the one pack element the contract names.
+  [[nodiscard]] bool sourceIsReturnOriginFormal(const MirPlace &source) const {
+    const auto formal = returnBorrowOriginFormal();
+    if (!formal || source.root != MirPlaceRootKind::Binding ||
+        source.binding != formal->binding)
+      return false;
+    if (source.projections.empty())
+      return source.type.kind != SemanticType::TypePack;
+    return source.projections.size() == 1 &&
+           source.projections.front().kind == MirProjectionKind::PackElement &&
+           source.projections.front().constantIndex &&
+           static_cast<std::size_t>(
+               *source.projections.front().constantIndex) ==
+               formal->elementWithinBinding;
+  }
+  [[nodiscard]] BorrowOriginKind bodyReturnBorrowOrigin() const {
+    return function != nullptr ? function->returnBorrowOrigin
+           : lambda != nullptr ? lambda->returnBorrowOrigin
+                               : BorrowOriginKind::None;
+  }
+  [[nodiscard]] AccessMode bodyReturnBorrowAccess() const {
+    return function != nullptr ? function->returnBorrowAccess
+           : lambda != nullptr ? lambda->returnBorrowAccess
+                               : AccessMode::ReadOnly;
+  }
+
   [[nodiscard]] bool mustReachBorrowedReturn(MirLoanId loan) const {
-    if (loan == 0 || loan > output.loans.size() || function == nullptr ||
-        function->returnBorrowOrigin != BorrowOriginKind::Argument ||
-        function->returnBorrowParameter >= function->parameterBindings.size()) {
+    const std::optional<HirBindingId> summarized =
+        returnBorrowParameterBinding();
+    if (loan == 0 || loan > output.loans.size() || !summarized) {
       return false;
     }
     const MirLoan &candidate = output.loans[loan - 1];
-    const HirBindingId parameter =
-        function->parameterBindings[function->returnBorrowParameter];
+    const HirBindingId parameter = *summarized;
     return candidate.entry &&
            std::find(candidate.carriers.begin(), candidate.carriers.end(),
                      parameter) != candidate.carriers.end();
@@ -10424,25 +10475,45 @@ private:
   }
 
   void seedReturnBorrow() {
-    if (function == nullptr ||
-        function->returnBorrowOrigin != BorrowOriginKind::Argument ||
-        function->source == nullptr || function->source->body() == nullptr) {
+    if (function != nullptr &&
+        (function->source == nullptr || function->source->body() == nullptr)) {
       return;
     }
-    if (function->returnBorrowParameter >= function->parameterBindings.size()) {
+    const std::optional<mir_detail::MirReturnOriginFormal> summarized =
+        returnBorrowOriginFormal();
+    if (!summarized) {
       return;
     }
-    const HirBindingId binding =
-        function->parameterBindings[function->returnBorrowParameter];
+    const HirBindingId binding = summarized->binding;
     if (bindingLoans.contains(binding)) {
       return;
     }
-    const MirPlaceId sourcePlace = placeForBinding(binding);
+    MirPlaceId sourcePlace = placeForBinding(binding);
+    const MirPlace *root =
+        sourcePlace != 0 ? output.findPlace(sourcePlace) : nullptr;
+    if (root != nullptr && root->type.kind == SemanticType::TypePack) {
+      // The contract names one element of a concrete pack: seed the entry
+      // loan on that element's place, as every other element access does.
+      const std::size_t element = summarized->elementWithinBinding;
+      if (!root->type.concretePack || !root->key ||
+          element >= root->type.arguments.size()) {
+        return;
+      }
+      MirPlace projected = *root;
+      projected.id = 0;
+      projected.projections.push_back(
+          {.kind = MirProjectionKind::PackElement, .constantIndex = element});
+      projected.key->projections.push_back(
+          {.kind = PlaceProjectionKind::ConstantIndex, .index = element});
+      projected.type = root->type.arguments[element];
+      projected.traits = resolvedTraits(projected.type);
+      sourcePlace = appendPackElementPlace(std::move(projected));
+    }
     if (sourcePlace == 0 || scopes.empty()) {
       return;
     }
     const MirLoanId loan = createLoan(MirLoanKind::Parameter, sourcePlace,
-                                      function->returnBorrowAccess, 0, binding);
+                                      bodyReturnBorrowAccess(), 0, binding);
     output.loans[loan - 1].entry = true;
     bindingLoans.insert_or_assign(binding, loan);
     scopes.front().loans.push_back(loan);
@@ -12353,11 +12424,176 @@ private:
                  : std::nullopt});
   }
 
+  // A consumed payload-enum switch subject enters its hidden owner binding at
+  // the end of the subject's full expression, exactly like a local declared
+  // from that value: its temporary obligation reparents into the binding, and
+  // the binding joins the enclosing scope's cleanup so a failure while the
+  // subject's other temporaries drop still drops the enum once. Each arm
+  // retires that owner at its entry; the scope never drops it normally.
+  struct ConsumedSwitchSubject {
+    HirBindingId binding = 0;
+    MirPlaceId place = 0;
+    MirDropObligationId obligation = 0;
+    SemanticType type = SemanticType::Unknown;
+  };
+
+  [[nodiscard]] std::optional<ConsumedSwitchSubject>
+  initializeConsumedSwitchSubject(const HirStatement &statement) {
+    const HirBinding *binding = findBinding(*statement.binding);
+    const HirValue *value = findValue(*statement.value);
+    if (binding == nullptr || value == nullptr ||
+        binding->info.type.kind != SemanticType::Enum ||
+        binding->info.type != value->info.type ||
+        value->info.category != ValueCategory::Value || scopes.empty()) {
+      valid = false;
+      return std::nullopt;
+    }
+    const MirPlaceId destination = placeForBinding(*statement.binding);
+    MirOperand initializer = valueOperand(*statement.value);
+    if (terminated()) {
+      return std::nullopt;
+    }
+    routeDirectResultInitialization(initializer, destination);
+    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                              .hirStatement = statement.id,
+                              .destination = destination,
+                              .operands = {std::move(initializer)},
+                              .info = {.type = binding->info.type,
+                                       .category = ValueCategory::Place,
+                                       .access = binding->info.access,
+                                       .traits = binding->info.traits}};
+    const MirDropObligationId target =
+        dropObligationForBinding(*statement.binding);
+    const MirDropObligationId sourceObligation =
+        dropObligationForValue(*statement.value);
+    if (target != 0) {
+      if (temporaryIsActive(sourceObligation)) {
+        appendReparentOrTypedTransfer(initialize, sourceObligation, target);
+        (void)removeTemporary(sourceObligation);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                     .target = target});
+      }
+    } else if (binding->info.traits.drop == DropKind::Lexical &&
+               tracksLocalDrops()) {
+      valid = false;
+    }
+    (void)appendInstruction(std::move(initialize));
+    registerDrop(*statement.binding, destination);
+    return ConsumedSwitchSubject{.binding = *statement.binding,
+                                 .place = destination,
+                                 .obligation = target,
+                                 .type = binding->info.type};
+  }
+
+  // Every path leaving the subject's evaluation retires the hidden owner
+  // explicitly, so it must not remain among the drops of the enclosing scope.
+  static void forgetConsumedSwitchSubject(std::vector<Scope> &state,
+                                          MirPlaceId place) {
+    for (Scope &scope : state) {
+      std::erase(scope.drops, place);
+    }
+  }
+
+  // Retires the consumed subject at an arm's entry. A binding arm moves every
+  // field of the active alternative into its by-value bindings; the final
+  // extraction transfers the enum's obligation out, so the drained shell is
+  // never dropped. Any other arm (tag-only labels or `default`) drops the
+  // enum, and therefore its active payload, before the arm's first statement.
+  void retireConsumedSwitchSubject(const HirStatement &statement,
+                                   const HirSwitchArm &arm,
+                                   const ConsumedSwitchSubject &consumed) {
+    const MirPlace *subjectPlace = output.findPlace(consumed.place);
+    if (subjectPlace == nullptr) {
+      valid = false;
+      return;
+    }
+    if (arm.payloadBindings.empty()) {
+      if (consumed.obligation != 0) {
+        (void)appendNormalDrop(
+            consumed.obligation, consumed.place, scopeDropInfo(subjectPlace),
+            scopeDropLifecycle(consumed.obligation), {consumed.obligation}, {});
+        appendNormalCleanupBoundary({consumed.obligation});
+      }
+      return;
+    }
+    for (std::size_t index = 0; index < arm.payloadBindings.size(); ++index) {
+      const HirSwitchArm::PayloadBinding &payload = arm.payloadBindings[index];
+      const HirBinding *binding = findBinding(payload.binding);
+      const HirValue *extraction = findValue(payload.value);
+      const MirPlaceId destination = placeForBinding(payload.binding);
+      if (binding == nullptr || extraction == nullptr || destination == 0 ||
+          extraction->kind != HirValueKind::PayloadExtraction ||
+          extraction->info.category != ValueCategory::Value ||
+          binding->info.type.kind == SemanticType::Reference ||
+          binding->info.type != extraction->info.type ||
+          !extraction->enumOwner || !extraction->enumVariant ||
+          !extraction->payloadIndex) {
+        valid = false;
+        continue;
+      }
+      MirInstruction extract{.kind = MirInstructionKind::Compute,
+                             .hirValue = extraction->id,
+                             .operation = MirOperation::PayloadExtract,
+                             .enumOwner = extraction->enumOwner,
+                             .enumVariant = extraction->enumVariant,
+                             .payloadIndex = extraction->payloadIndex,
+                             .info = extraction->info};
+      extract.operands.push_back({.kind = MirOperandKind::Move,
+                                  .place = consumed.place,
+                                  .type = consumed.type});
+      extract.result = resultFor(*extraction);
+      if (consumed.obligation != 0 && index + 1 == arm.payloadBindings.size()) {
+        appendLifecycle(extract, {.kind = MirLifecycleEventKind::TransferOut,
+                                  .source = consumed.obligation});
+      }
+      (void)appendInstruction(std::move(extract));
+      emittedValues.insert(extraction->id);
+      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                                .hirStatement = statement.id,
+                                .destination = destination,
+                                .operands = {valueOperand(payload.value)},
+                                .info = {.type = binding->info.type,
+                                         .category = ValueCategory::Place,
+                                         .access = binding->info.access,
+                                         .traits = binding->info.traits}};
+      if (binding->info.traits.drop == DropKind::Lexical) {
+        const MirDropObligationId obligation =
+            dropObligationForBinding(payload.binding);
+        if (obligation != 0) {
+          appendLifecycle(initialize,
+                          {.kind = MirLifecycleEventKind::Initialize,
+                           .target = obligation});
+        }
+      }
+      (void)appendInstruction(std::move(initialize));
+      registerDrop(payload.binding, destination);
+    }
+  }
+
   void lowerSwitch(const HirStatement &statement) {
     const std::vector<Scope> subjectScopes = scopes;
     const std::vector<TemporaryDrop> subjectTemporaryDrops = temporaryDrops;
     MirOperand subject;
-    if (statement.value) {
+    std::optional<ConsumedSwitchSubject> consumed;
+    if (statement.binding) {
+      if (!statement.value) {
+        valid = false;
+        return;
+      }
+      consumed = initializeConsumedSwitchSubject(statement);
+      if (terminated()) {
+        // A terminal subject leaves the whole switch unreachable.
+        return;
+      }
+      if (!consumed) {
+        valid = false;
+        return;
+      }
+      subject = {.kind = MirOperandKind::BorrowRead,
+                 .place = consumed->place,
+                 .type = consumed->type};
+    } else if (statement.value) {
       const HirValue *sourceValue = findValue(*statement.value);
       const MirPlaceId sourcePlace = placeForValue(*statement.value);
       if (sourceValue != nullptr && sourcePlace != 0 &&
@@ -12384,7 +12620,7 @@ private:
       }
     }
     endFullExpressionLoans(subjectScopes);
-    if (statement.value)
+    if (statement.value && !consumed)
       payloadSwitchSubjects[*statement.value] = subject;
     emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
                        statement.id);
@@ -12433,6 +12669,9 @@ private:
         bindingLoans;
     const auto switchTransferEndpoints = callTransferredLoanEndpoints;
     std::vector<Scope> exitScopes = switchScopes;
+    if (consumed) {
+      forgetConsumedSwitchSubject(exitScopes, consumed->place);
+    }
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         switchBindingLoans;
     normalizeSemanticLoanState(statement.endedLoans, exitScopes,
@@ -12466,7 +12705,12 @@ private:
       bindingLoans = switchBindingLoans;
       terminate({.kind = MirTerminatorKind::Unreachable,
                  .hirStatement = statement.id});
-    } else if (unmatchedBlock != exitBlock) {
+    } else if (unmatchedBlock != exitBlock || consumed) {
+      // A semantically valid consumed payload switch is exhaustive or has a
+      // `default` arm, so it never reaches this unmatched edge.
+      if (consumed) {
+        valid = false;
+      }
       current = unmatchedBlock;
       scopes = switchScopes;
       temporaryDrops = switchTemporaryDrops;
@@ -12485,11 +12729,21 @@ private:
       temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
       callTransferredLoanEndpoints = switchTransferEndpoints;
+      if (consumed) {
+        forgetConsumedSwitchSubject(scopes, consumed->place);
+      }
       scopes.push_back({});
       endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
                        statement.id);
+      if (consumed) {
+        retireConsumedSwitchSubject(statement, statement.switchArms[armIndex],
+                                    *consumed);
+      }
       for (const HirSwitchArm::PayloadBinding &payload :
            statement.switchArms[armIndex].payloadBindings) {
+        if (consumed) {
+          break;
+        }
         const HirBinding *binding = findBinding(payload.binding);
         const MirPlaceId destination = placeForBinding(payload.binding);
         if (binding == nullptr || destination == 0 || payload.value == 0) {
@@ -12641,19 +12895,14 @@ private:
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
           MirLoanId referenceParameterEntry = 0;
-          if (function != nullptr &&
-              function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-              function->returnBorrowParameter <
-                  function->parameterBindings.size() &&
-              borrow.loan <= output.loans.size()) {
-            const HirBindingId parameter =
-                function->parameterBindings[function->returnBorrowParameter];
+          if (const std::optional<HirBindingId> summarized =
+                  returnBorrowParameterBinding();
+              summarized && borrow.loan <= output.loans.size()) {
+            const HirBindingId parameter = *summarized;
             const MirLoan &candidate = output.loans[borrow.loan - 1];
             const MirPlace *source = output.findPlace(candidate.source);
             const bool carriedByParameter =
-                source != nullptr &&
-                source->root == MirPlaceRootKind::Binding &&
-                source->binding == parameter && source->projections.empty() &&
+                source != nullptr && sourceIsReturnOriginFormal(*source) &&
                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
                           parameter) != candidate.carriers.end();
             if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
@@ -12755,7 +13004,7 @@ private:
                         .type = value->info.type};
             }
           } else if (function != nullptr &&
-                     function->returnBorrowOrigin != BorrowOriginKind::None &&
+                     bodyReturnBorrowOrigin() != BorrowOriginKind::None &&
                      borrow.loan <= output.loans.size() &&
                      output.loans[borrow.loan - 1].kind ==
                          MirLoanKind::CallResult) {
@@ -12781,11 +13030,9 @@ private:
               transient = candidate.parent;
             }
             MirLoanId summarizedEntry = 0;
-            if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-                function->returnBorrowParameter <
-                    function->parameterBindings.size()) {
-              const auto found = bindingLoans.find(
-                  function->parameterBindings[function->returnBorrowParameter]);
+            if (const std::optional<HirBindingId> summarized =
+                    returnBorrowParameterBinding()) {
+              const auto found = bindingLoans.find(*summarized);
               summarizedEntry = found == bindingLoans.end() ? 0 : found->second;
             }
             MirLoanId mappedEntry = summarizedEntry;

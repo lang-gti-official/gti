@@ -191,6 +191,37 @@ auto SemanticVisitor::Impl::currentFunctionInfo() const
              : instanceBaseModel->findFunction(*currentFunctionDeclaration);
 }
 
+auto SemanticVisitor::Impl::currentReturnBorrowContract() const
+    -> std::optional<ReturnBorrowContract> {
+  if (currentLambdaReturn) {
+    const LambdaReturnContext &context = *currentLambdaReturn;
+    return ReturnBorrowContract{
+        .origin = context.origin,
+        .parameter = context.parameter,
+        .access = context.access,
+        .parameters =
+            context.declaration ? &context.declaration->parameters() : nullptr,
+        .parameterTypes = &context.parameterTypes,
+        .lambda = true,
+        .deferred = context.deferred};
+  }
+  const FunctionInfo *function = currentFunctionInfo();
+  if (function == nullptr) {
+    return std::nullopt;
+  }
+  return ReturnBorrowContract{
+      .origin = function->returnBorrowOrigin,
+      .parameter = function->returnBorrowParameter,
+      .access = function->returnBorrowAccess,
+      .place = function->returnBorrowPlace,
+      .parameters = function->declaration != nullptr &&
+                            function->bodyDeclaration() != nullptr
+                        ? &function->bodyDeclaration()->parameters()
+                        : nullptr,
+      .parameterTypes = &function->parameterTypes,
+      .lambda = false};
+}
+
 auto SemanticVisitor::Impl::callableParameterContract(
     const ExprPtr &callee) const -> const CallableParameterContract * {
   const Variable *variable = directCallableParameterVariable(callee);
@@ -324,6 +355,16 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
           "enclosing return type so the exact callable result is known.");
       diagnostics.emplace_back(std::move(diagnostic));
       valid = false;
+    } else if (returnType.kind == SemanticType::Reference &&
+               returnType.referenceAccess == AccessMode::ReadOnly &&
+               currentReturnBorrowContract() &&
+               (currentReturnBorrowContract()->origin ==
+                    BorrowOriginKind::Argument ||
+                currentReturnBorrowContract()->deferred)) {
+      // A read-only reference result relays the selected callable's own
+      // result-origin contract. The enclosing body names the parameter the
+      // relayed result borrows; each concrete instance verifies that the
+      // selected callable's origin reaches exactly that parameter.
     } else if (returnType.kind == SemanticType::Reference ||
                typeTraits(returnType).containsBorrowedState ||
                containsLambdaType(returnType)) {
@@ -397,7 +438,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
             .boundary = std::nullopt,
             .receiverBinding = receiverSymbol->id,
             .inferResultFromInstantiation = inferResultFromInstantiation});
-    currentType = returnType;
+    currentType = callExpressionType(returnType);
     return;
   }
 
@@ -438,7 +479,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
                .parameterTypes = argumentTypes,
                .capability = capability,
                .inferResultFromInstantiation = inferResultFromInstantiation}}});
-  currentType = returnType;
+  currentType = callExpressionType(returnType);
 }
 
 auto SemanticVisitor::Impl::validateCallableReturn(
@@ -451,6 +492,13 @@ auto SemanticVisitor::Impl::validateCallableReturn(
         returnType.kind != SemanticType::Reference &&
         !typeTraits(returnType).containsBorrowedState &&
         !containsLambdaType(returnType))
+      return true;
+    // A reference result relays through the selected callable's own
+    // result-origin contract: the call result borrows that argument, and
+    // the enclosing body's return summary decides whether it may escape.
+    if (returnType.kind == SemanticType::Reference &&
+        returnType.referenceAccess == AccessMode::ReadOnly &&
+        callableResultOriginContract(call))
       return true;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2046", DiagnosticPhase::Semantics, expressionToken(call.callee()),
@@ -643,11 +691,15 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
   valid = validateCallableCapability(call, lambda->capability) && valid;
   if (valid) {
     semanticModel.recordLambdaCall(
-        call, ResolvedLambdaCallInfo{.lambda = lambda->id,
-                                     .returnType = lambda->returnType,
-                                     .parameterTypes = lambda->parameterTypes,
-                                     .capability = lambda->capability,
-                                     .boundary = boundary});
+        call,
+        ResolvedLambdaCallInfo{.lambda = lambda->id,
+                               .returnType = lambda->returnType,
+                               .parameterTypes = lambda->parameterTypes,
+                               .capability = lambda->capability,
+                               .boundary = boundary,
+                               .borrowOrigin = lambda->returnBorrowOrigin,
+                               .borrowArgument = lambda->returnBorrowParameter,
+                               .borrowAccess = lambda->returnBorrowAccess});
   }
   currentType =
       valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
@@ -6472,6 +6524,22 @@ auto SemanticVisitor::Impl::resolveOperator(
     recordMutableBindingUse(receiverPlace->root);
   }
 
+  // A generic-result operator with an explicit borrowed_from contract
+  // resolves its origin per substitution, exactly as its instance records.
+  BorrowOriginKind operatorBorrowOrigin = selected.returnBorrowOrigin;
+  std::size_t operatorBorrowParameter = selected.returnBorrowParameter;
+  AccessMode operatorBorrowAccess = selected.returnBorrowAccess;
+  if (selected.declaration != nullptr &&
+      selected.returnBorrowOrigin == BorrowOriginKind::None &&
+      selected.returnType.kind == SemanticType::Reference &&
+      selected.declaration->hasFunctionAttribute("borrowed_from")) {
+    const GenericReturnBorrowContract contract = genericReturnBorrowContract(
+        *selected.declaration, selected.returnType, selected.parameterTypes,
+        selected.ownerClass, selected.staticMember);
+    operatorBorrowOrigin = contract.origin;
+    operatorBorrowParameter = contract.parameter;
+    operatorBorrowAccess = contract.access;
+  }
   ResolvedOperatorInfo resolved{
       .function = selected.id,
       .declaration = selected.declaration,
@@ -6483,9 +6551,9 @@ auto SemanticVisitor::Impl::resolveOperator(
       .receiverMode = selectedReceiverMode,
       .returnType = selected.returnType,
       .parameterTypes = selected.parameterTypes,
-      .borrowOrigin = selected.returnBorrowOrigin,
-      .borrowArgument = selected.returnBorrowParameter,
-      .borrowAccess = selected.returnBorrowAccess,
+      .borrowOrigin = operatorBorrowOrigin,
+      .borrowArgument = operatorBorrowParameter,
+      .borrowAccess = operatorBorrowAccess,
       .borrowArguments = selected.returnBorrowParameters,
       .borrowFields = selected.returnBorrowFields,
       .capability = callableInvocationCapability(selected.receiverMutability),
@@ -7086,18 +7154,34 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       restoredFields = std::move(*fields);
     }
   }
-  const FunctionReturnBorrowSummary concreteBorrow =
-      functionReturnBorrowSummary(
-          function.returnType, function.parameterTypes, function.ownerClass,
-          function.staticMember, function.record().intrinsic,
-          declarationInfo == nullptr
-              ? std::nullopt
-              : exactMovedReturnParameter(*declarationInfo));
+  FunctionReturnBorrowSummary concreteBorrow = functionReturnBorrowSummary(
+      function.returnType, function.parameterTypes, function.ownerClass,
+      function.staticMember, function.record().intrinsic,
+      declarationInfo == nullptr ? std::nullopt
+                                 : exactMovedReturnParameter(*declarationInfo));
+  // A generic-result declaration with an explicit borrowed_from contract
+  // decides its origin per substitution; the selected instance's contract
+  // binds this call exactly as its own reanalysis records it.
+  bool genericContract = false;
+  if (declarationInfo != nullptr && declarationInfo->declaration != nullptr &&
+      declarationInfo->bodyDeclaration() != nullptr &&
+      containsOpenTypeParameter(declarationInfo->returnType) &&
+      declarationInfo->bodyDeclaration()->hasFunctionAttribute(
+          "borrowed_from")) {
+    const GenericReturnBorrowContract contract = genericReturnBorrowContract(
+        *declarationInfo->bodyDeclaration(), function.returnType,
+        function.parameterTypes, function.ownerClass, function.staticMember);
+    concreteBorrow = {};
+    concreteBorrow.origin = contract.origin;
+    concreteBorrow.parameter = contract.parameter;
+    concreteBorrow.access = contract.access;
+    genericContract = true;
+  }
   const bool declarationOwnsBorrow =
-      declarationInfo != nullptr &&
+      !genericContract && declarationInfo != nullptr &&
       declarationInfo->returnBorrowOrigin != BorrowOriginKind::None;
   const bool candidateOwnsBorrow =
-      function.returnBorrowOrigin != BorrowOriginKind::None;
+      !genericContract && function.returnBorrowOrigin != BorrowOriginKind::None;
   const BorrowOriginKind returnBorrowOrigin =
       declarationOwnsBorrow ? declarationInfo->returnBorrowOrigin
                             : (candidateOwnsBorrow ? function.returnBorrowOrigin

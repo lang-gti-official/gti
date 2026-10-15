@@ -2613,6 +2613,16 @@ private:
     return id;
   }
 
+  [[nodiscard]] HirBindingId lowerSwitchSubject(const SwitchStmt &statement,
+                                                const BindingInfo &info,
+                                                HirBody &body) {
+    const HirBindingId id = nextBindingId++;
+    body.bindings.push_back(
+        {.id = id, .switchSubject = &statement, .info = info});
+    (void)enqueueClass(info.type);
+    return id;
+  }
+
   [[nodiscard]] HirBindingId lowerPayloadBinding(const Token &name,
                                                  const BindingInfo &info,
                                                  HirBody &body) {
@@ -3507,6 +3517,16 @@ private:
       const std::optional<HirValueId> subject =
           lowerExpression(switchStatement->expression(), model, classArguments,
                           classValueArguments, body);
+      // Semantics decided that this switch consumes its subject. The hidden
+      // owner precedes every arm binding, so failure drains and scope order
+      // see it exactly where a local declared before the switch would be.
+      const BindingInfo *consumedOwner =
+          model.findConsumedSwitchSubject(*switchStatement);
+      std::optional<HirBindingId> consumedSubject;
+      if (consumedOwner != nullptr && subject) {
+        consumedSubject =
+            lowerSwitchSubject(*switchStatement, *consumedOwner, body);
+      }
       std::vector<HirSwitchArm> arms;
       arms.reserve(switchStatement->arms().size());
       for (std::size_t armIndex = 0; armIndex < switchStatement->arms().size();
@@ -3531,6 +3551,11 @@ private:
                .constant = constant == nullptr
                                ? std::nullopt
                                : std::optional<SwitchCaseValue>{*constant}});
+          if (payloadPattern != nullptr &&
+              payloadPattern->consuming != consumedSubject.has_value()) {
+            // Pattern and switch must agree on whether bindings move.
+            lifecycleValid = false;
+          }
           if (payloadPattern != nullptr && subject) {
             for (const PayloadBindingInfo &payload : payloadPattern->bindings) {
               if (payload.name == nullptr || payload.source == nullptr) {
@@ -3577,6 +3602,7 @@ private:
       return appendStatement(
           {.kind = HirStatementKind::Switch,
            .source = statement,
+           .binding = consumedSubject,
            .value = subject,
            .switchArms = std::move(arms),
            .exhaustiveSwitch = model.isExhaustiveSwitch(*switchStatement)},
@@ -3796,6 +3822,9 @@ private:
         .capability = info->capability,
         .captureRequiresActiveCleanup = std::move(captureRequiresActiveCleanup),
         .traits = info->traits,
+        .returnBorrowOrigin = info->returnBorrowOrigin,
+        .returnBorrowParameter = info->returnBorrowParameter,
+        .returnBorrowAccess = info->returnBorrowAccess,
         .body = std::move(body),
     };
     return id;
@@ -6379,6 +6408,9 @@ private:
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
+        value.borrowOrigin = resolved->borrowOrigin;
+        value.borrowArgument = resolved->borrowArgument;
+        value.borrowAccess = resolved->borrowAccess;
         // The callee is an explicit receiver even when a final pack prevents
         // formation of the fixed-arity call plan. MIR stages it before the
         // expanded arguments rather than losing the closure environment.
