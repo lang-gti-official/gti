@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.1 — Reproducible generated names and conformance diagnostics
+## 0.440.2 — Reproducible generated names and conformance diagnostics
 
 - Generated C++ identifiers remain the same when a project or its standard
   library moves to another directory. Distinct source units retain distinct
@@ -17,6 +17,23 @@ for what minor and patch releases mean.
 - Conformance block header errors are reported once, independently of the
   number of operations. An indirectly included concept retains its declaration
   location and direct-include suggestion even when the block has no operations.
+
+## 0.440.1 — Conditional member-call results without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` produce a class
+  result without a destructor from a method call, such as
+  `Pod t = c ? a.peek() : b.peek();` or
+  `return c ? std::move(a).pod() : std::move(b).pod();`, or from a call that
+  consumes a value moved into it, such as
+  `Pod t = c ? make(std::move(a)) : make(std::move(b));`. This covers
+  read-only, mutable and consuming (`&&`) receivers, methods and functions
+  that can fail, and arms that mix such calls with ordinary ones.
+- Fix a wrong result when a function returns such a conditional and an arm
+  calls a function that can fail, as in
+  `Pod f(bool c, int a, int b) { return c ? lift(a) : lift(b); }`. The
+  caller read a result that was never written, which could also crash an
+  optimized build.
 
 ## 0.440.0 — Virtual method calls on temporaries
 
