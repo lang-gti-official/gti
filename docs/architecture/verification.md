@@ -6691,8 +6691,9 @@ right after the move that empties it.
 a cleanup-free class value that each arm of a conditional moves out of a whole
 named local, a by-value parameter included. Each shape runs through both arms,
 bound, assigned, passed on, read through a field, used as a member-call
-receiver (also for a class holding a view) and returned, in plain and
-failure-form bodies, beside a construction, copy, call or nested-join arm, with
+receiver (also for a class holding a literal-backed view) and returned, in
+plain and failure-form bodies, beside a construction, copy, call or nested-join
+arm, with
 the moved-from locals reassigned afterwards, the join assigned back into a
 moved local, both arms moving one local, and inside a loop. Failures after a
 bound join, before a returned join and in the joined value's member call

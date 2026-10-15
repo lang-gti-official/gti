@@ -26,12 +26,23 @@ public:
   ~Tracked() { std::println(-this.id); }
 };
 
-// A cleanup-free class holding a view of text that outlives it.
+// A cleanup-free class storing literal-backed text without an owner loan.
 class Label {
 public:
   std::string_view text;
   int weight;
   Label(std::string_view text, int weight) : text(text), weight(weight) {}
+  int score() { return this.weight * 10 + int(this.text.size()); }
+};
+
+// Dynamic views retain their exact shell through a checked reference. Moving
+// a named reference-bearing value is supported; joining such aggregate values
+// conditionally remains separate semantic work.
+class BorrowedLabel {
+public:
+  std::string_view& text;
+  int weight;
+  BorrowedLabel(std::string_view& text, int weight) : text(text), weight(weight) {}
   int score() { return this.weight * 10 + int(this.text.size()); }
 };
 
@@ -134,9 +145,15 @@ int same_local(bool left, int one) {
 // A moved value holding a view, read through a member call.
 int labelled(bool left, std::string_view one, std::string_view two,
              int weight) {
-  Label a{one, weight};
-  Label b{two, weight + 1};
-  return (left ? std::move(a) : std::move(b)).score();
+  Label a{"abc", weight};
+  Label b{"hello", weight + 1};
+  BorrowedLabel first{one, weight};
+  BorrowedLabel second{two, weight + 1};
+  BorrowedLabel movedFirst = std::move(first);
+  BorrowedLabel movedSecond = std::move(second);
+  int observed = left ? movedFirst.score() : movedSecond.score();
+  int joined = (left ? std::move(a) : std::move(b)).score();
+  return joined == observed ? joined : -9999;
 }
 
 int looped(bool left, int start) {
