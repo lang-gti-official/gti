@@ -92,6 +92,17 @@ auto SemanticVisitor::Impl::registerGlobalBorrowStorage(
                                    AccessModifier::Public, false,
                                    variable->isStatic());
     }
+    if (variable->linkage() == LanguageLinkage::C) {
+      semanticModel.recordForeignStorage(
+          {.symbol = symbol,
+           .type = type,
+           .access = variable->isMutable() ? AccessMode::Mutable
+                                           : AccessMode::ReadOnly,
+           .externalSymbol =
+               variable->nativeLinkName()
+                   ? std::string(variable->nativeLinkName()->name())
+                   : variable->name().lexeme});
+    }
     globalBorrowStorage[name].push_back(
         {.declaration = variable,
          .sourceUnit = sourceUnit,
@@ -2135,13 +2146,14 @@ auto SemanticVisitor::Impl::registerClassAttributes(
       }
       result.cAbiRecord = true;
       result.cAbiSource = attribute;
-      if (declaration.kind() != ClassKind::Struct) {
+      if (declaration.kind() != ClassKind::Struct &&
+          declaration.kind() != ClassKind::Union) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2064", DiagnosticPhase::Semantics, attribute,
-            "[[c_abi]] applies only to passive struct declarations.");
-        diagnostic.hints.emplace_back(
-            "Use 'struct' and keep ordinary classes and interfaces out of "
-            "the C ABI.");
+            "[[c_abi]] applies only to passive struct or union declarations.");
+        diagnostic.hints.emplace_back("Use 'struct' or 'union' and keep "
+                                      "ordinary classes and interfaces out of "
+                                      "the C ABI.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
     } else if (attribute.lexeme == "c_opaque") {
@@ -2679,17 +2691,17 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  classDecl->name().lexeme == "mutex_lock_token") {
         compilerCapability = CompilerCapabilityTypeKind::MutexLockToken;
       }
-      CapabilityPolicyRegistration capabilityPolicies;
+      CapabilityPolicyRegistration capabilityPolicies =
+          registerClassAttributes(*classDecl, genericParameters);
       if (classDecl->kind() == ClassKind::Union) {
         for (const ClassAttribute &attribute : classDecl->attributes()) {
-          report(attribute.name,
-                 "Unions do not accept class capability or native-record "
-                 "attributes.",
-                 "GTI-S2066");
+          if (attribute.name.lexeme != "c_abi") {
+            report(attribute.name,
+                   "Unions accept only the passive [[c_abi]] representation "
+                   "attribute.",
+                   "GTI-S2066");
+          }
         }
-      } else {
-        capabilityPolicies =
-            registerClassAttributes(*classDecl, genericParameters);
       }
       classes.push_back(ClassInfo{
           .id = id,
@@ -4429,10 +4441,23 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
       currentSourceUnit = sourceUnitFor(function->name());
       if (function->definitionOwner())
         continue;
-      std::vector<GenericParameterInfo> genericParameters =
-          makeGenericParameters(function->genericParameters(), function->name(),
-                                scope);
-      functionGenericParameters.emplace(function, genericParameters);
+      std::vector<GenericParameterInfo> genericParameters;
+      if (const auto header = functionGenericParameters.find(function);
+          header != functionGenericParameters.end()) {
+        genericParameters = header->second;
+        // This check is operation-relative, unlike the shared header checks.
+        std::erase_if(genericParameters, [&](const auto &parameter) {
+          if (parameter.name.lexeme != function->name().lexeme)
+            return false;
+          report(parameter.name, "Generic parameter cannot have the same name "
+                                 "as its declaration.");
+          return true;
+        });
+      } else {
+        genericParameters = makeGenericParameters(function->genericParameters(),
+                                                  function->name(), scope);
+      }
+      functionGenericParameters.insert_or_assign(function, genericParameters);
       const IntrinsicKind intrinsic = trustedIntrinsicKind(
           currentSourceUnit, scope, function->name().lexeme);
       (void)catalog.registerCallable(CallableDeclaration{
@@ -5593,7 +5618,8 @@ auto SemanticVisitor::Impl::reportCAbiRecord(const Token &location,
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2064", DiagnosticPhase::Semantics, location, std::move(message));
   diagnostic.hints.emplace_back(
-      "A [[c_abi]] struct is a non-generic, inheritance-free passive record "
+      "A [[c_abi]] struct or union is a non-generic, inheritance-free passive "
+      "record "
       "containing only public instance fields of admitted C scalar types, "
       "recursive raw pointers, native callbacks, fixed arrays, or other "
       "[[c_abi]] "
@@ -5992,7 +6018,8 @@ auto SemanticVisitor::Impl::validateCAbiRecordShape(ClassInfo &owner) -> bool {
   if (!owner.cAbiRecord || owner.declaration == nullptr) {
     return false;
   }
-  bool valid = owner.kind == ClassKind::Struct;
+  bool valid =
+      owner.kind == ClassKind::Struct || owner.kind == ClassKind::Union;
   valid = validateNativeCIdentifier(
               owner.name, "GTI-S2064", "C ABI record name",
               owner.namespaceScope.empty(), owner.namespaceScope.empty()) &&
@@ -6321,7 +6348,8 @@ auto SemanticVisitor::Impl::computeCAbiRecordLayout(
     }
 
     std::uint64_t fieldOffset = 0;
-    if (!alignCAbiOffset(layout.sizeBytes, fieldAlignment, fieldOffset) ||
+    if ((owner.kind != ClassKind::Union &&
+         !alignCAbiOffset(layout.sizeBytes, fieldAlignment, fieldOffset)) ||
         fieldOffset > std::numeric_limits<std::uint64_t>::max() - fieldSize) {
       reportCAbiRecord(field.declaration->name(),
                        "Layout of C ABI record '" + owner.name.lexeme +
@@ -6335,7 +6363,7 @@ auto SemanticVisitor::Impl::computeCAbiRecordLayout(
                              .offsetBytes = fieldOffset,
                              .sizeBytes = fieldSize,
                              .abiAlignmentBytes = fieldAlignment});
-    layout.sizeBytes = fieldOffset + fieldSize;
+    layout.sizeBytes = std::max(layout.sizeBytes, fieldOffset + fieldSize);
     layout.abiAlignmentBytes =
         std::max(layout.abiAlignmentBytes, fieldAlignment);
   }
@@ -6349,6 +6377,20 @@ auto SemanticVisitor::Impl::computeCAbiRecordLayout(
   }
   layout.sizeBytes = finalSize;
   owner.cAbiLayout = layout;
+  if (owner.kind == ClassKind::Union) {
+    // Both views carry the same semantic layout. Ordinary union operations
+    // consume the union view; ABI declarations consume the record view.
+    UnionLayout unionLayout{.sizeBytes = layout.sizeBytes,
+                            .abiAlignmentBytes = layout.abiAlignmentBytes};
+    for (const CAbiRecordFieldLayout &field : layout.fields) {
+      unionLayout.fields.push_back(
+          {.declaration = field.declaration,
+           .type = field.type,
+           .sizeBytes = field.sizeBytes,
+           .abiAlignmentBytes = field.abiAlignmentBytes});
+    }
+    owner.unionLayout = std::move(unionLayout);
+  }
   state[id - 1] = 2;
   return layout;
 }
@@ -6440,10 +6482,14 @@ auto SemanticVisitor::Impl::validateUnionShape(ClassInfo &owner) -> bool {
 auto SemanticVisitor::Impl::computeUnionLayout(
     ClassId id, std::vector<std::uint8_t> &state,
     const std::vector<bool> &shapeValid) -> std::optional<UnionLayout> {
-  if (id == 0 || id > classes.size() || !shapeValid[id - 1]) {
+  if (id == 0 || id > classes.size() ||
+      (!classInfo(id).cAbiRecord && !shapeValid[id - 1])) {
     return std::nullopt;
   }
   ClassInfo &owner = classInfo(id);
+  if (owner.cAbiRecord) {
+    return owner.unionLayout;
+  }
   if (state[id - 1] == 2) {
     return owner.unionLayout;
   }
@@ -6552,7 +6598,7 @@ auto SemanticVisitor::Impl::validateUnions() -> void {
   std::vector<bool> &shapeValid = requestSession.unionShapes;
   shapeValid.resize(classes.size(), false);
   for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
-    if (owner.kind == ClassKind::Union) {
+    if (owner.kind == ClassKind::Union && !owner.cAbiRecord) {
       shapeValid[owner.id - 1] = validateUnionShape(owner);
     }
   }

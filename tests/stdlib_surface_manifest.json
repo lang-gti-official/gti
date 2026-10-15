@@ -24,7 +24,7 @@
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
-    "stdlib/std/json.gti": "0baff47898a7646937e3fff4e8425d1a3b51b80b92fd1160653e765bc001b82d",
+    "stdlib/std/json.gti": "50746338dae54bc88e218a8af0dcc99e37afd7845c8efc737aed9f4a45b0b57c",
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
     "stdlib/std/memory.gti": "27d3221ed33ca461825a22a19829c0f8704ffd15afc5eecb833406f1ba4922df",

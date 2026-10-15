@@ -179,8 +179,13 @@ SourceGraph SourceLoader::load(
               "GTI-I0012");
           continue;
         }
-        if (!loadedImplementations.insert(canonical.string()).second)
+        if (!loadedImplementations.insert(canonical.string()).second) {
+          graph.implementationRoots.push_back(
+              {.interfaceUnit = graph.sourceUnits()[index].id,
+               .implementationUnit =
+                   graph.sourceUnitForPath(canonical.string())});
           continue;
+        }
         auto savedFlags = activeFlags;
         const auto savedDomain = configurationDomain;
         activeFlags = initialFlags;
@@ -198,7 +203,9 @@ SourceGraph SourceLoader::load(
                  "GTI-I0012");
           continue;
         }
-        graph.implementationRoots.push_back(implementation);
+        graph.implementationRoots.push_back(
+            {.interfaceUnit = graph.sourceUnits()[index].id,
+             .implementationUnit = implementation});
       }
     }
   }

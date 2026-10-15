@@ -44,6 +44,8 @@ struct NativePoint {
   mut float y;
 };
 
+[[c_abi]] union NativePayload { mut NativePoint point; mut uint64_t bits; };
+
 // Function-like support macros do not expand in these declaration positions.
 [[c_abi]]
 struct offsetof {
@@ -81,6 +83,7 @@ extern "C" {
   int32_t c_counter_read(const NativeCounter* counter);
   [[c_array(count)]] NativeCounter** c_counter_array(int32_t* count);
   NativePoint c_point_make(float x, float y);
+  NativePayload c_payload_make();
   void c_macro_name_probe(offsetof value, int32_t offsetof,
                           int32_t INT32_C, int32_t _parameter);
   uint32_t c_boundary_version();
@@ -98,6 +101,8 @@ c_string empty_c_string() { return nullptr; }
 
 int main() {
   mut NativePoint point = c_point_make(3.0, 4.0);
+  NativePayload payload = c_payload_make();
+  unsafe { if (payload.bits != uint64_t(42)) { return 91; } }
   mut int32_t counter_value = 0;
   mut int32_t counter_count = 0;
   mut int32_t open_status = -1;
@@ -197,6 +202,8 @@ NativeCounter** c_counter_array(int32_t* count) {
   }
   return c_array_counters;
 }
+
+NativePayload c_payload_make(void) { NativePayload value; value.bits = 42; return value; }
 
 NativePoint c_point_make(float x, float y) {
   NativePoint result = {.x = x, .y = y};

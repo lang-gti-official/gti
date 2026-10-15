@@ -1,0 +1,78 @@
+#include <foreign_variables/bindings>
+
+int main() {
+  // Forming a raw address creates no checked loan or native read.
+  auto counter_address = &native::counter;
+  auto limit_address = &native::limit;
+  unsafe {
+    if (counter_address != native::counter_address() ||
+        limit_address != native::limit_address()) { return 1; }
+    if (native::counter != c_int(3) || native::limit != c_int(41)) { return 2; }
+    if (native::operation(c_int(41)) != c_int(42) ||
+        native::readonly_operation(c_int(21)) != c_int(42)) { return 3; }
+
+    native::counter = c_int(7);
+    auto before_call = native::counter;
+    native::mutate_counter(c_int(21));
+    if (before_call != c_int(7) || native::counter != c_int(21)) { return 4; }
+    // C replaced the callback object as well as the scalar: reload both.
+    if (native::operation(c_int(21)) != c_int(42)) { return 5; }
+
+    *native::value_pointer = c_int(20);
+    if (native::counter != c_int(20) || *native::readonly_pointer != c_int(41)) { return 6; }
+    native::value_pointer = counter_address;
+    if (*native::value_pointer != c_int(20)) { return 7; }
+
+    mut auto local = native::snapshot;
+    if (local.value != c_int(7) || local.counter != counter_address) { return 8; }
+    local.value = c_int(42);
+    local.operation = native::operation;
+    native::snapshot = local;
+    if (native::observe_snapshot() != c_int(1)) { return 9; }
+    native::snapshot.value = c_int(43);
+    if (native::snapshot.value != c_int(43)) { return 10; }
+
+    // Returned and moved records must write through to the actual C object.
+    native::snapshot = native::make_snapshot(c_int(42));
+    if (native::observe_snapshot() != c_int(1)) { return 13; }
+    mut auto moved_snapshot = native::make_snapshot(c_int(42));
+    native::snapshot = std::move(moved_snapshot);
+    if (native::observe_snapshot() != c_int(1)) { return 14; }
+
+    // The native fixture establishes which untagged union member is active.
+    // Whole-object copies preserve that alternative, including foreign storage.
+    if (native::frozen_payload.number != c_int(41)) { return 15; }
+    mut auto local_payload = native::payload;
+    if (local_payload.number != c_int(7)) { return 16; }
+    local_payload.number = c_int(42);
+    native::payload = local_payload;
+    native::second_payload = native::payload;
+    if (native::observe_payload(native::second_payload) != c_int(1)) { return 17; }
+    native::payload = native::make_payload(c_int(42));
+    if (native::observe_payload(native::payload) != c_int(1)) { return 18; }
+    native::packet.data = native::payload;
+    native::packet.data.number = c_int(43);
+    if (native::observe_packet(native::packet) != c_int(1)) { return 19; }
+    native::packet.data = native::make_payload(c_int(43));
+    if (native::observe_packet(native::packet) != c_int(1)) { return 20; }
+    mut auto moved_payload = native::make_payload(c_int(43));
+    native::packet.data = std::move(moved_payload);
+    if (native::observe_packet(native::packet) != c_int(1)) { return 21; }
+    native::switch_payload();
+    if (native::payload.position.x != c_int(10) ||
+        native::payload.position.y != c_int(20)) { return 22; }
+    mut auto position = native::payload.position;
+    native::payload.position = position;
+    if (native::observe_position() != c_int(1)) { return 23; }
+    native::payload.position = std::move(position);
+    if (native::observe_position() != c_int(1)) { return 24; }
+    native::payload.position = native::make_coordinates(c_int(10), c_int(20));
+    if (native::observe_position() != c_int(1)) { return 25; }
+
+    // The GTI spelling differs from the actual C storage symbol.
+    if (native::epoch != c_int(13)) { return 11; }
+    native::epoch = c_int(14);
+    if (native::epoch != c_int(14)) { return 12; }
+  }
+  return 0;
+}

@@ -367,6 +367,7 @@ struct LoweredDestructorDeclaration {
 
 struct LoweredStorageDeclaration {
   SymbolId symbol = 0;
+  std::string externalSymbol;
   ClassId ownerClass = 0;
   SemanticType type = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;

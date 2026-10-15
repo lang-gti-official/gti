@@ -2556,6 +2556,28 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          stored.carriers.front() == source.binding;
 }
 
+// Text has an opaque owner, not a nominal reference-field path. This is only
+// the representation shape of the separate read-only entry witness; program
+// verification still proves the exact formal, dependency links and endpoints.
+[[nodiscard]] bool opaqueTextReferenceEntry(const MirLoan &dependency,
+                                            const MirPlace &source) {
+  return source.root == MirPlaceRootKind::Binding && source.binding != 0 &&
+         source.projections.empty() && source.initiallyAvailable &&
+         source.type.kind == SemanticType::Reference &&
+         source.type.arguments.size() == 1 &&
+         (source.type.arguments.front().kind == SemanticType::StringView ||
+          source.type.arguments.front().kind == SemanticType::CString) &&
+         source.type.referenceAccess == AccessMode::ReadOnly &&
+         dependency.kind == MirLoanKind::Stored && dependency.entry &&
+         !dependency.escapes && !dependency.lifecycleBound &&
+         dependency.source == source.id && dependency.parent == 0 &&
+         dependency.storedDependency == 0 && dependency.storedField == 0 &&
+         dependency.producedBy == 0 &&
+         dependency.access == AccessMode::ReadOnly &&
+         dependency.carriers.empty() && dependency.designatedFields.empty() &&
+         dependency.additionalDependencies.empty();
+}
+
 // A shared reference to a borrow-carrying object retains two distinct facts:
 // the physical formal shell and that shell's external dependency. Publishing
 // the reference field binds the same native parameter; it does not copy the
@@ -2581,7 +2603,9 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          dependency->storedDependency == 0 && dependency->storedField == 0 &&
          dependency->producedBy == 0 && dependency->source == source.id &&
          dependency->access == AccessMode::ReadOnly &&
-         !dependency->designatedFields.empty() && dependency->carriers.empty();
+         (!dependency->designatedFields.empty() ||
+          opaqueTextReferenceEntry(*dependency, source)) &&
+         dependency->carriers.empty();
 }
 
 [[nodiscard]] bool
@@ -2609,8 +2633,9 @@ sharedPhysicalStoredParameter(const MirBody &body,
       dependency->storedDependency != 0 || dependency->storedField != 0 ||
       dependency->producedBy != 0 || dependency->source != source.id ||
       dependency->access != AccessMode::ReadOnly ||
-      dependency->designatedFields.empty() || !dependency->carriers.empty() ||
-      !stored.additionalDependencies.empty())
+      (dependency->designatedFields.empty() &&
+       !opaqueTextReferenceEntry(*dependency, source)) ||
+      !dependency->carriers.empty() || !stored.additionalDependencies.empty())
     return false;
   if (std::count_if(body.loans.begin(), body.loans.end(),
                     [&](const MirLoan &shell) {
@@ -3217,6 +3242,8 @@ struct ClassMoveAssignmentFusion {
 
 [[nodiscard]] const MirPlace *classValueDestinationSlot(const MirBody &body,
                                                         MirValueId valueId);
+[[nodiscard]] bool hasCompleteCallInputSchedule(const MirBody &body,
+                                                const MirInstruction &call);
 [[nodiscard]] const MirClassInstance *
 passiveGeneratedDestructorClass(const MirProgram &program,
                                 const SemanticType &type);
@@ -3441,6 +3468,77 @@ inactiveExpectedReplacement(const MirProgram &program, const MirBody &body,
                                                      const MirBody &body,
                                                      const MirPlace &place);
 
+[[nodiscard]] const MirClassInstance *
+passiveCAbiRecordInstance(const MirProgram &program, const SemanticType &type);
+
+[[nodiscard]] bool foreignAggregateWritable(const MirProgram &program,
+                                            const SemanticType &type) {
+  if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+    return foreignAggregateWritable(program, type.arguments.front());
+  if (type.kind != SemanticType::Class)
+    return true;
+  const MirClassInstance *record = passiveCAbiRecordInstance(program, type);
+  return record != nullptr &&
+         std::all_of(record->declaredFields.begin(),
+                     record->declaredFields.end(),
+                     [&](const MirClassFieldInfo &field) {
+                       return field.access == AccessMode::Mutable &&
+                              foreignAggregateWritable(program, field.type);
+                     });
+}
+
+// Foreign C objects share the passive record representation but never acquire
+// a GTI lifetime slot. Prove their field chain from the copied native layout;
+// the ordinary adjacent copy fusion can then spell the exact load/store pair.
+[[nodiscard]] bool foreignCAbiRecordPlace(const MirProgram &program,
+                                          const MirPlace &place,
+                                          bool *unionProjection = nullptr) {
+  const ForeignStorageInfo *storage = program.findForeignStorage(place.symbol);
+  if (place.root != MirPlaceRootKind::Symbol || !place.foreignStorage ||
+      place.capture != 0 || storage == nullptr) {
+    return false;
+  }
+  SemanticType type = storage->type;
+  for (const MirPlaceProjection &projection : place.projections) {
+    const MirClassInstance *record = passiveCAbiRecordInstance(program, type);
+    if (projection.kind != MirProjectionKind::Field || record == nullptr) {
+      return false;
+    }
+    if (unionProjection != nullptr && record->kind == ClassKind::Union)
+      *unionProjection = true;
+    const auto field = std::find_if(
+        record->cAbiLayout->fields.begin(), record->cAbiLayout->fields.end(),
+        [&](const auto &candidate) {
+          return candidate.field == projection.field;
+        });
+    if (field == record->cAbiLayout->fields.end()) {
+      return false;
+    }
+    type = field->type;
+  }
+  return type == place.type &&
+         passiveCAbiRecordInstance(program, type) != nullptr;
+}
+
+// All passive record assignment producers share this destination proof.
+// Source effects and lifetimes remain owned by each producer's exact schedule.
+[[nodiscard]] bool
+foreignRecordAssignmentDestination(const MirProgram &program,
+                                   const MirPlace &destination,
+                                   const MirInstruction &assignment) {
+  bool unionProjection = false;
+  return foreignCAbiRecordPlace(program, destination, &unionProjection) &&
+         foreignAggregateWritable(program, destination.type) &&
+         destination.access == AccessMode::Mutable &&
+         assignment.rawMemoryAccess &&
+         (assignment.unsafeOperation == UnsafeOperationKind::ForeignStorage ||
+          (unionProjection &&
+           assignment.unsafeOperation == UnsafeOperationKind::UnionMember)) &&
+         !assignment.replacementPair && !assignment.replacementCleanup &&
+         !assignment.loan && !assignment.preparedParameterDrop &&
+         !assignment.successResultDrop && !assignment.successResultDestination;
+}
+
 // A failure-free class Move consumed immediately by one fixed-array Assign has
 // no independent MIR storage or drop identity. Preserve the exact schedule by
 // staging the source into the checked-write helper's by-value parameter. That
@@ -3503,6 +3601,9 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
       move->ownership->kind == OwnershipEventKind::Move &&
       destination != nullptr && arrayElementAccess(body, *destination);
   const auto passiveTemporaryMove = [&] {
+    const bool foreignDestination =
+        destination != nullptr &&
+        foreignRecordAssignmentDestination(program, *destination, *assignment);
     const bool namedSource =
         source->root == MirPlaceRootKind::Binding && source->binding != 0 &&
         source->key && move->intrinsic == IntrinsicKind::Move &&
@@ -3522,15 +3623,20 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
         !assignment->localFailureSites.empty() ||
         !assignment->definedFailure.empty() ||
         assignment->replacementPair != 0 || assignment->replacementCleanup ||
-        assignment->loan || assignment->rawMemoryAccess ||
-        assignment->unsafeOperation != UnsafeOperationKind::None)
+        assignment->loan ||
+        (!foreignDestination &&
+         (assignment->rawMemoryAccess ||
+          assignment->unsafeOperation != UnsafeOperationKind::None)))
       return false;
     const MirClassInstance *type =
-        passiveGeneratedDestructorClass(program, source->type);
+        foreignDestination
+            ? passiveCAbiRecordInstance(program, source->type)
+            : passiveGeneratedDestructorClass(program, source->type);
     if (type == nullptr ||
-        (type->kind != ClassKind::Class && type->kind != ClassKind::Struct) ||
-        type->abstract || type->polymorphic || type->cAbiRecord ||
-        type->unionLayout ||
+        (!foreignDestination &&
+         ((type->kind != ClassKind::Class && type->kind != ClassKind::Struct) ||
+          type->cAbiRecord || type->unionLayout)) ||
+        type->abstract || type->polymorphic ||
         type->compilerCapability != CompilerCapabilityTypeKind::None ||
         type->traits != value->info.traits || type->traits != source->traits ||
         type->traits != destination->traits ||
@@ -3552,6 +3658,8 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
                              drop.generatedValue == movedValue;
                     }))
       return false;
+    if (foreignDestination)
+      return true;
     if (destination->root == MirPlaceRootKind::Binding &&
         destination->projections.empty())
       return destination->binding != 0 && destination->projections.empty() &&
@@ -3635,8 +3743,8 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
 
 // A class copy used only by the immediately following assignment has no MIR
 // lifetime of its own: no place or drop obligation owns the loaded SSA value,
-// and the discarded assignment result is metadata only. Fuse this exact bare
-// binding shape into `destination = source`; materializing an intermediate C++
+// and the discarded assignment result is metadata only. Fuse the exact
+// place pair into `destination = source`; materializing an intermediate C++
 // object would invent construction and destruction that MIR does not contain.
 [[nodiscard]] ClassCopyAssignmentFusion
 classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
@@ -3680,9 +3788,11 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
   if (copied == nullptr || copied->definition != load->id ||
       copied->info.type != load->info.type || source == nullptr ||
       (source->root != MirPlaceRootKind::Binding &&
-       !exactPassiveClassField(program, body, *source, false)) ||
+       !exactPassiveClassField(program, body, *source, false) &&
+       !foreignCAbiRecordPlace(program, *source)) ||
       (!source->projections.empty() &&
-       !exactPassiveClassField(program, body, *source, false)) ||
+       !exactPassiveClassField(program, body, *source, false) &&
+       !foreignCAbiRecordPlace(program, *source)) ||
       source->type != load->info.type || !source->traits.copyable ||
       load->operands.front().type != source->type || uses.size() != 1 ||
       uses.front().kind != MirValueUseKind::InstructionOperand ||
@@ -3702,6 +3812,9 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
                                destination->root == MirPlaceRootKind::Binding &&
                                destination->projections.empty() &&
                                destination->access == AccessMode::Mutable;
+  const bool foreignDestination =
+      destination != nullptr &&
+      foreignRecordAssignmentDestination(program, *destination, *assignment);
   const auto *copiedClass =
       passiveGeneratedDestructorClass(program, source->type);
   const bool receiverDestination =
@@ -3737,9 +3850,10 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       assignmentResult->info.type != source->type ||
       destination->type != source->type || !destination->traits.copyable ||
       !destination->traits.copyAssignable ||
-      (!bareDestination && !checkedDestination && !receiverDestination) ||
+      (!bareDestination && !checkedDestination && !receiverDestination &&
+       !foreignDestination) ||
       (replacedExpected && !nativeExpected && !bareDestination) ||
-      ((bareDestination || receiverDestination) &&
+      ((bareDestination || receiverDestination || foreignDestination) &&
        (!assignment->localFailureSites.empty() ||
         !assignment->definedFailure.empty())) ||
       (receiverDestination &&
@@ -4350,10 +4464,21 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
       return false;
     const auto &borrow = *cursor++;
     const auto *loan = borrow.loan ? body.findLoan(*borrow.loan) : nullptr;
+    const auto *loanSource = loan ? body.findPlace(loan->source) : nullptr;
+    const auto *loadedSource = body.findPlace(load.operands.front().place);
+    const bool sharedPhysicalLoad =
+        loan && loanSource && loadedSource &&
+        sharedPhysicalStoredParameter(body, reference, *loan, *loanSource) &&
+        loadedSource->root == MirPlaceRootKind::Binding &&
+        loadedSource->binding == loanSource->binding &&
+        loadedSource->projections.size() == 1 &&
+        loadedSource->projections.front().kind ==
+            MirProjectionKind::Dereference &&
+        loadedSource->type == reference.targetType.arguments.front();
     if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
         loan->kind != MirLoanKind::Stored ||
         loan->storedField != reference.field ||
-        loan->source != load.operands.front().place ||
+        (loan->source != load.operands.front().place && !sharedPhysicalLoad) ||
         loan->producedBy != reference.arguments.front() ||
         borrow.hirValue != load.hirValue || borrow.result ||
         borrow.destination || borrow.receiver || borrow.operands.size() != 1 ||
@@ -6570,9 +6695,9 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // Initialize may instead activate the temporary's own full-expression
     // obligation directly. MIR builds this join when a member call borrows
     // the joined value as its receiver. A call, plain or on its Invoke
-    // success edge, and a copy of a place then construct the temporary right
-    // before that Initialize, as a construction arm does, and the
-    // temporary's Drop ends it.
+    // success edge, an ordinary constructor with prepared inputs, and a copy
+    // of a place construct the temporary right before that Initialize. The
+    // temporary's Drop ends it; input transfers do not activate the result.
     const MirBlock *invoke = invokeProducerBlock(body, *definition);
     const MirBlock *success =
         invoke == nullptr ? nullptr : body.findBlock(invoke->terminator.target);
@@ -6585,8 +6710,16 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
         activatedNext |=
             published->instructions[index - 1].id == definition->id &&
             published->instructions[index].id == initialize->id;
-    if ((directFunctionCall || directCopy) && activatedNext &&
-        initialize->lifecycle.size() == 1 && !definition->successResultDrop &&
+    const bool preparedConstruction =
+        directConstruct && definition->constructorTarget &&
+        definition->constructorKind == ConstructorKind::Ordinary &&
+        !definition->functionTarget && !definition->lambdaTarget &&
+        !definition->bodyTarget && !definition->callableInvocation &&
+        definition->intrinsic == IntrinsicKind::None &&
+        hasCompleteCallInputSchedule(body, *definition);
+    if ((directFunctionCall || directCopy || preparedConstruction) &&
+        activatedNext && initialize->lifecycle.size() == 1 &&
+        !definition->successResultDrop &&
         onlyPreparedInputTransfers(body, *definition) &&
         initialize->definedFailure.empty() &&
         initialize->localFailureSites.empty() &&
@@ -9447,8 +9580,6 @@ conditionalClassReturnJoinSlotForTransfer(const MirBody &body,
 [[nodiscard]] const MirDropObligation *
 uniqueValueDrop(const MirBody &body, MirValueId valueId,
                 const SemanticType &type);
-[[nodiscard]] bool hasCompleteCallInputSchedule(const MirBody &body,
-                                                const MirInstruction &call);
 
 struct ConditionalClassBindingJoinArm {
   const MirValue *value = nullptr;
@@ -12270,7 +12401,6 @@ passiveCAbiRecordInstance(const MirProgram &program, const SemanticType &type) {
   }
   return selected != nullptr && selected->cAbiRecord &&
                  selected->cAbiLayout.has_value() &&
-                 !selected->unionLayout.has_value() &&
                  !selected->requiresActiveDropState &&
                  !selected->requiresActiveCleanup
              ? selected
@@ -28371,8 +28501,10 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
       assignment->info.type != value->info.type ||
       assignmentResult->definition != assignment->id ||
       assignmentResult->info.type != value->info.type ||
-      destination->root != MirPlaceRootKind::Binding ||
-      !destination->projections.empty() ||
+      ((destination->root != MirPlaceRootKind::Binding ||
+        !destination->projections.empty()) &&
+       !foreignRecordAssignmentDestination(program, *destination,
+                                           *assignment)) ||
       destination->type != value->info.type ||
       destination->access != AccessMode::Mutable ||
       !destination->traits.copyAssignable ||
@@ -34475,14 +34607,14 @@ public:
               "verified reference carrier lost its referent type");
         }
         writeIndent();
-        if (place.type.referenceAccess == AccessMode::ReadOnly) {
-          output << "const ";
-        }
         if (parameter) {
+          if (place.type.referenceAccess == AccessMode::ReadOnly)
+            output << "const ";
           output << "auto *__gti_mir_p_" << place.id << " = &__gti_mir_arg_"
                  << *parameter << ";\n";
         } else {
-          output << typeSpelling(place.type.arguments.front())
+          output << accessTypeSpelling(place.type.arguments.front(),
+                                       place.type.referenceAccess)
                  << " *__gti_mir_p_" << place.id << "{};\n";
         }
         continue;
@@ -35366,16 +35498,16 @@ public:
         throw std::logic_error("verified MIR loan lost its source place");
       }
       writeIndent();
-      if (loan.access == AccessMode::ReadOnly) {
-        output << "const ";
-      }
+      const auto loanTypeSpelling = [&](const SemanticType &type) {
+        return accessTypeSpelling(type, loan.access);
+      };
       // A nested reference call publishes its exact referent pointer into
       // this Return loan. The semantic source still names the owner used for
       // conflicts, so the transfer payload owns the runtime pointer type.
       if (const MirInstruction *transfer =
               callResultReturnLoanProducer(facts.body, loan);
           transfer != nullptr) {
-        output << typeSpelling(transfer->info.type) << " *__gti_mir_loan_"
+        output << loanTypeSpelling(transfer->info.type) << " *__gti_mir_loan_"
                << loan.id << "{};\n";
         continue;
       }
@@ -35387,7 +35519,7 @@ public:
           throw std::logic_error(
               "verified MIR storage loan lost its element type");
         }
-        output << typeSpelling(source->type.arguments.front())
+        output << loanTypeSpelling(source->type.arguments.front())
                << " *__gti_mir_loan_" << loan.id << "{};\n";
         continue;
       }
@@ -35395,7 +35527,8 @@ public:
         // The entry loan aliases the reference parameter's pointer
         // carrier (ADR 018 §4): the place prelude above already bound
         // the carrier from the argument, so the loan pointer copies it.
-        // The declaration is already indented and may already carry `const`.
+        if (loan.access == AccessMode::ReadOnly)
+          output << "const ";
         output << "auto *__gti_mir_loan_" << loan.id << " = ";
         if (const auto element = packElementParameterIndex(
                 program, facts.body, {facts.kind, facts.id}, *source)) {
@@ -35424,7 +35557,7 @@ public:
             throw std::logic_error(
                 "verified MIR checked storage loan lost its element type");
           }
-          output << typeSpelling(source->type.arguments.front())
+          output << loanTypeSpelling(source->type.arguments.front())
                  << " *__gti_mir_loan_" << loan.id << "{};\n";
           continue;
         }
@@ -35434,7 +35567,7 @@ public:
           throw std::logic_error(
               "verified MIR call-result loan lost its element type");
         }
-        output << typeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
+        output << loanTypeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
                << "{};\n";
         continue;
       }
@@ -35445,7 +35578,7 @@ public:
           throw std::logic_error(
               "verified MIR return loan lost its exact referent type");
         }
-        output << typeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
+        output << loanTypeSpelling(*referent) << " *__gti_mir_loan_" << loan.id
                << "{};\n";
         continue;
       }
@@ -35457,7 +35590,7 @@ public:
         }
         loanedType = &source->type.arguments.front();
       }
-      output << typeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
+      output << loanTypeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
     if (!failureForm) {
@@ -35559,10 +35692,8 @@ public:
             if (calleeReturn.kind == SemanticType::Reference &&
                 producedCallResultLoan(facts.body, instruction) == nullptr) {
               writeIndent();
-              if (calleeReturn.referenceAccess == AccessMode::ReadOnly) {
-                output << "const ";
-              }
-              output << typeSpelling(calleeReturn.arguments.front())
+              output << accessTypeSpelling(calleeReturn.arguments.front(),
+                                           calleeReturn.referenceAccess)
                      << " *__gti_mir_discard_" << instruction.id << "{};\n";
             } else if (!instruction.result &&
                        (calleeReturn.kind == SemanticType::Class ||
@@ -36307,6 +36438,11 @@ private:
     return copiedTypeSpelling(type);
   }
 
+  [[nodiscard]] std::string accessTypeSpelling(const SemanticType &type,
+                                               AccessMode access) {
+    return cppAccessQualifiedTypeSpelling(type, access, typeSpelling(type));
+  }
+
   [[nodiscard]] const std::string &
   copiedTypeSpelling(const SemanticType &type) {
     const auto found = std::find_if(
@@ -36481,10 +36617,9 @@ private:
             closure.lambda->returnType.arguments.size() == 1) {
           // A reference result publishes its loan pointer through the
           // `T **` channel shared with function bodies (ADR 018 §5).
-          if (closure.lambda->returnType.referenceAccess ==
-              AccessMode::ReadOnly)
-            output << "const ";
-          output << typeSpelling(closure.lambda->returnType.arguments.front())
+          output << accessTypeSpelling(
+                        closure.lambda->returnType.arguments.front(),
+                        closure.lambda->returnType.referenceAccess)
                  << " **__gti_mir_out_result, ";
         } else if (closure.lambda->returnType != SemanticType::Void) {
           output << typeSpelling(closure.lambda->returnType)
@@ -37504,9 +37639,8 @@ private:
       }
       if (lambda->returnType.kind == SemanticType::Reference &&
           lambda->returnType.arguments.size() == 1) {
-        if (lambda->returnType.referenceAccess == AccessMode::ReadOnly)
-          output << "const ";
-        output << typeSpelling(lambda->returnType.arguments.front())
+        output << accessTypeSpelling(lambda->returnType.arguments.front(),
+                                     lambda->returnType.referenceAccess)
                << " **__gti_mir_out_result, ";
       } else if (lambda->returnType != SemanticType::Void) {
         output << typeSpelling(lambda->returnType)
@@ -39419,9 +39553,21 @@ private:
       const MirPlace *source =
           facts.body.findPlace(instruction.operands.front().place);
       if (source != nullptr && source->root == MirPlaceRootKind::Symbol) {
-        output << "__gti_mir_v_" << *instruction.result << " = ";
-        emitPlaceExpression(facts, *source);
-        output << ";\n";
+        if (source->type.kind == SemanticType::RawPointer &&
+            program.findForeignStorage(source->symbol) != nullptr) {
+          // The external object is a native pointer slot, while an SSA raw
+          // address is the inert carrier. Copy slot bytes through the shared
+          // native-slot operation without evaluating the stored pointer.
+          output
+              << "::gti_internal::backend::raw_pointer_slot_copy(__gti_mir_v_"
+              << *instruction.result << ", ";
+          emitPlaceExpression(facts, *source);
+          output << ");\n";
+        } else {
+          output << "__gti_mir_v_" << *instruction.result << " = ";
+          emitPlaceExpression(facts, *source);
+          output << ";\n";
+        }
         return;
       }
       if (source != nullptr) {
@@ -43698,9 +43844,8 @@ private:
         output << ", ";
       if (result.kind == SemanticType::Reference &&
           result.arguments.size() == 1) {
-        if (result.referenceAccess == AccessMode::ReadOnly)
-          output << "const ";
-        output << typeSpelling(result.arguments.front())
+        output << accessTypeSpelling(result.arguments.front(),
+                                     result.referenceAccess)
                << " **__gti_mir_out_result, ";
       } else if (result != SemanticType::Void) {
         output << typeSpelling(result) << " *__gti_mir_out_result, ";
@@ -44631,9 +44776,8 @@ private:
     if (const auto *loan = mir_detail::erasedReferenceResultLoan(
             program, facts.body, instruction)) {
       output << "__gti_mir_loan_" << loan->id << " = reinterpret_cast<";
-      if (loan->access == AccessMode::ReadOnly)
-        output << "const ";
-      output << typeSpelling(instruction.info.type) << "*>(std::addressof(";
+      output << accessTypeSpelling(instruction.info.type, loan->access)
+             << "*>(std::addressof(";
       // The verified call schedule can carry a borrowed place or loan through
       // a CallInput. Spell its referent with the ordinary argument transport,
       // not as a scalar SSA value (which need not exist for a checked borrow).
@@ -45854,8 +45998,12 @@ private:
               &instruction) ||
          ((failureForm || indirectResultForm) &&
           passiveResult.returnBlock != nullptr));
+    const bool placementResult =
+        classResultDestination != nullptr ||
+        expectedPayloadResult.producer == &instruction || stagedAssignment ||
+        stagedArrayResult;
     const bool passiveLocalResult =
-        passiveResult &&
+        passiveResult && !placementResult &&
         (passiveResult.returnBlock == nullptr ||
          (!failureForm && !indirectResultForm &&
           returnCallDefinition(facts.body, *instruction.result) !=
@@ -45936,11 +46084,7 @@ private:
     }
     if (nativeIndirectReturn || passiveLocalResult)
       output << ')';
-    output << (classResultDestination != nullptr ||
-                       expectedPayloadResult.producer == &instruction ||
-                       stagedAssignment || stagedArrayResult
-                   ? "; });\n"
-                   : ";\n");
+    output << (!nativeIndirectReturn && placementResult ? "; });\n" : ";\n");
     if (stagedDiscard) {
       writeIndent();
       output << "__gti_mir_v_" << *instruction.result

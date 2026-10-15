@@ -24,7 +24,7 @@
     "023-direct-initialization.gti": 39,
     "024-static.gti": 13,
     "025-polymorphic-ranges.gti": 23,
-    "026-stored-references.gti": 18,
+    "026-stored-references.gti": 122,
     "027-copy-move-policies.gti": 22,
     "028-callable-parameters.gti": 20,
     "029-callable-predicates.gti": 12,
