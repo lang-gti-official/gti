@@ -177,12 +177,10 @@ int run(bool left, int base) {
     total += kept.read();
   }
   {
-    // Only one arm consumes; the other calls an ordinary function. Arm
-    // arguments are computed first, here and below: an arm whose argument
-    // can fail before its call is not this join's shape.
-    int two = base + 30;
+    // Only one arm consumes; the other calls an ordinary function whose
+    // checked argument is computed in its arm.
     Plain a{base + 29};
-    Pod kept = left ? std::move(a).pod() : fresh(two);
+    Pod kept = left ? std::move(a).pod() : fresh(base + 30);
     total += kept.read();
   }
   {
@@ -195,10 +193,9 @@ int run(bool left, int base) {
   }
   {
     // A nested conditional inside one arm.
-    int three = base + 36;
     Plain a{base + 34};
     Plain b{base + 35};
-    Pod kept = left ? (left ? std::move(a).pod() : b.peek()) : fresh(three);
+    Pod kept = left ? (left ? std::move(a).pod() : b.peek()) : fresh(base + 36);
     total += kept.read();
   }
   {
@@ -219,12 +216,11 @@ int run(bool left, int base) {
     total += (left ? c.peek() : make_pod(std::move(d))).x;
   }
   {
-    // A generic receiver and a generic callee.
-    int one = base + 43;
-    int two = base + 44;
+    // A generic receiver and a generic callee, each with a checked argument.
     Token<int> a{base};
     Plain b{base};
-    Pod kept = left ? std::move(a).make(one) : forward<Plain>(std::move(b), two);
+    Pod kept = left ? std::move(a).make(base + 43)
+                    : forward<Plain>(std::move(b), base + 44);
     total += kept.read();
   }
   {
