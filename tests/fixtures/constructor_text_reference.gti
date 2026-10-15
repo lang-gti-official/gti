@@ -34,7 +34,8 @@ std::size_t inspect(std::string_view input, bool fail) {
 
 int main(int argc, std::vector<std::string> argv) {
   std::string_view literal = "literal";
-  TextReader static_reader{literal};
+  std::string_view alias = literal;
+  TextReader static_reader{alias};
   if (static_reader.size() != std::size_t(7)) { return 1; }
   mut std::string owner = std::string("dynamic");
   if (inspect(owner.view(), argc > 1) != std::size_t(7)) { return 2; }

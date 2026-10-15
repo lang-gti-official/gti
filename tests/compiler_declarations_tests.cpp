@@ -45,6 +45,9 @@ int main() {
   Label local{independent};
   Borrowed static_reference{independent};
   if (static_reference.size() != std::size_t(11)) { return 1; }
+  std::string_view alias = independent;
+  Borrowed static_alias{alias};
+  if (static_alias.size() != std::size_t(11)) { return 2; }
   Box<std::string_view> generic{"generic"};
   std::pair<std::string_view, int32_t> pair{"pair", 1};
   CLabel empty{nullptr};

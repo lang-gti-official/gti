@@ -2278,12 +2278,14 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
 verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner);
 
-[[nodiscard]] bool independentlyStaticTextBinding(const MirBody &body,
-                                                  const MirPlace &source) {
+[[nodiscard]] bool
+independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
+                               std::unordered_set<HirBindingId> &visited) {
   if (source.root != MirPlaceRootKind::Binding || !source.projections.empty() ||
       source.initiallyAvailable || source.traits.containsBorrowedState ||
       (source.type.kind != SemanticType::StringView &&
-       source.type.kind != SemanticType::CString))
+       source.type.kind != SemanticType::CString) ||
+      !visited.insert(source.binding).second)
     return false;
   // Prove the actual initializer and absence of writes independently: erased
   // borrowed-state metadata alone is never evidence of static lifetime.
@@ -2314,6 +2316,18 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
               initialization->operands.front().kind == MirOperandKind::Value
           ? definitionFor(body, initialization->operands.front().value)
           : nullptr;
+  if (literal && literal->kind == MirInstructionKind::Load &&
+      literal->operands.size() == 1 &&
+      literal->operands.front().kind == MirOperandKind::Copy &&
+      literal->info.type == source.type &&
+      !literal->info.traits.containsBorrowedState && !literal->loan &&
+      !literal->destination && !literal->receiver &&
+      literal->lifecycle.empty() && literal->definedFailure.empty() &&
+      literal->localFailureSites.empty()) {
+    const auto *copied = body.findPlace(literal->operands.front().place);
+    return copied && copied->type == source.type &&
+           independentlyStaticTextBinding(body, *copied, visited);
+  }
   return literal && literal->kind == MirInstructionKind::Compute &&
          literal->operation == MirOperation::Literal && literal->literal &&
          !literal->loan && literal->operands.empty() && !literal->destination &&
@@ -2327,6 +2341,12 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
           (source.type.kind == SemanticType::CString &&
            literal->info.type.kind == SemanticType::NullPtr &&
            std::holds_alternative<std::nullptr_t>(*literal->literal)));
+}
+
+[[nodiscard]] bool independentlyStaticTextBinding(const MirBody &body,
+                                                  const MirPlace &source) {
+  std::unordered_set<HirBindingId> visited;
+  return independentlyStaticTextBinding(body, source, visited);
 }
 
 [[nodiscard]] bool isPotentiallyBorrowedCarrier(const MirProgram &program,
