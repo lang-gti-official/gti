@@ -245,6 +245,155 @@ int main() { change(Token::item(7)); return 0; }
 int main() { Token& value = escape(Token::item(7)); return inspect(value); }
 )gti",
            "GTI-S2017", "may return a reference");
+  const auto localSets = analyze(passiveEnum + R"gti(
+Token select(bool flag) {
+  mut auto value = Token::empty;
+  if (flag) { value = Token::item(7); }
+  else { value = Token::empty; }
+  auto copied = value;
+  return std::move(copied);
+}
+Token snapshot() {
+  mut auto value = Token::empty;
+  auto copied = value;
+  value = Token::item(9);
+  return copied;
+}
+int main() {
+  auto first = select(true);
+  auto second = snapshot();
+  return inspect(first) + inspect(second) - 7;
+}
+)gti");
+  expect(localSets.canGenerateCode(),
+         "complete sets survive binding, branch union, copy and move");
+  if (!localSets.canGenerateCode())
+    dump(localSets);
+  else {
+    bool sawUnion = false;
+    bool sawMove = false;
+    for (const auto &function : localSets.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto *value = instruction.result
+                                  ? function.body.findValue(*instruction.result)
+                                  : nullptr;
+          if (!value || !value->borrowDependencies)
+            continue;
+          sawUnion |=
+              value->borrowDependencies->possibleAlternatives.size() == 2;
+          sawMove |= instruction.kind == lang::MirInstructionKind::Move;
+        }
+    expect(sawUnion && sawMove, "transport evidence includes both branch "
+                                "alternatives and a moved result");
+    for (int corruption = 0; corruption != 3; ++corruption) {
+      auto malformed = localSets.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            auto *value = instruction.result
+                              ? &function.body.values[*instruction.result - 1]
+                              : nullptr;
+            if (changed || instruction.kind != lang::MirInstructionKind::Load ||
+                !value || !value->borrowDependencies ||
+                value->borrowDependencies->possibleAlternatives.size() != 2)
+              continue;
+            auto &alternatives =
+                value->borrowDependencies->possibleAlternatives;
+            if (corruption == 0)
+              alternatives.pop_back();
+            if (corruption == 1)
+              alternatives.front().conditions.front().subobject = {1};
+            if (corruption == 2)
+              alternatives.back() = alternatives.front();
+            changed = true;
+          }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "MIR rejects omitted, substituted and duplicated joined "
+             "alternatives");
+    }
+  }
+  for (const std::string source :
+       {"Token unknown(Token input) { return input; }",
+        "void replace(mut Token& input) { input = Token::item(9); } "
+        "Token unknown() { mut auto value = Token::empty; replace(value); "
+        "return value; }"}) {
+    const auto unknownSet =
+        analyze(passiveEnum + source + " int main() { return 0; }");
+    expect(
+        unknownSet.canGenerateCode(),
+        "unknown or mutably invalidated alternatives retain no complete proof");
+    if (!unknownSet.canGenerateCode()) {
+      dump(unknownSet);
+      continue;
+    }
+    auto malformed = unknownSet.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+      for (auto &block : function.body.blocks)
+        for (auto &instruction : block.instructions) {
+          auto *value = instruction.result
+                            ? &function.body.values[*instruction.result - 1]
+                            : nullptr;
+          if (changed || instruction.kind != lang::MirInstructionKind::Load ||
+              !value || value->info.type.kind != lang::SemanticType::Enum ||
+              value->borrowDependencies)
+            continue;
+          value->borrowDependencies = lang::MirBorrowDependencySet{
+              .possibleAlternatives = {
+                  {.conditions = {
+                       {.enumeration = value->info.type, .variant = 1}}}}};
+          changed = true;
+        }
+    expect(
+        changed && !lang::verifyMirProgram(malformed).valid(),
+        "MIR cannot invent an empty-set proof for unknown or mutated storage");
+  }
+  accepted(passiveEnum + R"gti(
+Token repeated(int count) {
+  mut auto value = Token::empty;
+  for (mut int index = 0; index < count; ++index) {
+    auto previous = value;
+    [[discard]] inspect(previous);
+    value = Token::item(index);
+  }
+  return value;
+}
+int main() { auto value = repeated(3); return inspect(value) - 2; }
+)gti",
+           "loop-carried alternatives do not reuse a first-iteration proof");
+  const auto ownedSets = analyze(R"gti(
+#include <std/string>
+enum Owned { item(std::string text), empty };
+Owned move_result() {
+  auto original = Owned::item(std::string("error"));
+  auto relocated = std::move(original);
+  return relocated;
+}
+int main() { auto value = move_result(); return 0; }
+)gti");
+  expect(ownedSets.canGenerateCode(), "dependency-free owning alternatives "
+                                      "preserve explicit and implicit moves");
+  if (!ownedSets.canGenerateCode())
+    dump(ownedSets);
+  else {
+    std::size_t ownedMoves = 0;
+    for (const auto &function : ownedSets.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto *value = instruction.result
+                                  ? function.body.findValue(*instruction.result)
+                                  : nullptr;
+          if (instruction.kind == lang::MirInstructionKind::Move && value &&
+              value->info.type.kind == lang::SemanticType::Enum &&
+              value->borrowDependencies)
+            ++ownedMoves;
+        }
+    expect(
+        ownedMoves >= 2,
+        "actual owning moves, including synthesized return, retain exact sets");
+  }
   const auto enumProof = analyze(enumProtocol);
   if (enumProof.canGenerateCode()) {
     for (int corruption = 0; corruption != 6; ++corruption) {

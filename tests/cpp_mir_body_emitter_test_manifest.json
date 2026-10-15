@@ -218,6 +218,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testMutableReferencePrefixBeforeOwnedField",
+      "suite": "preflight"
+    },
+    {
       "name": "testOptionalPayloadCleanupComposition",
       "suite": "preflight"
     },
