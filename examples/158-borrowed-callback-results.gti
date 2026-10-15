@@ -1,0 +1,53 @@
+// Borrowed results through callbacks: a lambda, a generic relay, a GTI
+// invocation pointer and a signature-erased view each return a read-only
+// reference that borrows exactly one read-only reference argument.
+#include <std/functional>
+#include <std/io>
+#include <std/vector>
+
+class Pair {
+public:
+  int left;
+  int right;
+  Pair(int left, int right) : left(left), right(right) {}
+};
+
+// A free function infers its origin from its one read-only reference
+// parameter; the `int` parameter cannot own a reference.
+int& choose(int& preferred, int fallback) { return preferred; }
+
+// A generic relay names the parameter its result borrows; each instance
+// verifies that the selected callback's own origin reaches that parameter.
+[[borrowed_from(value)]]
+int& through<F>(F& callback, int& value) { return callback(value); }
+
+int& left_of(Pair& pair) { return pair.left; }
+
+int main() {
+  int cell = 10;
+
+  // A lambda's reference result borrows its one read-only reference
+  // parameter; captures are never origins.
+  auto same = [](int& value) -> int& { return value; };
+  int& direct = same(cell);
+  std::println(direct);
+
+  int& relayed = through(same, cell);
+  std::println(relayed + 1);
+
+  // A signature with a reference result carries the same inferred contract.
+  std::function_ptr<int&(int&, int)> pointer{choose};
+  int& chosen = pointer(cell, 0);
+  std::println(chosen + 2);
+
+  std::function_ref<int&(int&)> view{same};
+  int& viewed = view(cell);
+  std::println(viewed + 3);
+
+  // The borrowed result follows the argument, not the pointer or the view.
+  Pair pair{20, 30};
+  std::function_ptr<int&(Pair&)> field{left_of};
+  int& left = field(pair);
+  std::println(left + pair.right);
+  return 0;
+}

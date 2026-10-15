@@ -391,12 +391,17 @@ The current implemented foundation includes:
   of the exact signature. Shared views borrow read-only; mutable views borrow
   exclusively and require mutable access for invocation. They allocate nothing,
   never copy the target, have no empty state, and cannot outlive either the
-  callable or its borrowed captures. Borrowed results require a future
-  signature-level origin contract; a view does not infer cross-thread capability.
+  callable or its borrowed captures. A read-only reference result is admitted
+  through the `std::function_ref<R&(Args...)>` and
+  `std::function_ref<R&(Args...) mut>` forms: the signature's one read-only
+  reference parameter owns the result, the callable must publish the same
+  origin, and each call result borrows that argument rather than the view.
+  A view does not infer cross-thread capability.
   `std::function_ptr<R(Args...)>` provides non-null GTI invocation addresses for
   exact namespace-function items and captureless lambdas, preserving GTI failure
-  and argument/result ownership rules rather than the native C ABI; an owning
-  class result through an invocation pointer is a later slice.
+  and argument/result ownership rules rather than the native C ABI;
+  `std::function_ptr<R&(Args...)>` carries the same reference-result contract.
+  An owning class result through an invocation pointer is a later slice.
   The source-defined views use general checked-reference erasure from
   `<std/memory>`: `erase_ref`/`erase_mut` preserve a borrow as an opaque
   `erased_object` reference, and unsafe `restore_ref<T>`/`restore_mut<T>` restore

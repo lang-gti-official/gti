@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.435.0 — Borrowed results through callbacks
+
+- A lambda can return a read-only reference that borrows exactly one of its
+  read-only reference parameters; every `return` must derive from that
+  parameter, captures are never origins, and results derived from a mutable
+  parameter or an ambiguous parameter list are rejected (`GTI-S2017`). Direct invocation, a generic `F`/`F&` relay and a
+  signature-erased view all give the result the argument's borrow.
+- `std::function_ptr<R&(Args...)>` and `std::function_ref<R&(Args...)>`
+  carry a result-origin contract inferred from the signature's one read-only
+  reference parameter; the target must publish the same origin, and each call
+  result borrows that argument. Erased objects never compete as origins.
+- `[[borrowed_from(name)]]` on a declaration whose result type is a generic
+  parameter binds the instances whose result is a checked reference and may
+  name a final parameter pack. Example 158 and the
+  `checked_callable_result_origin` fixture accompany the feature.
+- Fixed: invoking a `std::function_ptr` or `std::function_ref` whose signature
+  takes a scalar reference parameter (`int&`) failed in the backend with
+  `GTI-B0001`; the invocation now drains that argument's staged borrow like a
+  source call.
+
 ## 0.434.0 — Protocol concepts and conformance blocks
 
 - A concept can now have a body instead of `= constraint;`. It declares

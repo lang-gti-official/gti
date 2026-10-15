@@ -775,6 +775,12 @@ private:
   // Exact immutable-program cache. Discover preparation targets once rather
   // than scanning every constructor body again for each emitted constructor.
   mutable std::optional<std::vector<HirConstructorInstanceId>> baseGateTargets_;
+  // The function instances some body names as a GTI invocation-pointer
+  // target. Their thunks inline the failure form whether or not the target
+  // may raise, so that form must also be admitted standalone.
+  mutable std::optional<std::vector<HirFunctionInstanceId>>
+      functionPointerTargets_;
+  [[nodiscard]] bool functionPointerTarget(HirFunctionInstanceId id) const;
 };
 
 } // namespace lang
