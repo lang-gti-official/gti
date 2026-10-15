@@ -6488,6 +6488,21 @@ the merge, and a failure while cleanup destroys a bound result reports the
 secondary failure. `testConditionalPreparedInputResult` in the emitter text
 suite refuses removed, duplicated and conditional input transfers and a second
 result activation, which MIR verification also rejects.
+`conditional_cleanup_free_call_result_runtime` runs the same eight
+configurations over a cleanup-free class result that each arm of a
+conditional makes by a member call, borrowing its receiver read-only or
+mutably or consuming it, or by a call that consumes a moved by-value
+argument. Each shape runs through both arms, bound, assigned, passed on,
+read through a field, and returned, in plain and failure-form bodies. The
+arms come from failure-free and raising callees, an arm beside an ordinary
+call, two moved arguments, a nested conditional, a generic receiver and a
+generic callee, and receivers and arguments with cleanup of their own. A
+returned join of ordinary raising calls, which earlier read an unwritten
+result, is covered too. A failing callee in an arm leaves no result.
+`testCleanupFreeConditionalCallArms` in the emitter text suite refuses
+removed, duplicated and conditional input transfers and a forged result
+activation, which MIR verification also rejects, and a forged consuming
+capability on a borrowed receiver.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,

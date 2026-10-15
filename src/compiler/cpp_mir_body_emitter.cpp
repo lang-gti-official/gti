@@ -4970,15 +4970,17 @@ preparedInputResultActivation(const MirBody &body,
   return nullptr;
 }
 
-// A producer whose result is activated on its Invoke success edge has no
-// lifecycle event of its own beyond the exact transfers of its prepared
-// inputs.
+// A producer whose result is activated on its Invoke success edge, or whose
+// cleanup-free result has no obligation at all, has no lifecycle event of its
+// own beyond the exact transfers of its prepared inputs.
 [[nodiscard]] bool onlyPreparedInputTransfers(const MirBody &body,
                                               const MirInstruction &producer) {
-  return producer.lifecycle.empty() ||
-         (producer.successResultDrop &&
-          exactPreparedInputTransfers(body, producer,
-                                      PreparedReceiverInput::Admitted));
+  return std::all_of(producer.lifecycle.begin(), producer.lifecycle.end(),
+                     [](const MirLifecycleEvent &event) {
+                       return event.kind == MirLifecycleEventKind::TransferOut;
+                     }) &&
+         exactPreparedInputTransfers(body, producer,
+                                     PreparedReceiverInput::Admitted);
 }
 
 [[nodiscard]] bool
@@ -9427,6 +9429,15 @@ struct ConditionalClassBindingJoin {
 cleanupFreeClassJoinMove(const MirProgram &program, const MirBody &body,
                          const MirPlace &slot);
 
+[[nodiscard]] bool exactMemberBorrowReceiver(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirInstruction &producer,
+                                             const MirFunctionInstance &target);
+[[nodiscard]] bool
+exactMemberConsumingReceiver(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &call,
+                             const MirFunctionInstance &target);
+
 [[nodiscard]] ConditionalClassBindingJoinArm
 conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
                                MirValueId valueId) {
@@ -9435,29 +9446,39 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
       value == nullptr ? nullptr : findInstruction(body, value->definition);
   // A static source call may produce a cleanup-free arm exactly as a
   // construction does: it publishes into the join's representation-only
-  // storage, plainly or on its Invoke success edge.
+  // storage, plainly or on its Invoke success edge. A member call keeps the
+  // receiver identity ordinary call admission proves, its exact borrow or its
+  // consumed receiver. The cleanup-free result has no lifecycle event of its
+  // own; the call may only transfer out its prepared inputs (moved by-value
+  // arguments, and a cleanup-free receiver moved out of a place).
   const MirFunctionInstance *callTarget =
       construct != nullptr && construct->kind == MirInstructionKind::Call &&
               construct->functionTarget
           ? program.findFunctionInstance(*construct->functionTarget)
           : nullptr;
+  const bool consumedReceiver =
+      callTarget != nullptr &&
+      exactMemberConsumingReceiver(program, body, *construct, *callTarget);
   const bool sourceCall =
       callTarget != nullptr && !construct->constructorTarget &&
-      !construct->receiver && !construct->destination &&
-      !construct->lambdaTarget && !construct->bodyTarget &&
-      !construct->callableInvocation &&
+      !construct->destination && !construct->lambdaTarget &&
+      !construct->bodyTarget &&
+      ((!construct->receiver &&
+        (!callTarget->owner || callTarget->staticMember)) ||
+       exactMemberBorrowReceiver(program, body, *construct, *callTarget) ||
+       consumedReceiver) &&
+      (!construct->callableInvocation || consumedReceiver) &&
       construct->intrinsic == IntrinsicKind::None &&
       construct->dispatch == CallDispatch::Static &&
       callTarget->definitionKind == MirDefinitionKind::Source &&
       callTarget->linkage == LanguageLinkage::Gti &&
-      (!callTarget->owner || callTarget->staticMember) &&
       callTarget->returnType == value->info.type &&
       callTarget->parameterTypes == construct->parameterTypes &&
       construct->result && *construct->result == valueId &&
       construct->localFailureSites.empty() &&
       construct->definedFailure.localOrigins.empty() &&
       !construct->successResultDrop && !construct->successResultDestination &&
-      construct->lifecycle.empty() &&
+      onlyPreparedInputTransfers(body, *construct) &&
       (construct->definedFailure.empty() ||
        (callTarget->mayRaiseDefinedFailure &&
         construct->definedFailure.propagation ==
@@ -9538,8 +9559,9 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     return {};
   }
   if (representationOnly) {
+    // A source call's prepared input transfers were proved above.
     if (value->info.traits != passive->traits || valueDrop != nullptr ||
-        !construct->lifecycle.empty()) {
+        (!sourceCall && !construct->lifecycle.empty())) {
       return {};
     }
   } else {
@@ -31038,6 +31060,24 @@ struct ClassSsaLifetimeSlot {
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
 
+// The cleanup-free conditional join whose single Move is this slot's
+// producer. That Move stages the joined object in the slot for its one
+// consumer, whatever the body's form; the join's storage ends right after.
+[[nodiscard]] const MirPlace *
+stagedCleanupFreeJoinMove(const MirProgram &program, const MirBody &body,
+                          const ClassSsaLifetimeSlot &slot) {
+  const MirInstruction *move = slot.producer;
+  const MirPlace *join = move != nullptr &&
+                                 move->kind == MirInstructionKind::Move &&
+                                 move->operands.size() == 1
+                             ? body.findPlace(move->operands.front().place)
+                             : nullptr;
+  return join != nullptr &&
+                 cleanupFreeClassJoinMove(program, body, *join) == move
+             ? join
+             : nullptr;
+}
+
 // A passive, unaliased error may remain in representation storage while MIR
 // retires surrounding locals. Follow only the existing normal cleanup spine;
 // failure edges keep their ordinary propagation/double-failure behavior. The
@@ -41213,13 +41253,10 @@ private:
           program, representations, facts.body, *instruction.result);
       // The joined object moves out of the cleanup-free join's storage into
       // its own staged slot; the join's representation then ends.
-      const MirPlace *joinSource =
-          instruction.operands.size() == 1
-              ? facts.body.findPlace(instruction.operands.front().place)
-              : nullptr;
-      if (passiveError.producer == &instruction && joinSource != nullptr &&
-          cleanupFreeClassJoinMove(program, facts.body, *joinSource) ==
-              &instruction) {
+      if (const MirPlace *joinSource =
+              passiveError.producer == &instruction
+                  ? stagedCleanupFreeJoinMove(program, facts.body, passiveError)
+                  : nullptr) {
         const auto join = canonicalSlotPlaceId(facts.body, *joinSource);
         writeIndent();
         output << "__gti_mir_v_" << *instruction.result
@@ -46431,8 +46468,16 @@ private:
                   ? returnDefaultConstructionDefinition(facts.body,
                                                         terminator.value->value)
                   : nullptr;
+          // The single Move out of a cleanup-free conditional join stages the
+          // joined object in its own slot, in this form as in the plain one,
+          // so the Return publishes from that slot below.
+          const bool stagedJoinReturn =
+              returnedClassSlot.returnBlock == &block &&
+              returnedClassSlot.consumerKind ==
+                  ClassSsaSlotConsumerKind::Return &&
+              stagedCleanupFreeJoinMove(program, facts.body, returnedClassSlot);
           const MirInstruction *moved =
-              construct == nullptr &&
+              construct == nullptr && !stagedJoinReturn &&
                       terminator.value->kind == MirOperandKind::Value
                   ? returnMoveDefinition(facts.body, terminator.value->value)
                   : nullptr;
