@@ -234,12 +234,12 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     return;
   }
   const auto &result = signature.arguments.front();
-  if (result.kind == SemanticType::Reference ||
-      (!containsOpenTypeParameter(result) &&
-       typeTraits(result).containsBorrowedState)) {
+  if (!containsOpenTypeParameter(result) &&
+      result.kind != SemanticType::Reference &&
+      typeTraits(result).containsBorrowedState) {
     report(expr.paren(),
-           "A signature-erased invocation result cannot borrow "
-           "until its signature carries a result-origin contract.",
+           "A signature-erased borrowed-state result needs a result-origin "
+           "contract; this slice carries one for reference results only.",
            "GTI-S2093");
     currentType = SemanticType::Unknown;
     return;
@@ -248,6 +248,30 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   for (const auto &type :
        std::span<const SemanticType>(signature.arguments).subspan(1))
     SemanticType::appendExpandedArgument(parameters, type);
+  // A reference result's origin is the signature's one read-only reference
+  // parameter, inferred exactly like a free function's summary. An erased
+  // object is opaque and never an origin: a typed referent cannot be reached
+  // through it, so the thunk's erased receiver does not compete with the
+  // signature's own parameters.
+  std::optional<std::size_t> resultOrigin;
+  if (result.kind == SemanticType::Reference &&
+      !containsOpenTypeParameter(signature)) {
+    const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+        result, parameters, 0, true, IntrinsicKind::None);
+    if (summary.origin != BorrowOriginKind::Argument ||
+        summary.access != AccessMode::ReadOnly) {
+      report(expr.paren(),
+             summary.eligibleParameters > 1
+                 ? "A signature-erased reference result's origin is ambiguous; "
+                   "exactly one read-only reference parameter may own it."
+                 : "A signature-erased reference result must be read-only and "
+                   "borrow exactly one read-only reference parameter.",
+             "GTI-S2093");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    resultOrigin = summary.parameter;
+  }
   // An invocation pointer's thunk forwards its arguments and result by
   // value through the typed invocation boundary. Arguments of any value
   // type, including owning class values, stage through it; an owning class
@@ -309,6 +333,37 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
       currentType = SemanticType::Unknown;
       return;
     }
+    // The target's own result-origin contract must name the signature's
+    // origin parameter: the erased invocation relays exactly that borrow.
+    if (resultOrigin && !containsOpenTypeParameter(target)) {
+      std::optional<std::size_t> targetOrigin;
+      if (function != 0) {
+        const auto *declaration = semanticModel.findFunction(function);
+        if (declaration == nullptr && instanceBaseModel != nullptr)
+          declaration = instanceBaseModel->findFunction(function);
+        if (declaration != nullptr &&
+            declaration->returnBorrowOrigin == BorrowOriginKind::Argument &&
+            declaration->returnBorrowAccess == AccessMode::ReadOnly)
+          targetOrigin = declaration->returnBorrowParameter;
+      } else if (lambda != 0) {
+        const LambdaInfo *info = semanticModel.findLambda(lambda);
+        if (info == nullptr && instanceBaseModel != nullptr)
+          info = instanceBaseModel->findLambda(lambda);
+        if (info != nullptr &&
+            info->returnBorrowOrigin == BorrowOriginKind::Argument &&
+            info->returnBorrowAccess == AccessMode::ReadOnly)
+          targetOrigin = info->returnBorrowParameter;
+      }
+      if (targetOrigin != resultOrigin) {
+        report(expressionToken(expr.arguments().front()),
+               "GTI invocation pointer construction requires a target whose "
+               "reference result borrows the signature's origin parameter " +
+                   std::to_string(*resultOrigin + 1) + ".",
+               "GTI-S2093");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     currentType = pointer;
     semanticModel.record(expr,
                          ResolvedCallInfo{.returnType = pointer,
@@ -320,9 +375,16 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     return;
   }
   const auto expanded = concreteCallArguments(arguments, expr.arguments());
-  currentType = result;
-  if (!expanded)
+  currentType = callExpressionType(result);
+  if (!expanded) {
+    // A declaration-wide pack has no arity yet; the result still denotes a
+    // place for a reference result so the enclosing generic body types.
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = result,
+                                                .parameterTypes = parameters,
+                                                .typeArguments = {signature},
+                                                .intrinsic = intrinsic});
     return;
+  }
   parameters.insert(parameters.begin(),
                     SemanticType::referenceTo(pointer, AccessMode::ReadOnly));
   bool valid = expanded->size() == parameters.size();
@@ -355,13 +417,23 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   }
   validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments,
                                    expr.paren());
-  if (valid)
-    semanticModel.record(expr, ResolvedCallInfo{.returnType = result,
-                                                .parameterTypes = parameters,
-                                                .typeArguments = {signature},
-                                                .intrinsic = intrinsic});
-  else
+  if (valid) {
+    // The invocation result borrows the argument the signature's origin
+    // names; the pointer itself is operand 0.
+    ResolvedCallInfo resolved{.returnType = result,
+                              .parameterTypes = parameters,
+                              .typeArguments = {signature},
+                              .intrinsic = intrinsic};
+    if (resultOrigin) {
+      resolved.borrowOrigin = BorrowOriginKind::Argument;
+      resolved.borrowArgument = *resultOrigin + 1;
+      resolved.borrowAccess = AccessMode::ReadOnly;
+    }
+    currentType = callExpressionType(result);
+    semanticModel.record(expr, std::move(resolved));
+  } else {
     currentType = SemanticType::Unknown;
+  }
 }
 
 } // namespace lang

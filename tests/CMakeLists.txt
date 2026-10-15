@@ -2043,6 +2043,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(protocol_concepts_runtime PROPERTIES TIMEOUT 900)
   add_test(
+    NAME consuming_payload_patterns_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_payload_patterns_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_payload_patterns_runtime PROPERTIES TIMEOUT 900)
+  add_test(
     NAME tryable_propagation_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_runtime_test.py"
@@ -3326,6 +3333,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(consuming_returned_result_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME consuming_conditional_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_conditional_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_conditional_receiver_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_lambda_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_lambda_runtime_test.py"
@@ -3483,6 +3497,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(constructor_field_publication_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME constructor_member_call_field_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constructor_member_call_field_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(constructor_member_call_field_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME fresh_callable_later_argument_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"

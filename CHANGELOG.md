@@ -26,6 +26,87 @@ for what minor and patch releases mean.
 - A conformance block's own type parameters are now named in diagnostics,
   instead of "type parameter".
 
+## 0.438.0 — Consuming payload-enum matches
+
+- A `switch` over a temporary or over an explicit `std::move(name)` now
+  consumes its payload enum. By-value bindings take ownership of their fields
+  by move, so move-only payloads such as strings and classes with destructors
+  bind directly, for example
+  `switch (std::move(this.slot)) { case state<T>::engaged(value): return value; ... }`
+  in a consuming accessor.
+- The consumed enum is retired at the selected arm's entry. A binding arm moves
+  every field of the alternative into its bindings; a tag-only or `default`
+  arm drops the enum, and so its payload, before its first statement.
+  Bindings drop at the arm's end like ordinary locals unless they are moved or
+  returned, and `return`, `break`, `continue` and defined failures drop every
+  live owner exactly once. A moved place stays moved after the switch.
+- A switch over a named enum is unchanged: its bindings copy, and `auto&` and
+  `mut auto&` borrow. Borrowed bindings on a consumed subject are rejected with
+  `GTI-S2067`, and the move-only binding diagnostic on a named subject now
+  points to consuming the enum instead.
+- Switching over a temporary enum whose payload has cleanup no longer fails in
+  native compilation, and copyable payloads bound from a consumed subject are
+  moved rather than copied.
+- Example 161 moves owned strings out of messages and takes a value out of a
+  source-defined optional.
+
+## 0.437.0 — Borrowed results through callbacks
+
+- A lambda can return a read-only reference that borrows exactly one of its
+  read-only reference parameters; every `return` must derive from that
+  parameter, captures are never origins, and results derived from a mutable
+  parameter or an ambiguous parameter list are rejected (`GTI-S2017`).
+  Direct invocation, a generic `F`/`F&` relay and a signature-erased view
+  all give the result the argument's borrow.
+- `std::function_ptr<R&(Args...)>` and `std::function_ref<R&(Args...)>`
+  carry a result-origin contract inferred from the signature's one read-only
+  reference parameter; the target must publish the same origin, and each call
+  result borrows that argument. Erased objects never compete as origins.
+- `[[borrowed_from(name)]]` on a declaration whose result type is a generic
+  parameter binds the instances whose result is a checked reference and may
+  name a final parameter pack. Example 160 and the
+  `checked_callable_result_origin` fixture accompany the feature.
+- Fixed: invoking a `std::function_ptr` or `std::function_ref` whose signature
+  takes a scalar reference parameter (`int&`) failed in the backend with
+  `GTI-B0001`; the invocation now drains that argument's staged borrow like a
+  source call.
+
+## 0.436.2 — Calls on receivers moved inside conditional expressions
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method or lambda is called on a
+  receiver moved out of a variable inside one arm of a conditional
+  expression, or in the right operand of `&&` or `||`, such as
+  `Tracked t = left ? std::move(a).release() : std::move(b).release();` or
+  `ready && std::move(job).finish()`. This failed for consuming (`&&`)
+  methods, for read-only and `mut` methods called on a moved receiver, for
+  moved lambdas, and for fields that a consuming method moves out of `this`,
+  in ordinary and generic functions, whether the result was stored, passed,
+  returned or read. Only the receiver of the arm that ran is destroyed, once,
+  at the end of the full expression. If its destructor fails, the result it
+  produced is destroyed before the failure propagates.
+
+## 0.436.1 — Method calls in constructor member initializers
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a constructor's member initializer
+  stores the result of a method call and the result's class needs cleanup.
+  This failed for every such method that cannot fail, such as
+  `Holder(Source source) : kept(source.make()) {}`, and for every consuming
+  (`&&`) method, such as `Holder(Single box) : kept(std::move(box).release()) {}`
+  or `Holder(int v) : kept(Single(v).release()) {}`. Receivers include
+  by-value, reference and `mut` reference parameters and temporaries, in
+  ordinary and generic classes. Field defaults that call a method on a
+  temporary, such as `Tracked kept = Source(3).make();`, are fixed too. A
+  consumed receiver is destroyed after the field is initialized; if its
+  destructor fails, the field is destroyed before the failure propagates.
+- A member initializer still stops with this error in these cases:
+  - a consuming call whose receiver is moved out of a variable whose class
+    has no destructor and no fields that need one, such as
+    `kept(std::move(source).take())` for a `Source` holding only an `int`
+  - a call to a `virtual` method whose result needs cleanup, such as
+    `kept(maker.make())`
+
 ## 0.436.0 — `?` for any type through `std::tryable`
 
 - Prefix `?` now works on any type with a `std::tryable` conformance block,

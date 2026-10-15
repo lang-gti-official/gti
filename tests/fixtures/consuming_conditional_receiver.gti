@@ -1,0 +1,220 @@
+#include <std/string>
+#include <std/vector>
+
+// A consuming (`&&`) member call whose receiver is moved out of a named
+// binding inside one arm of a conditional expression or a short-circuit
+// operand. The moved receiver lives in the hidden temporary that carries its
+// obligation through the merge, so the drop at the end of the full expression
+// destroys exactly the receiver of the arm that ran.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) { std::println(value); }
+  ~Tracked() { std::println(-this.id); }
+  int read() { return this.id; }
+};
+
+class Single {
+  mut Tracked item;
+public:
+  Single(int value) : item(Tracked(value)) {}
+  Tracked release() && { return std::move(this.item); }
+  int consume() && { return this.item.read(); }
+  bool positive() && { return this.item.read() > 0; }
+  int divide(int divisor) && { return this.item.read() / divisor; }
+  int peek() { return this.item.read(); }
+  int bump() mut { return this.item.read() + 10; }
+};
+
+class Pair<T> {
+  mut T first;
+  mut T second;
+public:
+  Pair(T first, T second) : first(std::move(first)), second(std::move(second)) {}
+  T release() && { return std::move(this.first); }
+};
+
+// A consumed receiver moves one of its own fields inside one arm.
+class Both {
+  mut Single first;
+  mut Single second;
+public:
+  Both(int a, int b) : first(Single(a)), second(Single(b)) {}
+  int pick(bool left) && {
+    return left ? std::move(this.first).consume()
+                : std::move(this.second).consume();
+  }
+};
+
+// Destructors that cannot fail keep the callees below in the plain form. A
+// receiver destroyed early, or twice, would read back as 0.
+class Quiet {
+  mut int id;
+public:
+  Quiet(int value) : id(value) {}
+  ~Quiet() { this.id = 0; }
+  int read() { return this.id; }
+};
+
+class QuietBox {
+  mut Quiet item;
+public:
+  QuietBox(int value) : item(Quiet(value)) {}
+  Quiet release() && { return std::move(this.item); }
+  int take() && { return this.item.read(); }
+};
+
+// A result whose destructor can fail while failure cleanup destroys it.
+class Fragile {
+  int id;
+  int divisor;
+public:
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {
+    std::println(value);
+  }
+  ~Fragile() {
+    std::println(-this.id);
+    int fragile = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+// The moved receiver's destructor runs at the conditional drop after the
+// merge, once release() has published its result.
+class Guarded {
+  mut Fragile item;
+  int divisor;
+public:
+  Guarded(int value, int item_divisor, int divisor)
+      : item(Fragile(value, item_divisor)), divisor(divisor) {}
+  ~Guarded() { int guard = 1 / this.divisor; }
+  Fragile release() && { return std::move(this.item); }
+};
+
+int pick_value(bool left, Single a, Single b) {
+  int value = left ? std::move(a).consume() : std::move(b).consume();
+  return value;
+}
+
+int pick_held(bool left, Single a, Single b) {
+  Tracked held = left ? std::move(a).release() : std::move(b).release();
+  return held.read();
+}
+
+Tracked pick_returned(bool left, Single a, Single b) {
+  return left ? std::move(a).release() : std::move(b).release();
+}
+
+T pick_generic<T>(bool left, Pair<T> a, Pair<T> b) {
+  return left ? std::move(a).release() : std::move(b).release();
+}
+
+int quiet_value(bool left, QuietBox a, QuietBox b) {
+  return left ? std::move(a).take() : std::move(b).take();
+}
+
+Quiet quiet_result(bool left, QuietBox a, QuietBox b) {
+  return left ? std::move(a).release() : std::move(b).release();
+}
+
+// Runs every shape through one arm; `base` keeps the two runs' traces apart.
+int run(bool left, int base) {
+  mut int total = 0;
+  {
+    Single a{base + 1};
+    Single b{base + 2};
+    total += pick_value(left, std::move(a), std::move(b));
+  }
+  {
+    Single a{base + 3};
+    Single b{base + 4};
+    Tracked chosen = left ? std::move(a).release() : std::move(b).release();
+    total += chosen.read();
+  }
+  {
+    Single a{base + 5};
+    Single b{base + 6};
+    total += pick_held(left, std::move(a), std::move(b));
+  }
+  {
+    // Only one arm consumes; the other constructs a fresh result.
+    Single a{base + 7};
+    Tracked chosen = left ? std::move(a).release() : Tracked(base + 8);
+    total += chosen.read();
+  }
+  {
+    Single a{base + 9};
+    Single b{base + 10};
+    Tracked chosen = pick_returned(left, std::move(a), std::move(b));
+    total += chosen.read();
+  }
+  {
+    Pair<Tracked> a{Tracked(base + 11), Tracked(base + 12)};
+    Pair<Tracked> b{Tracked(base + 13), Tracked(base + 14)};
+    Tracked chosen = pick_generic<Tracked>(left, std::move(a), std::move(b));
+    total += chosen.read();
+  }
+  {
+    // Moved closures invoked once.
+    Tracked x{base + 15};
+    Tracked y{base + 16};
+    auto first = [held = std::move(x)]() -> int { return held.read(); };
+    auto second = [held = std::move(y)]() -> int { return held.read(); };
+    total += left ? std::move(first)() : std::move(second)();
+  }
+  {
+    // A short-circuit operand consumes its receiver only when evaluated.
+    Single a{base + 17};
+    Single b{base + 18};
+    bool both = left && std::move(a).positive();
+    bool either = left || std::move(b).positive();
+    total += (both ? 1 : 0) + (either ? 2 : 0);
+  }
+  {
+    // A consuming call that can fail.
+    Single a{base + 19};
+    Single b{base + 20};
+    total += left ? std::move(a).divide(1) : std::move(b).divide(1);
+  }
+  {
+    // A moved receiver also reaches read-only and mutable fallbacks.
+    Single a{base + 21};
+    Single b{base + 22};
+    total += left ? std::move(a).peek() : std::move(b).bump();
+  }
+  {
+    Both both{base + 23, base + 24};
+    total += std::move(both).pick(left);
+  }
+  {
+    QuietBox a{base + 25};
+    QuietBox b{base + 26};
+    QuietBox c{base + 27};
+    QuietBox d{base + 28};
+    total += quiet_value(left, std::move(a), std::move(b));
+    Quiet kept = quiet_result(left, std::move(c), std::move(d));
+    total += kept.read();
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int total = run(true, 0);
+  total += run(false, 30);
+  // Failure cleanup. Scenario 1 fails the left receiver's destructor and 2
+  // the right one's; 3 fails the left receiver's destructor and then the
+  // published result's during cleanup; 4 fails the consuming call itself.
+  int scenario = argc - 1;
+  Guarded first{61, scenario == 3 ? 0 : 1,
+                scenario == 1 || scenario == 3 ? 0 : 1};
+  Guarded second{62, 1, scenario == 2 ? 0 : 1};
+  Fragile kept = scenario == 2 ? std::move(second).release()
+                               : std::move(first).release();
+  std::println("kept");
+  Single risky{63};
+  Single spare{64};
+  int checked = scenario == 4 ? std::move(risky).divide(0)
+                              : std::move(spare).divide(1);
+  std::println("checked");
+  return total + kept.read() + checked - 845;
+}

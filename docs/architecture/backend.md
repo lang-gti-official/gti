@@ -293,6 +293,13 @@ constructs its copy in representation storage, which the Return moves out. The
 copy is the one MIR selected for the `Load`, so no payload is limited to
 passive C-compatible records.
 
+A consuming payload extraction, a `Move` of a switch-owned subject binding,
+spells its field as an rvalue at the binding's construction. The extraction
+that carries the subject's `TransferOut` then ends the drained enum's C++
+lifetime without GTI cleanup; its moved-from fields are already disarmed. MIR's
+operand kind and lifecycle event select both spellings; the backend does not
+infer consumption from the subject's representation.
+
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
 local declaration planning and operand emission use the same view predicate.
@@ -308,6 +315,23 @@ remains at the recorded full-expression/failure Drop; it is not an argument
 transfer at Call. Only a successful result activates the replacement stage, so
 receiver failure cannot overwrite the old destination, and failed replacement
 cleanup destroys the unpublished result without committing it.
+
+A member or closure receiver moved out of a named binding materializes at its
+`Move`: the backend constructs the receiver's lifetime slot from the binding
+there, and the Receiver `MoveValue` input and the call only alias that slot. A
+consuming member is invoked on the slot as an rvalue; a selected read-only or
+mutable fallback is invoked on it as an lvalue. When the full expression has
+no internal merge, the slot is the moved value's own Value-rooted place. Inside
+one arm of a conditional expression or a short-circuit operand, MIR instead
+names as the Move's destination the hidden temporary that carries the
+receiver's full-expression obligation through the merge, and the Drops after
+the merge are conditional on the arm that ran. That temporary is the receiver's
+slot only when the Move activates its unique Value obligation, the input and
+invocation identities match exactly, nothing else writes or reads it, and only
+Drops of that obligation end it, at least one of them on the ordinary path. A
+conditional Drop destroys the slot only if its arm constructed it. A failing
+receiver destructor leaves the published result and the remaining cleanup to
+MIR's failure edge.
 
 Pointer-bearing passive C-compatible records use byte-preserving construction
 and assignment internally. Verified source calls snapshot value arguments
@@ -2540,6 +2564,20 @@ breaks adjacency. An owning result from a failure-free call
 arms its value obligation with the call's own `Initialize` event, as a
 failure-free constructor does, and the field `Initialize` reparents it into the
 field's rollback. The value then moves from its lifetime slot into the field.
+Either kind of call may be a source member whose receiver passes the shared
+receiver proofs: a typed borrow, as in `kept(source.make())` or through a
+reference parameter, or a consuming (`&&`) member's `Once` receiver, as in
+`kept(std::move(box).release())` or `kept(Single(v).release())`. Neither
+receiver is transferred at the call. A consumed receiver's full-expression
+`Drop` follows the field `Initialize`, and MIR's failure edge from that drop
+rolls the published field back; the backend emits that schedule unchanged.
+Field declaration defaults such as `Tracked kept = Source(3).make();` run as
+the same constructor-initializer stages. A cleanup-free receiver moved out of
+a binding is instead a prepared parameter that the call transfers out. The
+consuming-receiver proof does not admit that transport yet, so this proof
+still refuses `kept(std::move(source).take())` when `source`'s class needs no
+cleanup. Both producers also require static dispatch, so a virtual member
+call's result has no constructor-field route.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;

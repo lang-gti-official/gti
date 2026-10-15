@@ -1942,6 +1942,32 @@ private:
       const FunctionInfo &function,
       SemanticType ownerType = SemanticType::Unknown);
 
+  // An explicit borrowed_from contract on a generic-result declaration binds
+  // the instances whose substituted result is a checked reference: the named
+  // parameter, or the one eligible element of the named final pack, owns it.
+  void resolveGenericReturnBorrowContract(const FunctionInfo &declaration,
+                                          FunctionInfo &instance);
+  struct GenericReturnBorrowContract {
+    BorrowOriginKind origin = BorrowOriginKind::None;
+    std::size_t parameter = 0;
+    AccessMode access = AccessMode::ReadOnly;
+    bool ambiguous = false;
+    bool missing = false;
+  };
+  // The contract an explicit borrowed_from selects for one substitution of a
+  // generic-result declaration: None when the substituted result is not a
+  // checked reference, otherwise the named parameter or the one eligible
+  // element of the named final pack, by expanded parameter position.
+  [[nodiscard]] GenericReturnBorrowContract
+  genericReturnBorrowContract(const FunctionDecl &syntax,
+                              const SemanticType &returnType,
+                              std::span<const SemanticType> parameterTypes,
+                              ClassId ownerClass, bool staticMember) const;
+  void reportMissingLambdaReturnBorrowSummary(
+      const Lambda &lambda, const FunctionReturnBorrowSummary &summary);
+  // Whether the selected callable of this call (a lambda value or function
+  // item) publishes a result-origin contract its reference result relays.
+  [[nodiscard]] bool callableResultOriginContract(const Call &call) const;
   void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
                                                 const FunctionInfo &info);
 
@@ -2319,6 +2345,56 @@ private:
   directCallableParameterVariable(const ExprPtr &expression) const;
 
   [[nodiscard]] const FunctionInfo *currentFunctionInfo() const;
+
+  // The owner contract a `return` in the current body must satisfy: a
+  // function's declared or inferred summary, or the innermost lambda's
+  // inferred one. A lambda body never consults its enclosing function.
+  struct ReturnBorrowContract {
+    BorrowOriginKind origin = BorrowOriginKind::None;
+    std::size_t parameter = 0;
+    AccessMode access = AccessMode::ReadOnly;
+    std::optional<BorrowOriginPlace> place;
+    const std::vector<Parameter> *parameters = nullptr;
+    const std::vector<SemanticType> *parameterTypes = nullptr;
+    bool lambda = false;
+    // A lambda over open parameter types decides its origin once concrete.
+    bool deferred = false;
+    // The origin is an expanded parameter index; a final pack covers every
+    // index past the parameters written before it.
+    [[nodiscard]] const Parameter *originParameter() const {
+      if (parameters == nullptr || origin != BorrowOriginKind::Argument)
+        return nullptr;
+      std::size_t expanded = 0;
+      for (const Parameter &candidate : *parameters) {
+        if (candidate.pack)
+          return &candidate;
+        if (expanded == parameter)
+          return &candidate;
+        ++expanded;
+      }
+      return nullptr;
+    }
+    [[nodiscard]] const SemanticType *originParameterType() const {
+      return parameterTypes != nullptr &&
+                     origin == BorrowOriginKind::Argument &&
+                     parameter < parameterTypes->size()
+                 ? &(*parameterTypes)[parameter]
+                 : nullptr;
+    }
+  };
+  [[nodiscard]] std::optional<ReturnBorrowContract>
+  currentReturnBorrowContract() const;
+  struct LambdaReturnContext {
+    const Lambda *declaration = nullptr;
+    BorrowOriginKind origin = BorrowOriginKind::None;
+    std::size_t parameter = 0;
+    AccessMode access = AccessMode::ReadOnly;
+    std::vector<SemanticType> parameterTypes;
+    bool deferred = false;
+  };
+  // Set while a lambda body is analyzed, even when the lambda returns an
+  // owned value, so returns inside it never read the enclosing function.
+  std::optional<LambdaReturnContext> currentLambdaReturn;
 
   [[nodiscard]] const CallableParameterContract *
   callableParameterContract(const ExprPtr &callee) const;
@@ -4490,9 +4566,13 @@ private:
   void analyzePayloadConstruction(const Call &call,
                                   const EnumeratorRecord &enumerator);
 
+  // `consumingSubject` is true when the switch consumes its subject (a
+  // prvalue or an explicit std::move); by-value bindings then move their
+  // fields out instead of copying them.
   [[nodiscard]] std::optional<ResolvedPayloadPatternInfo>
   analyzePayloadSwitchPattern(const ExprPtr &expression,
-                              const SemanticType &subjectType);
+                              const SemanticType &subjectType,
+                              bool consumingSubject);
 
   [[nodiscard]] std::optional<Symbol>
   resolveExpressionSymbol(const ExprPtr &expression) const;

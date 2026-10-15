@@ -1280,8 +1280,52 @@ Construct a view from a named callable of the exact signature. A read view
 borrows it read-only; a mutable view borrows it exclusively and requires a
 mutable view binding for invocation. Neither construction allocates or copies
 the callable. There is no empty/null/default view. The callable and everything
-it borrows must remain valid for all uses of the view. Signature-erased borrowed
-results await an explicit result-origin contract and are not admitted here.
+it borrows must remain valid for all uses of the view.
+
+A signature whose result is a read-only reference carries a result-origin
+contract inferred like a free function's: exactly one read-only reference
+parameter of the signature owns the result, and a reference to an erased
+object is never an origin (a typed referent is reached through it only by
+exact restoration). The callable a view or invocation pointer is built from
+must publish the same origin, and each invocation's result borrows the
+argument at that position:
+
+```gti
+int& head(std::vector<int>& values) { return values[0u]; }
+std::function_ptr<int&(std::vector<int>&)> first{head};
+int& front = first(values);   // borrows `values`, not the pointer
+```
+
+An ambiguous signature (two eligible parameters), a mutable reference result
+and a borrowed-state class result are rejected before the view exists.
+
+#### Lambda Reference Results
+
+A lambda may return a read-only reference. Its origin is inferred by the same
+rule: exactly one read-only reference parameter owns the result, every
+`return` must derive from that parameter, and captures are never result
+origins. A result that derives from a mutable parameter, an ambiguous
+parameter list and a return that derives from a local, a copy or a capture are
+rejected; a lambda's explicit return type cannot spell a mutable reference. A direct
+invocation, a generic `F`/`F&` relay and a signature-erased view all give the
+result the borrow of that argument:
+
+```gti
+auto same = [](int& value) -> int& { return value; };
+int& view = same(cell);              // borrows `cell`
+
+[[borrowed_from(value)]]
+int& relay<F>(F& callback, int& value) { return callback(value); }
+```
+
+A generic relay names the parameter its result borrows with `borrowed_from`;
+each concrete instance verifies that the selected callable's own origin
+reaches exactly that parameter. On a declaration whose result type is a
+generic parameter, `borrowed_from` binds only the instances whose result is a
+checked reference and may name a final parameter pack, in which case the one
+reference element of the expanded pack in that instance owns the result.
+`std::function_ref` and `std::function_ptr` declare their call operators this
+way.
 
 Two general facilities support this ordinary source wrapper:
 
@@ -1611,7 +1655,11 @@ and finite recursion through concrete class cleanup; a failing destructor does
 not skip remaining sibling cleanup. Borrowed payload patterns introduce
 arm-scoped shared (`auto&`) or exclusive (`mut auto&`) loans into stable enum
 storage. Their conflict root is conservatively the whole enum, and a checked
-receiver-derived return retains its original owner dependency.
+receiver-derived return retains its original owner dependency. A switch over
+a consumed enum, a prvalue or an explicit `std::move`, instead owns the enum
+until the selected arm's entry: by-value bindings take its fields by move and
+release the drained enum without a second drop, while any other arm drops it
+before its first statement.
 Concrete generic callable instances and owning wrappers retain the same
 obligations, including enum elements in storage-backed collections and inline
 optional storage. No ownership rule follows merely from a generic argument's

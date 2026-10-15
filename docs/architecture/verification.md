@@ -1,5 +1,51 @@
 # Compiler Verification
 
+## Consuming payload-enum matches (0.438.0)
+
+`sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
+`std::move` subjects bind move-only fields of owning single, multi-field and
+mixed alternatives, a terminal subject leaves its switch unreachable, and
+concrete generic instances consume owning and scalar payloads, each through
+verified MIR. The test requires every binding arm to carry exactly one subject
+transfer and tag-only or `default` arms to drop the subject, keeps the moved
+place moved on every path, and rejects borrowed bindings on prvalue and moved
+subjects. Six program-verifier mutations reject a missing transfer, a field
+taken twice, a transfer before the arm's last extraction, a wrong variant, an
+arm entered from the default edge, and a copied extraction that carries the
+transfer. `consuming_payload_patterns_runtime` traces construction and
+destruction in C++20/C++23 at O0/O1/O2/O3 and ASan/UBSan. It covers prvalue
+and moved subjects, drops at tag-only and `default` arm entry, multi-field,
+mixed and nested owning alternatives, a source-defined optional's `&&`
+accessor, a generic function, `continue`/`break`/`return` from arms and a
+cleanup-free move-only payload. Its failure phases end inside an arm, in a
+payload destructor at tag-only arm entry, and in a subject temporary's
+destructor while the switch owns the enum; each releases every live owner
+exactly once. The same test runs example 161 in every mode. The MIR and
+lowered-program censuses add only example 161, and a consumed passive subject
+emits machine code identical to main's copy path at `-O3`.
+
+## Receivers moved inside conditional arms (0.436.2)
+
+`consuming_conditional_receiver_runtime` and the moved-receiver section of
+`conditional_class_publication`, both described below, carry the regression
+evidence. Against the 0.434.2 emitter (main `3b09c90b`) the fixture fails with
+`GTI-B0001`, as do eighteen reduced probes: scalar, stored, passed,
+member-read, returned and generic results, nested and mixed conditionals, one
+binding moved in both arms, `&&` and `||` operands, a consuming call that can
+fail, read-only and `mut` fallbacks, moved closures, a consuming `operator()`
+override, a field moved out of `this`, and callees in the plain form. The fixed
+compiler compiles each, and both arms run with the expected destruction order.
+Fresh-temporary receivers, `if`-statement returns, unconditional moves and
+cleanup-free receivers compile with both compilers. With the exclusivity checks
+of the new admission disabled, the publication gate reports the forged receiver
+read and second writer as admitted for all three forged receivers, and the loss
+of every ordinary-path Drop for one of them. Emitting all 1104 top-level
+fixtures and examples at O0 and O3 with the `3b09c90b` compiler and the fix on
+that base, with one `GTI_STDLIB_PATH`, gives byte-identical C++ for 1998 pairs
+and identical diagnostics for the 208 that fail; only the new fixture
+changed. The summed
+emission time was 1304.6 s before and 1298.7 s after.
+
 ## Fields moved ahead of fallible constructor work (0.435.1)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_move.gti`.
@@ -3359,6 +3405,16 @@ conditional-publication and prepared-argument mutation checks; these test the
 real storage and cleanup protocol rather than requiring obsolete source-grouping
 `Identity` instructions.
 
+The same gate selects all 29 receivers that the conditional-receiver fixture
+moves inside conditional arms and short-circuit operands, using their Move,
+Receiver `MoveValue` input and invocation identities. Each body must construct
+the hidden temporary at the Move and invoke the call through it. For the first
+moved class in each body form and the first moved closure, seven mutations are
+rejected after rebuilding use records: forged slot availability, an initially
+active obligation, an obligation from another source, a Move that reparents
+instead of activating, the call reading the temporary as a place, a second
+writer, and the loss of every ordinary-path Drop.
+
 `conditional_class_publication` adds production C++ admission and malformed-MIR
 checks for the passive conditional repair, retaining an active-cleanup control.
 Its mutations rebuild use records before checking rejection of forged initial
@@ -5287,7 +5343,7 @@ not a substitute for the combined production suite:
 | Construction, replacement and partial cleanup | `mir_backend_owned_lifecycle`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `optional_compiler_contract`, `optional_runtime`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
 | Borrow/reference composition | `compiler_ownership`, `borrowing_composition_pipeline`, `ordered_borrow_composition_runtime`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
 | Eligible container/value-wrapper consistency | `optional_runtime`, `vector_construction_only_runtime`, `generic_clone_runtime`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
-| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, exact transport and partial cleanup. |
+| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, exact transport and partial cleanup. |
 
 The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
 after a full Release/Ninja rebuild on macOS arm64 (AppleClang 21, LLVM 22.1.8,
@@ -6387,7 +6443,20 @@ local, fresh, generic, lambda and early-return receivers whose drops run
 before the Return. Each result is destroyed once, by its caller. A failing
 receiver destructor destroys the unpublished result, and a failure in that
 cleanup reports the secondary failure. A body whose drops cannot fail covers
-the plain emission form. Ownership
+the plain emission form.
+`consuming_conditional_receiver_runtime` moves receivers out of named bindings
+inside conditional arms and short-circuit operands in the same eight
+configurations, running each shape through both arms. The shapes are scalar and
+class results from by-value parameters and locals, one consuming arm beside a
+fresh result, direct and generic returns, moved closures, a consuming call that
+can fail, read-only and mutable fallbacks, fields moved out of a consumed
+receiver, and receivers whose cleanup cannot fail, which keep their callees in
+the plain emission form. Each moved receiver is destroyed once, at the end of
+its full expression, and only on the arm that ran. A failing receiver destructor
+in either arm reports at the drop after the merge. Cleanup then destroys the
+published result and skips the other arm's receiver, and a failure in that
+cleanup reports the secondary failure. A consuming call that fails inside its
+arm destroys its receiver on that failure edge. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
@@ -6687,6 +6756,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
 | `optional_runtime` | empty, value, move, checked read, reset, emplacement, fallback, and move-only payload behavior; inline allocation-free representation; copy and assignment rejection; live-borrow protection; exact cleanup; and `GTI-R0008` wrong-state reporting at O0/O3 under C++20/C++23 |
 | `class_payload_enum_runtime` | passive and active-cleanup class alternatives; fresh/copy/move construction; tag inspection through a checked reference; same-tag replacement plus cross-tag move assignment; distinct cleanup of two same-type owning fields; unit and `std::string` alternatives; normal/control-flow/defined-failure exactly-once drop; direct owning by-value call/return; and declaration-time rejection of move-only copied bindings at O0/O3 under C++20/C++23 |
+| `consuming_payload_patterns_runtime` | switches over prvalue and `std::move` subjects moving owning, multi-field, mixed, nested and cleanup-free move-only payloads into bindings; tag-only and `default` arm-entry drops; generic optional `&&` accessors and generic functions; `continue`/`break`/`return` from arms; defined failure inside an arm, at tag-only arm entry and in a subject temporary; example 161; C++20/C++23 O0/O1/O2/O3 and ASan/UBSan |
 | `payload_enum_containment_runtime` | ordinary class/struct direct fields; constructor and in-class initialization; containing-value move/call/return/assignment, including an immutable source and nested scope directly in the hosted entry; direct mutable-field replacement; return, break, and continue cleanup; partial-construction defined-failure rollback; C++ type-definition ordering and private disengaged representation; precise polymorphic-owner and fixed-array `GTI-S2067` rejection; and O0/O3 under C++20/C++23 |
 | `generic_payload_enum_runtime` | generic free-function and unrelated user-defined owner transport/capture, consuming extraction, vector reallocation/iteration, optional inline storage/reset, partial-owner rollback, later-argument and callee failure, failing and non-failing cleanup, implicit-copy/live-borrow/use-after-move diagnostics, C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
 | `compiler_ownership` / `ordered_borrow_composition_runtime` | completed mutation before checked lookup through user-defined tree/table, method, generic/free helper and constructor paths; borrowed-carrier call inputs; exact MIR order and forged-order rejection; earlier mutation, lookup and invocation failures; reverse-order, lexical-loan, exclusive-read, mutable-parameter and escaping-local rejection; precise diagnostic spans; C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
@@ -6761,6 +6831,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `recursive_cleanup_failure_runtime` | finite self/mutual ownership recipes; list clear/pop/move/scope cleanup, source-destructor node chains, direct and collection-owned nodes, reset and replacement; empty/live destinations, fresh/named moved values, direct objects, checked owner-field replacement, repeated successful assignment, staged-RHS secondary failure, and nested checked-arrow access/reset/assignment; 294 trace/failure executions plus the original projection reproducer in seven modes at C++20/C++23 O0/O1/O3 plus ASan/UBSan |
 | `checked_owner_replacement_runtime` | fresh and moved unique-owner/direct-class fixed-array replacement; exact old/staged/remaining cleanup, invalid positive and negative indices, first/secondary destructor failure, bounds-only preparation, and both dimensions of a chained destination; 133 executions at C++20/C++23 O0/O1/O3 plus ASan/UBSan |
 | `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, owning-field replacement, local cleanup failure, and secondary destructor failure, with exact cleanup order and source sites in 70 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
+| `constructor_member_call_field_runtime` | member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: failure-free borrowed receivers (by-value, read-only reference and `mut` reference parameters), consuming receivers moved from a parameter or a fresh temporary, a generic owner, field declaration defaults, and two member-call fields; a failing consuming call publishes nothing and cleans up its named or fresh receiver, a later initializer failure rolls the published field back, and a consumed receiver whose destructor fails after publication rolls the field back, with the secondary failure reported when that rollback fails too |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
