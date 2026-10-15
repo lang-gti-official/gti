@@ -39788,6 +39788,21 @@ private:
           return;
         }
       }
+      if (loan != nullptr && loan->referenceSelection) {
+        // The source places describe possible owners, not which address was
+        // selected at runtime. Copy the independently verified cached address;
+        // a consumed carrier may already have retired its active field.
+        const auto &selection = *loan->referenceSelection;
+        const auto *extract =
+            borrowedPayloadExtract(facts.body, selection.value);
+        if (extract == nullptr || !extract->payloadExtractionKind ||
+            !isStoredReferenceExtraction(*extract->payloadExtractionKind))
+          throw std::logic_error(
+              "verified selected reference lost its exact extraction");
+        output << "__gti_mir_loan_" << loan->id
+               << " = __gti_payload_reference_v_" << selection.value << ";\n";
+        return;
+      }
       const MirPlace *source =
           loan == nullptr ? nullptr : facts.body.findPlace(loan->source);
       if (source == nullptr) {
