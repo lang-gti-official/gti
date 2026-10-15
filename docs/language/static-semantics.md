@@ -1547,10 +1547,14 @@ In this phase `X` is a class or struct type; a payload enum with a block is
 rejected. The operand is transported like a by-value argument of type `X`. A
 temporary
 or `std::move(place)` operand needs a movable `X`. A named place needs a
-copyable `X` and remains available. `X`, `value_type` and `residual_type`
-contain no stored borrows, and `value_type` and `residual_type` are not
-references. The expression has type `std::tryable<X>::value_type`, or `void`
-when that type is `void`.
+copyable `X` and remains available. A borrowed `X` must currently have one
+exact stored-dependency path. A reference `value_type` is permitted when
+`take_value`'s `[[borrowed_from(value)]]` contract relays that path's external
+owner. The expression is then a place with the declared reference access;
+consuming the operand does not terminate the returned external borrow. Other
+value types and the residual contain no stored borrows; the residual is not a
+reference. The expression otherwise has type `std::tryable<X>::value_type`,
+or `void` when that type is `void`.
 
 The immediately enclosing function or lambda has a declared return type `R`,
 which is not `void`. The residual type is `R` itself, or `R` declares exactly

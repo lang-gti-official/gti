@@ -2933,8 +2933,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       } else if (functionInfo->returnBorrowOrigin == BorrowOriginKind::None) {
         reportContract(
             *contract.argument,
-            "The selected borrow origin must name a reference parameter with "
-            "sufficient access, or a non-static receiver.");
+            "The selected borrow origin must name a reference parameter or "
+            "single-dependency carrier with sufficient access, or a "
+            "non-static receiver.");
       }
       continue;
     }

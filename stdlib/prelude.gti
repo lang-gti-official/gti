@@ -180,7 +180,7 @@ namespace std {
     typename value_type;
     typename residual_type;
     bool has_value(T& value);
-    value_type take_value(T value);
+    [[borrowed_from(value)]] value_type take_value(T value);
     residual_type take_residual(T value);
   };
 

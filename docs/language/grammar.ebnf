@@ -126,12 +126,14 @@ function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | 
    direct calls. Neither changes the declared result type.
    discardable permits ignoring a non-void function or method result; it
    does not change evaluation, failure, cleanup, borrowing or the result type.
-   borrowed_from selects one checked reference parameter or a non-static
+   borrowed_from selects one checked reference parameter, the single external
+   dependency of a by-value carrier parameter, or a non-static
    receiver as the returned reference's owner. Safe returns must preserve it.
    On a declaration whose result type is a generic parameter it binds only the
    instances whose substituted result is a checked reference, and it may name
    a final parameter pack: the one reference element of the expanded pack in
-   that instance owns the result.
+   that instance owns the result. Protocol operations may state this contract;
+   their implementations preserve the selected parameter position.
    A direct raw dereference returned inside lexical unsafe may assert that
    relationship, retaining known lifetime/access contradictions. *)
 

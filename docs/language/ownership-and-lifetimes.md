@@ -1327,6 +1327,13 @@ reference element of the expanded pack in that instance owns the result.
 `std::function_ref` and `std::function_ptr` declare their call operators this
 way.
 
+The named parameter may also be a by-value carrier with exactly one stored
+checked dependency. In that case the result must relay that external owner:
+returning the carrier's own fields, a different parameter's owner, or a local
+is rejected. Consuming or destroying the carrier does not destroy its external
+owner. This same declaration-relative contract is available to protocol
+operations; it is not special treatment of any standard-library wrapper.
+
 Two general facilities support this ordinary source wrapper:
 
 - `std::erase_ref(object)` and `std::erase_mut(object)` return checked
