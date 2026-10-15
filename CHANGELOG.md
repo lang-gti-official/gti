@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.3 — Temporary arguments in short-circuit operands
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR. call-argument loan ... must be one exact non-escaping temporary input
+  loan") when a call that borrows a new object through a read-only reference
+  parameter runs only in some cases: in the right operand of `&&` or `||`,
+  or in one arm of `?:`. Examples are `ok && observe(make(-1))`,
+  `skip || observe(box(3))` and `left ? observe(make(1)) : observe(box(2))`,
+  and the same calls in `if` and `while` conditions. The object is destroyed
+  once at the end of the full expression when its operand ran, and never
+  when the operand was skipped, also when the call, a later argument or the
+  rest of the expression fails.
+
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
