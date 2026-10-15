@@ -2400,7 +2400,7 @@
         "concrete_instance_adapter": 50
       }
     },
-    "163-implicit-returns.gti": {
+    "164-implicit-returns.gti": {
       "declarations": 1262,
       "bodies": 141,
       "generated_items": 90,
