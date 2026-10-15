@@ -20,9 +20,13 @@ for what minor and patch releases mean.
   constructor's member initializer. This covers capturing lambdas, lambdas
   called more than once and classes with a destructor, which is still run
   exactly once, including when a later argument of the same call fails.
-- Fix the same error for a lambda that is never called when its body passes a
-  temporary that cannot be copied, or whose class has a destructor, by value
-  to a constructor, as in `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
+- Fix a failed native build ("backend failed while compiling and linking the
+  executable") when such a result, of a class with a destructor, is read
+  inside an operand of `&&` or `||`, as in `skip || make(1).id == 1`.
+- Fix the same internal compiler error for a lambda that is never called
+  when its body passes a temporary that cannot be copied, or whose class has
+  a destructor, by value to a constructor, as in
+  `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 

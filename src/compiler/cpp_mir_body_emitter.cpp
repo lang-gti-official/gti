@@ -43591,19 +43591,28 @@ private:
                     program, representations, facts.body, *instruction.result)
               : ValueRootedPlacementCallResultSlot{};
       // An owning class result read through field views or passed to one
-      // call owns its value-rooted slot, as a source call's result does.
+      // call owns its value-rooted slot, as a source call's result does. One
+      // read only through field views inside a short-circuit operand or
+      // conditional arm constructs in the conditional temporary that owns it.
       const ValueRootedClassCallResultSlot ownedClassInvocationSlot =
           instruction.result &&
                   instruction.info.type.kind == SemanticType::Class
               ? valueRootedClassCallResultSlot(program, representations,
                                                facts.body, *instruction.result)
               : ValueRootedClassCallResultSlot{};
+      const MirPlace *viewedClassInvocationSlot =
+          instruction.result &&
+                  instruction.info.type.kind == SemanticType::Class
+              ? conditionalTemporaryViewedResult(
+                    program, representations, facts.body, *instruction.result)
+              : nullptr;
       const MirPlace *temporaryResult =
           stagedInvocationSlot ? nullptr
           : ownedInvocationSlot.producer == &instruction
               ? ownedInvocationSlot.slot
           : ownedClassInvocationSlot.producer == &instruction
               ? ownedClassInvocationSlot.slot
+          : viewedClassInvocationSlot != nullptr ? viewedClassInvocationSlot
           : instruction.result &&
                   instruction.info.type.kind == SemanticType::Expected
               ? expectedClassResultDestinationSlot(program, facts.body,

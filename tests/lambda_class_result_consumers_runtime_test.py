@@ -20,10 +20,12 @@ def lambda_class_result_cases(name="lambda_class_result_consumers"):
 
     # A destroyed Res prints its negated id: a field-read result at the end
     # of its full expression, a moved argument inside its callee, a discarded
-    # result at once, an assigned binding's old value at the assignment, and
+    # result at once, an assigned binding's old value at the assignment, a
+    # short-circuit operand's result only when the operand is evaluated, and
     # the constructor field and the binding at scope exit.
     shapes = trace(1, 102, 7, 1, 6, 7, 8, 20, 11,
-                   12, -12, -13, 13, -14, 15, -16, 17, 7, -17, -15)
+                   12, -12, -13, 13, -14, 15, -16, 17, 1, -18, 1,
+                   7, -17, -15)
     return {fixture.stem: [
         ((), (0, shapes, "")),
         # The staged result is destroyed once by the later argument's failure.
