@@ -6454,9 +6454,21 @@ binding, are read through a field (also in a conditional) and initialize
 constructed and destroyed once. A failing guard after the call destroys the
 unpublished returned result, also when that cleanup fails again; a failing
 callee leaves no result, and a failing replacement keeps the old value for
-failure cleanup. `testPreparedConsumingReceiverReturn` in the emitter text
-suite refuses removed, duplicated or unactivated receiver handoffs and a
-non-consuming capability, which MIR verification also rejects.
+failure cleanup. A later argument that can fail after the receiver was
+prepared is covered for a bound, a returned (`mut` source), a field-read, an
+`expected`, a discarded and a replacing result, after an owning argument, in a
+constructor field's receiver and moved argument, in a loop, a generic body, a
+consuming `operator()`, a lambda and either arm of a conditional. Each failure
+leaves the member unrun, destroys an already prepared owning argument once,
+keeps a replaced binding's old value for failure cleanup and unwinds the
+caller's live results in reverse order.
+`testPreparedConsumingReceiverReturn` in the emitter text suite refuses
+removed, duplicated or unactivated receiver handoffs and a non-consuming
+capability, which MIR verification also rejects.
+`testPreparedConsumingReceiverLaterFailure` checks that the call consumes the
+materialized receiver slot, which is retired after the call and destroyed once
+on the failure edge, and refuses a removed, duplicated or non-failure cleanup
+Drop of it.
 `consuming_conditional_receiver_runtime` moves receivers out of named bindings
 inside conditional arms and short-circuit operands in the same eight
 configurations, running each shape through both arms. The shapes are scalar and
