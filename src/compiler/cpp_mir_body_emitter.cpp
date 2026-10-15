@@ -4724,7 +4724,11 @@ constructedFieldCopiedClosureFormal(const MirProgram &program,
 // A passive class or closure copy also spells directly from the native
 // by-value parameter. Unlike the owned form it does not consume that
 // parameter, but a second lifetime slot would still manufacture an extra copy
-// or move and change the exact copy/drop schedule.
+// or move and change the exact copy/drop schedule. MIR can record several
+// bare places for the formal, such as a later read beside the place the copy
+// loads. All of them name that one native parameter, so the source is the
+// formal's binding rather than one place record; a later copy of the formal
+// must not read a separate slot that its declaration never constructed.
 [[nodiscard]] bool copyParameterFieldSourcePlace(const MirProgram &program,
                                                  const MirBody &body,
                                                  const MirPlace &place) {
@@ -4747,10 +4751,16 @@ constructedFieldCopiedClosureFormal(const MirProgram &program,
   }
   const std::optional<std::vector<CppMirCopyParameterFieldBinding>> bindings =
       cppMirCopyParameterFieldBindings(program, *constructor);
+  const auto sameFormal = [&](MirPlaceId source) {
+    const MirPlace *loaded = body.findPlace(source);
+    return loaded != nullptr && loaded->root == MirPlaceRootKind::Binding &&
+           loaded->projections.empty() && loaded->binding == place.binding &&
+           loaded->type == place.type;
+  };
   return (bindings &&
           std::count_if(bindings->begin(), bindings->end(),
                         [&](const CppMirCopyParameterFieldBinding &binding) {
-                          return binding.sourcePlace == place.id &&
+                          return sameFormal(binding.sourcePlace) &&
                                  ((place.type.kind == SemanticType::Class &&
                                    binding.initializeInstruction != 0) ||
                                   place.type.kind == SemanticType::Lambda);
@@ -14913,6 +14923,29 @@ failureConstructorPassiveBoundField(const MirProgram &program,
                                              transferred);
 }
 
+[[nodiscard]] bool nativeCopyClosure(const MirProgram &program,
+                                     const SemanticType &type,
+                                     const SemanticTypeTraits &traits);
+
+// A closure copied from its formal into a field has no empty representation
+// either. Its record-published copy binding constructs the field in the
+// native member-initializer list in both constructor forms, and admits only a
+// closure whose native copy and destruction run no source code
+// (nativeCopyClosure). A class capture gives the field a lexical drop, but
+// ending that bound closure with the caller's object is as observation-free
+// as ending a trivially dropped one, so the field position does not matter.
+[[nodiscard]] bool failureConstructorPassiveClosureCopy(
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const MirClassFieldInfo &field,
+    const CppMirCopyParameterFieldBinding &binding) {
+  const MirValue *copied = constructor.body.findValue(binding.loadedValue);
+  return field.type.kind == SemanticType::Lambda &&
+         field.dropKind == DropKind::Lexical && !field.requiresActiveCleanup &&
+         binding.field == field.symbol && binding.initializeInstruction == 0 &&
+         copied != nullptr && copied->info.type == field.type &&
+         nativeCopyClosure(program, field.type, copied->info.traits);
+}
+
 [[nodiscard]] const MirInstruction *
 storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
 
@@ -15394,8 +15427,15 @@ failureConstructorBoundaryEligible(const MirProgram &program,
                              binding.fieldType == field.type &&
                              binding.valueDrop == 0 && binding.fieldDrop == 0;
                     });
+    const bool passiveClosureField =
+        copiedParameters &&
+        std::any_of(copiedParameters->begin(), copiedParameters->end(),
+                    [&](const auto &binding) {
+                      return failureConstructorPassiveClosureCopy(
+                          program, constructor, field, binding);
+                    });
     const bool retainedPassiveField =
-        passiveNativeField ||
+        passiveNativeField || passiveClosureField ||
         ((failureConstructorPassiveBoundField(program, field) ||
           selectedPassiveNativeFields) &&
          ((copiedParameters &&
@@ -27478,7 +27518,9 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
 // drop identity keeps the result in its value-rooted slot from the call until
 // the Return transfers it out, so the scheduled drops still run in MIR order
 // between them. A failure-capable call instead constructs straight into its
-// caller's result storage.
+// caller's result storage. A consuming (`&&`) member call qualifies through
+// the shared consuming-receiver proof: its receiver is not transferred at
+// Call, so the receiver's full-expression drop is one of those later drops.
 [[nodiscard]] const MirPlace *returnedCallResultSlot(const MirProgram &program,
                                                      const MirBody &body,
                                                      MirValueId valueId) {
@@ -27493,7 +27535,9 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
       call->kind != MirInstructionKind::Call || !call->result ||
       *call->result != valueId || call->destination ||
       call->successResultDestination || call->constructorTarget ||
-      call->lambdaTarget || call->bodyTarget || call->callableInvocation ||
+      call->lambdaTarget || call->bodyTarget ||
+      (call->callableInvocation &&
+       !exactMemberConsumingReceiver(program, body, *call, *target)) ||
       call->intrinsic != IntrinsicKind::None ||
       call->dispatch != CallDispatch::Static ||
       target->definitionKind != MirDefinitionKind::Source ||
@@ -33592,7 +33636,10 @@ public:
         // A copied formal remains available after field publication. Retain
         // only an alias so subsequent exact place projections still name the
         // original native parameter, without manufacturing another object.
+        // Its duplicate bare places spell that one canonical alias.
         if (copyParameterFieldSourcePlace(program, facts.body, place)) {
+          if (canonicalBindingPlaceId(facts.body, place) != place.id)
+            continue;
           const auto parameter = parameterIndex(place, facts);
           if (!parameter)
             throw std::logic_error(
