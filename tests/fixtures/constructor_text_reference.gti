@@ -27,15 +27,18 @@ struct TextReader {
   std::size_t size() { return this.text.size(); }
 };
 
+std::string_view& relay_text(std::string_view& input) { return input; }
+
 std::size_t inspect(std::string_view input, bool fail) {
-  TextOwner reader{input, Ticket(), fail};
+  TextOwner reader{relay_text(input), Ticket(), fail};
   return reader.size();
 }
 
 int main(int argc, std::vector<std::string> argv) {
   std::string_view literal = "literal";
   std::string_view alias = literal;
-  TextReader static_reader{alias};
+  std::string_view& reference = alias;
+  TextReader static_reader{relay_text(reference)};
   if (static_reader.size() != std::size_t(7)) { return 1; }
   mut std::string owner = std::string("dynamic");
   if (inspect(owner.view(), argc > 1) != std::size_t(7)) { return 2; }

@@ -7521,8 +7521,9 @@ outside the temporary's class hierarchy.
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
 receiver cleanup and that producer failure does not activate a receiver drop.
-The LSP smoke matrix owns `GTI-S2081` publication and clearing plus
-hover/signature selection.
+The LSP smoke matrix owns `GTI-S2081` publication for a borrowed return from a
+temporary and clearing after correction, plus hover/signature selection. Virtual
+temporary receiver calls are positive cases, not a stale rejection boundary.
 
 `temporary_constructor_argument_runtime` composes an owning constructed
 argument with read-only/grouped mutable receivers and read-borrowed temporary

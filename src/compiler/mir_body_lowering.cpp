@@ -5348,9 +5348,11 @@ private:
   [[nodiscard]] bool borrowsCarrierStorage(const HirValue &value) const {
     if (value.info.category != ValueCategory::Place)
       return false;
-    if ((value.info.type.kind == SemanticType::Class ||
-         value.info.type.kind == SemanticType::Lambda) &&
-        value.info.traits.containsBorrowedState)
+    if (value.info.type.kind == SemanticType::StringView ||
+        value.info.type.kind == SemanticType::CString ||
+        ((value.info.type.kind == SemanticType::Class ||
+          value.info.type.kind == SemanticType::Lambda) &&
+         value.info.traits.containsBorrowedState))
       return true;
     // Erasure removes the visible referent layout, not the addressable
     // shell's lifetime or its inherited owners. Preserve the selected
@@ -5474,27 +5476,52 @@ private:
            isRangeIteratorBinding(binding->second);
   }
 
-  [[nodiscard]] bool
-  storesCarrierReceiverReference(const HirValue &value) const {
+  [[nodiscard]] bool storesCarrierReference(const HirValue &value) const {
     if (value.intrinsic != IntrinsicKind::None || !value.functionTarget ||
         value.info.category != ValueCategory::Value ||
         value.info.type.kind != SemanticType::Class ||
         !value.info.traits.containsBorrowedState ||
-        value.borrowOrigin != BorrowOriginKind::Receiver ||
-        !value.borrowFields.empty() || !value.borrowArguments.empty())
+        !value.borrowArguments.empty())
       return false;
-    const auto receiver = receiverValue(value);
-    const auto *input = receiver ? findValue(*receiver) : nullptr;
-    if (input == nullptr || !input->info.traits.containsBorrowedState)
+    const bool receiverResult =
+        value.borrowOrigin == BorrowOriginKind::Receiver;
+    const auto arguments = callArgumentValues(value);
+    const auto selected =
+        receiverResult ? receiverValue(value)
+        : value.borrowOrigin == BorrowOriginKind::Argument &&
+                value.borrowArgument < arguments.size()
+            ? std::optional<HirValueId>{arguments[value.borrowArgument]}
+            : std::nullopt;
+    const auto *input = selected ? findValue(*selected) : nullptr;
+    if (input == nullptr ||
+        (!input->info.traits.containsBorrowedState &&
+         input->info.type.kind != SemanticType::StringView &&
+         input->info.type.kind != SemanticType::CString))
+      return false;
+    if (receiverResult
+            ? !value.borrowFields.empty()
+            : value.borrowArgument >= value.parameterTypes.size() ||
+                  value.parameterTypes[value.borrowArgument].kind !=
+                      SemanticType::Reference ||
+                  value.borrowFields.size() > 1 ||
+                  (!value.borrowFields.empty() &&
+                   (!value.borrowFields.front().sourceFields.empty() ||
+                    value.borrowFields.front().origin !=
+                        BorrowOriginKind::Argument ||
+                    value.borrowFields.front().parameter !=
+                        value.borrowArgument)))
       return false;
     // The compact receiver contract represents one stored reference. A
     // multi-origin carrier instead forwards its existing external dependencies
     // (for example a subview of two independent buffers), not its own shell.
     std::vector<SemanticType> visiting;
+    std::optional<SemanticType> reference;
     const auto references = [&](const auto &self,
                                 const SemanticType &type) -> unsigned {
-      if (type.kind == SemanticType::Reference)
+      if (type.kind == SemanticType::Reference) {
+        reference = type;
         return 1;
+      }
       if (std::find(visiting.begin(), visiting.end(), type) != visiting.end())
         return 2;
       const auto owner = std::find_if(
@@ -5519,7 +5546,11 @@ private:
       visiting.pop_back();
       return count;
     };
-    return references(references, value.info.type) == 1;
+    return references(references, value.info.type) == 1 &&
+           (receiverResult ||
+            (reference &&
+             reference->arguments ==
+                 value.parameterTypes[value.borrowArgument].arguments));
   }
 
   [[nodiscard]] MirPlaceId borrowOriginPlace(const HirValue &value,
@@ -5631,7 +5662,7 @@ private:
     }
     // A returned reference protects the addressable carrier shell. A
     // by-value carrier instead forwards its external stored referents.
-    if (borrowsCarrierStorage(value) || storesCarrierReceiverReference(value)) {
+    if (borrowsCarrierStorage(value) || storesCarrierReference(value)) {
       if (value.borrowOrigin == BorrowOriginKind::Receiver) {
         if (const auto receiver = receiverValue(value)) {
           const auto *input = findValue(*receiver);
@@ -6832,11 +6863,11 @@ private:
                   value.borrowOrigin == BorrowOriginKind::Argument &&
                   value.borrowArgument < arguments.size()
               ? findValue(arguments[value.borrowArgument])
-          : storesCarrierReceiverReference(value) && receiverValue(value)
+          : storesCarrierReference(value) && receiverValue(value)
               ? findValue(*receiverValue(value))
               : nullptr;
       const bool shellReferenceInput =
-          storesCarrierReceiverReference(value) ||
+          storesCarrierReference(value) ||
           (value.borrowOrigin == BorrowOriginKind::Argument &&
            value.borrowArgument < value.parameterTypes.size() &&
            value.parameterTypes[value.borrowArgument].kind ==
@@ -6865,7 +6896,8 @@ private:
       if (shellContract != nullptr) {
         recordLoanIdentity(loan, *shellContract);
       } else if (kind == MirLoanKind::Stored && shellArgument != nullptr &&
-                 shellArgument->info.traits.containsBorrowedState &&
+                 (shellArgument->info.traits.containsBorrowedState ||
+                  storesCarrierReference(value)) &&
                  shellReferenceInput && value.borrowArguments.empty() &&
                  value.borrowFields.size() <= 1 &&
                  (value.borrowFields.empty() ||
@@ -6883,7 +6915,12 @@ private:
             value.restoresReferenceResult &&
             !value.restoredBorrowFields.empty())
           output.loans[loan - 1].storedDependency = originLoan;
-        if (output.loans[loan - 1].storedDependency == 0)
+        // A text reference may select a literal-backed local. The program
+        // verifier independently proves that case from its initialization;
+        // every dynamic text source still requires its exact owner witness.
+        if (output.loans[loan - 1].storedDependency == 0 &&
+            value.info.type.kind != SemanticType::StringView &&
+            value.info.type.kind != SemanticType::CString)
           valid = false;
       } else if (parent != 0) {
         // A referent returned through an existing carrier reference remains
@@ -10141,7 +10178,9 @@ private:
     const bool shellReference =
         value->info.category == ValueCategory::Place &&
         (value->info.type.kind == SemanticType::Class ||
-         value->info.type.kind == SemanticType::Lambda) &&
+         value->info.type.kind == SemanticType::Lambda ||
+         value->info.type.kind == SemanticType::StringView ||
+         value->info.type.kind == SemanticType::CString) &&
         value->info.traits.containsBorrowedState;
     if (existing != 0 && !(shellReference && output.loans[existing - 1].kind ==
                                                  MirLoanKind::Stored)) {
@@ -11664,14 +11703,36 @@ private:
           const auto arguments = initializer != nullptr
                                      ? callArgumentValues(*initializer)
                                      : std::vector<HirValueId>{};
+          MirLoanId accessorAncestor = expectedParent;
+          if (accessorAncestor == 0 && desired->storedDependency != 0 &&
+              desired->access == AccessMode::ReadOnly) {
+            const auto dependency = semanticLoans.find(desired->storedDependency);
+            MirLoanId ancestor = retained.parent;
+            std::unordered_set<MirLoanId> visited;
+            while (const auto *link = output.findLoan(ancestor)) {
+              if (!visited.insert(ancestor).second)
+                break;
+              if (link->kind != MirLoanKind::CallResult) {
+                if (link->entry && link->kind == MirLoanKind::Parameter &&
+                    dependency != semanticLoans.end() &&
+                    link->storedDependency == dependency->second &&
+                    sameBorrowSource(link->source, retained.source) &&
+                    loanIsActive(scopes, ancestor))
+                  accessorAncestor = ancestor;
+                break;
+              }
+              ancestor = link->parent;
+            }
+          }
           const bool exactAccessorParent =
               retained.kind == MirLoanKind::Stored && initializer != nullptr &&
-              initializer->constructorTarget &&
+              (initializer->constructorTarget ||
+               storesCarrierReference(*initializer)) &&
               initializer->borrowOrigin == BorrowOriginKind::Argument &&
               initializer->borrowArgument < arguments.size() &&
               retained.parent ==
                   loanForValue(arguments[initializer->borrowArgument]) &&
-              retainableCallResultChain(retained.parent, expectedParent,
+              retainableCallResultChain(retained.parent, accessorAncestor,
                                         arguments[initializer->borrowArgument],
                                         desired->access);
           // A stored reference may retain the exact accessor result passed

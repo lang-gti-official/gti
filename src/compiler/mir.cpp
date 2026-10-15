@@ -10672,7 +10672,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
           loan.storedField == 0 && loan.parent == 0 && loan.producedBy != 0 &&
           source != nullptr && source->root != MirPlaceRootKind::Loan &&
-          source->traits.containsBorrowedState;
+          (source->traits.containsBorrowedState ||
+           source->type.kind == SemanticType::StringView ||
+           source->type.kind == SemanticType::CString);
       if ((loan.kind == MirLoanKind::Stored && !derivedStoredDependency &&
            !publishedShellDependency && !constructedShellDependency) ||
           (dependency.kind != MirLoanKind::Stored && !restoredDependency) ||
