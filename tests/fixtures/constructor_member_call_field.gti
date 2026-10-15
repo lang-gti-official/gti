@@ -115,6 +115,15 @@ public:
   Keeper(Shelf<T> shelf) : kept(std::move(shelf).take()) {}
 };
 
+// Field defaults run as the selected constructor's initializer stages.
+class Defaulted {
+  mut Tracked kept = Source(13).make();
+  mut Tracked taken = Single(14).release();
+public:
+  Defaulted() {}
+  int read() { return this.kept.read() + this.taken.read(); }
+};
+
 class CheckedTaking {
   mut Tracked kept;
 public:
@@ -182,6 +191,10 @@ int main(int argc, std::vector<std::string> argv) {
     Keeper<Tracked> keeper{Shelf<Tracked>(Tracked(6))};
   }
   {
+    Defaulted defaulted{};
+    total += defaulted.read();
+  }
+  {
     CheckedTaking checked{Single(7), has(argv, "call") ? 0 : 1};
     total += checked.read();
   }
@@ -194,5 +207,5 @@ int main(int argc, std::vector<std::string> argv) {
   Checked checked{
       Guarded(10, receiver && has(argv, "double") ? 0 : 1, receiver ? 0 : 1)};
   std::println("kept");
-  return total + pair.read() + checked.read() - 57;
+  return total + pair.read() + checked.read() - 84;
 }

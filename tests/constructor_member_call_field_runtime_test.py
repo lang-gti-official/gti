@@ -26,7 +26,7 @@ def member_call_field_cases(name="constructor_member_call_field"):
     # constructor's rollback when a later initializer or the consumed
     # receiver's drop fails. A failing consuming call publishes nothing and
     # failure cleanup destroys its named (-7) or fresh (-8) receiver.
-    before = "-1\n-2\n-3\n-5\n-4\n-6\n"
+    before = "-1\n-2\n-3\n-5\n-4\n-6\n-14\n-13\n"
     published = before + "-7\n-8\n"
     call = division("int guard = 1 / divisor;")
     return {fixture.stem: [
