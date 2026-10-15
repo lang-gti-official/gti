@@ -20670,7 +20670,6 @@ public:
   InvalidReceiver() : value(0) {}
   void reset() mut {}
   mut int& expose() mut { return this.value; }
-  virtual void virtual_reset() mut {}
 
 private:
   mut int value;
@@ -20684,7 +20683,6 @@ int main() {
   bool choose = true;
   (choose ? InvalidReceiver() : InvalidReceiver()).reset();
   [[discard]] InvalidReceiver().expose();
-  InvalidReceiver().virtual_reset();
   return 0;
 }
 )";
@@ -20695,15 +20693,283 @@ int main() {
       !invalid.semanticValid &&
           hasDiagnostic(invalid.diagnostics,
                         "Mutable method requires a mutable receiver") &&
-          countDiagnosticCode(invalid.diagnostics, "GTI-S2081") == 2 &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2081") == 1 &&
           hasDiagnostic(invalid.diagnostics,
                         "cannot produce a reference, pointer-like value") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Virtual dispatch on a temporary receiver") &&
           hasRelatedDiagnostic(invalid.diagnostics, "declared mutable here") &&
           hasDiagnosticHint(invalid.diagnostics, "Bind the value"),
       "unsupported temporary receivers should retain precise compiler "
       "diagnostics while immutable named objects remain rejected");
+}
+
+void testVirtualTemporaryReceivers() {
+  // Dispatch selects which body runs over the borrowed temporary; it does not
+  // change the receiver role. Virtual, override, interface-override, inherited
+  // and operator() members all borrow the materialized temporary exactly as a
+  // non-virtual member does, and keep their own dispatch.
+  const std::string source = R"(
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+  int read() { return this.id; }
+};
+
+class Maker {
+public:
+  virtual Tracked make() { return Tracked(1); }
+  Tracked plain() { return Tracked(2); }
+  virtual Tracked operator()(int value) { return Tracked(value); }
+};
+
+class Doubling : public Maker {
+public:
+  Tracked make() override { return Tracked(2); }
+};
+
+class Inheriting : public Maker {
+public:
+  Inheriting() {}
+};
+
+interface Factory {
+  Tracked build() mut;
+};
+
+class Counting : public Factory {
+  mut int next;
+public:
+  Counting(int start) : next(start) {}
+  Tracked build() mut override {
+    this.next += 1;
+    return Tracked(this.next);
+  }
+};
+
+int main() {
+  Tracked base = Maker().make();
+  Tracked derived = Doubling().make();
+  Tracked inherited = Inheriting().make();
+  Tracked plain = Inheriting().plain();
+  Tracked built = Counting(4).build();
+  Tracked invoked = Maker()(6);
+  return base.read() + derived.read() + inherited.read() + plain.read() +
+         built.read() + invoked.read() - 18;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("virtual-temporary-receivers.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected virtual-temporary diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "virtual, override, interface and inherited members should borrow "
+         "fresh temporaries through verified receiver stages");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::HirFunctionInstance *main = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr && instance.source->name().lexeme == "main")
+      main = &instance;
+  }
+  const lang::MirFunctionInstance *mirMain =
+      main == nullptr ? nullptr : frontend.mir.findFunctionInstance(main->id);
+  expect(main != nullptr && mirMain != nullptr,
+         "the virtual-temporary fixture should retain its main body");
+  if (main == nullptr || mirMain == nullptr) {
+    return;
+  }
+
+  std::size_t virtualHirCalls = 0;
+  std::size_t staticHirCalls = 0;
+  std::size_t mutableHirCalls = 0;
+  for (const lang::HirValue &value : main->body.values) {
+    if (value.kind != lang::HirValueKind::Call || !value.callPlan ||
+        !value.callPlan->receiver ||
+        (value.callPlan->receiver->kind !=
+             lang::HirCallInputKind::ReadTemporaryBorrow &&
+         value.callPlan->receiver->kind !=
+             lang::HirCallInputKind::MutableTemporaryBorrow)) {
+      continue;
+    }
+    const auto *sourceCall = dynamic_cast<const lang::Call *>(value.source);
+    const lang::ResolvedCallInfo *resolved =
+        sourceCall == nullptr ? nullptr
+                              : frontend.semantics.findCall(*sourceCall);
+    const lang::ResolvedOperatorInfo *resolvedOperator =
+        sourceCall == nullptr ? nullptr
+                              : frontend.semantics.findOperator(*sourceCall);
+    const lang::CallReceiverMode mode =
+        resolvedOperator != nullptr ? resolvedOperator->receiverMode
+        : resolved != nullptr       ? resolved->receiverMode
+                                    : lang::CallReceiverMode::None;
+    const bool mutableInput = value.callPlan->receiver->kind ==
+                              lang::HirCallInputKind::MutableTemporaryBorrow;
+    expect(mode == (mutableInput ? lang::CallReceiverMode::FreshTemporaryMutable
+                                 : lang::CallReceiverMode::FreshTemporaryRead),
+           "HIR temporary receiver access should copy the selected semantic "
+           "mode for virtual members too");
+    virtualHirCalls += value.dispatch == lang::CallDispatch::Virtual ? 1 : 0;
+    staticHirCalls += value.dispatch == lang::CallDispatch::Static ? 1 : 0;
+    mutableHirCalls += mutableInput ? 1 : 0;
+  }
+  expect(virtualHirCalls == 5 && staticHirCalls == 1 && mutableHirCalls == 1,
+         "HIR should keep each member's own dispatch over its temporary "
+         "receiver borrow");
+
+  const auto stageFor =
+      [&](const lang::MirBody &body,
+          const lang::MirInstruction &call) -> const lang::MirInstruction * {
+    if (!call.receiver || call.receiver->kind != lang::MirOperandKind::Value)
+      return nullptr;
+    const lang::MirValue *value = body.findValue(call.receiver->value);
+    const lang::MirBlock *block =
+        value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+    if (block == nullptr)
+      return nullptr;
+    for (const lang::MirInstruction &instruction : block->instructions) {
+      if (instruction.id == value->definition &&
+          (instruction.callInputKind ==
+               lang::HirCallInputKind::ReadTemporaryBorrow ||
+           instruction.callInputKind ==
+               lang::HirCallInputKind::MutableTemporaryBorrow))
+        return &instruction;
+    }
+    return nullptr;
+  };
+  std::size_t virtualStages = 0;
+  std::size_t staticStages = 0;
+  for (const lang::MirBlock &block : mirMain->body.blocks) {
+    for (const lang::MirInstruction &call : block.instructions) {
+      if (call.kind != lang::MirInstructionKind::Call ||
+          stageFor(mirMain->body, call) == nullptr) {
+        continue;
+      }
+      const lang::MirFunctionInstance *target =
+          call.functionTarget
+              ? frontend.mir.findFunctionInstance(*call.functionTarget)
+              : nullptr;
+      const bool virtualCall = call.dispatch == lang::CallDispatch::Virtual;
+      expect(target != nullptr && target->virtualMethod == virtualCall &&
+                 (call.definedFailure.propagation ==
+                  lang::FailurePropagationKind::VirtualCall) == virtualCall,
+             "MIR should keep the target's dispatch and failure contract on "
+             "a temporary receiver call");
+      virtualStages += virtualCall ? 1 : 0;
+      staticStages += virtualCall ? 0 : 1;
+    }
+  }
+  expect(virtualStages == 5 && staticStages == 1,
+         "MIR should stage every virtual and inherited temporary receiver");
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "the C++ backend should consume verified virtual temporary receiver "
+         "stages");
+
+  const auto rejectsTemporaryReceiver = [](const lang::MirProgram &program) {
+    const lang::MirVerificationResult result = lang::verifyMirProgram(program);
+    return std::any_of(
+        result.errors.begin(), result.errors.end(),
+        [](const lang::MirVerificationError &error) {
+          return error.message.find(
+                     "temporary receiver input does not match") !=
+                 std::string::npos;
+        });
+  };
+  const auto hirClass = [&](std::optional<lang::HirClassInstanceId> id)
+      -> const lang::HirClassInstance * {
+    for (const lang::HirClassInstance &instance :
+         frontend.hir.classInstances()) {
+      if (id && instance.id == *id)
+        return &instance;
+    }
+    return nullptr;
+  };
+  // Each mutation rewrites one temporary receiver call in main, selected by
+  // its target's member name and owner class.
+  const auto forgeCall = [&](std::string_view member, std::string_view owner,
+                             const auto &rewrite) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    lang::MirFunctionInstance *forgedMain =
+        main->id == 0 || main->id > functions.size() ? nullptr
+                                                     : &functions[main->id - 1];
+    bool rewritten = false;
+    if (forgedMain == nullptr)
+      return std::pair{false, forged};
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(forgedMain->body.blocks)) {
+      for (lang::MirInstruction &call :
+           const_cast<std::vector<lang::MirInstruction> &>(
+               block.instructions)) {
+        const lang::HirFunctionInstance *target =
+            call.functionTarget
+                ? frontend.hir.findFunctionInstance(*call.functionTarget)
+                : nullptr;
+        const lang::HirClassInstance *targetOwner =
+            target == nullptr ? nullptr : hirClass(target->owner);
+        if (rewritten || call.kind != lang::MirInstructionKind::Call ||
+            stageFor(forgedMain->body, call) == nullptr || target == nullptr ||
+            target->source == nullptr || targetOwner == nullptr ||
+            targetOwner->source == nullptr ||
+            target->source->name().lexeme != member ||
+            targetOwner->source->name().lexeme != owner) {
+          continue;
+        }
+        rewritten = rewrite(call);
+      }
+    }
+    return std::pair{rewritten, forged};
+  };
+  const auto staticVirtual =
+      forgeCall("make", "Maker", [](lang::MirInstruction &call) {
+        call.dispatch = lang::CallDispatch::Static;
+        return true;
+      });
+  expect(staticVirtual.first && rejectsTemporaryReceiver(staticVirtual.second),
+         "the MIR verifier should reject a virtual member statically "
+         "dispatched over a temporary receiver");
+  const auto virtualStatic =
+      forgeCall("plain", "Maker", [](lang::MirInstruction &call) {
+        call.dispatch = lang::CallDispatch::Virtual;
+        return true;
+      });
+  expect(virtualStatic.first && rejectsTemporaryReceiver(virtualStatic.second),
+         "the MIR verifier should reject table dispatch of a non-virtual "
+         "member over a temporary receiver");
+  // A sibling override has the same signature but is not a member of the
+  // temporary's own class or any of its bases.
+  std::optional<lang::HirFunctionInstanceId> siblingOverride;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    const lang::HirClassInstance *owner = hirClass(instance.owner);
+    if (instance.source != nullptr && owner != nullptr &&
+        owner->source != nullptr && instance.source->name().lexeme == "make" &&
+        owner->source->name().lexeme == "Doubling")
+      siblingOverride = instance.id;
+  }
+  const auto unrelatedOwner =
+      forgeCall("plain", "Maker", [&](lang::MirInstruction &call) {
+        // Dispatch matches the forged virtual target, so only the owner
+        // relation differs from a verified shape.
+        if (!siblingOverride)
+          return false;
+        call.functionTarget = *siblingOverride;
+        call.dispatch = lang::CallDispatch::Virtual;
+        return true;
+      });
+  expect(unrelatedOwner.first &&
+             rejectsTemporaryReceiver(unrelatedOwner.second),
+         "the MIR verifier should reject a temporary receiver whose member "
+         "belongs to a class outside the temporary's own hierarchy");
 }
 
 void testTemporaryArgumentBorrows() {
@@ -21976,6 +22242,7 @@ constexpr NamedTest kTests[] = {
     {"testEphemeralBorrowedCarrierReceivers",
      testEphemeralBorrowedCarrierReceivers},
     {"testMutableTemporaryReceivers", testMutableTemporaryReceivers},
+    {"testVirtualTemporaryReceivers", testVirtualTemporaryReceivers},
     {"testTemporaryArgumentBorrows", testTemporaryArgumentBorrows},
     {"testRetainedBorrowedCallResults", testRetainedBorrowedCallResults},
     {"testNestedBorrowChainLoanOrdering", testNestedBorrowChainLoanOrdering},
