@@ -27,9 +27,11 @@ for what minor and patch releases mean.
 - A consuming call on such a value still stops with this error when a later
   argument of the same call can fail, such as
   `std::move(maker).make_with(1 / divisor)`, or when its result initializes a
-  field in a constructor's member-initializer list. A field read inside `?:`,
-  such as `ok ? std::move(maker).show().id : 0`, fails the same way when the
-  method cannot fail, as it does when the value is passed as an argument.
+  field in a constructor's member-initializer list. Inside `?:` it also fails
+  when the class result initializes a variable or is returned, such as
+  `Tracked t = ok ? std::move(a).make() : std::move(b).make();`, or when a
+  field of the result is read and the method cannot fail; the same calls
+  fail when the value is passed as an argument instead.
 
 ## 0.436.2 — Calls on receivers moved inside conditional expressions
 
