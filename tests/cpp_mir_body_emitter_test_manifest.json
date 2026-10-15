@@ -390,6 +390,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeJoinReceiver",
+      "suite": "text"
+    },
+    {
       "name": "testMovedGenericOwnerReceiverStage",
       "suite": "text"
     },
@@ -431,6 +435,10 @@
     },
     {
       "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
+      "name": "testCheckedConditionalArmInputs",
       "suite": "text"
     },
     {
