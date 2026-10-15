@@ -1299,6 +1299,35 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
     if (!typeTraits(current).containsBorrowedState ||
         !requiresActiveCleanupFor(current))
       return false;
+    if (current.kind == SemanticType::Expected ||
+        current.kind == SemanticType::Unexpected) {
+      const std::size_t arity = current.kind == SemanticType::Expected ? 2 : 1;
+      if (current.arguments.size() != arity)
+        return true;
+      // Generated alternative cleanup only retains a dependency when one of
+      // the actual components can use or release it during destruction. An
+      // unrelated owning error does not extend a borrowed success's loan.
+      return std::any_of(current.arguments.begin(), current.arguments.end(),
+                         [&](const auto &component) {
+                           return component.kind == SemanticType::Unknown ||
+                                  self(self, component);
+                         });
+    }
+    if (current.kind == SemanticType::Enum) {
+      const auto enumeration = enumTypeFor(current);
+      if (!enumeration || !enumeration->payload ||
+          std::find(visiting.begin(), visiting.end(), current) !=
+              visiting.end())
+        return true;
+      visiting.push_back(current);
+      bool bound = false;
+      for (const auto &variant : enumeration->enumerators)
+        for (const auto &field : variant.payloadTypes)
+          bound =
+              bound || field.kind == SemanticType::Unknown || self(self, field);
+      visiting.pop_back();
+      return bound;
+    }
     const auto *owner = classInfo(current);
     // Unknown/recursive cleanup is conservative. Compiler-bound resources and
     // source destructors may use or release a declared dependency. Generated
@@ -1606,6 +1635,102 @@ auto SemanticVisitor::Impl::storedReferenceInventory(const SemanticType &type)
     const -> std::optional<std::vector<StoredReferencePath>> {
   return collectStoredReferencePaths(type,
                                      StoredReferenceQuery::CompleteInventory);
+}
+
+auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
+    const SemanticType &type)
+    -> std::optional<std::vector<BorrowAlternativePath>> {
+  if (!storedReferenceInventory(type))
+    return std::nullopt;
+  std::vector<SemanticType> visiting;
+  const auto visit = [&](const auto &self, const SemanticType &current)
+      -> std::optional<std::vector<BorrowAlternativePath>> {
+    if (current.kind == SemanticType::Unknown ||
+        containsOpenTypeParameter(current))
+      return std::nullopt;
+    std::vector<BorrowAlternativePath> result;
+    if (current.kind == SemanticType::Reference)
+      return current.arguments.size() == 1 ? std::optional{std::move(result)}
+                                           : std::nullopt;
+    if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return std::nullopt;
+    visiting.push_back(current);
+    const auto appendChildren = [&](const SemanticType &child, SymbolId field,
+                                    const BorrowDependencyCondition *outer) {
+      if (!typeTraits(child).containsBorrowedState)
+        return true;
+      auto children = self(self, child);
+      if (!children || field == 0)
+        return false;
+      for (auto &path : *children) {
+        for (auto &condition : path.conditions)
+          condition.subobject.insert(condition.subobject.begin(), field);
+        if (outer != nullptr)
+          path.conditions.insert(path.conditions.begin(), *outer);
+        result.push_back(std::move(path));
+      }
+      return true;
+    };
+    bool complete = true;
+    if (current.kind == SemanticType::Enum) {
+      const auto enumeration = enumTypeFor(current);
+      complete = enumeration.has_value();
+      if (enumeration && enumeration->payload)
+        for (std::size_t index = 0; index < enumeration->enumerators.size();
+             ++index) {
+          const auto &variant = enumeration->enumerators[index];
+          const BorrowDependencyCondition outer{.enumeration = current,
+                                                .variant = index};
+          result.push_back({.conditions = {outer}});
+          if (variant.payloadTypes.size() != variant.payloadSymbols.size()) {
+            complete = false;
+            continue;
+          }
+          for (std::size_t field = 0; field < variant.payloadTypes.size();
+               ++field)
+            complete &= appendChildren(variant.payloadTypes[field],
+                                       variant.payloadSymbols[field], &outer);
+        }
+    } else if (typeTraits(current).containsBorrowedState) {
+      if (current.hasLambdaShape()) {
+        const auto *lambda = semanticModel.findLambda(current.lambdaId);
+        const auto captures = current.lambdaCaptureTypes();
+        complete = lambda != nullptr && lambda->declaration != nullptr &&
+                   lambda->declaration->captures().size() == captures.size();
+        if (complete)
+          for (std::size_t index = 0; index < captures.size(); ++index) {
+            const std::vector<StoredField> path{
+                &lambda->declaration->captures()[index]};
+            const auto fields = storedFieldSymbols(current, path);
+            complete &=
+                fields.size() == 1 &&
+                appendChildren(captures[index], fields.front(), nullptr);
+          }
+      } else if (const auto *owner = classInfo(current)) {
+        const auto substitution = classSubstitution(current);
+        for (const auto &field : owner->fields) {
+          if (field.declaration == nullptr)
+            continue;
+          const auto member =
+              owner->members.find(field.declaration->name().lexeme);
+          const std::vector<StoredField> path{field.declaration};
+          const auto fields = storedFieldSymbols(current, path);
+          if (member == owner->members.end() || fields.size() != 1) {
+            complete = false;
+            continue;
+          }
+          complete &= appendChildren(
+              substituteType(member->second.symbol.type, substitution),
+              fields.front(), nullptr);
+        }
+      } else {
+        complete = false;
+      }
+    }
+    visiting.pop_back();
+    return complete ? std::optional{std::move(result)} : std::nullopt;
+  };
+  return visit(visit, type);
 }
 
 auto SemanticVisitor::Impl::storedReferencePaths(const SemanticType &type) const
@@ -2147,6 +2272,25 @@ auto SemanticVisitor::Impl::storedFieldSymbols(
 auto SemanticVisitor::Impl::isDirectStoredReferenceType(
     const SemanticType &type) const -> bool {
   return !storedReferencePaths(type).empty();
+}
+
+auto SemanticVisitor::Impl::storedConditionSymbols(
+    const SemanticType &type,
+    std::span<const StoredReferenceCondition> conditions)
+    -> std::optional<std::vector<BorrowDependencyCondition>> {
+  std::vector<BorrowDependencyCondition> result;
+  for (const auto &condition : conditions) {
+    auto fields = storedFieldSymbols(type, condition.subobject);
+    const auto enumeration = enumTypeFor(condition.enumeration);
+    if (fields.size() != condition.subobject.size() || !enumeration ||
+        !enumeration->payload ||
+        condition.variant >= enumeration->enumerators.size())
+      return std::nullopt;
+    result.push_back({.subobject = std::move(fields),
+                      .enumeration = condition.enumeration,
+                      .variant = condition.variant});
+  }
+  return result;
 }
 
 auto SemanticVisitor::Impl::isFallibleBorrowType(const SemanticType &type) const
@@ -5534,17 +5678,21 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
       abstractEntry && (type.kind == SemanticType::StringView ||
                         type.kind == SemanticType::CString);
   std::vector<SymbolId> designatedFields;
+  std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additional;
   for (const auto &path : paths) {
     auto fields = storedFieldSymbols(type, path.fields);
-    if (fields.size() != path.fields.size())
+    auto qualified = storedConditionSymbols(type, path.conditions);
+    if (fields.size() != path.fields.size() || !qualified)
       return 0;
-    if (designatedFields.empty())
+    if (designatedFields.empty()) {
       designatedFields = std::move(fields);
-    else
+      conditions = std::move(*qualified);
+    } else
       additional.push_back({.place = place,
                             .designatedFields = std::move(fields),
-                            .access = path.reference.referenceAccess});
+                            .access = path.reference.referenceAccess,
+                            .conditions = std::move(*qualified)});
   }
   if (designatedFields.empty() && !textEntry)
     return 0;
@@ -5554,7 +5702,7 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
       textEntry       ? AccessMode::ReadOnly
       : abstractEntry ? paths.front().reference.referenceAccess
                       : borrowAccess(type),
-      false, 0, true, std::move(designatedFields));
+      false, 0, true, std::move(designatedFields), std::move(conditions));
   SemanticLoanInfo loan = *semanticModel.findLoan(id);
   loan.additionalDependencies = std::move(additional);
   if (abstractEntry) {
@@ -5810,6 +5958,15 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   // they cannot be copied onto a reference loan to the external referent.
   if (expression && carrier->type.kind != SemanticType::Reference &&
       !isFallibleBorrowType(carrier->type)) {
+    if (const auto *complete =
+            semanticModel.findBorrowDependencySet(*expression);
+        complete && complete->dependencies.empty() &&
+        !complete->possibleAlternatives.empty()) {
+      // A verified selected alternative with no external dependency has no
+      // origin-bearing loan to create. Keep the complete value fact on the
+      // binding; unknown/missing evidence must still take the checked path.
+      return;
+    }
     const auto dependencies = semanticModel.findBorrowDependencies(*expression);
     if (!dependencies.empty()) {
       for (const auto &dependency : dependencies)
