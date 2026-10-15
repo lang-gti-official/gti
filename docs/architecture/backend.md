@@ -2688,6 +2688,28 @@ fixed arrays, payload enums or other closures remain outside this route. A
 closure-typed class constructed as another class's member initializer uses
 the constructed-field family below.
 
+A closure moved from its formal, as in `Keeper(F f) : callback(std::move(f))`,
+publishes through the constructor record as well, and the owned-parameter
+proof binds the formal's exact `Move` to the field. The same record form
+serves a payload enum moved into a field. Such a move may precede work that
+can fail, in the constructor body or in a later sibling initializer. The proof
+still binds it when it publishes ahead of every failure edge: only the exact
+effect-free records of earlier initializers precede the `Move` (passive scalar
+siblings, record-published closure copies, or stored-reference bindings), and
+its own full-expression boundary follows it. The native member-initializer list
+then moves the formal exactly where MIR moves it, in the failure form as in the
+ordinary one, and the body only records that publication. Whether the failure
+form may keep the published field when a later edge fails is a separate,
+per-field proof. A trivially dropped field needs nothing. A struct-capturing
+closure field is retained as a passive shell under the copy route's capture
+rule, because ending it with the caller's object runs no source code. The
+moved-from formal keeps its lexical drop on both exits; it retires only the
+native parameter's moved-from shell. A move recorded after any other
+initializer work, such as a fallible sibling declared before the closure
+field, is never hoisted across that work and stays outside this route. So does
+a struct-capturing moved closure that is not copyable, whose retained shell
+would need a destruction-only capture proof.
+
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an
 empty-state capability: its references must already be bound by the exact

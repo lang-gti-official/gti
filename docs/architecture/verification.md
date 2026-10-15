@@ -1,5 +1,35 @@
 # Compiler Verification
 
+## Fields moved ahead of fallible constructor work (0.435.1)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_move.gti`.
+Generic class constructors move their closure parameter into a field and then
+run work that can fail: a call in the body, a call on the moved field, a
+fallible sibling initializer, or checked arithmetic. One class copies a scalar
+parameter into a field before the closure field, and one copies the formal into
+an earlier field before moving it into a later one. Struct- and
+number-capturing closures share each class. A non-generic class moves a
+payload enum into a field before a body that can fail, so the rule is shown
+on an unrelated user type. A closure that divides by zero inside a constructor
+body takes the failure edge after the moved field is published and must exit
+with status 70 and the division diagnostic. Every result is checked in
+C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. In
+`cpp_mir_body_emitter_text`, `testMovedClosureFieldInFallibleConstructor`
+requires the owned-parameter proof to bind the record-published move of every
+closure instance of a body-call constructor and a fallible-sibling
+constructor. Production emission must keep one failure-form constructor per
+instance that moves the parameter once, in its member-initializer list. A
+struct capture must keep the formal's drop on both exits. Moving the later
+scalar sibling's records ahead of the `Move` must make the proof refuse the
+binding, and a move declared after a fallible sibling must stay unbound.
+Against the 0.434.1 emitter the proof refuses every instance and emission
+fails with `GTI-B0001`. A differential `--emit-cpp` over 1709 fixture,
+coverage and example programs at O0 and O3 changed only three closure
+fixtures. In each, the struct-capturing instance of `Moved(F f) :
+callback(std::move(f)) {}`, which is failure-capable only through its formal's
+lexical drop, gained an admitted failure-form definition that no caller
+instantiates.
+
 ## Copied constructor formals reused in fallible bodies (0.434.1)
 
 `generic_callable_transport_runtime` adds `generic_closure_formal_reuse.gti`.
