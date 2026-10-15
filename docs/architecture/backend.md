@@ -2505,6 +2505,34 @@ equal payload types at different indices, alignment, nested carriers/arrays,
 native construction/move/assignment failures and exact retirement counts;
 source runtime tests retain failure-cleanup and sanitizer coverage.
 
+Cleanup-free enum fields use the same destination-construction policy through
+their existing MIR initializer-record publication. The exact source constructor,
+declared field, root value, unique initializer and immediately following full-
+expression boundary must agree; an explicit `Initialize` takes precedence over
+that record route. The enum must be borrow-free, trivial to drop and free of
+relocation failure, with no other runtime use or value-rooted place. Its native
+empty field shell is replaced directly at the producer, preserving operand
+order and avoiding a whole-enum temporary assignment. Substituted fields,
+duplicated roots, borrowed state, effects and mismatched boundaries retain the
+ordinary staged path or fail representation admission.
+
+A bounded closed-tag-domain proof exposes an exhaustive switch's impossible
+default edge to the native optimizer. It independently matches the exact
+payload enum/type/traits and copied dense alternative inventory, each unique
+typed enumerator case, and an empty `Unreachable` default block. The source
+must be an initialized entry reference parameter dereference or an exact
+immediate enum field of an ordinary read-only source-method receiver. Only
+inert full-expression/read metadata may precede it, and entry cannot have a
+backedge. Constructor/destructor bodies, local/value roots, consuming or mutable
+receivers, moved state, intervening effects and incomplete/substituted rows do
+not qualify. This distinction excludes the carrier's private empty/vacant
+shells; an exhaustive-case count alone is never sufficient. The proof emits
+`mir_closed_enum_unreachable_v1` only on that switch edge. Ordinary MIR
+`Unreachable`, explicit defaults and defined-failure paths retain their existing
+abort/diagnostic behavior. Mutation tests cover omitted, duplicate, substituted
+and mistyped cases, unavailable sources, wrong fields/formals, effectful entry,
+changed defaults and backedges.
+
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
 native argument and moves it into its canonical MIR place. Expansions and
