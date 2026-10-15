@@ -2580,11 +2580,12 @@ receiver is transferred at the call. A consumed receiver's full-expression
 rolls the published field back; the backend emits that schedule unchanged.
 Field declaration defaults such as `Tracked kept = Source(3).make();` run as
 the same constructor-initializer stages. A cleanup-free receiver moved out of
-a binding is instead a prepared parameter that the call transfers out. The
-consuming-receiver proof does not admit that transport yet, so this proof
-still refuses `kept(std::move(source).take())` when `source`'s class needs no
-cleanup. Both producers also require static dispatch, so a virtual member
-call's result has no constructor-field route.
+a binding is instead a prepared parameter that the call transfers like an
+owning argument, as in `kept(std::move(source).take())` where `source`'s class
+needs no cleanup. Both producers count that transfer among the call's
+prepared inputs (`preparedReceiverStage`), so no receiver drop follows the
+field `Initialize`. Both producers require static dispatch, so a virtual
+member call's result has no constructor-field route.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;
