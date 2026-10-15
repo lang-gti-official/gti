@@ -12420,8 +12420,13 @@ def test_mutable_temporary_receiver_tooling(executable, root):
                    "requires a mutable receiver" in item.get("message", "")
                    for item in diagnostics), diagnostics
         # A checked reference still cannot escape a fresh temporary owner.
-        assert any(item.get("code") == "GTI-S2081"
-                   for item in diagnostics), diagnostics
+        errors = [item for item in diagnostics if item.get("code") == "GTI-S2081"]
+        assert len(errors) == 1 and "reference" in errors[0]["message"], diagnostics
+        offset = invalid_source.index("Probe().expose()") + len("Probe().expose(")
+        assert errors[0]["range"] == {
+            "start": lsp_position(invalid_source, offset),
+            "end": lsp_position(invalid_source, offset + 1),
+        }, errors
 
         session.send(
             {

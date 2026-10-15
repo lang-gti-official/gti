@@ -424,8 +424,10 @@ boundaries from call syntax.
 
 Fresh temporary receiver diagnostics and selected read/mutable overloads use
 the same compiler records. The LSP publishes `GTI-S2081` unchanged and clears
-it only after a newer compiler snapshot accepts the receiver. Hover and
-signature help render the exact selected trailing-`mut` overload; the protocol
+it only after a newer compiler snapshot accepts the receiver. Regression
+coverage checks the reference-escape reason and exact closing-parenthesis
+range separately from the read-only named receiver's mutable-call rejection.
+Hover and signature help render the exact selected trailing-`mut` overload; the protocol
 layer does not infer freshness from constructor-like punctuation.
 
 Fresh temporary arguments use the same compiler snapshot. An ineligible
