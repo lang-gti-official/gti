@@ -6543,6 +6543,22 @@ result, is covered too. A failing callee in an arm leaves no result.
 removed, duplicated and conditional input transfers and a forged result
 activation, which MIR verification also rejects, and a forged consuming
 capability on a borrowed receiver.
+`conditional_checked_arm_input_runtime` runs the same eight configurations
+over a cleanup-free class result whose arms first evaluate inputs that can
+fail: overflow-checked arguments, a call computing an argument, a raising
+callee, a `?` operand, a scalar conditional or `&&` inside an argument, a
+nested conditional with a checked condition, and a temporary with cleanup in
+an argument. Each shape runs through both arms, bound, returned, assigned,
+passed on, read through a field, copied from a named place, used to
+initialize a field and re-entered in a loop. Failing inputs (an overflow in a
+bound arm, a failing argument call in a returned arm, a failing callee after a
+checked argument, an overflow in a nested condition) end their arm before its
+call, and cleanup destroys only what was constructed before. The
+`conditional_cleanup_free_call_result_runtime` fixture computes its call
+arms' checked arguments inside the arms as well.
+`testCheckedConditionalArmInputs` in the emitter text suite admits the bound,
+returned and `?` forms and refuses a failure edge or the other arm's edge
+forged into an arm, which MIR verification also rejects.
 `conditional_moved_local_join_runtime` runs the same eight configurations over
 a cleanup-free class value that each arm of a conditional moves out of a whole
 named local, a by-value parameter included. Each shape runs through both arms,
