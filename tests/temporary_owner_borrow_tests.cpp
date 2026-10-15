@@ -183,9 +183,110 @@ int main() {
            "escaping or mutable temporary-owner views remain source errors");
   }
 }
+// A fresh payload-enum value, with or without cleanup, is borrowed for one
+// call exactly as a fresh class value is. Scalar-backed enums and mutable
+// references to temporaries stay source errors.
+void checkPayloadEnumTemporaryArguments() {
+  const std::string declarations = R"(
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() {}
+  int read() { return this.id; }
+};
+enum class state { empty, engaged(int value) };
+enum class owned { empty, held(Tracked item) };
+state make(int v) {
+  if (v < 0) {
+    return state::empty;
+  }
+  return state::engaged(v);
+}
+owned hold(int v) { return owned::held(Tracked(v)); }
+bool engaged(state& s) {
+  switch (s) {
+  case state::engaged:
+    return true;
+  case state::empty:
+    return false;
+  }
+}
+bool held(owned& o) {
+  switch (o) {
+  case owned::held:
+    return true;
+  case owned::empty:
+    return false;
+  }
+}
+)";
+  const auto valid =
+      lang::Frontend().analyze("payload-enum-temporary.gti", declarations + R"(
+int main() {
+  bool constructed = engaged(state::engaged(1));
+  bool unit = engaged(state::empty);
+  bool returned = engaged(make(2));
+  bool owning = held(hold(3));
+  bool unitOwning = held(owned::empty);
+  return constructed && !unit && returned && owning && !unitOwning ? 0 : 1;
+}
+)");
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "fresh payload-enum values are borrowed for one call");
+  if (!valid.canGenerateCode()) {
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t enumStages = 0;
+  for (const auto &function : valid.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputRole != lang::MirCallInputRole::Argument ||
+            instruction.callInputKind !=
+                lang::HirCallInputKind::ReadTemporaryBorrow ||
+            instruction.info.type.arguments.size() != 1 ||
+            instruction.info.type.arguments.front().kind !=
+                lang::SemanticType::Enum)
+          continue;
+        ++enumStages;
+        auto malformed = valid.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidateBlock : changed->body.blocks)
+          for (auto &candidate : candidateBlock.instructions)
+            if (candidate.id == instruction.id)
+              candidate.loan.reset();
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a borrowed payload-enum temporary keeps its call-scoped loan");
+      }
+    }
+  }
+  expect(enumStages == 5,
+         "each fresh payload-enum argument stages one temporary borrow");
+
+  for (const std::string source :
+       {"enum class code { ok, failed }; code pick() { return code::ok; } "
+        "bool good(code& c) { return c == code::ok; } int main() { return "
+        "good(pick()) ? 0 : 1; }",
+        "enum class state { empty, engaged(int value) }; void clear(mut state& "
+        "s) { s = state::empty; } int main() { clear(state::engaged(1)); "
+        "return 0; }"}) {
+    const auto invalid =
+        lang::Frontend().analyze("payload-enum-temporary-invalid.gti", source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "scalar-backed enum temporaries and mutable temporary borrows "
+           "remain source errors");
+  }
+}
 } // namespace
 
 int main() {
   checkTemporaryOwnerBorrow();
+  checkPayloadEnumTemporaryArguments();
   return failures == 0 ? 0 : 1;
 }
