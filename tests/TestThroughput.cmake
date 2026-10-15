@@ -32,6 +32,7 @@ if(Python3_Interpreter_FOUND)
     conditional_capability_runtime conditional_converted_receiver_runtime
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
     borrowed_argument_fallible_condition_runtime
+    borrowed_argument_nested_owning_argument_runtime
     conditional_cleanup_free_call_result_runtime
     conditional_checked_arm_input_runtime
     conditional_prepared_input_result_runtime
