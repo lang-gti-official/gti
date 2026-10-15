@@ -9,6 +9,59 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.4 — Consuming calls on moved generic classes
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a consuming (`&&`) method is called on a
+  generic class value moved out of a local or parameter, such as
+  `int t = std::move(m).probe();`. It happened when the class declares a
+  default constructor, does not delete its copy constructor, and is
+  instantiated with a type that needs cleanup. Examples are `maybe<Tracked>`
+  with an owning payload-enum field `mut state<T> slot;` or a plain
+  `mut T item;` field, where `Tracked` has a destructor.
+- The fix covers methods that leave the fields in place and methods that move
+  a field out first, such as
+  `T value() && { switch (std::move(this.slot)) { ... } }`. It also covers
+  results that are returned, wrapped in `expected`, or stored by a member
+  initializer. The moved value is destroyed once, at the end of the full
+  expression that consumed it.
+- Classes that delete their copy constructor, such as
+  `std::experimental::optional`, were not affected.
+
+## 0.439.3 — Conformance block types are checked once
+
+- A problem in a conformance block's pattern is reported once, at the
+  pattern. With `class holder<std::copy_constructible T>`, the block
+  `for <T> concept wrapped<holder<T>>` used to report the unsatisfied
+  constraint (`GTI-S2029`) at `holder<T>` once for the block and again for
+  each operation; an unknown pattern type repeated the same way. Each
+  operation's own parameter types are still checked at their own location.
+- A block's pattern and `using` types are checked once every class's members
+  and lifecycle are known, as other declarations are. A valid block over a
+  concrete type, such as `for concept wrapped<box<Coin>>` where `box`
+  requires `std::equality_comparable` and `Coin` defines `operator==`, no
+  longer fails with `Type 'unknown class' does not satisfy ...`, and a
+  `using` type may project through a block declared later in the file. A
+  concrete pattern that fails such a requirement, such as `holder<Ticket>`
+  for a non-copyable `Ticket`, is now reported at the pattern.
+- Completion inside a block's pattern offers the types in scope whether or
+  not the block has operations.
+
+## 0.439.2 — Conditional class results from moved inputs
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:`, or an operand of `&&`
+  or `||`, produces a class result that needs cleanup from a call that
+  consumes a value moved into it, and the result is then bound, returned,
+  assigned, passed on or read through a field. The moved value may be a
+  by-value argument, such as `Quiet t = c ? make(std::move(a)) :
+  make(std::move(b));`, or the receiver of a consuming (`&&`) method, such as
+  `return c ? std::move(a).make() : std::move(b).make();` or
+  `c ? std::move(p).loud().id : 0`. This covers class arguments with and
+  without cleanup, constructors, methods that can fail, arms that mix such
+  calls with ordinary ones, and nested conditionals. Only the arm that runs
+  consumes its input, and its result is destroyed exactly once.
+
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

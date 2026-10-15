@@ -31,6 +31,7 @@ if(Python3_Interpreter_FOUND)
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
     conditional_capability_runtime conditional_converted_receiver_runtime
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
+    conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime
     constructor_virtual_call_field_runtime
@@ -46,6 +47,7 @@ if(Python3_Interpreter_FOUND)
     consuming_prepared_receiver_runtime
     consuming_receiver_runtime consuming_retained_field_replace_runtime
     consuming_conditional_receiver_runtime consuming_returned_result_runtime
+    consuming_generic_owner_receiver_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime

@@ -4380,6 +4380,246 @@ int main() { Tracked kept = take(Maker(1)); return kept.read() - 1; }
   }
 }
 
+// A failure-free call in a conditional arm that consumes a prepared input
+// (a moved cleanup-free receiver or by-value argument) transfers it out beside
+// its own result Initialize. The result is still published into the
+// conditional temporary that a binding, a Return or a field read consumes.
+// Only exactly one unconditional transfer per prepared input and one result
+// activation are admitted.
+void testConditionalPreparedInputResult() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-conditional-prepared-input-result.gti", R"(
+class Tracked {
+  mut int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { this.id = 0; }
+  int read() { return this.id; }
+};
+class Viewed {
+public:
+  mut int id;
+  Viewed(int value) : id(value) {}
+  ~Viewed() { this.id = 0; }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  int get() { return this.base; }
+  Tracked make() && { return Tracked(this.base); }
+  Viewed view() && { return Viewed(this.base); }
+};
+Tracked build(Maker maker) { return Tracked(maker.get()); }
+Viewed show(Maker maker) { return Viewed(maker.get()); }
+int bound(bool left, Maker a, Maker b) {
+  Tracked kept = left ? std::move(a).make() : build(std::move(b));
+  return kept.read();
+}
+Tracked returned(bool left, Maker a, Maker b) {
+  return left ? build(std::move(a)) : std::move(b).make();
+}
+int viewed(bool left, Maker a, Maker b) {
+  return left ? std::move(a).view().id : show(std::move(b)).id;
+}
+int main() {
+  Tracked kept = returned(true, Maker(2), Maker(3));
+  return bound(false, Maker(1), Maker(4)) + kept.read() +
+         viewed(true, Maker(5), Maker(6)) - 11;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "conditional results of calls consuming moved inputs verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t bodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // Each arm's call transfers its prepared input and activates its result.
+    std::vector<lang::MirInstructionId> calls;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.lifecycle.size() == 2 &&
+            instruction.lifecycle[0].kind ==
+                lang::MirLifecycleEventKind::TransferOut &&
+            instruction.lifecycle[1].kind ==
+                lang::MirLifecycleEventKind::Initialize)
+          calls.push_back(instruction.id);
+    if (calls.size() != 2)
+      continue;
+    ++bodies;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               emitter.supportsBodyText(address),
+           "a conditional result accounts for its call's prepared input");
+    for (const lang::MirInstructionId call : calls) {
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id != call)
+              continue;
+            const auto transfer = instruction.lifecycle[0];
+            const auto activation = instruction.lifecycle[1];
+            if (mutation == 0)
+              instruction.lifecycle = {activation};
+            else if (mutation == 1)
+              instruction.lifecycle.push_back(transfer);
+            else if (mutation == 2)
+              instruction.lifecycle[0].conditional = true;
+            else
+              instruction.lifecycle.push_back(activation);
+          }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a forged conditional prepared input transfer fails MIR "
+               "verification " +
+                   std::to_string(mutation));
+        const lang::CppMirBodyEmitter rejected(malformed, map);
+        expect(!rejected.analyze(address).ready() ||
+                   !rejected.supportsBodyText(address),
+               "a forged conditional prepared input transfer cannot enter "
+               "backend emission " +
+                   std::to_string(mutation));
+      }
+    }
+  }
+  expect(bodies == 3, "the bound, returned and field-read conditionals were "
+                      "exercised: " +
+                          std::to_string(bodies));
+}
+
+// A generic owner's representation row takes its special members from the
+// generic declaration, so maybe<Tracked> declares value-initialization even
+// though the instance over a cleanup-bearing payload is move-only. Moving it
+// out of a binding into a consuming call stages a MoveValue receiver that
+// aliases the Move's full-expression slot. That stage owns no storage and is
+// not a copy stage, so local declaration must not demand any for it.
+void testMovedGenericOwnerReceiverStage() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-generic-owner-receiver.gti", R"(
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+enum class state<T> { empty, engaged(T value) };
+class maybe<T> {
+  mut state<T> slot;
+public:
+  maybe() : slot(state<T>::empty) {}
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  int probe() && { return 1; }
+};
+int main() {
+  maybe<Tracked> owner = maybe<Tracked>(Tracked(7));
+  int probed = std::move(owner).probe();
+  return probed - 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "a consuming member may consume a moved generic owner");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::MirBodyAddress address{};
+  bool failureForm = false;
+  lang::MirInstructionId move = 0;
+  lang::MirInstructionId stage = 0;
+  lang::MirInstructionId call = 0;
+  lang::MirValueId staged = 0;
+  lang::MirDropObligationId lifetime = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+            instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+            !instruction.result || instruction.operands.size() != 1)
+          continue;
+        const auto *moved =
+            function.body.findValue(instruction.operands.front().value);
+        const lang::MirInstruction *producer = nullptr;
+        for (const auto &candidate : block.instructions)
+          if (moved != nullptr && candidate.id == moved->definition)
+            producer = &candidate;
+        for (const auto &consumer : block.instructions)
+          if (producer != nullptr &&
+              producer->kind == lang::MirInstructionKind::Move &&
+              producer->lifecycle.size() == 1 &&
+              consumer.kind == lang::MirInstructionKind::Call &&
+              consumer.receiver &&
+              consumer.receiver->value == *instruction.result &&
+              consumer.callableInvocation ==
+                  lang::CallableInvocationCapability::Once) {
+            address = {.kind = lang::MirBodyKind::Function,
+                       .owner = function.id};
+            failureForm = function.mayRaiseDefinedFailure;
+            move = producer->id;
+            stage = instruction.id;
+            call = consumer.id;
+            staged = *instruction.result;
+            lifetime = producer->lifecycle.front().target;
+          }
+      }
+  expect(call != 0 && stage != 0 && lifetime != 0,
+         "the moved owner is staged as a receiver aliasing its full-expression "
+         "slot");
+  if (call == 0 || stage == 0 || lifetime == 0)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto plan = emitter.buildPlan(address);
+  expect(plan.admitted(),
+         "the moved generic owner's receiver stage needs no local of its own");
+  if (!plan.admitted())
+    return;
+  const auto text = failureForm
+                        ? emitter.emitFailureBodyText(plan, "generic-owner", 1)
+                        : emitter.emitBodyText(plan, "generic-owner", 1);
+  expect(text.emitted() &&
+             text.text.find("call input " + std::to_string(staged) +
+                            " aliases the caller-owned receiver lifetime") !=
+                 std::string::npos &&
+             text.text.find("__gti_mir_v_" + std::to_string(staged) + ';') ==
+                 std::string::npos &&
+             text.text.find("__gti_mir_v_" + std::to_string(staged) + '{') ==
+                 std::string::npos,
+         "the call reads the moved owner through its receiver lifetime slot");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    if (mutation == 0)
+      for (auto &drop : body->dropObligations)
+        if (drop.id == lifetime)
+          drop.fullExpression = 0;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.id == move && mutation == 1)
+          instruction.lifecycle.clear();
+        else if (instruction.id == call && mutation == 2)
+          instruction.lifecycle.push_back(
+              {.kind = lang::MirLifecycleEventKind::TransferOut,
+               .source = lifetime});
+        else if (instruction.id == stage && mutation == 3)
+          instruction.preparedParameterDrop = lifetime;
+      }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "a forged moved owner receiver handoff fails MIR verification " +
+               std::to_string(mutation));
+    expect(
+        !lang::CppMirBodyEmitter(malformed, map).buildPlan(address).admitted(),
+        "a forged moved owner receiver handoff cannot enter backend "
+        "emission " +
+            std::to_string(mutation));
+  }
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -5686,6 +5926,8 @@ constexpr NamedTest kTests[] = {
     {"testExpectedConsumingMemberReturn", testExpectedConsumingMemberReturn},
     {"testPreparedConsumingReceiverReturn",
      testPreparedConsumingReceiverReturn},
+    {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
+    {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},

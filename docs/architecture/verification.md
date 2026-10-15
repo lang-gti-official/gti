@@ -6469,10 +6469,44 @@ its full expression, and only on the arm that ran. A failing receiver destructor
 in either arm reports at the drop after the merge. Cleanup then destroys the
 published result and skips the other arm's receiver, and a failure in that
 cleanup reports the secondary failure. A consuming call that fails inside its
-arm destroys its receiver on that failure edge. Ownership
+arm destroys its receiver on that failure edge.
+`consuming_generic_owner_receiver_runtime` runs the same eight configurations
+for generic owners moved out of a named binding or parameter. Each owner class
+declares a default constructor and leaves its copy constructor to the generic
+declaration, while its instance over a cleanup-bearing payload is move-only.
+The owners hold an owning payload enum, also through a field declaration
+default, or a plain payload field whose default constructor is constrained
+away. Consuming members drop the receiver whole or move the payload out. Their
+results are discarded, bound, returned directly, wrapped in `expected`, stored
+by a member initializer, and selected in conditional arms, a loop and a generic
+caller, and a lambda body and a destructor body consume owners of their own.
+Each receiver is destroyed once, at the end of the full expression that
+consumed it. A failing consuming call and a failing payload destructor each
+destroy the receiver once before the unmoved bindings, and a payload destructor
+that fails again during that cleanup reports the secondary failure.
+`testMovedGenericOwnerReceiverStage` in the emitter text suite admits the
+receiver stage as an alias of its full-expression slot. It refuses forged
+handoffs that MIR verification also rejects: a slot outside any full
+expression, a Move that activates nothing, a transfer at invocation and a
+prepared parameter. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
+`conditional_prepared_input_result_runtime` runs the same eight configurations
+over class results that a conditional arm or short-circuit operand makes by
+consuming a moved input: a cleanup-free receiver of a consuming member, or a
+by-value argument with or without cleanup of its own. Each shape runs through
+both arms. The results are bound, assigned, passed on, read by a member call or
+through fields, and returned. They come from failure-free and raising calls,
+constructions, an arm beside an ordinary call, two moved arguments, a nested
+conditional, a generic receiver and a generic callee. Bodies whose drops
+cannot fail cover the plain emission form. Only the arm that ran consumes its
+input, and its result is destroyed once. A failing callee or construction in
+an arm leaves no result, a failing result destructor reports at the drop after
+the merge, and a failure while cleanup destroys a bound result reports the
+secondary failure. `testConditionalPreparedInputResult` in the emitter text
+suite refuses removed, duplicated and conditional input transfers and a second
+result activation, which MIR verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,

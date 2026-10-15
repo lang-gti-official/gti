@@ -67,6 +67,32 @@ int main() {
     expect(located,
            std::string("missing ") + code + " with '" + fragment + "'");
   };
+  // Exactly one `code` diagnostic spans `token`, written right after
+  // `before`. A block's syntax that its operations restate must not report
+  // again for each copy.
+  const auto reportedOnce = [&](const std::string &source, const char *code,
+                                const std::string &before,
+                                const std::string &token) {
+    const auto result = analyze(source);
+    const std::size_t found = source.find(before + token);
+    expect(found != std::string::npos, "no '" + before + token + "' in source");
+    const std::size_t start = found + before.size();
+    const auto count = std::count_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [&](const auto &d) {
+          return d.code == code &&
+                 d.primary.source.ends_with("protocol-concepts.gti") &&
+                 d.primary.start == start &&
+                 d.primary.end == start + token.size();
+        });
+    if (count != 1)
+      dump(result);
+    expect(!result.canGenerateCode(),
+           "invalid source must not reach codegen: " + before + token);
+    expect(count == 1, std::string(code) + " at '" + before + token +
+                           "' reported " + std::to_string(count) +
+                           " times; expected once");
+  };
 
   const std::string measurable = R"gti(
 concept measurable<T> {
@@ -392,7 +418,11 @@ int main() { return 0; }
 )gti",
            "GTI-S2005", "expects 'scaled<A, B>::factor_type'");
   // A constraint a block's pattern fails names the block's own parameter.
-  rejected(R"gti(
+  // The block validates its pattern; each operation restates the block's
+  // application as its requirement without validating it again, so the
+  // pattern reports once however many operations the block has. An
+  // operation's own parameter type is a separate location.
+  const std::string unprovenPattern = R"gti(
 concept wrapped<T> {
   typename value_type;
   value_type unwrap(T value);
@@ -407,8 +437,132 @@ for <T> concept wrapped<holder<T>> {
   T unwrap(holder<T> value) { return value.item; }
 };
 int main() { return 0; }
+)gti";
+  rejected(unprovenPattern, "GTI-S2029", "Type 'T' does not satisfy");
+  reportedOnce(unprovenPattern, "GTI-S2029", "concept wrapped<holder<", "T");
+  reportedOnce(unprovenPattern, "GTI-S2029", "unwrap(holder<", "T");
+  const std::string unprovenPatternTwice = R"gti(
+concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+  bool is_empty(T value);
+};
+class holder<std::copy_constructible T> {
+public:
+  T item;
+  holder(T value) : item(value) {}
+};
+for <T> concept wrapped<holder<T>> {
+  using value_type = T;
+  T unwrap(holder<T> value) { return value.item; }
+  bool is_empty(holder<T> value) { return false; }
+};
+int main() { return 0; }
+)gti";
+  reportedOnce(unprovenPatternTwice, "GTI-S2029", "concept wrapped<holder<",
+               "T");
+  reportedOnce(unprovenPatternTwice, "GTI-S2029", "unwrap(holder<", "T");
+  reportedOnce(unprovenPatternTwice, "GTI-S2029", "is_empty(holder<", "T");
+  const std::string unknownPattern = measurable + R"gti(
+for concept measurable<Missing> {
+  using unit_type = int;
+  int measure(Missing& item) { return 0; }
+  bool is_empty(Missing& item) { return true; }
+};
+int main() { return 0; }
+)gti";
+  reportedOnce(unknownPattern, "GTI-S2000", "concept measurable<", "Missing");
+  reportedOnce(unknownPattern, "GTI-S2000", "measure(", "Missing");
+
+  // A block's types are validated after every block is registered and each
+  // class's members and lifecycle are known, so a concrete type's
+  // constraints and a projection through a later block hold as they do in
+  // any other declaration.
+  const std::string comparedBox = R"gti(
+concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+};
+class box<std::equality_comparable T> {
+public:
+  T item;
+  box(T value) : item(value) {}
+};
+class Coin {
+public:
+  int id;
+  Coin(int value) : id(value) {}
+)gti";
+  const std::string coinOperators = R"gti(
+  bool operator==(Coin& other) { return id == other.id; }
+  bool operator!=(Coin& other) { return id != other.id; }
+)gti";
+  accepted(comparedBox + coinOperators + R"gti(};
+for concept wrapped<box<Coin>> {
+  using value_type = box<Coin>;
+  box<Coin> unwrap(box<Coin> value) { return value; }
+};
+int main() {
+  box<Coin> boxed{Coin(42)};
+  wrapped<box<Coin>>::value_type same = wrapped<box<Coin>>::unwrap(boxed);
+  return same.item.id - 42;
+}
 )gti",
-           "GTI-S2029", "Type 'T' does not satisfy");
+           "a concrete pattern and associated type should satisfy a "
+           "constraint met by the class's members");
+  const std::string uncomparedBox = comparedBox + R"gti(};
+for concept wrapped<box<Coin>> {
+  using value_type = int;
+  int unwrap(box<Coin> value) { return value.item.id; }
+};
+int main() { return 0; }
+)gti";
+  rejected(uncomparedBox, "GTI-S2029", "Type 'Coin' does not satisfy");
+  reportedOnce(uncomparedBox, "GTI-S2029", "concept wrapped<box<", "Coin");
+  reportedOnce(uncomparedBox, "GTI-S2029", "unwrap(box<", "Coin");
+  // A block without operations validates its pattern too.
+  const std::string uncopiedPattern = R"gti(
+concept labeled<T> {
+  typename label_type;
+};
+class holder<std::copy_constructible T> {
+public:
+  T item;
+  holder(T value) : item(value) {}
+};
+class Ticket {
+public:
+  int id;
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+for concept labeled<holder<Ticket>> {
+  using label_type = int;
+};
+int main() { return 0; }
+)gti";
+  rejected(uncopiedPattern, "GTI-S2029", "Type 'Ticket' does not satisfy");
+  reportedOnce(uncopiedPattern, "GTI-S2029", "concept labeled<holder<",
+               "Ticket");
+  accepted(measurable + R"gti(
+concept labeled<T> {
+  typename label_type;
+};
+for concept labeled<Meters> {
+  using label_type = measurable<Rope>::unit_type;
+};
+for concept measurable<Rope> {
+  using unit_type = int;
+  int measure(Rope& item) { return item.length; }
+  bool is_empty(Rope& item) { return item.length == 0; }
+};
+int main() {
+  labeled<Meters>::label_type length = 42;
+  return length - 42;
+}
+)gti",
+           "an associated type may project through a block declared later");
 
   // Declarations.
   rejected(R"gti(
@@ -682,6 +836,37 @@ int main() {
                                  std::string::npos;
                         }),
            "the generated namespace must not appear in the outline");
+  }
+
+  // Completion inside a block's pattern offers the types in scope, whether
+  // or not the block has operations.
+  for (const std::string members :
+       {"  using value_type = Item;\n"
+        "  Item unwrap(holder<Item> value) { return value.item; }\n",
+        "  using value_type = Item;\n"}) {
+    const std::string source = R"gti(concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+};
+class holder<T> {
+public:
+  T item;
+  holder(T value) : item(value) {}
+};
+for <Item> concept wrapped<hol> {
+)gti" + members + "};\n";
+    const auto completion = lang::LanguageQueries().complete(
+        {.entryPath = root / "tests" / "protocol-concepts.gti",
+         .source = source,
+         .byteOffset = source.find("<hol>") + 4,
+         .preludePaths = {root / "stdlib" / "prelude.gti"},
+         .standardLibraryRoots = {root / "stdlib"}});
+    expect(std::any_of(completion.candidates.begin(),
+                       completion.candidates.end(),
+                       [](const auto &candidate) {
+                         return candidate.label == "holder";
+                       }),
+           "completion in a block's pattern should offer class templates");
   }
 
   // Formatting keeps `for <T> concept` and treats block parameters and
