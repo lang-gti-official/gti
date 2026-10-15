@@ -1,0 +1,186 @@
+#include <std/string>
+#include <std/vector>
+
+// A member call's owning result initializes a constructor field. The receiver
+// is borrowed, borrowed mutably, or consumed (`&&`). The field Initialize
+// publishes the result; a consumed receiver's full-expression drop runs after
+// it, so a failure there rolls the published field back.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+class Source {
+  int base;
+public:
+  Source(int base) : base(base) {}
+  Tracked make() { return Tracked(this.base); }
+  Tracked split(int divisor) { return Tracked(this.base / divisor); }
+};
+
+class Counter {
+  mut int next_id;
+public:
+  Counter(int start) : next_id(start) {}
+  Tracked peek() { return Tracked(this.next_id); }
+  Tracked next() mut {
+    this.next_id += 1;
+    return Tracked(this.next_id);
+  }
+};
+
+class Single {
+  mut Tracked item;
+public:
+  Single(int value) : item(Tracked(value)) {}
+  Tracked release() && { return std::move(this.item); }
+  Tracked release_checked(int divisor) && {
+    int guard = 1 / divisor;
+    return std::move(this.item);
+  }
+};
+
+class Shelf<T> {
+  mut T item;
+public:
+  Shelf(T item) : item(std::move(item)) {}
+  T take() && { return std::move(this.item); }
+};
+
+// A result whose destructor can fail while failure cleanup destroys it.
+class Fragile {
+  int id;
+  int divisor;
+public:
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {}
+  ~Fragile() {
+    std::println(std::to_string(-this.id));
+    int fragile = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+// The receiver's destructor runs after release() has produced the result.
+class Guarded {
+  mut Fragile item;
+  int divisor;
+public:
+  Guarded(int value, int item_divisor, int divisor)
+      : item(Fragile(value, item_divisor)), divisor(divisor) {}
+  ~Guarded() { int guard = 1 / this.divisor; }
+  Fragile release() && { return std::move(this.item); }
+};
+
+class Borrowing {
+  mut Tracked kept;
+public:
+  Borrowing(Source source) : kept(source.make()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Consuming {
+  mut Tracked kept;
+public:
+  Consuming(Single box) : kept(std::move(box).release()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Fresh {
+  mut Tracked kept;
+public:
+  Fresh(int value) : kept(Single(value).release()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Viewing {
+  mut Tracked kept;
+public:
+  Viewing(Counter& counter) : kept(counter.peek()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Advancing {
+  mut Tracked kept;
+public:
+  Advancing(mut Counter& counter) : kept(counter.next()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Keeper<T> {
+  mut T kept;
+public:
+  Keeper(Shelf<T> shelf) : kept(std::move(shelf).take()) {}
+};
+
+class CheckedTaking {
+  mut Tracked kept;
+public:
+  CheckedTaking(Single box, int divisor)
+      : kept(std::move(box).release_checked(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
+// The second initializer can fail after the first member-call result was
+// published into its field.
+class Pair {
+  mut Tracked first;
+  mut Tracked second;
+public:
+  Pair(Source source, Single box, int divisor)
+      : first(std::move(box).release()), second(source.split(divisor)) {}
+  int read() { return this.first.read() + this.second.read(); }
+};
+
+class Checked {
+  mut Fragile kept;
+public:
+  Checked(Guarded box) : kept(std::move(box).release()) {}
+  int read() { return this.kept.read(); }
+};
+
+bool has(std::vector<std::string>& argv, std::string_view flag) {
+  for (std::string& item : argv) {
+    if (item == flag) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int total = 0;
+  {
+    Borrowing held{Source(1)};
+    total += held.read();
+  }
+  {
+    Consuming taken{Single(2)};
+    total += taken.read();
+  }
+  {
+    Fresh fresh{3};
+    total += fresh.read();
+  }
+  {
+    mut Counter counter{4};
+    Viewing viewed{counter};
+    Advancing advanced{counter};
+    total += viewed.read() + advanced.read();
+  }
+  {
+    Keeper<Tracked> keeper{Shelf<Tracked>(Tracked(6))};
+  }
+  {
+    CheckedTaking checked{Single(7), has(argv, "call") ? 0 : 1};
+    total += checked.read();
+  }
+  Pair pair{Source(16), Single(9), has(argv, "later") ? 0 : 2};
+  bool receiver = has(argv, "receiver");
+  Checked checked{
+      Guarded(10, receiver && has(argv, "double") ? 0 : 1, receiver ? 0 : 1)};
+  std::println("kept");
+  return total + pair.read() + checked.read() - 49;
+}
