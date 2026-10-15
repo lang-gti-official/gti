@@ -1681,7 +1681,21 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
       containsOpenTypeParameter(function.returnType) || !function.declaration ||
       function.declaration->hasCLinkage() ||
       std::any_of(function.parameterTypes.begin(),
-                  function.parameterTypes.end(), containsOpenTypeParameter))
+                  function.parameterTypes.end(), containsOpenTypeParameter) ||
+      std::any_of(typeArguments.begin(), typeArguments.end(),
+                  containsOpenTypeParameter) ||
+      std::any_of(function.dispatchOwner.arguments.begin(),
+                  function.dispatchOwner.arguments.end(),
+                  containsOpenTypeParameter) ||
+      std::any_of(valueArguments.begin(), valueArguments.end(),
+                  [](const auto &value) {
+                    return value.kind != CompileTimeValue::UInt64;
+                  }) ||
+      std::any_of(function.dispatchOwner.valueArguments.begin(),
+                  function.dispatchOwner.valueArguments.end(),
+                  [](const auto &value) {
+                    return value.kind != CompileTimeValue::UInt64;
+                  }))
     return std::nullopt;
   const auto *declaration = semanticModel.findFunction(function.id);
   if (!declaration && instanceBaseModel)
