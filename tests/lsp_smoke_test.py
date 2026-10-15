@@ -12333,27 +12333,28 @@ def main():
 
 
 def test_mutable_temporary_receiver_tooling(executable, root):
-    invalid_source = (
+    declarations = (
         "class Probe {\n"
         "public:\n"
-        "  Probe() {}\n"
+        "  Probe() : value(0) {}\n"
         "  virtual void reset() mut {}\n"
+        "  mut int& expose() mut { return this.value; }\n"
         "  int inspect() { return 1; }\n"
         "  int inspect() mut { return 2; }\n"
+        "\n"
+        "private:\n"
+        "  mut int value;\n"
         "};\n"
+    )
+    # A fresh temporary cannot return a mutable reference to itself; a virtual
+    # mutable member keeps the ordinary temporary receiver role.
+    invalid_source = declarations + (
         "int main() {\n"
-        "  Probe().reset();\n"
+        "  [[discard]] Probe().expose();\n"
         "  return 0;\n"
         "}\n"
     )
-    valid_source = (
-        "class Probe {\n"
-        "public:\n"
-        "  Probe() {}\n"
-        "  void reset() mut {}\n"
-        "  int inspect() { return 1; }\n"
-        "  int inspect() mut { return 2; }\n"
-        "};\n"
+    valid_source = declarations + (
         "int main() {\n"
         "  Probe probe = Probe();\n"
         "  std::move(probe).reset();\n"
@@ -12398,7 +12399,13 @@ def test_mutable_temporary_receiver_tooling(executable, root):
             and message["params"].get("version") == 1
         )
         diagnostics = invalid["params"]["diagnostics"]
-        assert any(item.get("code") == "GTI-S2081" for item in diagnostics), diagnostics
+        errors = [item for item in diagnostics if item.get("code") == "GTI-S2081"]
+        assert errors and "reference" in errors[0]["message"], diagnostics
+        offset = invalid_source.index("Probe().expose()") + len("Probe().expose(")
+        assert errors[0]["range"] == {
+            "start": lsp_position(invalid_source, offset),
+            "end": lsp_position(invalid_source, offset + 1),
+        }, errors
 
         session.send(
             {
