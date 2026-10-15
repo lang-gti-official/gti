@@ -8335,9 +8335,44 @@ remains rejected. The focused native matrix passes all nine modes:
 C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 164
 and the existing cleanup traces. A named passive enum operand exposed a branch-dominance
 lowering failure in an earlier probe and still needs a dedicated follow-up.
-The user requested expedited delivery of verified prerequisites and waived the
-full suite; that does not mark the complete borrowed-enum goal finished or
-authorize unverified reference-bearing payloads.
+The earlier expedited prerequisite request did not mark the complete
+borrowed-enum goal finished or authorize unverified reference-bearing payloads.
+On 2026-10-16 the owner restored the normal validation and integration workflow
+and requested completion of the reference-payload goal. Full relevant validation
+is required for this follow-up; no safety or performance gate is waived.
+
+The follow-up separates two cooperating implementation regions:
+
+- Conditional enum inventories, construction, retained loans, active-tag
+  extraction and local value transport extend the existing place/loan model.
+  Primary and additional dependencies must preserve the same typed alternative
+  conditions. Shared references may alias; exclusive references transfer or
+  reborrow according to the existing access rules. Moving an alternative never
+  moves its external referent. Exact error-only alternatives carry a complete
+  empty set, not a fabricated storage loan.
+- Function-result summaries use declaration-relative parameter/receiver paths
+  and typed alternative conditions, never body-local place or loan identities.
+  They are demanded independently of declaration order and checked against all
+  reachable normal returns. Calls substitute only independently verified
+  summaries; unresolved recursive summaries remain unknown. The same local
+  complete-set dataflow supplies producer/return evidence to both checks, so
+  this does not introduce another ownership or liveness engine.
+
+The usable end-to-end client is an ordinary source-defined result with borrowed
+success and owning failure, including shared and exclusive results, direct
+protocol calls and prefix propagation. An unrelated nested sum/view client must
+exercise the same rule. Acceptance includes known-empty construction/return,
+conditional joins, moved carriers, selected reference extraction, source
+destructor retention, mutable alias and dangling-return rejection, and malformed
+MIR with omitted/substituted paths, origins, tags, access or call summaries.
+An error-only input to a reference-returning operation cannot manufacture an
+origin: if its verified normal-return contract requires an impossible active
+dependency, the implementation must represent that lack of a normal result
+explicitly or retain a documented conservative rejection until the corresponding
+proof is implemented. It must not infer permission from missing metadata.
+Normal release gates include C++20/C++23 O0/O1/O2/O3 runtime and failure-cleanup
+coverage, sanitizers, the example/corpus checks, relevant tooling and broad
+compiler validation, and optimized runtime/allocation/code-size measurements.
 
 ### L-ERR-01: Error Propagation Operator
 
@@ -9556,7 +9591,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Borrowed capture/results and inline consuming projection remain general lifetime/origin goals, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **generic, recursively owned and borrowed-pattern profiles delivered** | `L-SUM-01` and ADR 014 cover substituted alternative identity, owning class payloads, finite recursive containment, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Polymorphic transport, direct capture, non-class owning payloads/fixed arrays, stored reference payloads and stable layout remain distinct goals. |
+| Payload enums/matching | **generic, structurally owned and borrowed-pattern profiles delivered; stored reference payloads in progress** | `L-SUM-01` and ADR 014 cover substituted alternative identity, finite nested payload enums, owning fixed arrays and representable owning wrappers, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Stored reference payloads still require conditional dependency and result-summary proofs; polymorphic transport and direct capture remain distinct goals. |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
