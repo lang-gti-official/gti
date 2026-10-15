@@ -31,6 +31,7 @@ if(Python3_Interpreter_FOUND)
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
     conditional_capability_runtime conditional_converted_receiver_runtime
     conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
+    conditional_cleanup_free_call_result_runtime
     conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime
