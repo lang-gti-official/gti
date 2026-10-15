@@ -47,6 +47,7 @@ if(Python3_Interpreter_FOUND)
     consuming_prepared_receiver_runtime
     consuming_receiver_runtime consuming_retained_field_replace_runtime
     consuming_conditional_receiver_runtime consuming_returned_result_runtime
+    consuming_generic_owner_receiver_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     dormant_capability_runtime
