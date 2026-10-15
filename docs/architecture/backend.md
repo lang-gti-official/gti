@@ -925,15 +925,12 @@ as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
 obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
 ownership event that takes the local's key to `Moved`, and the local keeps its
 passive binding drop. That drop ends the moved-from shell after the join on
-the path that moved it, and the live object on the other. A member call on
-the joined value instead builds a join temporary with its own full-expression
-`Value` obligation, which the arm's `Initialize`, right after the `Move`,
-activates directly; `classValueDestinationSlot` admits that moved-local arm by
-the same ownership and passive-drop facts. A nested join is proved on its
-own, and the nested arm's region starts at that inner join's branch block. A
-passive arm may also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
-with overflow-checked additions, a call that can fail, a `?` operand, or scalar
-control flow inside an argument. Without an exact diamond, the branch is the
+the path that moved it, and the live object on the other. A nested join is
+proved on its own, and the nested arm's region starts at that inner join's
+branch block. A passive arm may also evaluate its inputs before that entry, as
+in `c ? f(a + 1) : f(b + 2)` with overflow-checked additions, a call that can
+fail, a `?` operand, or scalar control flow inside an argument. Without an
+exact diamond, the branch is the
 nearest common dominator of the two arm entries, and its two successors start
 the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
 (`exactConditionalArmRegion`): the branch enters it once and nothing else
@@ -950,6 +947,22 @@ return, field read, assignment or field initializer exactly as a fresh
 result's slot does. In the failure form too, a Return of that staged value
 publishes the caller's result from the slot; the staging Move does not
 publish it.
+A member call on the joined value itself, as in `(c ? a() : b()).read()`,
+has a different MIR shape. MIR gives the join temporary a full-expression
+value obligation, stages the temporary as the call's receiver (a read-only
+or mutable temporary borrow; a consuming member's receiver is staged as the
+mutable one), and drops it at the end of the full expression. The join's Move is then only the temporary's materialization and
+has no use. Each arm's `Initialize` activates the temporary's obligation
+directly, because a cleanup-free arm result has none of its own. A
+construction arm already constructed the temporary at that `Initialize`.
+`classValueDestinationSlot` also names the temporary for a call arm with no
+lifecycle event beyond its prepared input transfers, for a copied place, and
+for a whole named local moved out by the same ownership and passive-drop facts
+as the arm above, when the `Initialize` follows the producer directly or opens
+its Invoke success block. Each constructs the temporary directly, a call that
+can fail only on success, and the receiver borrows it as
+`directTemporaryReceiver` borrows a fresh result's slot. A nested-join arm is
+not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
