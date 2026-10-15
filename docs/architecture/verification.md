@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Receivers moved inside conditional arms (0.435.2)
+## Receivers moved inside conditional arms (0.436.1)
 
 `consuming_conditional_receiver_runtime` and the moved-receiver section of
 `conditional_class_publication`, both described below, carry the regression

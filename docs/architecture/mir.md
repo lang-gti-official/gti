@@ -1214,7 +1214,9 @@ status — an out-of-bounds write silently no-opped while the matching read
 raised. Program v50 adds the bounded two-phase mutable loan for plain
 source-defined subscript and dereference stores described below. Program v49
 and body v45 add the explicit early-exit full-expression
-marker role used by expected propagation. Each propagation failure edge retains a
+marker role used by expected propagation, and by propagation through
+`std::tryable`, which branches on its `has_value` call and returns the
+residual's construction. Each propagation failure edge retains a
 path-exclusive boundary alongside the one ordinary continuation boundary, so
 verification can prove exact temporary and lexical cleanup without reopening
 HIR. Program v48 and body v44 serialize the exact designated stored-reference

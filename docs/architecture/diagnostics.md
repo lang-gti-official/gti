@@ -943,6 +943,17 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   `?std::move(result)` only for a named move-only expected. Do not offer a
   mechanical fix-it because consuming a named result or choosing a borrow
   lifetime changes program intent.
+  For other operands, propagation through `std::tryable` reports:
+  - an operand type with no `for concept std::tryable<...>` block;
+  - a generic operand without a `requires std::tryable<T>` conjunct;
+  - an operand that cannot be moved, or a named one that cannot be copied,
+    suggesting `?std::move(name)`;
+  - a borrowing operand, value type or residual type;
+  - an enclosing callable without a declared return type, or a `void` one;
+  - a return type that is neither the residual type nor constructible from it
+    through exactly one `implicit` constructor;
+  - use in a constexpr function;
+  - an operand that is not a class or struct, such as a payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has
   proved a defining include. Preserve the unresolved source-name span and
   message, add the verified include hints and zero-width edits. The same rule
