@@ -362,9 +362,9 @@ int use_plain(struct Plain plain);
          "a bit-field record should degrade to opaque with its reason");
   const lang::bindgen::BindingItem *overlay = findItem(plan, "Overlay");
   expect(overlay != nullptr &&
-             overlay->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(overlay->reason, "union"),
-         "a union should degrade to opaque with its reason");
+             overlay->kind == lang::bindgen::BindingItemKind::Record &&
+             overlay->recordIsUnion,
+         "a passive union should import its overlapping record kind");
   const lang::bindgen::BindingItem *holder = findItem(plan, "Holder");
   expect(holder != nullptr &&
              holder->kind == lang::bindgen::BindingItemKind::Record,

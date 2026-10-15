@@ -510,7 +510,8 @@ private:
     } else {
       openCppNamespaces(output, record.declaration->namespaceScope);
     }
-    output << "struct " << record.declaration->name << ";\n";
+    output << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+           << record.declaration->name << ";\n";
     if (record.info->cOpaqueHandle) {
       closePublicCppNamespaces(output, record.declaration->namespaceScope);
     } else {
@@ -520,7 +521,8 @@ private:
 
   void emitCppRecord(std::ostream &output, const NativeRecord &record) const {
     openCppNamespaces(output, record.declaration->namespaceScope);
-    output << "struct " << record.declaration->name << " {\n";
+    output << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+           << record.declaration->name << " {\n";
     for (const MirCAbiRecordFieldLayout &field :
          record.info->cAbiLayout->fields) {
       output << "  "
@@ -729,8 +731,9 @@ private:
   void emitCBranch(std::ostream &output) const {
     for (const NativeRecord &record : records) {
       output << "/* " << record.info->qualifiedName << " */\n"
-             << "typedef struct " << record.cName << ' ' << record.cName
-             << ";\n";
+             << "typedef "
+             << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+             << record.cName << ' ' << record.cName << ";\n";
     }
     for (const NativeOpaqueHandle &handle : opaqueHandles) {
       output << "/* " << handle.info->qualifiedName << " (opaque handle) */\n"
@@ -748,7 +751,8 @@ private:
     }
     for (const std::size_t index : orderedRecords) {
       const NativeRecord &record = records[index];
-      output << "struct " << record.cName << " {\n";
+      output << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+             << record.cName << " {\n";
       for (const MirCAbiRecordFieldLayout &field :
            record.info->cAbiLayout->fields) {
         output << "  "

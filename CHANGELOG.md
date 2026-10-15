@@ -9,6 +9,10 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.441.0
+
+- Admit passive `[[c_abi]] union` layouts, nested native records and named C union imports, preserving explicit unsafe member access and compiler-owned layout checks.
+
 ## 0.440.1 — Conditional member-call results without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
