@@ -1783,8 +1783,7 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
 auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     const CallableCandidate &function,
     const std::vector<SemanticType> &typeArguments,
-    const std::vector<CompileTimeValue> &valueArguments,
-    const SourceSpan &site)
+    const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site)
     -> std::optional<FunctionBorrowDependencySummary> {
   if (function.virtualMethod ||
       function.returnType.kind != SemanticType::Enum ||
@@ -1836,7 +1835,8 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
                                     function.dispatchOwner.valueArguments,
                                 .types = typeArguments,
                                 .values = valueArguments};
-  if (const auto found = state->entries.find(key); found != state->entries.end())
+  if (const auto found = state->entries.find(key);
+      found != state->entries.end())
     return found->second->complete ? found->second->result : std::nullopt;
   const bool discovered = state->discovered.contains(key);
   const bool depthLimit =
@@ -1848,9 +1848,10 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     auto diagnostic = makeDiagnostic(
         DiagnosticId::GenericInstantiationLimit, site,
         {depthLimit ? "result-summary-depth" : "result-summary-instance",
-         std::to_string(depthLimit
-                            ? GenericInstantiationLimits::maximumDepth
-                            : GenericInstantiationLimits::maximumDistinctInstances)});
+         std::to_string(
+             depthLimit
+                 ? GenericInstantiationLimits::maximumDepth
+                 : GenericInstantiationLimits::maximumDistinctInstances)});
     diagnostic.related.push_back(
         {tokenSpan(function.declaration->name()),
          "Declaration requiring this concrete result summary."});
@@ -1916,6 +1917,224 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   return entry->result;
 }
 
+auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
+    const FunctionInfo &function, const SemanticBorrowDependencySet &complete)
+    -> std::optional<FunctionBorrowDependencySummary> {
+  const auto *syntax = function.bodyDeclaration();
+  if (!syntax || function.parameterPack ||
+      syntax->parameters().size() != function.parameterTypes.size())
+    return std::nullopt;
+  const bool directReference =
+      function.returnType.kind == SemanticType::Reference &&
+      function.returnType.arguments.size() == 1;
+  const auto inventory =
+      directReference
+          ? std::optional<
+                std::vector<StoredReferencePath>>{{{.reference =
+                                                        function.returnType}}}
+          : storedReferenceInventory(function.returnType);
+  if (!inventory)
+    return std::nullopt;
+  const auto alternatives =
+      directReference ? std::optional{std::vector<BorrowAlternativePath>{}}
+                      : storedBorrowAlternativeInventory(function.returnType);
+  if (!alternatives ||
+      (alternatives->empty() != complete.possibleAlternatives.empty()))
+    return std::nullopt;
+  for (const auto &alternative : complete.possibleAlternatives)
+    if (std::find(alternatives->begin(), alternatives->end(), alternative) ==
+        alternatives->end())
+      return std::nullopt;
+
+  struct ResultPath {
+    std::vector<SymbolId> fields;
+    SemanticType reference;
+    std::vector<BorrowDependencyCondition> conditions;
+  };
+  std::vector<ResultPath> resultPaths;
+  for (const auto &path : *inventory) {
+    auto fields = storedFieldSymbols(function.returnType, path.fields);
+    auto conditions =
+        storedConditionSymbols(function.returnType, path.conditions);
+    if (fields.size() != path.fields.size() || !conditions)
+      return std::nullopt;
+    resultPaths.push_back(
+        {std::move(fields), path.reference, std::move(*conditions)});
+  }
+  const auto active = [&](const auto &conditions) {
+    if (conditions.empty())
+      return true;
+    return std::any_of(
+        complete.possibleAlternatives.begin(),
+        complete.possibleAlternatives.end(), [&](const auto &alternative) {
+          return std::all_of(
+              conditions.begin(), conditions.end(), [&](const auto &condition) {
+                return std::find(alternative.conditions.begin(),
+                                 alternative.conditions.end(),
+                                 condition) != alternative.conditions.end();
+              });
+        });
+  };
+  // An exact empty alternative needs no invented origin. Conversely every
+  // active reference-bearing path must have at least one checked origin.
+  for (const auto &path : resultPaths)
+    if (active(path.conditions) &&
+        std::none_of(complete.dependencies.begin(), complete.dependencies.end(),
+                     [&](const auto &dependency) {
+                       return dependency.designatedFields == path.fields &&
+                              dependency.conditions == path.conditions &&
+                              dependency.access ==
+                                  path.reference.referenceAccess;
+                     }))
+      return std::nullopt;
+
+  FunctionBorrowDependencySummary summary{.possibleAlternatives =
+                                              complete.possibleAlternatives};
+  for (const auto &dependency : complete.dependencies) {
+    const auto resultPath = std::find_if(
+        resultPaths.begin(), resultPaths.end(), [&](const auto &path) {
+          return path.fields == dependency.designatedFields &&
+                 path.conditions == dependency.conditions &&
+                 path.reference.kind == SemanticType::Reference &&
+                 path.reference.arguments.size() == 1 &&
+                 path.reference.referenceAccess == dependency.access;
+        });
+    if (resultPath == resultPaths.end() || !active(dependency.conditions))
+      return std::nullopt;
+    BorrowedFieldOrigin normalized{.resultFields = dependency.designatedFields,
+                                   .access = dependency.access,
+                                   .resultConditions = dependency.conditions};
+    SemanticType sourceType = SemanticType::Unknown;
+    bool physicalCallerStorage = false;
+    AccessMode sourceAccess = AccessMode::ReadOnly;
+    if (dependency.place.receiver) {
+      if (dependency.place.root != 0 || function.ownerClass == 0 ||
+          function.staticMember)
+        return std::nullopt;
+      normalized.origin = BorrowOriginKind::Receiver;
+      sourceType = openClassType(function.ownerClass);
+      physicalCallerStorage =
+          syntax->receiverMutability() != ReceiverMutability::Consuming;
+      sourceAccess = receiverAllowsMutation(syntax->receiverMutability())
+                         ? AccessMode::Mutable
+                         : AccessMode::ReadOnly;
+    } else {
+      for (std::size_t index = 0; index < function.parameterTypes.size();
+           ++index) {
+        const auto *binding =
+            semanticModel.findBinding(syntax->parameters()[index]);
+        if (!binding || binding->symbol == 0 ||
+            binding->symbol != dependency.place.root)
+          continue;
+        if (normalized.origin != BorrowOriginKind::None)
+          return std::nullopt;
+        normalized.origin = BorrowOriginKind::Argument;
+        normalized.parameter = index;
+        sourceType = function.parameterTypes[index];
+        if (sourceType.kind == SemanticType::Reference &&
+            sourceType.arguments.size() == 1) {
+          physicalCallerStorage = true;
+          sourceAccess = sourceType.referenceAccess;
+          sourceType = SemanticType(sourceType.arguments.front());
+        }
+      }
+      if (normalized.origin == BorrowOriginKind::None)
+        return std::nullopt;
+    }
+
+    bool externalReferent = false;
+    for (const auto &projection : dependency.place.projections) {
+      if (projection.kind != PlaceProjectionKind::Field ||
+          projection.field == 0)
+        return std::nullopt;
+      SemanticType fieldType = SemanticType::Unknown;
+      if (sourceType.kind == SemanticType::Enum) {
+        const auto enumeration = enumTypeFor(sourceType);
+        if (!enumeration || !enumeration->payload)
+          return std::nullopt;
+        for (const auto &variant : enumeration->enumerators) {
+          if (variant.payloadSymbols.size() != variant.payloadTypes.size())
+            return std::nullopt;
+          for (std::size_t index = 0; index < variant.payloadTypes.size();
+               ++index)
+            if (variant.payloadSymbols[index] == projection.field) {
+              if (fieldType != SemanticType::Unknown)
+                return std::nullopt;
+              fieldType = variant.payloadTypes[index];
+              normalized.sourceConditions.push_back(
+                  {.subobject = normalized.sourceFields,
+                   .enumeration = sourceType,
+                   .variant = variant.variantIndex});
+            }
+        }
+      } else if (const auto *owner = classInfo(sourceType)) {
+        for (const auto &[_, member] : owner->members) {
+          if (member.symbol.staticMember ||
+              member.symbol.bindingKind != SemanticBindingKind::Field ||
+              toolingSymbolFor(member.symbol) != projection.field)
+            continue;
+          if (fieldType != SemanticType::Unknown)
+            return std::nullopt;
+          fieldType = substituteSymbol(member.symbol, sourceType).type;
+        }
+      }
+      if (fieldType == SemanticType::Unknown)
+        return std::nullopt;
+      normalized.sourceFields.push_back(projection.field);
+      if (fieldType.kind == SemanticType::Reference) {
+        if (fieldType.arguments.size() != 1)
+          return std::nullopt;
+        // This path designates the external referent, not the lifetime of the
+        // by-value carrier shell. A readonly shell does not rewrite the
+        // independently checked reference field's declared access mode.
+        externalReferent = true;
+        sourceAccess = fieldType.referenceAccess;
+        fieldType = SemanticType(fieldType.arguments.front());
+      }
+      sourceType = std::move(fieldType);
+    }
+    if ((!physicalCallerStorage && !externalReferent) ||
+        sourceType != resultPath->reference.arguments.front() ||
+        (dependency.access == AccessMode::Mutable &&
+         sourceAccess != AccessMode::Mutable))
+      return std::nullopt;
+
+    // The entry authority is caller-owned. A local cleanup-bound capability
+    // cannot escape merely because its underlying place has that same root.
+    std::unordered_set<SemanticLoanId> seen;
+    for (auto id = dependency.parent; id != 0;) {
+      if (!seen.insert(id).second)
+        return std::nullopt;
+      const auto *loan = semanticModel.findLoan(id);
+      if (!loan || (loan->lifecycleBound && !loan->entry))
+        return std::nullopt;
+      if (loan->entry)
+        break;
+      id = loan->parent;
+    }
+    if (function.explicitReturnBorrowOrigin) {
+      if (normalized.origin != function.returnBorrowOrigin)
+        return std::nullopt;
+      if (normalized.origin == BorrowOriginKind::Argument &&
+          normalized.parameter != function.returnBorrowParameter &&
+          std::find(function.returnBorrowParameters.begin(),
+                    function.returnBorrowParameters.end(),
+                    normalized.parameter) ==
+              function.returnBorrowParameters.end())
+        return std::nullopt;
+      if (!function.returnBorrowFields.empty() &&
+          std::find(function.returnBorrowFields.begin(),
+                    function.returnBorrowFields.end(),
+                    normalized) == function.returnBorrowFields.end())
+        return std::nullopt;
+    }
+    if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
+                  normalized) == summary.dependencies.end())
+      summary.dependencies.push_back(std::move(normalized));
+  }
+  return summary;
+}
+
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
   // Reanalysis must not retain a primary/earlier body's complete fact when
@@ -1947,11 +2166,14 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                            ? semanticModel.findExpression(*returned->value())
                            : nullptr;
     const auto complete = completeBorrowDependencySet(returned->value());
-    if (!info || info->type != cleared.returnType || !complete ||
-        !complete->dependencies.empty() ||
-        complete->possibleAlternatives.empty())
+    if (!info || info->type != cleared.returnType || !complete)
       return;
-    for (const auto &alternative : complete->possibleAlternatives) {
+    const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete);
+    // Nonempty declaration transport remains gated on its independently
+    // verified MIR call/return mapping; normalization alone is not admission.
+    if (!normalized || !normalized->dependencies.empty())
+      return;
+    for (const auto &alternative : normalized->possibleAlternatives) {
       if (std::find(summary.possibleAlternatives.begin(),
                     summary.possibleAlternatives.end(),
                     alternative) == summary.possibleAlternatives.end())
