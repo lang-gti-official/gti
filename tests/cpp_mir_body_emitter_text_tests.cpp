@@ -4997,6 +4997,199 @@ int main() {
              std::to_string(transferring) + ", " + std::to_string(borrowing));
 }
 
+// A cleanup-free conditional value borrowed as a member call's receiver gets
+// a join temporary with a full-expression obligation of its own, which each
+// arm's Initialize activates directly. A call arm, plain or on its Invoke
+// success edge, and a copied place publish into that temporary as a
+// construction arm does; the call borrows it, read-only or mutably, and its
+// Drop ends it. A removed, conditional, duplicated or retargeted activation,
+// and an arm result that activates the obligation itself, are refused.
+void testCleanupFreeJoinReceiver() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-cleanup-free-join-receiver.gti", R"(
+class Pod {
+public:
+  mut int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+  int swap(int v) mut {
+    int old = this.x;
+    this.x = v;
+    return old;
+  }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  Pod make() && { return Pod(this.base); }
+  Pod peek() { return Pod(this.base); }
+};
+Pod fresh(int id) { return Pod(id); }
+Pod risky(int id, int divisor) { return Pod(id / divisor); }
+int read_calls(bool left, int a, int b) {
+  return (left ? fresh(a) : fresh(b)).read();
+}
+int swap_copies(bool left, Pod a, Pod b) { return (left ? a : b).swap(0); }
+int read_raising(bool left, int a, int b, int divisor) {
+  return (left ? risky(a, divisor) : fresh(b)).read();
+}
+int swap_members(bool left, Maker a, Maker b) {
+  return (left ? std::move(a).make() : b.peek()).swap(0);
+}
+int main() {
+  return read_calls(true, 1, 2) + swap_copies(false, Pod(3), Pod(4)) +
+         read_raising(true, 5, 6, 1) +
+         swap_members(false, Maker(7), Maker(8)) - 18;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "a cleanup-free conditional receiver verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t bodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // Each arm's Initialize activates the join temporary's own obligation;
+    // the published value is a call result or a copy with none of its own.
+    std::vector<lang::MirInstructionId> arms;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *slot =
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.destination &&
+                    instruction.lifecycle.size() == 1 &&
+                    instruction.operands.size() == 1
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        const auto *drop = slot == nullptr
+                               ? nullptr
+                               : function.body.findDropObligation(
+                                     instruction.lifecycle.front().target);
+        const auto *value =
+            slot == nullptr
+                ? nullptr
+                : function.body.findValue(instruction.operands.front().value);
+        const lang::MirInstruction *producer = nullptr;
+        for (const auto &candidate : function.body.blocks)
+          for (const auto &item : candidate.instructions)
+            if (value != nullptr && item.id == value->definition)
+              producer = &item;
+        if (slot != nullptr &&
+            slot->root == lang::MirPlaceRootKind::Temporary &&
+            instruction.lifecycle.front().kind ==
+                lang::MirLifecycleEventKind::Initialize &&
+            drop != nullptr && drop->place == slot->id && producer != nullptr &&
+            (producer->kind == lang::MirInstructionKind::Call ||
+             producer->kind == lang::MirInstructionKind::Load))
+          arms.push_back(instruction.id);
+      }
+    if (arms.size() != 2)
+      continue;
+    ++bodies;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional publishes into the receiver's join "
+           "temporary");
+    for (const lang::MirInstructionId arm : arms) {
+      for (int mutation = 0; mutation != 5; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        lang::MirInstruction *initialize = nullptr;
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.id == arm)
+              initialize = &instruction;
+        const auto activation = initialize->lifecycle.front();
+        if (mutation == 0) {
+          initialize->lifecycle.clear();
+        } else if (mutation == 1) {
+          initialize->lifecycle.front().conditional = true;
+        } else if (mutation == 2) {
+          initialize->lifecycle.push_back(activation);
+        } else if (mutation == 3) {
+          // A drop of another place, or none at all.
+          initialize->lifecycle.front().target = 0;
+          for (const auto &drop : body->dropObligations)
+            if (drop.id != activation.target)
+              initialize->lifecycle.front().target = drop.id;
+        } else {
+          const auto *value =
+              body->findValue(initialize->operands.front().value);
+          for (auto &block : body->blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == value->definition)
+                instruction.lifecycle.push_back(activation);
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a forged cleanup-free join receiver activation fails MIR "
+               "verification " +
+                   std::to_string(mutation));
+        const lang::CppMirBodyEmitter rejected(malformed, map);
+        expect(!rejected.analyze(address).ready() ||
+                   !supportsSelectedBodyText(malformed, map, function.id),
+               "a forged cleanup-free join receiver activation cannot enter "
+               "backend emission " +
+                   std::to_string(mutation));
+      }
+    }
+  }
+  expect(bodies == 4, "the call, copy, raising and member-call receivers "
+                      "were exercised: " +
+                          std::to_string(bodies));
+
+  // Both arms publish into the temporary the call borrows; nothing
+  // value-initializes the class.
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // The selected form's definition, not its forward declaration.
+  const auto bodyText = [&](const std::string &name) {
+    for (const std::string form :
+         {"(bool __gti_mir_arg_0", "__gti_mir_failure(bool __gti_mir_arg_0"})
+      for (std::size_t start = text.find("_" + name + form);
+           start != std::string::npos;
+           start = text.find("_" + name + form, start + 1)) {
+        const std::size_t line = text.find('\n', start);
+        if (line != std::string::npos && text[line - 1] == '{')
+          return text.substr(start, text.find("\n  }\n", start) - start);
+      }
+    return std::string();
+  };
+  for (const std::string name :
+       {"read_calls", "swap_copies", "read_raising", "swap_members"}) {
+    const std::string body = bodyText(name);
+    const std::string receiver = ".get().::__gti_program::Pod::__gti_fn_";
+    const std::size_t call = body.find(receiver);
+    const std::size_t slotStart =
+        call == std::string::npos ? call : body.rfind("__gti_mir_p_", call);
+    const std::string slot = slotStart == std::string::npos
+                                 ? std::string()
+                                 : body.substr(slotStart, call - slotStart);
+    std::size_t publications = 0;
+    for (const std::string publication :
+         {".construct_from(", ".construct(", ".construction_address()"})
+      for (std::size_t at = slot.empty() ? std::string::npos
+                                         : body.find(slot + publication);
+           at != std::string::npos && at < call;
+           at = body.find(slot + publication, at + 1))
+        ++publications;
+    expect(publications == 2 &&
+               body.find(slot + ".destroy();", call) != std::string::npos &&
+               body.find("::__gti_program::Pod __gti_mir_v_") ==
+                   std::string::npos,
+           name + " publishes both arms into the borrowed join temporary, "
+                  "which its Drop ends");
+  }
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -6450,6 +6643,7 @@ constexpr NamedTest kTests[] = {
      testPreparedConsumingReceiverLaterFailure},
     {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
     {"testCleanupFreeConditionalCallArms", testCleanupFreeConditionalCallArms},
+    {"testCleanupFreeJoinReceiver", testCleanupFreeJoinReceiver},
     {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
