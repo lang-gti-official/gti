@@ -558,6 +558,8 @@ private:
     }
     // Each operation requires the block's own application, which the block
     // proves; inside it, `Concept<Pattern>::name` is therefore available.
+    // The generated keyword marks the restatement: semantics validates the
+    // block's patterns once, for the block, and not again for each copy.
     RequiresClause blockRequirement;
     blockRequirement.keyword = forKeyword;
     blockRequirement.keyword.kind = TokenKind::REQUIRES;

@@ -382,8 +382,12 @@ temporary place, begins the selected receiver borrow after successful
 production, ends that borrow after invocation, and retains ownership of the
 value until the enclosing full-expression cleanup. This ephemeral capability
 does not authorize a stored reference, address, field-assignment target, or
-mutable-reference argument. An explicit move from named storage or a virtual
-method does not gain this fresh-temporary capability. A read-only ordinary
+mutable-reference argument. The selected method may be virtual, an override,
+the implementation of an interface requirement, or inherited from a base
+class: dynamic dispatch still selects the body that runs, the borrow covers the
+whole temporary, and a failing override leaves the temporary to the same
+full-expression cleanup. An explicit move from named storage does not gain
+this fresh-temporary capability. A read-only ordinary
 method on a self-contained temporary may return a read-only reference or
 `std::string_view` tied to that temporary receiver for immediate nonescaping
 use, such as `read(make_owner().get())` or `parse(make_text().view())`.

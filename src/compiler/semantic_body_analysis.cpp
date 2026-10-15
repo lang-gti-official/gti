@@ -19,6 +19,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.deferredFlowOwners.clear();
   genericDefaultConstants.clear();
   genericDefaultConstantUses.clear();
+  conformanceTypeChecks.clear();
   requirementScopes.clear();
   requestSession.mutableLocalCandidates.clear();
   requestSession.mutableBindingUses.clear();
@@ -253,6 +254,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   recordClassTypes();
   recordClassLifecycles();
   validateTypeAliasConstraints();
+  validateConformanceTypes();
   registerDesignatedConstructors();
 }
 
@@ -603,6 +605,9 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           classCanUseStructuralDefaultConstruction(concreteType)
               ? SpecialMemberStatus::Generated
               : SpecialMemberStatus::Deleted;
+    else if (concrete.defaultConstructor == SpecialMemberStatus::Declared &&
+             !declaredDefaultConstructorApplies(concreteType))
+      concrete.defaultConstructor = SpecialMemberStatus::Deleted;
     // Absence of an open-primary operation is not an explicit '= delete'.
     // The ordinary concrete structural trait query owns availability.
     concrete.copyConstructor = concrete.traits.copyable

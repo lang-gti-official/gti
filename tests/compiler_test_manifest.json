@@ -306,6 +306,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testConcreteApplicationSpecialMembers",
+      "suite": "declarations"
+    },
+    {
       "name": "testDefaultParameters",
       "suite": "declarations"
     },
@@ -559,6 +563,10 @@
     },
     {
       "name": "testMutableTemporaryReceivers",
+      "suite": "ownership"
+    },
+    {
+      "name": "testVirtualTemporaryReceivers",
       "suite": "ownership"
     },
     {
