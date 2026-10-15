@@ -8783,64 +8783,18 @@ private:
     // Cleanup on the residual path must not retire the success path's
     // carrier-to-owner mapping, just as it must not retire its scope loans.
     bindingLoans = evaluatedBindingLoans;
-    if (value.info.type == SemanticType::Void || !value.dropObligation) {
-      // The result is the take_value call's result itself, so consumers see
-      // an ordinary call rather than a join temporary that a class without
-      // a default constructor could not declare.
-      HirValue call = *success;
-      call.id = value.id;
-      call.fullExpression = value.fullExpression;
-      call.dropObligation.reset();
-      emitCall(call);
-      if (!terminated()) {
-        endAddedLoans(evaluatedScopes);
-      }
-      emittedValues.insert(value.id);
-      return;
+    // The result is the take_value call's result itself, carrying the
+    // propagation's own obligation, so consumers see an ordinary call result
+    // rather than a join temporary that a class without a default
+    // constructor could not declare.
+    HirValue call = *success;
+    call.id = value.id;
+    call.fullExpression = value.fullExpression;
+    call.dropObligation = value.dropObligation;
+    emitCall(call);
+    if (!terminated()) {
+      endAddedLoans(evaluatedScopes);
     }
-    const MirOperand produced = valueOperand(plan.output);
-    if (terminated()) {
-      emittedValues.insert(value.id);
-      return;
-    }
-    const MirPlaceId temporary = conditionalTemporary(value);
-    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
-                              .hirValue = value.id,
-                              .destination = temporary,
-                              .operands = {produced},
-                              .info = {.type = value.info.type,
-                                       .category = ValueCategory::Place,
-                                       .access = AccessMode::Mutable,
-                                       .traits = value.info.traits}};
-    const MirDropObligationId resultObligation =
-        dropObligationForValue(value.id, temporary);
-    const MirDropObligationId sourceObligation =
-        dropObligationForValue(plan.output);
-    if (resultObligation != 0) {
-      if (temporaryIsActive(sourceObligation)) {
-        appendReparentOrTypedTransfer(initialize, sourceObligation,
-                                      resultObligation);
-        (void)removeTemporary(sourceObligation);
-      } else {
-        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
-                                     .target = resultObligation});
-      }
-      registerTemporary(resultObligation);
-    }
-    (void)appendInstruction(std::move(initialize));
-    const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
-                            !value.info.traits.copyable;
-    (void)appendInstruction(
-        {.kind =
-             moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
-         .hirValue = value.id,
-         .result = resultFor(value),
-         .operands = {{.kind = moveResult ? MirOperandKind::Move
-                                          : MirOperandKind::Copy,
-                       .place = temporary,
-                       .type = value.info.type}},
-         .info = value.info});
-    endAddedLoans(evaluatedScopes);
     emittedValues.insert(value.id);
   }
 
