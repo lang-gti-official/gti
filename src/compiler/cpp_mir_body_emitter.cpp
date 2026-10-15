@@ -6566,6 +6566,60 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
       if (nestedJoin || movedLocal)
         return destination;
     }
+    // A cleanup-free named local moved into an arm has no obligation to hand
+    // over: MIR records only the local's ownership transition, and the arm's
+    // Initialize, right after the Move, activates the temporary's own
+    // full-expression obligation directly. The local keeps its binding drop,
+    // which ends the moved-from shell.
+    if (directMove && definition->lifecycle.empty() &&
+        initialize->lifecycle.size() == 1) {
+      const MirPlace *source =
+          body.findPlace(definition->operands.front().place);
+      const MirBlock *published = body.findBlock(value->definitionBlock);
+      bool activatedNext = false;
+      if (published != nullptr)
+        for (std::size_t index = 1; index < published->instructions.size();
+             ++index)
+          activatedNext |=
+              published->instructions[index - 1].id == definition->id &&
+              published->instructions[index].id == initialize->id;
+      const MirLifecycleEvent &activation = initialize->lifecycle.front();
+      const MirDropObligation *destinationDrop =
+          body.findDropObligation(activation.target);
+      const bool movedCleanupFreeLocal =
+          source != nullptr && source->root == MirPlaceRootKind::Binding &&
+          source->binding != 0 && source->projections.empty() &&
+          source->type == value->info.type &&
+          definition->operands.front().type == value->info.type &&
+          definition->ownership &&
+          definition->ownership->kind == OwnershipEventKind::Move &&
+          source->key && definition->ownership->place == *source->key &&
+          definition->ownership->after == OwnershipStateSet::Moved &&
+          definition->definedFailure.empty() &&
+          definition->localFailureSites.empty() &&
+          initialize->definedFailure.empty() &&
+          initialize->localFailureSites.empty() && activatedNext &&
+          activation.kind == MirLifecycleEventKind::Initialize &&
+          activation.source == 0 && !activation.conditional &&
+          !activation.failureCleanup && destinationDrop != nullptr &&
+          destinationDrop->kind == MirDropObligationKind::Value &&
+          !destinationDrop->initiallyActive &&
+          destinationDrop->place == destination->id &&
+          destinationDrop->dropType.type == destination->type &&
+          destinationDrop->fullExpression != 0 &&
+          std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                       [&](const MirDropObligation &drop) {
+                         const MirPlace *place = body.findPlace(drop.place);
+                         return drop.generatedValue == valueId ||
+                                (place != nullptr &&
+                                 place->root == MirPlaceRootKind::Value &&
+                                 place->value == valueId) ||
+                                (drop.place == source->id &&
+                                 drop.dropType.requiresActiveCleanup);
+                       });
+      if (movedCleanupFreeLocal)
+        return destination;
+    }
     // A temporary destination is a real slot only when MIR explicitly
     // initializes one produced-value obligation and reparents that obligation
     // into the temporary's own full-expression obligation. This is the shape
@@ -9513,11 +9567,30 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
                    [&](const MirDropObligation &drop) {
                      return drop.place == armSource->id;
                    });
+  // An arm may also move a whole named local out. The class has no cleanup
+  // obligation, so MIR records only the local's ownership transition to
+  // Moved; the local keeps its passive binding drop, which still ends the
+  // moved-from shell after the join.
+  const bool movedLocal =
+      armSource != nullptr && construct->kind == MirInstructionKind::Move &&
+      construct->operands.front().kind == MirOperandKind::Move &&
+      armSource->root == MirPlaceRootKind::Binding && armSource->binding != 0 &&
+      armSource->projections.empty() && armSource->type == value->info.type &&
+      construct->operands.front().type == value->info.type &&
+      construct->ownership &&
+      construct->ownership->kind == OwnershipEventKind::Move &&
+      armSource->key && construct->ownership->place == *armSource->key &&
+      construct->ownership->after == OwnershipStateSet::Moved &&
+      std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                   [&](const MirDropObligation &drop) {
+                     return drop.place == armSource->id &&
+                            drop.dropType.requiresActiveCleanup;
+                   });
   if (value == nullptr || value->info.type.kind != SemanticType::Class ||
       (value->info.category != ValueCategory::Value && !copiedPlace) ||
       construct == nullptr ||
       (construct->kind != MirInstructionKind::Construct && !sourceCall &&
-       !copiedPlace && !nestedJoin)) {
+       !copiedPlace && !nestedJoin && !movedLocal)) {
     return {};
   }
   const MirDropObligation *valueDrop =
@@ -9537,11 +9610,12 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
         construct->definedFailure.propagation ==
             FailurePropagationKind::Constructor) ||
        (sourceCall && !construct->definedFailure.empty()));
-  if ((sourceCall || copiedPlace || nestedJoin) && !representationOnly)
+  if ((sourceCall || copiedPlace || nestedJoin || movedLocal) &&
+      !representationOnly)
     return {};
-  if (sourceCall || copiedPlace || nestedJoin) {
-    // The call-specific shape is proved above; the construction-specific
-    // checks below do not apply.
+  if (sourceCall || copiedPlace || nestedJoin || movedLocal) {
+    // The call- and place-specific shapes are proved above; the
+    // construction-specific checks below do not apply.
   } else if ((!representationOnly &&
               value->info.traits.drop != DropKind::Lexical) ||
              !construct->result || *construct->result != valueId ||

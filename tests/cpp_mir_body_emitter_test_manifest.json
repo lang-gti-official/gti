@@ -386,6 +386,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeConditionalMovedLocalArms",
+      "suite": "text"
+    },
+    {
       "name": "testMovedGenericOwnerReceiverStage",
       "suite": "text"
     },
