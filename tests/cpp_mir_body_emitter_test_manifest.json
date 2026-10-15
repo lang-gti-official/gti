@@ -258,6 +258,10 @@
       "suite": "text"
     },
     {
+      "name": "testCopiedFormalReusedInConstructorBody",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },
