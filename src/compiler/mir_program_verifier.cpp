@@ -40,6 +40,10 @@ struct MirStoredCarrierReference {
 findStoredCarrierReferenceInventory(const MirProgram &program,
                                     const SemanticType &type);
 
+[[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
+findStoredCarrierAlternativeInventory(const MirProgram &program,
+                                      const SemanticType &type);
+
 [[nodiscard]] std::vector<MirStoredCarrierReference>
 findStoredCarrierReferences(const MirProgram &program,
                             const SemanticType &type);
@@ -4356,6 +4360,98 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
       return std::nullopt;
     }
     return references;
+  };
+  return visit(visit, type);
+}
+
+// Enumerate the typed alternative paths that qualify retained dependencies.
+// The strict reference inventory is the prerequisite: an absent/unsupported
+// layout never turns into an empty alternative or dependency proof.
+[[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
+findStoredCarrierAlternativeInventory(const MirProgram &program,
+                                      const SemanticType &type) {
+  if (!findStoredCarrierReferenceInventory(program, type))
+    return std::nullopt;
+  std::vector<SemanticType> visiting;
+  const auto visit = [&](const auto &self, const SemanticType &current)
+      -> std::optional<std::vector<BorrowAlternativePath>> {
+    if (current.kind == SemanticType::Unknown ||
+        current.kind == SemanticType::TypeParameter)
+      return std::nullopt;
+    std::vector<BorrowAlternativePath> result;
+    if (current.kind == SemanticType::Reference)
+      return current.arguments.size() == 1 ? std::optional{std::move(result)}
+                                           : std::nullopt;
+    if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return std::nullopt;
+    visiting.push_back(current);
+    const auto appendChildren = [&](const SemanticType &child, SymbolId field,
+                                    const BorrowDependencyCondition *outer) {
+      const auto traits = storagePayloadTraits(program, child);
+      if (!traits)
+        return false;
+      if (!traits->containsBorrowedState)
+        return true;
+      auto children = self(self, child);
+      if (!children || field == 0)
+        return false;
+      for (auto &path : *children) {
+        for (auto &condition : path.conditions)
+          condition.subobject.insert(condition.subobject.begin(), field);
+        if (outer)
+          path.conditions.insert(path.conditions.begin(), *outer);
+        result.push_back(std::move(path));
+      }
+      return true;
+    };
+    bool complete = true;
+    if (current.kind == SemanticType::Enum) {
+      const auto *enumeration = program.findPayloadEnum(current);
+      complete = enumeration != nullptr || program.findIntegralEnum(current);
+      if (enumeration)
+        for (std::size_t index = 0; index < enumeration->variants.size();
+             ++index) {
+          const auto &variant = enumeration->variants[index];
+          const BorrowDependencyCondition outer{.enumeration = current,
+                                                .variant = index};
+          result.push_back({.conditions = {outer}});
+          if (variant.payloadTypes.size() != variant.payloadSymbols.size()) {
+            complete = false;
+            continue;
+          }
+          for (std::size_t field = 0; field < variant.payloadTypes.size();
+               ++field)
+            complete &= appendChildren(variant.payloadTypes[field],
+                                       variant.payloadSymbols[field], &outer);
+        }
+    } else {
+      const auto traits = storagePayloadTraits(program, current);
+      complete = traits.has_value();
+      if (traits && traits->containsBorrowedState) {
+        if (current.kind == SemanticType::Lambda) {
+          const auto instance = std::find_if(
+              program.lambdaInstances().begin(),
+              program.lambdaInstances().end(),
+              [&](const auto &row) { return row.type == current; });
+          complete =
+              instance != program.lambdaInstances().end() &&
+              instance->captureSymbols.size() == instance->captureTypes.size();
+          if (complete)
+            for (std::size_t index = 0; index < instance->captureTypes.size();
+                 ++index)
+              complete &=
+                  appendChildren(instance->captureTypes[index],
+                                 instance->captureSymbols[index], nullptr);
+        } else if (const auto *instance =
+                       uniqueMirClassInstanceForType(program, current)) {
+          for (const auto &field : instance->declaredFields)
+            complete &= appendChildren(field.type, field.symbol, nullptr);
+        } else
+          complete = false;
+      }
+    }
+    visiting.pop_back();
+    return complete ? std::optional{std::move(result)} : std::nullopt;
   };
   return visit(visit, type);
 }
@@ -11153,14 +11249,12 @@ struct CompleteBorrowFlow {
       if (type.kind != SemanticType::Enum)
         continue;
       const auto inventory = findStoredCarrierReferenceInventory(program, type);
-      const auto *enumeration = program.findPayloadEnum(type);
-      if (!inventory || !inventory->empty() || !enumeration)
+      auto alternatives = findStoredCarrierAlternativeInventory(program, type);
+      if (!inventory || !inventory->empty() || !alternatives ||
+          alternatives->empty())
         continue;
-      MirBorrowDependencySet complete;
-      for (std::size_t variant = 0; variant < enumeration->variants.size();
-           ++variant)
-        complete.possibleAlternatives.push_back(
-            {.conditions = {{.enumeration = type, .variant = variant}}});
+      MirBorrowDependencySet complete{.possibleAlternatives =
+                                          std::move(*alternatives)};
       // An unknown entry tag admits every typed alternative. The complete
       // empty inventory comes from the concrete parameter and sealed layout,
       // never a value annotation or the absence of an attached loan.
