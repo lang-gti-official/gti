@@ -1067,6 +1067,12 @@ private:
         }
         continue;
       }
+      if ((childKind == CXCursor_UnionDecl ||
+           childKind == CXCursor_StructDecl) &&
+          clang_Cursor_isAnonymousRecordDecl(child) != 0) {
+        fail("anonymous promoted record fields have no GTI representation");
+        continue;
+      }
       if (childKind != CXCursor_FieldDecl) {
         continue; // Nested tag definitions surface through the field using
                   // them.

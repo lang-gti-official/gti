@@ -93,6 +93,8 @@ struct Packet {
   mut Vec2 point;
 };
 
+[[c_abi]] union NativeOverlay { mut Packet packet; mut uint8_t bytes[48]; };
+
 [[c_abi]]
 struct Link {
   mut Packet* next;
@@ -247,6 +249,15 @@ void testTargetMatrix() {
     const lang::ClassTypeInfo *packet =
         packetSyntax == nullptr ? nullptr
                                 : result.semantics.findClassType(*packetSyntax);
+    const auto *unionSyntax = findClass(result.program, "NativeOverlay");
+    const auto *unionInfo = unionSyntax == nullptr
+                                ? nullptr
+                                : result.semantics.findClassType(*unionSyntax);
+    allMatch = allMatch && unionInfo && unionInfo->cAbiLayout &&
+               unionInfo->unionLayout &&
+               unionInfo->cAbiLayout->sizeBytes == 48 &&
+               unionInfo->cAbiLayout->abiAlignmentBytes == 8 &&
+               unionInfo->cAbiLayout->fields[1].offsetBytes == 0;
     allMatch = allMatch && result.canGenerateCode() && packet != nullptr &&
                packet->cAbiLayout && packet->cAbiLayout->sizeBytes == 32 &&
                packet->cAbiLayout->abiAlignmentBytes == 8 &&
