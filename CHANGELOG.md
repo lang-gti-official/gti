@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.443.0 — Conformance blocks for `expected`, pointers and arrays
+## 0.442.0 — Conformance blocks for `expected`, pointers and arrays
 
 - A conformance block's pattern may apply `expected`, a raw pointer or a
   fixed-length array to the block's parameters, as it applies a class or
