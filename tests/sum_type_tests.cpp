@@ -1017,11 +1017,12 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(nestedOwning, "GTI-S2067") &&
-             hasMessage(nestedOwning, "not a concrete class value") &&
-             hasMessage(nestedOwning, "owning class alternatives only"),
-         "nested owning payload enums should remain a diagnosed omission of "
-         "the bounded class-payload slice");
+  expect(nestedOwning.canGenerateCode() &&
+             lang::verifyMirProgram(nestedOwning.mir).valid(),
+         "finite nested owning payload enums use structural cleanup recipes");
+  if (nestedOwning.canGenerateCode())
+    expect(!gti_test::emitCppText(nestedOwning).empty(),
+           "non-generic nested owning payloads reach native representation");
 
   const lang::FrontendResult genericPayload =
       analyze("generic-class-payload-enum.gti", R"(
@@ -1062,7 +1063,9 @@ int main() { return 0; }
           lang::SemanticType::UInt64;
       const auto checked = lang::verifyMirProgram(forged);
       expect(!checked.valid() &&
-                 hasMirMessage(checked, "payload-enum lifecycle table"),
+                 hasMirMessage(checked,
+                               "payload-enum inline layout is recursive or "
+                               "unresolved"),
              "a forged alternative cannot borrow another generic "
              "instantiation's cleanup proof");
     }
