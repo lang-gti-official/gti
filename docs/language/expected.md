@@ -199,6 +199,34 @@ the callable immediately returns `unexpected(error)` after cleaning up the
 live full-expression and lexical obligations on that path. Propagation never
 performs an implicit error conversion.
 
+Other types propagate with the same operator through the prelude's
+`std::tryable` protocol concept
+([ADR 029](../decisions/029-tryable-propagation.md)). A type opts in with a
+conformance block outside its own declaration:
+
+```gti
+for <std::copyable T> concept std::tryable<Checked<T>> {
+  using value_type = T;
+  using residual_type = Rejected;
+  bool has_value(Checked<T>& result) { return result.code == 0; }
+  T take_value(Checked<T> result) { return result.value; }
+  Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
+};
+
+Status total() {
+  int value = ?make();   // returns Status(Rejected) when make() fails
+  return Status(value);
+}
+```
+
+The enclosing return type receives the residual as `R result = residual;`
+would, so `Status` above declares `implicit Status(Rejected rejected)`. The
+operand is passed like a by-value argument: unlike `expected`, a named place
+is copied whole, and a named move-only operand needs `std::move`. A
+`void` `value_type` makes `?operand` a statement. See
+[execution](execution.md#48-recoverable-failure) for the order of
+evaluation and cleanup.
+
 ## Requiring a successful result
 
 `expect(message)` is explicit consuming extraction with panic-on-error policy:
