@@ -1147,6 +1147,10 @@ add_executable(gti_protocol_concept_tests
   "${PROJECT_SOURCE_DIR}/tests/protocol_concept_tests.cpp")
 target_link_libraries(gti_protocol_concept_tests PRIVATE gti_cpp_backend)
 add_test(NAME protocol_concepts COMMAND gti_protocol_concept_tests)
+add_executable(gti_tryable_propagation_tests
+  "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
+target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend)
+add_test(NAME tryable_propagation COMMAND gti_tryable_propagation_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime
@@ -2045,6 +2049,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(consuming_payload_patterns_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME tryable_propagation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(tryable_propagation_runtime PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME recursive_cleanup_failure_runtime

@@ -10,7 +10,7 @@ function, continue/break/return out of an arm, a move-only payload without
 cleanup, and an alternative whose class owns another payload enum. Phases 1-3
 fail inside a binding arm, while a tag-only arm drops its enum, and while the
 subject's other temporaries end; every live owner is released exactly once.
-Example 159 runs as documented.
+Example 160 runs as documented.
 """
 
 import pathlib
@@ -43,7 +43,7 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     tests = pathlib.Path(__file__).parent
     source = tests / "fixtures" / "consuming_payload_patterns.gti"
-    example = tests.parent / "examples" / "159-consuming-matches.gti"
+    example = tests.parent / "examples" / "160-consuming-matches.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],

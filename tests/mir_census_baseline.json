@@ -156,7 +156,7 @@
     "156-borrowing-callbacks.gti": 68,
     "157-protocol-concepts.gti": 139,
     "158-multi-parameter-concepts.gti": 135,
-    "159-consuming-matches.gti": 237
+    "159-tryable-propagation.gti": 135
   },
-  "total": 17487
+  "total": 17385
 }

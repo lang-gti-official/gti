@@ -55,12 +55,13 @@ You do not need to read the entire sequence to find an API pattern:
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
 | Relate several types through one concept, with a result type that depends on all of them | [158: multi-parameter concepts](158-multi-parameter-concepts.gti) |
+| Propagate a failure from your own result type with `?` | [159: tryable propagation](159-tryable-propagation.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
 | Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
-| Take ownership of an enum alternative's payload in a `switch` | [159: consuming matches](159-consuming-matches.gti) |
+| Take ownership of an enum alternative's payload in a `switch` | [160: consuming matches](160-consuming-matches.gti) |
 | Read program arguments | [43: hosted arguments](043-program-arguments.gti) |
 | Traverse, search, or modify containers | [90: algorithms](090-generic-algorithms.gti), [87: dictionaries](087-associative-containers.gti) |
 | Model an owner and its checked views | [41: owner dependencies](041-owner-dependencies.gti), [42: reborrows](042-exclusive-reborrows.gti) |
@@ -219,7 +220,8 @@ is a teaching helper, not a production server.
 | `156-borrowing-callbacks.gti` | shared/exclusive captures, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
 | `157-protocol-concepts.gti` | a concept with an associated unit type and two operations, a conformance block for one class and a generic one for every instance of a class template, and a generic function that returns the associated type through `requires` |
 | `158-multi-parameter-concepts.gti` | a two-parameter concept whose sum type depends on both operands, a block for one pair of unit types and a generic block whose repeated parameter requires matching kinds, and a generic function that requires the pair |
-| `159-consuming-matches.gti` | a switch over temporary messages that moves their owned strings into its bindings, an arm without bindings that drops its message on entry, a source-defined optional whose `&&` accessor moves the value out of its field, and a borrowed match over a named enum |
+| `159-tryable-propagation.gti` | a validator's generic result type joining `?` through a `std::tryable` block, and a return type that receives the residual through an `implicit` constructor |
+| `160-consuming-matches.gti` | a switch over temporary messages that moves their owned strings into its bindings, an arm without bindings that drops its message on entry, a source-defined optional whose `&&` accessor moves the value out of its field, and a borrowed match over a named enum |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

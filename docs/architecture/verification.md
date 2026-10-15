@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Consuming payload-enum matches (0.436.0)
+## Consuming payload-enum matches (0.437.0)
 
 `sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
 `std::move` subjects bind move-only fields of owning single, multi-field and
@@ -20,9 +20,39 @@ accessor, a generic function, `continue`/`break`/`return` from arms and a
 cleanup-free move-only payload. Its failure phases end inside an arm, in a
 payload destructor at tag-only arm entry, and in a subject temporary's
 destructor while the switch owns the enum; each releases every live owner
-exactly once. The same test runs example 159 in every mode. The MIR and
-lowered-program censuses add only example 159, and a consumed passive subject
+exactly once. The same test runs example 160 in every mode. The MIR and
+lowered-program censuses add only example 160, and a consumed passive subject
 emits machine code identical to main's copy path at `-O3`.
+
+## Fields moved ahead of fallible constructor work (0.435.1)
+
+`generic_callable_transport_runtime` adds `generic_closure_field_move.gti`.
+Generic class constructors move their closure parameter into a field and then
+run work that can fail: a call in the body, a call on the moved field, a
+fallible sibling initializer, or checked arithmetic. One class copies a scalar
+parameter into a field before the closure field, and one copies the formal into
+an earlier field before moving it into a later one. Struct- and
+number-capturing closures share each class. A non-generic class moves a
+payload enum into a field before a body that can fail, so the rule is shown
+on an unrelated user type. A closure that divides by zero inside a constructor
+body takes the failure edge after the moved field is published and must exit
+with status 70 and the division diagnostic. Every result is checked in
+C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. In
+`cpp_mir_body_emitter_text`, `testMovedClosureFieldInFallibleConstructor`
+requires the owned-parameter proof to bind the record-published move of every
+closure instance of a body-call constructor and a fallible-sibling
+constructor. Production emission must keep one failure-form constructor per
+instance that moves the parameter once, in its member-initializer list. A
+struct capture must keep the formal's drop on both exits. Moving the later
+scalar sibling's records ahead of the `Move` must make the proof refuse the
+binding, and a move declared after a fallible sibling must stay unbound.
+Against the 0.434.1 emitter the proof refuses every instance and emission
+fails with `GTI-B0001`. A differential `--emit-cpp` over 1709 fixture,
+coverage and example programs at O0 and O3 changed only three closure
+fixtures. In each, the struct-capturing instance of `Moved(F f) :
+callback(std::move(f)) {}`, which is failure-capable only through its formal's
+lexical drop, gained an admitted failure-form definition that no caller
+instantiates.
 
 ## Copied constructor formals reused in fallible bodies (0.434.1)
 
@@ -6681,7 +6711,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
 | `optional_runtime` | empty, value, move, checked read, reset, emplacement, fallback, and move-only payload behavior; inline allocation-free representation; copy and assignment rejection; live-borrow protection; exact cleanup; and `GTI-R0008` wrong-state reporting at O0/O3 under C++20/C++23 |
 | `class_payload_enum_runtime` | passive and active-cleanup class alternatives; fresh/copy/move construction; tag inspection through a checked reference; same-tag replacement plus cross-tag move assignment; distinct cleanup of two same-type owning fields; unit and `std::string` alternatives; normal/control-flow/defined-failure exactly-once drop; direct owning by-value call/return; and declaration-time rejection of move-only copied bindings at O0/O3 under C++20/C++23 |
-| `consuming_payload_patterns_runtime` | switches over prvalue and `std::move` subjects moving owning, multi-field, mixed, nested and cleanup-free move-only payloads into bindings; tag-only and `default` arm-entry drops; generic optional `&&` accessors and generic functions; `continue`/`break`/`return` from arms; defined failure inside an arm, at tag-only arm entry and in a subject temporary; example 159; C++20/C++23 O0/O1/O2/O3 and ASan/UBSan |
+| `consuming_payload_patterns_runtime` | switches over prvalue and `std::move` subjects moving owning, multi-field, mixed, nested and cleanup-free move-only payloads into bindings; tag-only and `default` arm-entry drops; generic optional `&&` accessors and generic functions; `continue`/`break`/`return` from arms; defined failure inside an arm, at tag-only arm entry and in a subject temporary; example 160; C++20/C++23 O0/O1/O2/O3 and ASan/UBSan |
 | `payload_enum_containment_runtime` | ordinary class/struct direct fields; constructor and in-class initialization; containing-value move/call/return/assignment, including an immutable source and nested scope directly in the hosted entry; direct mutable-field replacement; return, break, and continue cleanup; partial-construction defined-failure rollback; C++ type-definition ordering and private disengaged representation; precise polymorphic-owner and fixed-array `GTI-S2067` rejection; and O0/O3 under C++20/C++23 |
 | `generic_payload_enum_runtime` | generic free-function and unrelated user-defined owner transport/capture, consuming extraction, vector reallocation/iteration, optional inline storage/reset, partial-owner rollback, later-argument and callee failure, failing and non-failing cleanup, implicit-copy/live-borrow/use-after-move diagnostics, C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
 | `compiler_ownership` / `ordered_borrow_composition_runtime` | completed mutation before checked lookup through user-defined tree/table, method, generic/free helper and constructor paths; borrowed-carrier call inputs; exact MIR order and forged-order rejection; earlier mutation, lookup and invocation failures; reverse-order, lexical-loan, exclusive-read, mutable-parameter and escaping-local rejection; precise diagnostic spans; C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
