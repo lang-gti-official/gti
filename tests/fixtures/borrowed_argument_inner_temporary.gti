@@ -68,6 +68,14 @@ bool judged(Tracked& tracked, std::vector<std::string>& argv,
 
 bool near(Point& point) { return point.positive(); }
 
+bool keeps(Point& point, bool flag) { return point.positive() && flag; }
+
+// Nothing in this body can fail.
+bool calm(bool skip) {
+  return keeps(Point(1), skip || Point(2).positive()) &&
+         keeps(Point(3), skip ? false : near(Point(4)));
+}
+
 int32_t combine(Tracked& tracked, bool flag) {
   return tracked.read() * 10 + (flag ? 1 : 0);
 }
@@ -87,11 +95,13 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(combine(made(6), run ? made(7).raise() : holds(made(8))));
   // The borrowed argument is a local.
   std::println(combine(first, skip || holds(Tracked(9))));
-  // Objects with nothing to destroy.
+  // Objects with nothing to destroy, also in a body that cannot fail.
   std::println(combine(made(10), skip || Point(11).positive()));
   std::println(combine(made(12), run && near(Point(13))));
+  std::println(calm(skip) ? 1 : 0);
   // The producer, the nested call or a later argument can fail.
-  std::println(combine(made(14), skip || fragile(15, argv, "make").positive()));
+  std::println(
+      combine(made(14), skip || fragile(15, argv, "make").positive()));
   std::println(combine(made(16), skip || made(17).checked(argv, "receiver")));
   std::println(combine(made(18), skip || judged(made(19), argv, "argument")));
   std::println(
