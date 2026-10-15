@@ -3319,6 +3319,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(consuming_returned_result_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME consuming_prepared_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_prepared_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_prepared_receiver_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_conditional_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_conditional_receiver_runtime_test.py"
