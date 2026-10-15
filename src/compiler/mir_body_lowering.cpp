@@ -12335,6 +12335,10 @@ private:
         return;
       }
       consumed = initializeConsumedSwitchSubject(statement);
+      if (terminated()) {
+        // A terminal subject leaves the whole switch unreachable.
+        return;
+      }
       if (!consumed) {
         valid = false;
         return;
@@ -12373,9 +12377,6 @@ private:
       payloadSwitchSubjects[*statement.value] = subject;
     emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
                        statement.id);
-    if (terminated()) {
-      return;
-    }
     const MirBlockId exitBlock = appendBlock();
     std::vector<MirBlockId> armBlocks;
     armBlocks.reserve(statement.switchArms.size());

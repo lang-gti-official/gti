@@ -4516,8 +4516,10 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                subjectInfo->category == ValueCategory::Value &&
                                subjectInfo->type == subjectType;
   if (consumedSubject) {
+    // Like an immutable local initialized from the subject: arms move its
+    // fields out, but no source code can name or assign it.
     semanticModel.recordConsumedSwitchSubject(
-        stmt, bindingInfo(subjectType, AccessMode::Mutable));
+        stmt, bindingInfo(subjectType, AccessMode::ReadOnly));
   }
   const bool validSubject = isInteger(subjectType) ||
                             subjectType == SemanticType::Char ||

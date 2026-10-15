@@ -237,6 +237,41 @@ int32_t consume_passive() {
   }
 }
 
+// Nested owning containment: an alternative's class owns another payload
+// enum. The consumed binding owns that whole chain; observing the inner enum
+// through the binding borrows from it.
+class Envelope {
+public:
+  box inner;
+  Envelope(box value) : inner(std::move(value)) {}
+};
+
+enum class parcel { none, sealed(Envelope envelope) };
+
+int32_t open_parcel(parcel value) {
+  switch (std::move(value)) {
+  case parcel::sealed(envelope):
+    switch (envelope.inner) {
+    case box::one(auto& item):
+      return item.read();
+    default:
+      return 0;
+    }
+  case parcel::none:
+    return -1;
+  }
+}
+
+void drop_parcel() {
+  switch (parcel::sealed(Envelope(box::one(Tracked(81))))) {
+  case parcel::none:
+    break;
+  default:
+    std::println(1081);
+    break;
+  }
+}
+
 int32_t divide_in_arm(int32_t divisor) {
   switch (box::two(Tracked(50), Tracked(51))) {
   case box::two(left, right):
@@ -292,5 +327,7 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(loop_exits());
   early_return();
   std::println(consume_passive());
+  std::println(open_parcel(parcel::sealed(Envelope(box::one(Tracked(80))))));
+  drop_parcel();
   return 0;
 }
