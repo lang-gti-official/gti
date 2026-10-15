@@ -1000,11 +1000,14 @@ exact ownership place. Move-only values require `std::move` at consuming calls,
 initializers, and assignments. One bounded return rule is implicit: `return
 name;`, with optional grouping, consumes `name` when it is a whole local or
 by-value parameter, its type exactly equals the function result type, and that
-type is movable but not copyable. Copyable named returns remain copies.
-Conversions, fields and other projections, globals, references, captures,
-temporaries, and immovable values do not receive this rule. Copyable values may
-still be moved explicitly so generic code does not need an ownership-specific
-spelling.
+type is movable but not copyable. Copyable named returns remain copies. A
+return that converts through an `implicit` constructor or conversion operator
+taking its operand by value moves such a local or parameter into the
+conversion in the same way; a conversion that borrows it leaves it in place.
+Other conversions, fields and other projections, globals, references,
+captures, temporaries, and immovable values do not receive this rule. Copyable
+values may still be moved explicitly so generic code does not need an
+ownership-specific spelling.
 
 A move consumes the source binding. Any later read is a semantic error, even
 for a copyable type, rather than observing a C++-style unspecified moved-from

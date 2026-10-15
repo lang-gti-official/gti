@@ -418,8 +418,8 @@ receiver restrictions and ordinary ownership checks, demonstrated by example
   objects beyond exact domain-operator capabilities;
 - virtual or borrow-carrying conversion operators (explicit-by-default
   conversion operators exist; see ADR 027);
-- implicit user conversions outside declaration initialization, and
-  conversion-ranked overload resolution;
+- implicit user conversions outside declaration initialization and returns,
+  and conversion-ranked overload resolution;
 - unrestricted multiple state-bearing inheritance, diamonds, protected inheritance, and
   covariant virtual returns;
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,

@@ -1,0 +1,255 @@
+// `return value;` with a value of another type initializes the owned result
+// exactly as `R result = value;` would: through one implicit constructor of
+// the result or one implicit conversion operator of the value. Construction
+// prints a tracked id, destruction its negation, and each conversion a marker
+// of its own, so every phase's trace is an oracle that follows from this
+// source alone. Phase 0 returns a temporary, a moved local, a moved by-value
+// parameter, a borrowed local, a consumed local, a borrowed local beside a
+// later one, a temporary receiver beside a guard, a generic instance and a
+// lambda. Each moved value is destroyed exactly once, by its final owner; a
+// borrowed one at its own lexical cleanup. Phases 1 to 3 fail inside the
+// selected conversion, and every live value is released exactly once. Phase 4
+// compares returns folded at compile time with the same calls at run time.
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// Takes its argument by value, so a returned eligible local moves into it.
+class Ticket {
+  Tracked kept;
+
+public:
+  implicit Ticket(Tracked value) : kept(std::move(value)) {
+    std::println(std::to_string(100 + this.kept.read()));
+  }
+  int read() { return this.kept.read(); }
+};
+
+// Borrows its argument, so a returned local stays in place until cleanup.
+class Receipt {
+  int id;
+
+public:
+  implicit Receipt(Tracked& source) : id(source.read() + 200) {
+    std::println(std::to_string(this.id));
+  }
+  int read() { return this.id; }
+};
+
+// A consuming conversion moves its state out of the receiver.
+class Handle {
+  mut Tracked tracked;
+
+public:
+  Handle(int value) : tracked(Tracked(value)) {}
+  implicit operator Ticket() && {
+    std::println(std::to_string(300 + this.tracked.read()));
+    return Ticket(std::move(this.tracked));
+  }
+};
+
+// A read-only conversion borrows its receiver and builds a fresh result.
+class Source {
+  Tracked tracked;
+
+public:
+  Source(int value) : tracked(Tracked(value)) {}
+  implicit operator Ticket() {
+    std::println(std::to_string(400 + this.tracked.read()));
+    return Ticket(Tracked(this.tracked.read() + 10));
+  }
+};
+
+// Takes ownership of its argument and then fails: the constructor's own
+// failure cleanup releases the stored argument exactly once.
+class FailingTicket {
+  Tracked kept;
+  int ratio;
+
+public:
+  implicit FailingTicket(Tracked value, int divisor = 0)
+      : kept(std::move(value)), ratio(20 / divisor) {}
+  int read() { return this.kept.read() + this.ratio; }
+};
+
+// Fails inside a read-only operator, after its temporary receiver exists.
+class FailingSource {
+  Tracked tracked;
+  int divisor;
+
+public:
+  FailingSource(int value, int by) : tracked(Tracked(value)), divisor(by) {}
+  implicit operator Ticket() { return Ticket(Tracked(10 / this.divisor)); }
+};
+
+// Fails inside a consuming operator, before it moves its state out.
+class FailingHandle {
+  mut Tracked tracked;
+  int divisor;
+
+public:
+  FailingHandle(int value, int by) : tracked(Tracked(value)), divisor(by) {}
+  implicit operator Ticket() && {
+    int scaled = 30 / this.divisor;
+    std::println(std::to_string(scaled));
+    return Ticket(std::move(this.tracked));
+  }
+};
+
+struct Holder<T> {
+  T value;
+  implicit Holder(T initial) : value(std::move(initial)) {}
+};
+
+struct Celsius {
+  int degrees;
+  implicit constexpr Celsius(int value) : degrees(value) {}
+};
+
+struct Fahrenheit {
+  int degrees;
+  constexpr Fahrenheit(int value) : degrees(value) {}
+  implicit constexpr operator Celsius() {
+    return Celsius((this.degrees - 32) * 5 / 9);
+  }
+};
+
+Ticket from_temporary(int id) { return Tracked(id); }
+
+Ticket from_local(int id) {
+  Tracked local{id};
+  return local;
+}
+
+Ticket from_parameter(Tracked value) { return value; }
+
+Receipt from_borrow(int id) {
+  Tracked local{id};
+  return local;
+}
+
+Ticket from_handle(int id) {
+  Handle handle{id};
+  return handle;
+}
+
+// The borrowed source outlives the later local: cleanup is lexical.
+Ticket from_source(int id) {
+  Source source{id};
+  Tracked later{id + 50};
+  return source;
+}
+
+// The temporary receiver ends with the full expression, before the guard.
+Ticket from_source_temporary(int id) {
+  Tracked guard{id};
+  return Source(id + 1);
+}
+
+Holder<T> hold<T>(T value) { return value; }
+
+FailingTicket fail_local(int id) {
+  Tracked guard{id};
+  Tracked local{id + 1};
+  return local;
+}
+
+Ticket fail_temporary(int id) {
+  Tracked guard{id};
+  return FailingSource(id + 1, 0);
+}
+
+Ticket fail_handle(int id) {
+  Tracked guard{id};
+  FailingHandle handle{id + 1, 0};
+  return handle;
+}
+
+constexpr Celsius boiling(int value) { return value; }
+
+constexpr Celsius converted(int fahrenheit) {
+  Fahrenheit reading{fahrenheit};
+  return reading;
+}
+
+constexpr int folded = boiling(100).degrees + converted(212).degrees;
+static_assert(folded == 200);
+
+int run(int selected) {
+  if (selected == 0) {
+    {
+      Ticket ticket = from_temporary(1);
+      std::println(std::to_string(ticket.read()));
+    }
+    {
+      Ticket ticket = from_local(2);
+      std::println(std::to_string(ticket.read()));
+    }
+    {
+      Ticket ticket = from_parameter(Tracked(3));
+      std::println(std::to_string(ticket.read()));
+    }
+    {
+      Receipt receipt = from_borrow(4);
+      std::println(std::to_string(receipt.read()));
+    }
+    {
+      Ticket ticket = from_handle(5);
+      std::println(std::to_string(ticket.read()));
+    }
+    {
+      Ticket ticket = from_source(6);
+      std::println(std::to_string(ticket.read()));
+    }
+    {
+      Ticket ticket = from_source_temporary(7);
+      std::println(std::to_string(ticket.read()));
+    }
+    {
+      Holder<Tracked> held = hold(Tracked(9));
+      Holder<int> plain = hold(int(500));
+      std::println(std::to_string(held.value.read() + plain.value));
+    }
+    {
+      auto make = [](int id) -> Ticket {
+        Tracked local{id};
+        return local;
+      };
+      Ticket ticket = make(10);
+      std::println(std::to_string(ticket.read()));
+    }
+    return 0;
+  }
+  if (selected == 1) {
+    FailingTicket failed = fail_local(20);
+    return failed.read();
+  }
+  if (selected == 2) {
+    Ticket failed = fail_temporary(30);
+    return failed.read();
+  }
+  if (selected == 3) {
+    Ticket failed = fail_handle(40);
+    return failed.read();
+  }
+  // Inputs known only at run time reach the same converted returns.
+  int runtime =
+      boiling(selected * 25).degrees + converted(selected * 53).degrees;
+  std::println(std::to_string(folded));
+  std::println(std::to_string(runtime));
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}

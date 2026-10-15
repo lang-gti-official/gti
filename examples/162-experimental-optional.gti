@@ -22,8 +22,7 @@ std::experimental::optional<Account> find(int id) {
   if (id == 2) {
     return std::experimental::optional<Account>(Account(std::string("lin"), 2));
   }
-  std::experimental::optional<Account> missing = std::experimental::nullopt;
-  return missing;
+  return std::experimental::nullopt;
 }
 
 // Both accounts must exist; `?` returns an empty optional otherwise.

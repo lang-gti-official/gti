@@ -1,6 +1,6 @@
 # ADR 023: Bounded Implicit Return Movement
 
-Status: Accepted
+Status: Accepted; revised 2026-10-15 for return conversions (see below)
 
 ## Context
 
@@ -31,9 +31,9 @@ hold:
 The move consumes the source and uses the same availability, borrow-conflict,
 partial-move, cleanup, and result-publication rules as explicit `std::move`.
 Copyable values continue to copy on return. The rule does not apply to return
-conversions, fields or other projections, globals, references, captures,
-temporaries, or immovable values. It is not last-use inference and it does not
-change any non-return consuming context.
+conversions (revised below), fields or other projections, globals, references,
+captures, temporaries, or immovable values. It is not last-use inference and it
+does not change any non-return consuming context.
 
 Semantics owns the decision and records an instance-local fact because generic
 substitution can change copyability. HIR materializes that fact as the existing
@@ -54,3 +54,20 @@ operation: GTI preserves a copy rather than silently preferring movement. A
 future broader move-by-default model, implicit projections, or return
 conversion movement must replace this decision with compatibility and
 lifecycle evidence; it cannot be inferred by HIR, MIR, or a backend.
+
+## Revision: return conversions (2026-10-15)
+
+Returns now convert through ADR 027's implicit constructors and conversion
+operators, as declarations do
+([ADR 027 revision](027-user-defined-conversions.md#revision-returns-2026-10-15)).
+This rule supplies their movement. The eligible operands are unchanged except
+for the exact-type condition: after grouping, a whole named local or by-value
+parameter whose concrete type is movable and not copyable. Such an operand is
+moved into a conversion that takes it by value, an `implicit` constructor
+whose parameter is not a reference or a consuming `implicit` operator, which
+then selects as it would for `std::move(value)`. A conversion that borrows
+the operand does not move it. Semantics records the same instance-local fact
+and HIR places the same unary `Move` beneath the conversion; MIR and the
+backend gain no rule. Returns that wrap a success into `expected<T, E>`
+still require `std::move(value)`, because that conversion is built in rather
+than an implicit constructor or operator.

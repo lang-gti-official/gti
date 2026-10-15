@@ -1642,6 +1642,18 @@ private:
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
 
+  // The compatibility walker has no conversion rule: a value that an implicit
+  // constructor or conversion operator converts, for a declaration or a
+  // return, executes only through the staged verified-MIR profile.
+  [[nodiscard]] static ConstexprEvaluation
+  constexprConversionFailure(const Expr &converted) {
+    return constexprFailure(
+        expressionToken(converted),
+        ConstantEvaluationFailure::UnsupportedExpression,
+        "An implicitly converted value requires the verified MIR "
+        "constant-evaluation profile.");
+  }
+
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
           &target,
@@ -2018,6 +2030,20 @@ private:
   analyzeImplicitReturnMove(const ExprPtr &expression,
                             const SemanticType &returnType,
                             const SemanticType &valueType);
+
+  // ADR 023's movement of a returned whole local or by-value parameter of a
+  // move-only type, whatever the type it then initializes: an exact return
+  // publishes the moved value, and a converted return passes it to the
+  // conversion that consumes it.
+  [[nodiscard]] ImplicitReturnMoveStatus
+  moveReturnedOwner(const ExprPtr &expression, const SemanticType &valueType);
+
+  // A returned value of another type converts to an owned return type exactly
+  // as the declaration `R result = value;` would. Returns whether a conversion
+  // applied; its selection reports its own failures.
+  bool analyzeReturnConversion(const ExprPtr &expression,
+                               const SemanticType &returnType,
+                               const SemanticType &valueType);
 
   [[nodiscard]] const ExprPtr *
   operatorBorrowSource(const ExprPtr &expression,
@@ -3675,7 +3701,8 @@ private:
   [[nodiscard]] bool
   selectResidualReturn(const Unary &expr, const SemanticType &returnType,
                        const SemanticType &residualType,
-                       std::optional<ResolvedConstructionInfo> &construction);
+                       std::optional<ResolvedConstructionInfo> &construction,
+                       std::optional<ResolvedOperatorInfo> &conversion);
   [[nodiscard]] SemanticType
   analyzeTryablePropagation(const Unary &expr, const SemanticType &operandType);
   void reportConformanceError(const Token &site, std::string message,
@@ -4141,13 +4168,16 @@ private:
   contextualConstructionRawFields(const Expr &initializer,
                                   const SemanticType &type);
 
-  // The hint for a declaration no implicit conversion accepts, with the
-  // explicit spelling that selects any constructor or conversion operator.
+  // The hint for a declaration or return no implicit conversion accepts, with
+  // the explicit spelling that selects any constructor or conversion operator.
   [[nodiscard]] static std::string
-  implicitConstructionHint(const std::string &explicitSpelling) {
+  implicitConstructionHint(const std::string &explicitSpelling,
+                           std::string_view converted = "a declaration's "
+                                                        "initializer") {
     return "Only a constructor or conversion operator declared 'implicit' "
-           "converts a declaration's initializer; write '" +
-           explicitSpelling + "' to convert explicitly.";
+           "converts " +
+           std::string(converted) + "; write '" + explicitSpelling +
+           "' to convert explicitly.";
   }
 
   [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const;

@@ -3216,18 +3216,31 @@ private:
       const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
     const std::optional<HirValueId> source = lowerExpression(
         expression, model, classArguments, classValueArguments, body);
-    if (!source || !expression) {
+    // A converted return moves its operand beneath the conversion.
+    if (!source || !expression ||
+        model.findContextualConstruction(*expression) != nullptr ||
+        model.findContextualConversion(*expression) != nullptr) {
       return source;
     }
+    return implicitReturnMove(*expression, *source, model, body);
+  }
+
+  // ADR 023's implicit return movement of a whole local or by-value
+  // parameter: its place read becomes the operand of one Move that carries
+  // the read's ownership event, exactly as an explicit std::move would.
+  [[nodiscard]] HirValueId implicitReturnMove(const Expr &expression,
+                                              HirValueId source,
+                                              const SemanticModel &model,
+                                              HirBody &body) {
     const ImplicitReturnMoveInfo *implicitMove =
-        model.findImplicitReturnMove(*expression);
+        model.findImplicitReturnMove(expression);
     if (implicitMove == nullptr) {
       return source;
     }
 
-    const auto found = std::find_if(
-        body.values.begin(), body.values.end(),
-        [&](const HirValue &value) { return value.id == *source; });
+    const auto found =
+        std::find_if(body.values.begin(), body.values.end(),
+                     [&](const HirValue &value) { return value.id == source; });
     if (found == body.values.end() || !found->ownership ||
         found->ownership->kind != OwnershipEventKind::Move) {
       lifecycleValid = false;
@@ -3242,9 +3255,9 @@ private:
 
     HirValue move{.id = nextValueId++,
                   .kind = HirValueKind::Move,
-                  .source = expression.get(),
+                  .source = &expression,
                   .info = std::move(info),
-                  .operands = {*source},
+                  .operands = {source},
                   .intrinsic = IntrinsicKind::Move,
                   .borrowOrigin = implicitMove->borrowOrigin,
                   .borrowArgument = 0,
@@ -3253,7 +3266,7 @@ private:
                   .ownership = ownership};
     const HirValueId moveId = move.id;
     body.values.push_back(std::move(move));
-    output.program.sourceValueIds[expression.get()].push_back(moveId);
+    output.program.sourceValueIds[&expression].push_back(moveId);
     return moveId;
   }
 
@@ -4745,43 +4758,27 @@ private:
       return std::nullopt;
     }
 
-    // The residual initializes the return value as a declaration's implicit
-    // construction would; the construction has no source expression.
+    // The residual returns as `return residual;` would: through the implicit
+    // constructor or conversion operator semantics selected for it, exactly
+    // as a converted return's operand. Neither call has a source expression.
     HirValueId residualReturnId = 0;
     if (plan.returnConstruction) {
-      const ResolvedConstructionInfo &construction = *plan.returnConstruction;
-      HirValue residualReturn{
-          .id = nextValueId++,
-          .kind = HirValueKind::DirectInitializer,
-          .info = {.type = construction.constructedType,
-                   .category = ValueCategory::Value,
-                   .access = AccessMode::ReadOnly,
-                   .traits = instanceProvider->traitsFor(
-                       construction.constructedType)},
-          .operands = {*residual},
-          .parameterTypes = construction.parameterTypes,
-          .definedFailure = {.propagation =
-                                 FailurePropagationKind::Constructor},
-          .constructorKind = construction.kind,
-      };
-      const HirConstructorInstanceId constructor =
-          enqueueConstructor(construction, site);
-      if (constructor == 0) {
+      const std::optional<HirValueId> constructed = implicitConstructionValue(
+          *residual, *plan.returnConstruction, expression.oper(), body);
+      if (!constructed) {
+        return std::nullopt;
+      }
+      residualReturnId = *constructed;
+    } else if (plan.returnConversion) {
+      const std::optional<HirFunctionInstanceId> target =
+          conversionFunctionTarget(*plan.returnConversion, plan.residualType,
+                                   classArguments, classValueArguments);
+      if (!target || *target == 0) {
         lifecycleValid = false;
         return std::nullopt;
       }
-      residualReturn.constructorTarget = constructor;
-      const std::optional<std::vector<HirCallArgument>> arguments =
-          orderedConstructorArguments(residualReturn, residualReturn.operands,
-                                      residualReturn.parameterTypes, body, 1);
-      if (!arguments) {
-        lifecycleValid = false;
-        return std::nullopt;
-      }
-      residualReturn.callPlan =
-          HirCallPlan{.receiver = std::nullopt, .arguments = *arguments};
-      residualReturnId = residualReturn.id;
-      body.values.push_back(std::move(residualReturn));
+      residualReturnId = implicitConversionValue(
+          *residual, *plan.returnConversion, *target, nullptr, body);
     }
 
     std::vector<HirValueId> operands{*operand, *test, *success, *residual};
@@ -5234,12 +5231,36 @@ private:
       const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
     const Expr *const enclosing = contextualConstructionInner;
     contextualConstructionInner = &initializer;
-    const std::optional<HirValueId> argument = lowerExpression(
+    std::optional<HirValueId> argument = lowerExpression(
         initializer, model, classArguments, classValueArguments, body);
     contextualConstructionInner = enclosing;
+    // A converted return's eligible operand is moved into the constructor.
+    if (argument) {
+      argument = implicitReturnMove(initializer, *argument, model, body);
+    }
     const std::optional<Token> site =
         model.contextualConstructionSite(initializer);
-    if (!argument || !site || construction.parameterTypes.empty() ||
+    if (!argument || !site) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
+    const std::optional<HirValueId> id =
+        implicitConstructionValue(*argument, construction, *site, body);
+    if (id) {
+      body.contextualConstructions.push_back(
+          {.source = &initializer, .value = *id});
+    }
+    return id;
+  }
+
+  // The source-less value an implicit constructor selected for one value
+  // produces: that value is its sole explicit operand, and the selected
+  // declaration defaults follow it.
+  [[nodiscard]] std::optional<HirValueId>
+  implicitConstructionValue(HirValueId argument,
+                            const ResolvedConstructionInfo &construction,
+                            const Token &site, HirBody &body) {
+    if (construction.parameterTypes.empty() ||
         construction.kind != ConstructorKind::Ordinary ||
         construction.constructor == 0 || construction.generatedDefault) {
       lifecycleValid = false;
@@ -5263,9 +5284,9 @@ private:
         .borrowFields = construction.borrowFields,
         .constructorKind = construction.kind,
     };
-    value.operands.push_back(*argument);
+    value.operands.push_back(argument);
     const HirConstructorInstanceId target =
-        enqueueConstructor(construction, tokenSpan(*site));
+        enqueueConstructor(construction, tokenSpan(site));
     if (target == 0) {
       lifecycleValid = false;
       return std::nullopt;
@@ -5291,7 +5312,7 @@ private:
       for (const Expr *defaultArgument : construction.defaultArguments) {
         const std::optional<HirValueId> lowered = lowerDefaultArgument(
             defaultArgument, defaultModel, targetClassArguments,
-            targetClassValueArguments, body, sourceLocationAt(*site));
+            targetClassValueArguments, body, sourceLocationAt(site));
         if (!lowered) {
           lifecycleValid = false;
           return std::nullopt;
@@ -5313,9 +5334,75 @@ private:
                                  .arguments = std::move(*arguments)};
     const HirValueId id = value.id;
     body.values.push_back(std::move(value));
-    body.contextualConstructions.push_back(
-        {.source = &initializer, .value = id});
     return id;
+  }
+
+  // The function instance of a selected conversion operator, owned by the
+  // converted value's class.
+  [[nodiscard]] std::optional<HirFunctionInstanceId> conversionFunctionTarget(
+      const ResolvedOperatorInfo &resolved, SemanticType receiverType,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) {
+    const FunctionInfo *target = baseModel->findFunction(resolved.function);
+    if (target == nullptr) {
+      return std::nullopt;
+    }
+    if (resolved.dispatchOwner.kind == SemanticType::Class &&
+        resolved.dispatchOwner.classId == target->ownerClass) {
+      receiverType = resolved.dispatchOwner;
+    }
+    const std::vector<SemanticType> ownerArguments =
+        receiverType.kind == SemanticType::Class ? receiverType.arguments
+                                                 : classArguments;
+    const std::vector<CompileTimeValue> ownerValueArguments =
+        receiverType.kind == SemanticType::Class ? receiverType.valueArguments
+                                                 : classValueArguments;
+    return enqueueFunction(*target, ownerArguments, ownerValueArguments, {}, {},
+                           resolved.returnType, resolved.parameterTypes);
+  }
+
+  // The receiver-only call an implicit conversion operator selected for one
+  // value: a condition's operator bool, a declaration's or return's
+  // conversion, or a propagated residual's, whose call has no source.
+  [[nodiscard]] HirValueId implicitConversionValue(
+      HirValueId receiverValue, const ResolvedOperatorInfo &resolved,
+      HirFunctionInstanceId target, const Expr *source, HirBody &body) {
+    (void)enqueueClass(resolved.returnType);
+    HirValue conversion{
+        .id = nextValueId++,
+        .kind = HirValueKind::Call,
+        .source = source,
+        .info = {.type = resolved.returnType,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits = instanceProvider->traitsFor(resolved.returnType)},
+        .operands = {receiverValue},
+        .definedFailure = {.propagation =
+                               resolved.dispatch == CallDispatch::Virtual
+                                   ? FailurePropagationKind::VirtualCall
+                                   : FailurePropagationKind::DirectCall},
+        .dispatch = resolved.dispatch,
+        .dispatchOwner = resolved.dispatchOwner,
+        .receiver = receiverValue,
+        .functionTarget = target,
+        .callableBoundary = resolved.boundary,
+    };
+    conversion.borrowOrigin = resolved.borrowOrigin;
+    conversion.borrowArgument = resolved.borrowArgument;
+    conversion.borrowAccess = resolved.borrowAccess;
+    if (resolved.receiverMode == CallReceiverMode::Consuming) {
+      conversion.callableInvocation = resolved.capability;
+    }
+    if (const std::optional<HirCallReceiver> planned =
+            orderedReceiver(receiverValue, resolved.receiverMutability,
+                            resolved.receiverMode, body)) {
+      conversion.callPlan = HirCallPlan{.receiver = *planned, .arguments = {}};
+    } else {
+      lifecycleValid = false;
+    }
+    const HirValueId conversionId = conversion.id;
+    body.values.push_back(std::move(conversion));
+    return conversionId;
   }
 
   [[nodiscard]] std::optional<HirValueId>
@@ -6643,24 +6730,8 @@ private:
     if (const ResolvedOperatorInfo *resolved =
             model.findContextualConversion(*raw);
         resolved != nullptr && resolved->function != 0) {
-      if (const FunctionInfo *target =
-              baseModel->findFunction(resolved->function)) {
-        SemanticType receiverType = resolved->dispatchOwner;
-        if (receiverType.kind != SemanticType::Class ||
-            receiverType.classId != target->ownerClass) {
-          receiverType = model.typeOf(*raw);
-        }
-        const std::vector<SemanticType> ownerArguments =
-            receiverType.kind == SemanticType::Class ? receiverType.arguments
-                                                     : classArguments;
-        const std::vector<CompileTimeValue> ownerValueArguments =
-            receiverType.kind == SemanticType::Class
-                ? receiverType.valueArguments
-                : classValueArguments;
-        contextualConversionTarget =
-            enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes);
-      }
+      contextualConversionTarget = conversionFunctionTarget(
+          *resolved, model.typeOf(*raw), classArguments, classValueArguments);
     }
     // A function target is this instance's exact selection. A generic
     // callable call inherits its deferred record from the primary analysis,
@@ -6946,48 +7017,15 @@ private:
     if (const ResolvedOperatorInfo *resolved =
             model.findContextualConversion(*raw);
         resolved != nullptr && contextualConversionTarget) {
-      const HirValueId receiverValue = value.id;
+      const HirValueId convertedValue = value.id;
       const HirFunctionInstanceId target = *contextualConversionTarget;
       body.values.push_back(std::move(value));
-      output.program.sourceValueIds[raw].push_back(receiverValue);
-
-      (void)enqueueClass(resolved->returnType);
-      HirValue conversion{
-          .id = nextValueId++,
-          .kind = HirValueKind::Call,
-          .source = raw,
-          .info = {.type = resolved->returnType,
-                   .category = ValueCategory::Value,
-                   .access = AccessMode::ReadOnly,
-                   .traits = instanceProvider->traitsFor(resolved->returnType)},
-          .operands = {receiverValue},
-          .definedFailure = {.propagation =
-                                 resolved->dispatch == CallDispatch::Virtual
-                                     ? FailurePropagationKind::VirtualCall
-                                     : FailurePropagationKind::DirectCall},
-          .dispatch = resolved->dispatch,
-          .dispatchOwner = resolved->dispatchOwner,
-          .receiver = receiverValue,
-          .functionTarget = target,
-          .callableBoundary = resolved->boundary,
-      };
-      conversion.borrowOrigin = resolved->borrowOrigin;
-      conversion.borrowArgument = resolved->borrowArgument;
-      conversion.borrowAccess = resolved->borrowAccess;
-      if (resolved->receiverMode == CallReceiverMode::Consuming) {
-        conversion.callableInvocation = resolved->capability;
-      }
-      if (const std::optional<HirCallReceiver> planned =
-              orderedReceiver(receiverValue, resolved->receiverMutability,
-                              resolved->receiverMode, body)) {
-        conversion.callPlan =
-            HirCallPlan{.receiver = *planned, .arguments = {}};
-      } else {
-        lifecycleValid = false;
-      }
-
-      const HirValueId conversionId = conversion.id;
-      body.values.push_back(std::move(conversion));
+      output.program.sourceValueIds[raw].push_back(convertedValue);
+      // A converted return's eligible operand is moved into the receiver.
+      const HirValueId receiverValue =
+          implicitReturnMove(*raw, convertedValue, model, body);
+      const HirValueId conversionId =
+          implicitConversionValue(receiverValue, *resolved, target, raw, body);
       output.program.sourceValueIds[raw].push_back(conversionId);
       return conversionId;
     }

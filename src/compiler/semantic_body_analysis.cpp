@@ -4448,15 +4448,23 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
 
   const SemanticType valueType =
       analyzeInitializer(stmt.value(), currentReturnType);
+  const bool textView = currentReturnType.kind == SemanticType::StringView ||
+                        currentReturnType.kind == SemanticType::CString;
+  // A value of another type initializes the owned result exactly as the
+  // declaration `R result = value;` would (ADR 027).
+  const bool converted =
+      !textView &&
+      !isOwnershipAssignable(currentReturnType, valueType, stmt.value()) &&
+      analyzeReturnConversion(stmt.value(), currentReturnType, valueType);
   recordRawResult(stmt.value());
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
   }
-  if (currentReturnType.kind == SemanticType::StringView ||
-      currentReturnType.kind == SemanticType::CString) {
+  if (textView) {
     validateOwnerDependentTextReturn(valueType, stmt.value());
   }
-  if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
+  if (!converted &&
+      !isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
     const ImplicitReturnMoveStatus implicitMove =
         analyzeImplicitReturnMove(stmt.value(), currentReturnType, valueType);
     if (implicitMove == ImplicitReturnMoveStatus::NotEligible) {
@@ -4493,11 +4501,22 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
           diagnostics.emplace_back(std::move(diagnostic));
         }
       } else {
+        const std::size_t reported = diagnostics.size();
         report(expressionToken(stmt.value()),
                "Cannot return a value of type '" + typeSpelling(valueType) +
                    "' from a function returning '" +
                    typeSpelling(currentReturnType) + "'.",
                "GTI-S2003");
+        // As for a declaration, say how an explicit conversion is spelled.
+        if (diagnostics.size() > reported && !textView &&
+            !typeTraits(currentReturnType).containsBorrowedState &&
+            (!conversionOperatorCandidates(valueType, currentReturnType, false)
+                  .empty() ||
+             declarationConstructionApplies(stmt.value(), currentReturnType,
+                                            valueType))) {
+          diagnostics.back().hints.emplace_back(implicitConstructionHint(
+              typeSpelling(currentReturnType) + "(...)", "a returned value"));
+        }
       }
     }
   }
@@ -11571,6 +11590,10 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
           ConstantEvaluationFailure::UnsupportedExpression,
           "Every field of a constexpr aggregate must be initialized.");
     }
+    if (recordsDeclarationConversion(*initializerExpression)) {
+      restore();
+      return constexprConversionFailure(*initializerExpression);
+    }
     ConstexprEvaluation initializer =
         evaluateConstexprExpression(*initializerExpression, context);
     if (!initializer) {
@@ -12534,6 +12557,10 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
     ConstexprLocalValue value;
     if (binding->constant) {
       value = *binding->constant;
+    } else if (declaration->initializer() &&
+               recordsDeclarationConversion(*declaration->initializer())) {
+      return constexprStatementFailure(
+          constexprConversionFailure(*declaration->initializer()));
     } else if (declaration->initializer()) {
       ConstexprEvaluation initializer =
           evaluateConstexprExpression(declaration->initializer(), context);
@@ -12568,6 +12595,10 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
           constexprFailure(returnStatement->keyword(),
                            ConstantEvaluationFailure::UnsupportedExpression,
                            "A scalar constexpr function must return a value."));
+    }
+    if (recordsDeclarationConversion(*returnStatement->value())) {
+      return constexprStatementFailure(
+          constexprConversionFailure(*returnStatement->value()));
     }
     ConstexprEvaluation value =
         evaluateConstexprExpression(returnStatement->value(), context);

@@ -1,6 +1,6 @@
 # ADR 029: Prefix `?` Through `std::tryable`
 
-Status: Accepted (2026-10-15)
+Status: Accepted (2026-10-15); decision 5 revised 2026-10-15 (see below)
 
 ## Context
 
@@ -50,15 +50,16 @@ body, satisfied through `for concept` blocks outside the type.
    is a statement.
 
 5. **Failure.** `take_residual` produces the residual. The enclosing function
-   or lambda returns it, initializing its declared return type `R` as
-   `R result = residual;` would:
+   or lambda returns it as an ordinary `return residual;` of that fresh value
+   would, initializing its declared return type `R` as `R result = residual;`
+   would:
    - the residual already has type `R`; or
-   - `R` declares exactly one `implicit` constructor whose sole parameter is
-     the residual's type.
+   - ADR 027's one shared selection converts it: one `implicit` constructor
+     of `R`, or one `implicit` conversion operator of the residual's class.
 
    The return first destroys the full expression's earlier temporaries,
    newest first, and then performs ordinary lexical cleanup, as for
-   `expected`.
+   `expected`. (Revised; see below.)
 
 6. **Execution.** Each step is an ordinary call of the selected block
    function. HIR records the steps as one propagation plan, and MIR lowers it
@@ -99,7 +100,9 @@ body, satisfied through `for concept` blocks outside the type.
 - The operand must be a class, struct or payload-enum type. Payload enums
   joined in the 2026-10-15 revision below; a scalar-backed enum remains
   outside this phase.
-- Violations are reported as `GTI-S2086`.
+- Violations are reported as `GTI-S2086`. A residual conversion that the
+  shared selection rejects keeps that selection's own diagnostic, such as
+  `GTI-S2122` for an ambiguity.
 
 ## Revision: payload-enum operands (2026-10-15)
 
@@ -115,4 +118,33 @@ names, propagates like a class. No rule is specific to `?`:
 
 An enum declares no constructors, so a residual returned from a function
 whose return type is a payload enum has that enum type, which is how a
-`result<T, E>`-style enum returns its own failure.
+`result<T, E>`-style enum returns its own failure, or converts through an
+`implicit` conversion operator of the residual's class (see the next
+revision).
+
+## Revision: the residual is an ordinary return (2026-10-15)
+
+Decision 5 originally searched the return type for exactly one `implicit`
+constructor taking the residual: a second conversion rule beside
+declarations, which never considered conversion operators. When returns
+gained ADR 027's conversions, the owner directed that the residual be
+consolidated with ordinary initialization rather than keep its own resolver.
+
+The residual is now an ordinary return of the residual. Semantics passes the
+fresh residual, through a synthesized stand-in for the `take_residual`
+result, to the same selection that `return residual;` and
+`R result = residual;` use, and the hand-written constructor search is
+removed. A residual therefore also converts through an `implicit` conversion
+operator, an `implicit` constructor with defaulted trailing parameters, or a
+constrained `implicit` constructor whose requirements hold; an ambiguity is
+`GTI-S2122`, and an access or ownership failure is the selection's own
+diagnostic. HIR represents the residual return as the same contextual
+construction, or receiver-only conversion call, that a declaration or return
+lowers to; MIR still branches to the early return and adds no operation.
+
+The built-in scalar and `expected` initialization conversions that an
+ordinary return also accepts, such as an integer widening, do not apply to a
+residual yet: the propagation exit returns either the residual itself or a
+selected call, and it does not share the ordinary return's built-in
+conversion. Supporting them needs that exit to return through the ordinary
+return lowering. They remain `GTI-S2086`.

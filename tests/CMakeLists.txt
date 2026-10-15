@@ -2036,6 +2036,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(conversion_operators_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME implicit_returns_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/implicit_returns_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(implicit_returns_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME protocol_concepts_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/protocol_concepts_runtime_test.py"

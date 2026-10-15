@@ -492,7 +492,8 @@ The current implemented foundation includes:
   - a consuming `T value() &&` that moves the value out;
   - move assignment, which destroys the current value, if any, first;
   - `implicit optional(std::experimental::nullopt_t)` and the
-    `std::experimental::nullopt` value;
+    `std::experimental::nullopt` value, so a declaration or a return may
+    write `std::experimental::nullopt` for an empty optional;
   - a `std::tryable` block, so `?` on an optional moves its value out, or
     returns an empty optional from a function returning one.
 

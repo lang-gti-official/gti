@@ -403,8 +403,8 @@ Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list, and a class may declare
 conversion operators to other types (section 3.9.2). Neither defines an
-implicit conversion for calls, returns, or assignment; only the declaration
-rule below selects one, declared `implicit`, for an initializer of another
+implicit conversion for calls or assignment; only the declaration rule below,
+which returns share, selects one, declared `implicit`, for a value of another
 type.
 
 The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
@@ -441,10 +441,10 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Function arguments, returns, and
-assignment never use it. A class assignment from another type requires an
-exact member `operator=`, such as `std::string`'s
-`operator=(std::string_view)`.
+contextually typed call, or a function name. A return uses the same rule
+(below); function arguments and assignment never use it. A class assignment
+from another type requires an exact member `operator=`, such as
+`std::string`'s `operator=(std::string_view)`.
 
 A declaration whose initializer has a class type `U` also converts it
 through an implicit conversion operator of `U` to exactly the declared type,
@@ -458,6 +458,28 @@ declaration is ambiguous (`GTI-S2122`): GTI never ranks a constructor against
 a conversion operator, and `T name{initializer}` still selects the
 constructor. A conversion operator without `implicit` converts only
 explicitly; the exact-type error's hint then names `T(...)`.
+
+A return converts as a declaration does ([ADR 027](../decisions/027-user-defined-conversions.md#revision-returns-2026-10-15)).
+In a function, method, or lambda whose declared return type `R` is an owned
+value type, `return value;` with a value of another type `U` that no other
+rule admits initializes the result exactly as `R result = value;` would:
+through the one implicit constructor of `R` that takes it or the one implicit
+conversion operator of `U` to `R`, with the same selection, ambiguity,
+access, ownership, failure, and cleanup, and the same exclusions. A
+reference return, a text view, a borrow-carrying return type, and a `void`
+function keep their own rules. So a function returning
+`std::experimental::optional<T>` may `return std::experimental::nullopt;`,
+and `Celsius make() { return 21; }` calls `implicit Celsius(int)`. When the
+selected conversion takes its operand by value, an implicit constructor
+whose parameter is not a reference or a consuming implicit operator, a
+returned whole local or by-value parameter that section 3.10 would move is
+moved into it, as `R result = std::move(value);` would; no `std::move` is
+needed. A conversion that borrows its operand, through a reference parameter
+or a read-only or `mut` receiver, leaves it in place until lexical cleanup,
+and any other named place is copied, or rejected when it cannot be copied,
+as in a declaration. When nothing converts, the return keeps its exact-type
+error (`GTI-S2003`); its hint names the explicit `R(...)` form when `R` is a
+constructible class or `U` declares a conversion operator to `R`.
 
 `implicit` is written first in an ordinary constructor declaration, before
 `constexpr`. It requires a source body and a constructor callable with exactly
@@ -1550,20 +1572,25 @@ or enum template that a block's pattern names; a scalar-backed enum is
 rejected in this phase. The operand is transported like a by-value argument of
 type `X`, and `has_value` borrows a temporary as an ordinary call borrows a
 fresh value of `X`. A payload enum declares no constructors, so a residual
-initializes a payload-enum return type only when it has that type. A
-temporary
-or `std::move(place)` operand needs a movable `X`. A named place needs a
+initializes a payload-enum return type only when it has that type or converts
+through an `implicit` conversion operator of its class. A temporary or
+`std::move(place)` operand needs a movable `X`. A named place needs a
 copyable `X` and remains available. `X`, `value_type` and `residual_type`
 contain no stored borrows, and `value_type` and `residual_type` are not
 references. The expression has type `std::tryable<X>::value_type`, or `void`
 when that type is `void`.
 
 The immediately enclosing function or lambda has a declared return type `R`,
-which is not `void`. The residual type is `R` itself, or `R` declares exactly
-one unconstrained, safe `implicit` constructor whose single parameter is the
-residual type. In a generic body these checks happen for each concrete
-instance. Propagation through `std::tryable` is not available in constant
-evaluation. Violations are `GTI-S2086`.
+which is not `void`. The residual returns as an ordinary `return residual;`
+of that fresh value would (section 3.5): the residual type is `R` itself, or
+the shared selection converts it through one `implicit` constructor of `R` or
+one `implicit` conversion operator of the residual's class. The built-in
+scalar and `expected` initialization conversions do not apply to a residual.
+In a generic body these checks happen for each concrete instance.
+Propagation through `std::tryable` is not available in constant evaluation.
+Violations are `GTI-S2086`, except that a residual conversion the shared
+selection rejects, such as an ambiguous one (`GTI-S2122`), keeps that
+selection's diagnostic.
 
 An owning operand whose expression category is a value selects move transport
 for both alternatives. A named owning place selects copy transport for both
@@ -1606,10 +1633,10 @@ like any member; an override has the same target and receiver.
 A conversion operator is explicit by default. Only `Target(value)` calls it,
 including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
 `bool(value)`, and an alias of a numeric, raw pointer, or class target.
-`implicit operator Target()` also admits the declaration conversion of
-section 3.5. No other context converts: function arguments, returns,
-assignment, operator operands, and `auto` inference keep exact types, and brace
-construction `Target{value}` considers only constructors.
+`implicit operator Target()` also admits the declaration and return
+conversions of section 3.5. No other context converts: function arguments,
+assignment, operator operands, and `auto` inference keep exact types, and
+brace construction `Target{value}` considers only constructors.
 
 **Selection.** In `Target(value)`, where `value` has a class type `U` that
 declares a conversion operator to exactly `Target`, the conversion has two
@@ -1626,8 +1653,8 @@ operator, and an owned temporary or `std::move(value)` prefers a consuming
 operator. A consuming operator never consumes a named owner implicitly, and a
 `mut` operator requires a mutable place. Access is checked after selection,
 so a private operator is an access error, never a reason to use another path.
-A declaration considers only implicit constructors and implicit operators,
-under the same rule.
+A declaration or return considers only implicit constructors and implicit
+operators, under the same rule.
 
 At most one conversion applies. GTI never chains a conversion operator with a
 constructor, another conversion operator, or a numeric conversion: a
@@ -1663,11 +1690,14 @@ A by-value `return name;`, including transparent parentheses around `name`,
 implicitly selects move transport only when `name` denotes a whole local or
 by-value parameter, the source and result types are exact, and the concrete
 type is movable but not copyable. The source becomes unavailable on that path.
-A copyable source still selects copy transport. Return conversions and fields,
-indexed or dereferenced places, globals, references, captures, temporaries, and
-immovable values do not gain implicit movement; their existing copy,
-conversion, or explicit `std::move` requirements remain in force. Concrete
-generic reanalysis makes this decision from the substituted type traits.
+A copyable source still selects copy transport. A return conversion (section
+3.5) that takes its operand by value moves an operand that meets these
+conditions apart from the exact types; one that borrows it does not move it.
+Fields, indexed or dereferenced places, globals, references, captures,
+temporaries, and immovable values do not gain implicit movement; their
+existing copy, conversion, or explicit `std::move` requirements remain in
+force. Concrete generic reanalysis makes this decision from the substituted
+type traits.
 
 A void-returning function, method, operator, or lambda accepts a bare `return`
 or `return expression;` with an exactly void-typed expression. Non-void values

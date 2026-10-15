@@ -5,10 +5,12 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 // Conversion operators: `operator Target()` is called only by an explicit
 // `Target(value)` unless declared `implicit`, which also admits declaration
-// initialization. Every rule is exercised through unrelated user types.
+// initialization and returns. Every rule is exercised through unrelated user
+// types.
 int main() {
   int failures = 0;
   const auto expect = [&](bool condition, const std::string &message) {
@@ -263,13 +265,230 @@ int main() { return 0; }
 )gti",
            "GTI-S2003", "Cannot initialize 'widened'");
 
-  // No other context converts.
+  // A converted return lowers as the selected operator's receiver-only call
+  // on the returned value, as a declaration's does: one Move of an eligible
+  // operand when the operator consumes it, the place itself otherwise. Each
+  // instance of the named function reports whether its operand moved.
+  const auto returnMoves = [&](const lang::FrontendResult &result,
+                               const std::string &name) {
+    std::vector<bool> moves;
+    for (const lang::StmtPtr &declaration : result.program.declarations()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(declaration.get());
+      if (function == nullptr || function->name().lexeme != name ||
+          function->body() == nullptr)
+        continue;
+      const lang::ReturnStmt *returned = nullptr;
+      for (const lang::StmtPtr &statement : function->body()->statements())
+        if (const auto *candidate =
+                dynamic_cast<const lang::ReturnStmt *>(statement.get()))
+          returned = candidate;
+      const lang::FunctionInfo *info = result.semantics.findFunction(*function);
+      if (returned == nullptr || !returned->value() || info == nullptr)
+        continue;
+      for (const lang::HirFunctionInstance &instance :
+           result.hir.functionInstances()) {
+        if (instance.declaration != info->id)
+          continue;
+        for (const lang::HirStatement &statement : instance.body.statements) {
+          if (statement.kind != lang::HirStatementKind::Return ||
+              statement.source != returned || !statement.value)
+            continue;
+          const lang::HirValue *call =
+              instance.body.findValue(*statement.value);
+          const lang::HirValue *operand =
+              call != nullptr && call->kind == lang::HirValueKind::Call &&
+                      call->receiver && call->functionTarget
+                  ? instance.body.findValue(*call->receiver)
+                  : nullptr;
+          if (operand != nullptr && operand->source == returned->value().get())
+            moves.push_back(operand->kind == lang::HirValueKind::Move);
+        }
+      }
+    }
+    return moves;
+  };
+  const auto acceptedReturns = [&](const std::string &source,
+                                   const std::string &message) {
+    auto result = analyze(source);
+    expect(result.canGenerateCode(), message);
+    if (!result.canGenerateCode())
+      for (const auto &d : result.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+    return result;
+  };
+
+  // A return converts its value exactly as `R result = value;` would, through
+  // an implicit operator to an owned value type, including `bool` and numeric
+  // targets. The operator's receiver follows member-call rules: a temporary
+  // is borrowed for the call, a named place borrowed or mutated in place, and
+  // a consuming operator takes an owned temporary or a whole move-only local
+  // or by-value parameter that the return moves implicitly (ADR 023).
+  {
+    auto result = acceptedReturns(R"gti(
+#include <std/string>
+struct UserId {
+  int64_t value;
+  UserId(int64_t raw) : value(raw) {}
+};
+struct RawId {
+  int64_t raw;
+  RawId(int64_t value) : raw(value) {}
+  implicit operator UserId() { return UserId(this.raw); }
+  implicit operator bool() { return this.raw != int64_t(0); }
+};
+class Builder {
+  mut std::string text;
+public:
+  Builder(std::string_view start) : text(start) {}
+  Builder(Builder& other) = delete;
+  Builder(Builder&& other) = default;
+  implicit operator std::string() && { return std::move(this.text); }
+};
+struct Counter {
+  mut int calls = 0;
+  implicit operator int() mut {
+    this.calls++;
+    return this.calls;
+  }
+};
+UserId temporary() { return RawId(int64_t(4)); }
+UserId borrowed(RawId raw) { return raw; }
+bool truth(RawId raw) { return raw; }
+std::string built() {
+  Builder builder{"local"};
+  return builder;
+}
+std::string parameter(Builder builder) { return (builder); }
+std::string fresh() { return Builder("fresh"); }
+int counted() {
+  mut Counter counter{};
+  return counter;
+}
+int main() {
+  std::string local = built();
+  std::string moved = parameter(Builder("param"));
+  std::string made = fresh();
+  return int(temporary().value + borrowed(RawId(int64_t(2))).value) +
+         (truth(RawId(int64_t(1))) ? 1 : 0) + counted() +
+         int(local.size() + moved.size() + made.size());
+}
+)gti",
+                                  "returns must convert through implicit "
+                                  "operators");
+    expect(returnMoves(result, "temporary") == std::vector<bool>{false} &&
+               returnMoves(result, "borrowed") == std::vector<bool>{false} &&
+               returnMoves(result, "truth") == std::vector<bool>{false} &&
+               returnMoves(result, "built") == std::vector<bool>{true} &&
+               returnMoves(result, "parameter") == std::vector<bool>{true} &&
+               returnMoves(result, "fresh") == std::vector<bool>{false} &&
+               returnMoves(result, "counted") == std::vector<bool>{false},
+           "a consuming operator must receive one implicit Move of an "
+           "eligible operand, and every other return its own value");
+  }
+
+  // A lambda with a declared return type converts like a function, and a
+  // generic body's return converts in each concrete instance.
+  {
+    auto result = acceptedReturns(R"gti(
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+struct Feet {
+  int value;
+  Feet(int amount) : value(amount) {}
+  implicit operator Meters() { return Meters(this.value / 3); }
+};
+struct Box<T> {
+  mut T value;
+  Box(T initial) : value(std::move(initial)) {}
+  implicit operator T() && { return std::move(this.value); }
+};
+class Token {
+public:
+  int id;
+  Token(int raw) : id(raw) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+};
+Token unbox(Box<Token> box) { return box; }
+T unwrap<T>(Box<T> box) { return std::move(box); }
+int main() {
+  auto measure = [](int feet) -> Meters { return Feet(feet); };
+  auto named = [](int feet) -> Meters {
+    Feet local{feet};
+    return local;
+  };
+  Meters first = measure(9);
+  Meters second = named(12);
+  Token token = unbox(Box<Token>(Token(5)));
+  return first.value + second.value + token.id +
+         unwrap(Box<int>(1)) + unwrap(Box<Token>(Token(2))).id;
+}
+)gti",
+                                  "lambdas and generic instances must convert "
+                                  "returns");
+    expect(returnMoves(result, "unbox") == std::vector<bool>{true},
+           "a move-only by-value parameter must move into a consuming "
+           "operator");
+  }
+
+  // Calls, assignment, `auto` inference, operands and braces never convert,
+  // and a conversion operator without `implicit` is explicit at a return too.
   rejected(ids + "int take(UserId id) { return 0; }\n"
                  "int main() { RawId raw{int64_t(1)}; return take(raw); }\n",
            "GTI-S2003", "parameter requires 'UserId'");
   rejected(ids + "UserId give(RawId raw) { return raw; }\n"
                  "int main() { return 0; }\n",
            "GTI-S2003", "Cannot return");
+  rejected(ids + "UserId give(RawId raw) { return raw; }\n"
+                 "int main() { return 0; }\n",
+           "GTI-S2003", "converts a returned value; write 'UserId(...)'");
+  // A consuming operator never consumes a named owner the return does not
+  // move: a copyable local, a reference binding or a field. Movement needs a
+  // whole move-only local or by-value parameter.
+  const std::string builder = R"gti(
+#include <std/string>
+struct Coins {
+  mut int count = 3;
+  implicit operator int() && { return this.count; }
+};
+class Pinned {
+  mut std::string text;
+public:
+  Pinned(std::string_view start) : text(start) {}
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = default;
+  implicit operator std::string() && { return std::move(this.text); }
+};
+)gti";
+  rejected(builder + "int copyable() { Coins coins{}; return coins; }\n"
+                     "int main() { return 0; }\n",
+           "GTI-S2022", "A consuming conversion operator requires");
+  rejected(builder + "std::string aliased(Pinned& pinned) { return pinned; }\n"
+                     "int main() { return 0; }\n",
+           "GTI-S2022", "A consuming conversion operator requires");
+  rejected(builder + "class Shop {\n  Pinned pinned;\npublic:\n  Shop() : "
+                     "pinned(Pinned(\"b\")) {}\n  std::string take() { return "
+                     "this.pinned; }\n};\nint main() { return 0; }\n",
+           "GTI-S2022", "A consuming conversion operator requires");
+  // Reference, text-view, void and deduced returns keep their own rules.
+  rejected(ids + "int64_t& bits(RawId& raw) { return raw; }\n"
+                 "int main() { return 0; }\n",
+           "GTI-S2017", "Reference return requires an exact 'int64_t' value");
+  rejected(builder + "std::string_view view(Pinned pinned) { return pinned; "
+                     "}\nint main() { return 0; }\n",
+           "GTI-S2003",
+           "Cannot return a value of type 'Pinned' from a function returning "
+           "'std::string_view'");
+  rejected(ids + "void none(RawId raw) { return raw; }\n"
+                 "int main() { return 0; }\n",
+           "GTI-S2000", "Void function cannot return a value");
+  rejected(ids + "auto deduced() { return RawId(int64_t(1)); }\n"
+                 "int main() { return 0; }\n",
+           "GTI-S2028",
+           "'auto' is only valid for an initialized local binding");
   rejected(ids + "int main() { RawId raw{int64_t(1)}; mut UserId id = "
                  "UserId(raw); id = raw; return 0; }\n",
            "GTI-S2003", "Cannot assign");
@@ -314,6 +533,10 @@ struct Source {
            "GTI-S2122", "Conversion of 'Source' to 'Target' is ambiguous");
   rejected(ambiguous + "int main() { Source source{}; Target target = source; "
                        "return target.value; }\n",
+           "GTI-S2122",
+           "Initialization of 'Target' from 'Source' is ambiguous");
+  rejected(ambiguous + "Target give(Source source) { return source; }\n"
+                       "int main() { return give(Source()).value; }\n",
            "GTI-S2122",
            "Initialization of 'Target' from 'Source' is ambiguous");
   rejected(R"gti(
@@ -437,6 +660,6 @@ int main() { return Globals::tested ? 1 : 0; }
     return 1;
   }
   std::cout << "conversion operator selection, contexts, receivers, "
-               "declarations and effects passed\n";
+               "declarations, returns and effects passed\n";
   return 0;
 }

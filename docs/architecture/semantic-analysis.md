@@ -128,11 +128,49 @@ and conservative raw-pointer field origins, at the declaration, as the direct
 initializer's expression would.
 
 The rule runs where the exact `nullptr_t` construction does, for declarations
-and field constructor initializers. It does not run for `constexpr` or
-range-element bindings, reference fields, unions, abstract classes,
-borrow-carrying declared types, or initializers typed by their destination
-(brace lists, contextually typed calls and function names). Calls, returns and
-assignment never consult it.
+and field constructor initializers, and for returns (below). It does not run
+for `constexpr` or range-element bindings, reference fields, unions, abstract
+classes, borrow-carrying declared types, or initializers typed by their
+destination (brace lists, contextually typed calls and function names). Calls
+and assignment never consult it.
+
+## Return conversion
+
+`visitReturnStmt` hands a value of another type to an owned return type to
+`analyzeReturnConversion`, which applies the declaration's selection
+unchanged: `declarationConstructionApplies` and
+`declarationConversionApplies` decide whether a path exists, and
+`analyzeDeclarationConversion` or `analyzeDeclarationConstruction` selects and
+records it on the returned expression, so the return shares the
+declaration's records, diagnostics, effects and raw-pointer field origins.
+Reference, text-view, borrow-carrying and `void` returns never reach it.
+
+Before selecting, it decides ADR 023 movement. The constructor probe and
+`conversionOperatorCandidates` say whether the one existing path takes its
+operand by value: a constructor whose explicit parameter is not a reference,
+or a consuming operator. Only then does `moveReturnedOwner`, the eligibility
+and bookkeeping half of `analyzeImplicitReturnMove` without the exact-type
+condition, move a whole move-only local or by-value parameter: it records the
+`Move` ownership event and the implicit-return-move fact. For the selection
+alone, the operand's expression record becomes the moved value's (`Value`
+category), exactly what `std::move(value)` would produce, and is restored
+afterwards, so the operand's own record still describes the place that HIR
+wraps in the `Move`. A borrowing path, an ineligible operand and an
+ambiguity select on the place exactly as the declaration does. The probe's
+diagnostics are discarded because the selection repeats any it reports.
+
+The legacy constexpr walker refuses a contextually converted declaration
+initializer, field initializer or returned value
+(`constexprConversionFailure`); the staged verified-MIR profile executes the
+selected call instead.
+
+Prefix `?` uses the same function for its residual. `selectResidualReturn`
+synthesizes a stand-in literal, located at `?` and recorded as a fresh
+`Value` of the residual type, runs `analyzeReturnConversion` on it, and moves
+the selected construction or conversion into
+`ResolvedTryablePropagationInfo::returnConstruction` or `returnConversion`,
+forgetting the stand-in's contextual records. The stand-in is retained with
+the analyzer's other synthesized expressions and is never lowered.
 
 ## Conversion operators
 
@@ -162,9 +200,11 @@ names the receiver for the ownership, constexpr and HIR consumers that
 otherwise locate an operator receiver by node shape. A declaration records a
 contextual conversion on its initializer, in the map that holds a condition's
 `operator bool`, and the declaration's sites accept the initializer through
-`recordsDeclarationConversion`. Every contextual conversion now records its
-target's program effect edge, so a condition's `operator bool` contributes to
-initializer-order effects like a declaration's conversion does.
+`recordsDeclarationConversion`; a converted return records its conversion on
+the returned expression in the same way. Every contextual conversion now
+records its target's program effect edge, so a condition's `operator bool`
+contributes to initializer-order effects like a declaration's conversion
+does.
 
 ## Native C scalar target facts
 

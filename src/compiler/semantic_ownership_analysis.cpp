@@ -9337,8 +9337,16 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
 auto SemanticVisitor::Impl::analyzeImplicitReturnMove(
     const ExprPtr &expression, const SemanticType &returnType,
     const SemanticType &valueType) -> ImplicitReturnMoveStatus {
-  if (!expression || returnType != valueType ||
-      !isMoveOnlyOwnerType(valueType)) {
+  if (returnType != valueType) {
+    return ImplicitReturnMoveStatus::NotEligible;
+  }
+  return moveReturnedOwner(expression, valueType);
+}
+
+auto SemanticVisitor::Impl::moveReturnedOwner(const ExprPtr &expression,
+                                              const SemanticType &valueType)
+    -> ImplicitReturnMoveStatus {
+  if (!expression || !isMoveOnlyOwnerType(valueType)) {
     return ImplicitReturnMoveStatus::NotEligible;
   }
 

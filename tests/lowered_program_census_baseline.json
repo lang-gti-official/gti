@@ -2414,11 +2414,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 39
       }
+    },
+    "164-implicit-returns.gti": {
+      "declarations": 1262,
+      "bodies": 141,
+      "generated_items": 90,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 39
+      }
     }
   },
   "totals": {
-    "declarations": 122561,
-    "bodies": 18078,
-    "generated_items": 11420
+    "declarations": 123823,
+    "bodies": 18219,
+    "generated_items": 11510
   }
 }

@@ -310,8 +310,9 @@ Prefix `?` through `std::tryable`
 - the operand;
 - an ordinary static call of the block's `has_value`, borrowing it;
 - `take_value` and `take_residual` calls, each consuming it on its own path;
-- the residual return: an implicit construction of the return type, or the
-  residual itself.
+- the residual return: the implicit construction or receiver-only implicit
+  conversion call that the shared selection chose, built by the same lowering
+  as a declaration's, or the residual itself.
 
 A temporary operand is borrowed in place and moved into the consuming call.
 An explicit `std::move(place)` leaves the place in place: the test borrows it,
@@ -320,7 +321,8 @@ borrowed and copied. HIR verification checks:
 - each call against the semantic record's block function and its argument
   kind;
 - that every step belongs to the propagation's full expression;
-- the residual construction's identity.
+- the residual construction's or conversion's identity, its operand (the
+  residual, then any selected defaults) and its call plan.
 
 `expect(message)` uses the same selected-combinator record and eager input
 contract, with receiver then counted message rather than a mapper. Its success
@@ -847,8 +849,17 @@ The declaration's full expression ends with the construction, and
 `initializerValueForSource` returns it for the binding or field it
 initializes. The HIR model checks every entry against the semantic record: the
 selected constructor, parameter types and defaults, the constructor failure
-channel, and the absence of a result borrow. MIR lowers it as any constructor
-call; no MIR operation is added.
+channel, and the absence of a result borrow. A generic body's program record
+is still the primary's `C<T>`, so its entries retain that constructor identity
+and check the concrete constructor instance's parameter types instead. MIR
+lowers it as any constructor call; no MIR operation is added.
+
+A converted return lowers the same way: its returned expression carries the
+contextual construction or conversion, and the return statement's value is
+that construction or conversion call. When semantics recorded an implicit
+return move for the operand, the one `Move` that ADR 023 adds wraps the
+operand beneath the construction or call, never the result, so the
+constructor parameter or consuming receiver receives the moved value.
 
 The bounded M-EXEC-01 invocation slices give an eligible ordinary call,
 resolved class operator call, or ordinary constructor a `HirCallPlan`.
@@ -948,9 +959,10 @@ a class value is eligible only when it can be moved. The operand vector remains
 source provenance; MIR consumes the plan as schedule authority for these
 slices.
 
-A contextual conversion, a condition's `operator bool` or a declaration's
-implicit conversion operator, is an explicit synthetic HIR call whose receiver
-operand is the already lowered source expression. It has its own target,
+A contextual conversion, a condition's `operator bool` or a declaration's or
+return's implicit conversion operator, is an explicit synthetic HIR call whose
+receiver operand is the already lowered source expression, or the `Move` of it
+for a converted return's moved operand. It has its own target,
 dispatch, failure, borrow, receiver, and call-plan identity, and the
 conversion's result type and traits; the source value keeps its own. When one
 source expression therefore produces both a value and an outer conversion
