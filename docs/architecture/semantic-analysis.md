@@ -2159,13 +2159,13 @@ stable across compilations and distinct per block. The namespace holds:
   parameters.
 
 Every function also carries a requires clause naming the block's own
-application, built from generated tokens. Each existing declaration and
-lowering pass therefore sees ordinary namespace functions. HIR enqueues their
+application, under a generated `requires` keyword. Each existing declaration
+and lowering pass therefore sees ordinary namespace functions. HIR enqueues their
 instances from ordinary `ResolvedCallInfo` records, MIR lowers them like any
 generic function, and the C++ backend names them by the existing instance
 identity, which includes the generated namespace.
 
-**Registration** happens in two stages before the catalog is sealed:
+**Registration** happens in three stages before the catalog is sealed:
 1. `registerConformances` runs right after concept resolution. It resolves
    the concept from the block's enclosing namespace, then checks each
    argument's pattern shape, that every block parameter appears, ADR 020
@@ -2176,11 +2176,20 @@ identity, which includes the generated namespace.
    ever bind closed types or each other, and no occurs check is needed. It
    records each `using` type in the block's parameter space. A block with
    missing or extra associated types still registers, so its operations are
-   still checked and its uses do not report a second error.
+   still checked and its uses do not report a second error. This stage needs
+   only the identities of the block's written types, not their validity.
 2. `bindConformanceOperations` runs after namespace symbols exist. It selects
    each operation's function from the generated namespace and compares both
    signatures in the block's parameter space, with projections of the block's
    own pattern resolved to its types.
+3. `validateConformanceTypes` runs with the type-alias constraint check,
+   after every block is registered and each class's members and lifecycle
+   are recorded. It validates each block's patterns and `using` types once,
+   whether or not the block registered. A concrete type's constraints and a
+   projection through a block declared later are therefore decided as in any
+   other declaration. The restated requires clause on each block function is
+   resolved for its body but not validated again, so a pattern problem
+   reports once at the block rather than once per operation.
 
 `SemanticCatalog::conformances` is copied into instance-analysis snapshots and
 included in the instance-reuse fingerprint.

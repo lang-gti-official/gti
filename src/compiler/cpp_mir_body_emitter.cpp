@@ -34308,9 +34308,12 @@ public:
         // slot; the adjacent receiver-field Assign consumes it once.
         continue;
       }
-      if (consumedReceiverValueSlot(facts.body, value.id)) {
+      if (consumedReceiverValueSlot(facts.body, value.id) ||
+          consumedReceiverStageSlot(facts.body, value.id)) {
         // The moved receiver already has its exact lifetime slot: its
         // Value-rooted place, or the conditional temporary it moves into.
+        // Its MoveValue receiver stage aliases that slot at the call, so
+        // neither identity is a copy stage needing storage of its own.
         continue;
       }
       if (valueRootedMoveAssignmentSlot(program, representations, facts.body,
