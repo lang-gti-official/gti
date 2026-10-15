@@ -1,0 +1,32 @@
+// std::experimental::optional: empty and engaged states, `?`, and a consuming
+// move-out of a move-only payload.
+#include <std/experimental/optional>
+#include <std/memory>
+#include <std/string>
+
+std::experimental::optional<std::unique_ptr<int>> boxed(int value) {
+  if (value < 0) {
+    std::experimental::optional<std::unique_ptr<int>> none =
+        std::experimental::nullopt;
+    return none;
+  }
+  return std::experimental::optional<std::unique_ptr<int>>(
+      std::make_unique<int>(value));
+}
+
+std::experimental::optional<int> doubled(int value) {
+  std::unique_ptr<int> owner = ?boxed(value);
+  return std::experimental::optional<int>(*owner * 2);
+}
+
+int main() {
+  std::experimental::optional<int> good = doubled(21);
+  std::experimental::optional<int> bad = doubled(-1);
+  mut std::experimental::optional<std::string> text{};
+  std::println(std::to_string(text.emplace(std::string("kept")).size()));
+  std::string taken = std::move(text).value();
+  std::println(std::to_string(good.value()));
+  std::println(bad.has_value() ? "value" : "empty");
+  std::println(taken.view());
+  return 0;
+}

@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.438.1 — Virtual method calls in constructor member initializers
+## 0.439.1 — Virtual method calls in constructor member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a constructor's member initializer
@@ -24,6 +24,27 @@ for what minor and patch releases mean.
 - Calling a non-consuming `virtual` method on a temporary, such as
   `Tracked t = Maker().make();`, `kept(Maker().make())` or the field default
   `Tracked kept = Maker().make();`, still stops with this error.
+
+## 0.439.0 — A source-defined optional
+
+- `<std/experimental/optional>` adds `std::experimental::optional<T>`, written
+  entirely in GTI over a payload enum with no compiler-private storage. It
+  has the same surface as `std::optional`, plus:
+  - a consuming `T value() &&` that moves the value out;
+  - move assignment, which destroys the current value first;
+  - `std::experimental::nullopt`;
+  - an implicit conversion from `nullopt_t`.
+- `?` works on it through a `std::tryable` block. It moves the value out,
+  move-only payloads included, or returns an empty optional:
+  `Account left = ?find(1);`.
+- An empty access panics rather than raising `empty_owner_access`, which is
+  one of the differences to settle before it replaces `std::optional`.
+- It is not yet as fast as `std::optional`: at `-O2` it is about 1.6 times
+  slower in a tight loop over `int` and 1.1 times over an allocating
+  `string`, because of how payload enums are built today.
+- Example 162 demonstrates it.
+- A conformance block's own type parameters are now named in diagnostics,
+  instead of "type parameter".
 
 ## 0.438.0 — Consuming payload-enum matches
 
