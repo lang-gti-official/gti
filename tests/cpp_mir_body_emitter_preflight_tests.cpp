@@ -47,14 +47,28 @@ bool present(State<int>& state) {
   case State<int>::value: return true;
   }
 }
+class Holder {
+  State<int> state;
+public:
+  Holder() : state(State<int>::value(7)) {}
+  bool present() {
+    switch (this.state) {
+    case State<int>::empty: return false;
+    case State<int>::value: return true;
+    }
+  }
+};
 int main() {
   auto state = State<int>::value(7);
-  return present(state) ? 0 : 1;
+  Holder holder{};
+  return present(state) && holder.present() ? 0 : 1;
 }
 )");
   expect(frontend.canGenerateCode(), "passive tag observer should lower");
   if (!frontend.canGenerateCode())
     return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  constexpr std::string_view closedDomain = "mir_closed_enum_unreachable_v1";
   std::size_t observed = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -72,9 +86,186 @@ int main() {
           expect(instruction.kind != lang::MirInstructionKind::Load ||
                      instruction.info.type != switching.value->type,
                  "tag-only matching must not stage a whole-enum copy");
+      const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                         function.id};
+      const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+      const auto text =
+          emitter.emitBodyText(address, "closed-payload-domain", 1);
+      expect(text.emitted() &&
+                 text.text.find(closedDomain) != std::string::npos,
+             "exact initialized entry observers expose the closed tag domain");
+      for (int mutation = 0; mutation != 14; ++mutation) {
+        auto forged = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        auto &entry = changed->body.blocks[block.id - 1];
+        auto &term = entry.terminator;
+        auto &place = changed->body.places[term.value->place - 1];
+        auto &fallback = changed->body.blocks[term.target - 1];
+        switch (mutation) {
+        case 0:
+          term.switchTargets.pop_back();
+          break;
+        case 1:
+          term.switchTargets[1].value = term.switchTargets[0].value;
+          break;
+        case 2:
+          term.switchTargets[0].value->value.magnitude = 99;
+          break;
+        case 3:
+          ++term.switchTargets[0].value->enumOwner;
+          break;
+        case 4:
+          term.switchTargets[0].value->type = lang::SemanticType::Int32;
+          break;
+        case 5:
+          term.value->kind = lang::MirOperandKind::Move;
+          break;
+        case 6:
+          place.type = lang::SemanticType::Int32;
+          break;
+        case 7:
+          fallback.terminator.kind = lang::MirTerminatorKind::Return;
+          break;
+        case 8:
+          fallback.instructions.push_back(entry.instructions.front());
+          break;
+        case 9:
+          entry.instructions.front().kind = lang::MirInstructionKind::Drop;
+          break;
+        case 10:
+          term.switchTargets[0].target = changed->body.entry;
+          break;
+        case 11:
+          if (function.owner)
+            changed->receiverMutability = lang::ReceiverMutability::Consuming;
+          else
+            for (auto &root : changed->body.places)
+              root.initiallyAvailable = false;
+          break;
+        case 12:
+          if (function.owner)
+            ++place.projections.front().field;
+          else
+            changed->parameterBindings.front() = 0;
+          break;
+        case 13:
+          if (entry.instructions.front().ownership)
+            entry.instructions.front().ownership->before =
+                lang::OwnershipStateSet::Moved;
+          else
+            place.root = lang::MirPlaceRootKind::Value;
+          break;
+        }
+        const lang::CppMirBodyEmitter rejected(forged, map);
+        const auto rejectedText =
+            rejected.emitBodyText(address, "forged-domain", 1);
+        expect(!rejectedText.emitted() ||
+                   rejectedText.text.find(closedDomain) == std::string::npos,
+               "incomplete, substituted, effectful or unavailable domains "
+               "never become native unreachable");
+      }
+      for (int mutation = 0; mutation != 5; ++mutation) {
+        auto rows = buildRows(frontend, frontend.mir);
+        const auto row = std::find_if(
+            rows.enums.begin(), rows.enums.end(), [&](const auto &candidate) {
+              return candidate.type == switching.value->type;
+            });
+        expect(row != rows.enums.end(), "observer has an exact enum row");
+        if (row == rows.enums.end())
+          continue;
+        switch (mutation) {
+        case 0:
+          row->payloadVariants.pop_back();
+          break;
+        case 1:
+          row->payloadVariants[1].index = 0;
+          break;
+        case 2:
+          ++row->owner;
+          break;
+        case 3:
+          row->traits.copyable = !row->traits.copyable;
+          break;
+        case 4:
+          rows.enums.push_back(*row);
+          break;
+        }
+        const lang::CppMirBodyEmissionMap forgedRows(std::move(rows));
+        const lang::CppMirBodyEmitter rejected(frontend.mir, forgedRows);
+        const auto rejectedText =
+            rejected.emitBodyText(address, "forged-enum-row", 1);
+        expect(!rejectedText.emitted() ||
+                   rejectedText.text.find(closedDomain) == std::string::npos,
+               "stale, incomplete or ambiguous representation rows cannot "
+               "prove a closed domain");
+      }
     }
   }
-  expect(observed == 1, "fixture must exercise one passive enum observer");
+  expect(observed == 2,
+         "fixture must exercise reference and receiver-field observers");
+  std::size_t constructed = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operation != lang::MirOperation::PayloadConstruct)
+          continue;
+        ++constructed;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                           constructor.id};
+        const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+        const auto text =
+            emitter.emitFailureBodyText(address, "passive-field", 1);
+        constexpr std::string_view publication =
+            "direct passive payload field publication";
+        expect(text.emitted() &&
+                   text.text.find(publication) != std::string::npos,
+               "passive enum fields construct directly at their MIR "
+               "publication point");
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto forged = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              forged.findConstructorInstance(constructor.id));
+          auto *producer =
+              findPreflightInstruction(changed->body, instruction.id);
+          switch (mutation) {
+          case 0:
+            ++changed->initializers.front().field;
+            break;
+          case 1:
+            changed->initializers.front().targetType =
+                lang::SemanticType::Int32;
+            break;
+          case 2:
+            changed->initializers.front().generatedDefault = true;
+            break;
+          case 3:
+            changed->initializers.push_back(changed->initializers.front());
+            break;
+          case 4:
+            producer->localFailureSites.push_back(1);
+            break;
+          case 5:
+            changed->body.blocks[block.id - 1]
+                .instructions.back()
+                .fullExpressionEnd = 0;
+            break;
+          case 6:
+            producer->info.traits.containsBorrowedState = true;
+            break;
+          }
+          const lang::CppMirBodyEmitter rejected(forged, map);
+          const auto rejectedText =
+              rejected.emitFailureBodyText(address, "forged-passive-field", 1);
+          expect(!rejectedText.emitted() ||
+                     rejectedText.text.find(publication) == std::string::npos,
+                 "passive publication rejects wrong fields, roots, effects, or "
+                 "borrowed state");
+        }
+      }
+  }
+  expect(constructed == 1,
+         "fixture exercises one direct passive field construction");
 }
 
 void testBoundedSecondaryFailureRecordStorage() {
