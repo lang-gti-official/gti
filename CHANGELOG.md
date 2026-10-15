@@ -15,13 +15,17 @@ for what minor and patch releases mean.
   generating a representation") when a function returns the result of a
   consuming (`&&`) method directly, such as
   `Tracked take(Single box) { return std::move(box).release(); }`. This
-  failed whenever the method could not fail and its receiver still had a
-  destructor to run after the call: a by-value parameter, a local, or a
-  temporary such as `return Single(1).release();`, in ordinary and generic
-  functions, methods and lambdas. The returned value is destroyed exactly
-  once, by the caller. If the receiver's destructor fails after the call,
-  the result is destroyed before the failure propagates.
+  failed for every such method that cannot fail, because the receiver is
+  destroyed after the call and before the return. Receivers include by-value
+  parameters, locals and temporaries such as `return Single(1).release();`,
+  in ordinary and generic functions, methods and lambdas. The returned value
+  is destroyed exactly once, by the caller. If the receiver's destructor
+  fails after the call, the result is destroyed before the failure
+  propagates.
 - A consuming call still stops with this error in these cases:
+  - when it is returned this way and its receiver is moved out of a variable
+    whose class has no destructor and no fields that need one, such as
+    `return std::move(p).make();` for a class holding only an `int`
   - when its result initializes a field in a constructor's member-initializer
     list, such as `Holder(Single box) : kept(std::move(box).release()) {}`;
     a member initializer that calls a method on a parameter, such as
