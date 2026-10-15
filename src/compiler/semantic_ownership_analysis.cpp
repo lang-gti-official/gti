@@ -1561,8 +1561,15 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
                      : std::optional<std::vector<StoredReferencePath>>{
                            std::move(paths)};
     }
-    if (owner == nullptr || owner->kind == ClassKind::Union ||
-        owner->cAbiRecord || owner->cOpaqueHandle ||
+    // A validated native layout is a complete, passive field inventory. Raw
+    // pointers and native callbacks do not carry checked GTI loans. Traverse
+    // those fields normally; neither an unvalidated record nor an ordinary
+    // union establishes the same completeness guarantee.
+    const bool validatedNativeRecord =
+        owner != nullptr && owner->cAbiRecord && owner->cAbiLayout.has_value();
+    if (owner == nullptr ||
+        (owner->kind == ClassKind::Union && !validatedNativeRecord) ||
+        (owner->cAbiRecord && !validatedNativeRecord) || owner->cOpaqueHandle ||
         // A synchronization guard carries capability-produced exclusive
         // access in addition to its declared shared resource reference.
         // Nested field maps currently preserve the latter, not the former.
@@ -1805,16 +1812,31 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
           (field.referenceAccess == AccessMode::Mutable &&
            info->access != AccessMode::Mutable))
         return std::nullopt;
-      const auto place = retainedLoanPlace(argument);
-      const auto source = retainedLoanSource(argument);
-      if ((place.root == 0 && !place.receiver) ||
-          semanticModel.findForeignStorage(place.root) != nullptr)
-        return std::nullopt;
-      input.dependencies.push_back(
-          {.place = place,
-           .access = field.referenceAccess,
-           .protectsStorage = hasStableBorrowStorage(argument),
-           .parent = source ? source->loan : SemanticLoanId{0}});
+      if (auto selectedOrigins =
+              selectedReferenceDependencies(semanticPlace(argument))) {
+        for (auto dependency : *selectedOrigins) {
+          if ((dependency.place.root == 0 && !dependency.place.receiver) ||
+              !dependency.protectsStorage ||
+              semanticModel.findForeignStorage(dependency.place.root) !=
+                  nullptr ||
+              (field.referenceAccess == AccessMode::Mutable &&
+               dependency.access != AccessMode::Mutable))
+            return std::nullopt;
+          dependency.access = field.referenceAccess;
+          input.dependencies.push_back(std::move(dependency));
+        }
+      } else {
+        const auto place = retainedLoanPlace(argument);
+        const auto source = retainedLoanSource(argument);
+        if ((place.root == 0 && !place.receiver) ||
+            semanticModel.findForeignStorage(place.root) != nullptr)
+          return std::nullopt;
+        input.dependencies.push_back(
+            {.place = place,
+             .access = field.referenceAccess,
+             .protectsStorage = hasStableBorrowStorage(argument),
+             .parent = source ? source->loan : SemanticLoanId{0}});
+      }
     } else {
       const auto inventory = storedReferenceInventory(field);
       if (!inventory)
@@ -1868,6 +1890,146 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
     }
   }
   return result;
+}
+
+auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
+    const CallableCandidate &function,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments)
+    -> std::optional<FunctionBorrowDependencySummary> {
+  if (function.virtualMethod ||
+      function.returnType.kind != SemanticType::Enum ||
+      containsOpenTypeParameter(function.returnType) || !function.declaration ||
+      function.declaration->hasCLinkage() ||
+      std::any_of(function.parameterTypes.begin(),
+                  function.parameterTypes.end(), containsOpenTypeParameter))
+    return std::nullopt;
+  const auto *declaration = semanticModel.findFunction(function.id);
+  if (!declaration && instanceBaseModel)
+    declaration = instanceBaseModel->findFunction(function.id);
+  if (!declaration || !declaration->bodyDeclaration() ||
+      !declaration->bodyDeclaration()->body())
+    return std::nullopt;
+  const bool concrete = !typeArguments.empty() || !valueArguments.empty() ||
+                        !function.dispatchOwner.arguments.empty() ||
+                        !function.dispatchOwner.valueArguments.empty();
+  if (!concrete && declaration &&
+      declaration->returnType == function.returnType &&
+      declaration->parameterTypes == function.parameterTypes &&
+      (!instanceAnalysisActive || declaration->completeReturnBorrow))
+    return declaration->completeReturnBorrow;
+
+  // Ordinary instance analysis is reused in an isolated worker. Only the
+  // normalized declaration-relative result leaves it: caller scopes/loans and
+  // body-local IDs never enter the cache. An active recursive query is unknown.
+  if (!requestSession.completeReturnQueries)
+    requestSession.completeReturnQueries =
+        std::make_shared<CompleteReturnQueryState>();
+  const auto state = requestSession.completeReturnQueries;
+  const InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Function,
+                                .declaration = function.id,
+                                .classTypes = function.dispatchOwner.arguments,
+                                .classValues =
+                                    function.dispatchOwner.valueArguments,
+                                .types = typeArguments,
+                                .values = valueArguments};
+  for (const auto &entry : state->entries)
+    if (entry->key == key)
+      return entry->complete ? entry->result : std::nullopt;
+  // An unbounded expanding generic recursion has no finite result proof.
+  // Resource exhaustion remains unknown, never a vacuous complete-empty set.
+  if (state->depth >= 32 || state->entries.size() >= 2048)
+    return std::nullopt;
+  auto entry = std::make_shared<CompleteReturnQuery>();
+  entry->key = key;
+  state->entries.push_back(entry);
+  ++state->depth;
+  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
+                                       sources, rawPointerAudit);
+  if (state->idleCatalogs.empty())
+    worker->catalog = catalog.snapshotForInstanceAnalysis();
+  else {
+    worker->catalog = std::move(state->idleCatalogs.back());
+    state->idleCatalogs.pop_back();
+  }
+  worker->semanticModel = semanticModel;
+  worker->valueFlow = valueFlow;
+  for (const auto *definition : constexprDefinitionsAnalyzed)
+    if (declaredBeforeCurrent(definition))
+      worker->constexprDefinitionsAnalyzed.insert(definition);
+  for (const auto *definition : constexprConstructorsAnalyzed)
+    if (declaredBeforeCurrent(definition))
+      worker->constexprConstructorsAnalyzed.insert(definition);
+  worker->genericDefaultConstants = genericDefaultConstants;
+  worker->defaultArgumentSyntax = defaultArgumentSyntax;
+  worker->defaultArgumentDependencies = defaultArgumentDependencies;
+  worker->nextLambdaId = nextLambdaId;
+  worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
+  worker->requestSession.completeReturnQueries = state;
+  const auto analysis = worker->analyzeFunctionInstance(
+      function.id, key.classTypes, key.classValues, key.types, key.values);
+  if (analysis.valid()) {
+    const auto *analyzed = analysis.model.findFunction(function.id);
+    if (analyzed && analyzed->returnType == function.returnType &&
+        analyzed->parameterTypes == function.parameterTypes)
+      entry->result = analyzed->completeReturnBorrow;
+  }
+  state->idleCatalogs.push_back(std::move(worker->catalog));
+  entry->complete = true;
+  --state->depth;
+  return entry->result;
+}
+
+auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
+    const FunctionInfo &function) -> void {
+  // Reanalysis must not retain a primary/earlier body's complete fact when
+  // this body now has unknown, recursive or nonreturning result evidence.
+  const FunctionId id = function.id;
+  FunctionInfo cleared = function;
+  cleared.completeReturnBorrow.reset();
+  if (cleared.declaration)
+    semanticModel.record(*cleared.declaration, cleared);
+  const FunctionDecl *syntax = cleared.bodyDeclaration();
+  if (!syntax || !syntax->body() ||
+      cleared.returnType.kind != SemanticType::Enum ||
+      containsOpenTypeParameter(cleared.returnType) || cleared.neverReturns ||
+      loanFlow.deferredConstexprSelection ||
+      loanFlow.unknownImplicitResultReturn)
+    return;
+
+  // Expression facts were recorded at each return's own evaluation point,
+  // before a later move or replacement could change its binding. Reuse the
+  // existing structural flow walk rather than accumulating mutable state
+  // across nested lambdas, demanded bodies or concrete instance analyses.
+  std::vector<const ReturnStmt *> returns;
+  (void)summarizeFlow(syntax->body()->statements(), &returns, true);
+  if (returns.empty())
+    return;
+  FunctionBorrowDependencySummary summary;
+  for (const auto *returned : returns) {
+    const auto *info = returned->value()
+                           ? semanticModel.findExpression(*returned->value())
+                           : nullptr;
+    const auto complete = completeBorrowDependencySet(returned->value());
+    if (!info || info->type != cleared.returnType || !complete ||
+        !complete->dependencies.empty() ||
+        complete->possibleAlternatives.empty())
+      return;
+    for (const auto &alternative : complete->possibleAlternatives) {
+      if (std::find(summary.possibleAlternatives.begin(),
+                    summary.possibleAlternatives.end(),
+                    alternative) == summary.possibleAlternatives.end())
+        summary.possibleAlternatives.push_back(alternative);
+    }
+  }
+  // Reload after nested body demands and restoration-summary publication.
+  const auto *current = semanticModel.findFunction(id);
+  if (!current || !current->declaration)
+    return;
+  FunctionInfo updated = *current;
+  updated.completeReturnBorrow = std::move(summary);
+  semanticModel.record(*updated.declaration, std::move(updated));
 }
 
 auto SemanticVisitor::Impl::joinedBorrowDependencySets(
@@ -2532,6 +2694,7 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
   instance.returnBorrowParameter = 0;
   instance.returnBorrowParameters.clear();
   instance.returnBorrowFields.clear();
+  instance.completeReturnBorrow.reset();
   instance.returnBorrowPlace.reset();
   const FunctionDecl *syntax = declaration.bodyDeclaration();
   if (syntax == nullptr) {
@@ -3432,6 +3595,9 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
   }
+  if (const auto dependencies =
+          selectedReferenceDependencies(semanticPlace(expression)))
+    return *dependencies;
   // Recorded expression dependencies describe closure environments and
   // erased referents, whose dependency layout the type alone cannot name.
   // Ordinary carriers (a fallible borrow, a view) keep the structural
@@ -4213,6 +4379,68 @@ auto SemanticVisitor::Impl::appendUniqueLoan(std::vector<SemanticLoanId> &loans,
   }
 }
 
+auto SemanticVisitor::Impl::selectedReferenceDependencies(
+    const SemanticPlace &place) const
+    -> std::optional<std::vector<SemanticLoanDependency>> {
+  if (place.root == nullptr ||
+      place.root->type.kind != SemanticType::Reference ||
+      place.root->retainedLoan == 0)
+    return std::nullopt;
+  const auto *loan = semanticModel.findLoan(place.root->retainedLoan);
+  if (loan == nullptr || loan->kind != SemanticLoanKind::Reference ||
+      !loan->referenceSelection)
+    return std::nullopt;
+  std::vector<SemanticLoanDependency> result;
+  const auto append = [&](SemanticLoanDependency dependency) {
+    // The selected alternative was proved when the scalar reference was
+    // published. Its external origins remain unconditional obligations of
+    // this access; the immutable selection retains the original tag/path.
+    dependency.place.projections.insert(dependency.place.projections.end(),
+                                        place.projections.begin(),
+                                        place.projections.end());
+    dependency.parent = loan->id;
+    if (std::find(result.begin(), result.end(), dependency) == result.end())
+      result.push_back(std::move(dependency));
+  };
+  append({.place = loan->place,
+          .designatedFields = loan->designatedFields,
+          .access = loan->access,
+          .protectsStorage = loan->protectsStorage,
+          .conditions = loan->conditions});
+  for (auto dependency : loan->additionalDependencies) {
+    // A shared reborrow may narrow an exclusive selected capability. It
+    // cannot retain exclusive access through a secondary origin.
+    if (loan->access == AccessMode::ReadOnly)
+      dependency.access = AccessMode::ReadOnly;
+    append(std::move(dependency));
+  }
+  return result;
+}
+
+auto SemanticVisitor::Impl::loanPlaces(const SemanticPlace &place)
+    -> std::vector<SemanticLoanPlace> {
+  std::vector<SemanticLoanPlace> result;
+  if (const auto dependencies = selectedReferenceDependencies(place)) {
+    for (const auto &dependency : *dependencies)
+      appendUniquePlace(result, dependency.place);
+  } else {
+    appendUniquePlace(result, loanPlace(place));
+  }
+  return result;
+}
+
+auto SemanticVisitor::Impl::loanPlaces(const ExprPtr &expression,
+                                       bool transient)
+    -> std::vector<SemanticLoanPlace> {
+  const auto place = semanticPlace(expression);
+  if (selectedReferenceDependencies(place))
+    return loanPlaces(place);
+  std::vector<SemanticLoanPlace> result;
+  appendUniquePlace(result, transient ? transientLoanPlace(expression)
+                                      : loanPlace(expression));
+  return result;
+}
+
 auto SemanticVisitor::Impl::loanPlace(SemanticPlace place)
     -> SemanticLoanPlace {
   if (place.root == nullptr) {
@@ -4467,11 +4695,21 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
 auto SemanticVisitor::Impl::reportLoanPlaceConflict(
     const Token &token, const SemanticLoanPlace &stable, AccessMode requested,
     std::string message, SemanticLoanId throughLoan) -> void {
-  if (stable.root == 0 && !stable.receiver) {
-    return;
+  reportLoanPlaceConflicts(token, std::span(&stable, 1), requested,
+                           std::move(message), throughLoan);
+}
+
+auto SemanticVisitor::Impl::reportLoanPlaceConflicts(
+    const Token &token, std::span<const SemanticLoanPlace> places,
+    AccessMode requested, std::string message, SemanticLoanId throughLoan)
+    -> void {
+  std::vector<SemanticLoanId> conflicts;
+  for (const auto &place : places) {
+    if (place.root == 0 && !place.receiver)
+      continue;
+    for (const auto conflict : conflictingLoans(place, requested, throughLoan))
+      appendUniqueLoan(conflicts, conflict);
   }
-  std::vector<SemanticLoanId> conflicts =
-      conflictingLoans(stable, requested, throughLoan);
   if (throughLoan != 0 && std::any_of(conflicts.begin(), conflicts.end(),
                                       [&](SemanticLoanId candidate) {
                                         return loanIsAncestor(throughLoan,
@@ -4489,8 +4727,8 @@ auto SemanticVisitor::Impl::reportLoanPlaceConflict(
   if (throughLoan == 0) {
     throughLoan = accessLoan(place);
   }
-  reportLoanPlaceConflict(token, loanPlace(place), requested,
-                          std::move(message), throughLoan);
+  reportLoanPlaceConflicts(token, loanPlaces(place), requested,
+                           std::move(message), throughLoan);
 }
 
 auto SemanticVisitor::Impl::validateLoanPlaceAccess(const Expr &expression,
@@ -4533,22 +4771,26 @@ auto SemanticVisitor::Impl::validateMutableCallArgumentLoans(
         parameter.referenceAccess != AccessMode::Mutable) {
       continue;
     }
-    const SemanticLoanPlace stable = transientLoanPlace(arguments[index]);
+    const auto origins = loanPlaces(arguments[index], true);
     invalidateBorrowDependencySet(semanticPlace(arguments[index]));
-    recordMutableBindingUse(stable.root);
-    if (stable.root == 0 && !stable.receiver) {
+    for (const auto &origin : origins)
+      recordMutableBindingUse(origin.root);
+    if (origins.empty()) {
       continue;
     }
     const SemanticLoanId throughLoan = accessLoan(arguments[index]);
     if (suppressLoanPlaceAccessDepth == 0 &&
-        !conflictingLoans(stable, AccessMode::ReadOnly, throughLoan).empty()) {
+        std::any_of(origins.begin(), origins.end(), [&](const auto &origin) {
+          return !conflictingLoans(origin, AccessMode::ReadOnly, throughLoan)
+                      .empty();
+        })) {
       // Ordinary argument analysis already diagnosed this suspended-parent
       // or mutable-loan read. Retain the mutable boundary check only when it
       // adds a conflict that a read-only expression access cannot see.
       continue;
     }
-    reportLoanPlaceConflict(
-        location, stable, AccessMode::Mutable,
+    reportLoanPlaceConflicts(
+        location, origins, AccessMode::Mutable,
         "Mutable reference argument overlaps a borrow that may still be "
         "live.",
         throughLoan);
@@ -4798,6 +5040,20 @@ auto SemanticVisitor::Impl::appendUniquePlace(
   }
 }
 
+auto SemanticVisitor::Impl::appendLoanPlaces(
+    std::vector<SemanticLoanPlace> &places, const SemanticPlace &place)
+    -> void {
+  for (auto origin : loanPlaces(place))
+    appendUniquePlace(places, std::move(origin));
+}
+
+auto SemanticVisitor::Impl::appendLoanPlaces(
+    std::vector<SemanticLoanPlace> &places, const ExprPtr &expression,
+    bool transient) -> void {
+  for (auto origin : loanPlaces(expression, transient))
+    appendUniquePlace(places, std::move(origin));
+}
+
 auto SemanticVisitor::Impl::appendTransientMutationPlaces(
     const ExprPtr &expression, std::vector<SemanticLoanPlace> &places) -> void {
   if (!expression) {
@@ -4807,30 +5063,30 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
   if (const auto *assign = exprAs<Assign>(expression.get());
       assign != nullptr && assign->path().segments.size() == 1) {
     if (Symbol *target = resolveMutable(assign->name())) {
-      appendUniquePlace(places, loanPlace(placeForSymbol(*target)));
+      appendLoanPlaces(places, placeForSymbol(*target));
     }
   } else if (const auto *set = exprAs<Set>(expression.get())) {
-    appendUniquePlace(places, loanPlace(semanticPlace(*set)));
+    appendLoanPlaces(places, semanticPlace(*set));
   } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
-    appendUniquePlace(places, loanPlace(semanticPlace(*indexSet)));
+    appendLoanPlaces(places, semanticPlace(*indexSet));
   } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
-    appendUniquePlace(places, transientLoanPlace(set->target()));
+    appendLoanPlaces(places, set->target(), true);
   } else if (const auto *dereferenceSet =
                  exprAs<DereferenceSet>(expression.get())) {
     SemanticPlace target = semanticPlace(dereferenceSet->object());
     if (target.root != nullptr) {
       target.projections.push_back({.kind = PlaceProjectionKind::Dereference});
-      appendUniquePlace(places, loanPlace(std::move(target)));
+      appendLoanPlaces(places, target);
     }
   } else if (const auto *postfix = exprAs<Postfix>(expression.get())) {
     if (postfix->oper().kind == TokenKind::PLUS_PLUS ||
         postfix->oper().kind == TokenKind::MINUS_MINUS) {
-      appendUniquePlace(places, transientLoanPlace(postfix->expression()));
+      appendLoanPlaces(places, postfix->expression(), true);
     }
   } else if (const auto *unary = exprAs<Unary>(expression.get())) {
     if (unary->oper().kind == TokenKind::PLUS_PLUS ||
         unary->oper().kind == TokenKind::MINUS_MINUS) {
-      appendUniquePlace(places, transientLoanPlace(unary->right()));
+      appendLoanPlaces(places, unary->right(), true);
     }
   }
 
@@ -4843,7 +5099,7 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
       if (const ExprPtr *receiver =
               conversion != nullptr ? conversion
                                     : operatorReceiverExpression(expression)) {
-        appendUniquePlace(places, transientLoanPlace(*receiver));
+        appendLoanPlaces(places, *receiver, true);
       }
     }
     if (const auto *call = exprAs<Call>(expression.get())) {
@@ -4853,8 +5109,7 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
         if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
             resolved->parameterTypes[index].referenceAccess ==
                 AccessMode::Mutable) {
-          appendUniquePlace(places,
-                            transientLoanPlace(call->arguments()[index]));
+          appendLoanPlaces(places, call->arguments()[index], true);
         }
       }
     } else if (const auto *binary = exprAs<Binary>(expression.get())) {
@@ -4862,14 +5117,14 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
           resolved->parameterTypes.front().kind == SemanticType::Reference &&
           resolved->parameterTypes.front().referenceAccess ==
               AccessMode::Mutable) {
-        appendUniquePlace(places, transientLoanPlace(binary->right()));
+        appendLoanPlaces(places, binary->right(), true);
       }
     } else if (const auto *index = exprAs<Index>(expression.get())) {
       if (!resolved->parameterTypes.empty() &&
           resolved->parameterTypes.front().kind == SemanticType::Reference &&
           resolved->parameterTypes.front().referenceAccess ==
               AccessMode::Mutable) {
-        appendUniquePlace(places, transientLoanPlace(index->index()));
+        appendLoanPlaces(places, index->index(), true);
       }
     }
   }
@@ -4890,7 +5145,7 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
         if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
             resolved->parameterTypes[index].referenceAccess ==
                 AccessMode::Mutable) {
-          appendUniquePlace(places, transientLoanPlace((*arguments)[index]));
+          appendLoanPlaces(places, (*arguments)[index], true);
         }
       }
     }
@@ -4909,18 +5164,17 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
   if (call != nullptr && call->arguments().size() == 1 &&
       (syntacticMove ||
        (resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move))) {
-    appendUniquePlace(places, transientLoanPlace(call->arguments().front()));
+    appendLoanPlaces(places, call->arguments().front(), true);
   }
   if (call != nullptr && resolved != nullptr) {
     if (resolved->declaration != nullptr &&
         resolved->declaration->receiverMutability() ==
             ReceiverMutability::Mutable) {
       if (const auto *member = exprAs<Get>(call->callee().get())) {
-        appendUniquePlace(places, transientLoanPlace(member->object()));
+        appendLoanPlaces(places, member->object(), true);
       } else if (currentClass) {
-        appendUniquePlace(places,
-                          loanPlace(SemanticPlace{.root = receiverStateSymbol(),
-                                                  .receiver = true}));
+        appendLoanPlaces(places, SemanticPlace{.root = receiverStateSymbol(),
+                                               .receiver = true});
       }
     }
     const std::size_t count =
@@ -4930,8 +5184,8 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
       if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
           resolved->parameterTypes[index].referenceAccess ==
               AccessMode::Mutable) {
-        appendUniquePlace(places, transientLoanPlace(*resolvedCallArgument(
-                                      *call, resolved, index)));
+        appendLoanPlaces(places, *resolvedCallArgument(*call, resolved, index),
+                         true);
       }
     }
   }
@@ -5052,14 +5306,15 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
   // must not be collected while unwinding to the root.
   const ExprKind kind = expression->exprKind();
   if (kind == ExprKind::Variable || kind == ExprKind::This) {
-    appendUniquePlace(places, loanPlace(expression));
+    appendLoanPlaces(places, expression);
     return;
   }
   if (kind == ExprKind::Get || kind == ExprKind::Index) {
-    SemanticLoanPlace place = loanPlace(expression);
-    const bool stablePlace = place.root != 0 || place.receiver;
+    auto origins = loanPlaces(expression);
+    const bool stablePlace = !origins.empty();
     if (stablePlace) {
-      appendUniquePlace(places, std::move(place));
+      for (auto &origin : origins)
+        appendUniquePlace(places, std::move(origin));
     }
     if (const auto *member = exprAs<Get>(expression.get())) {
       if (!stablePlace) {
@@ -5264,9 +5519,12 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     std::span<const SemanticType> parameterTypes,
     std::span<const ExprPtr *> arguments, const Token &location,
     std::optional<SemanticLoanPlace> receiver, AccessMode receiverAccess,
-    bool transientReceiver) -> void {
+    bool transientReceiver, std::span<const SemanticLoanPlace> receiverOrigins)
+    -> void {
   struct CallPlace {
-    SemanticLoanPlace place;
+    // These are possible owners of one evaluated reference, not separate
+    // simultaneous call accesses. Compare with other operands, never itself.
+    std::vector<SemanticLoanPlace> origins;
     AccessMode access = AccessMode::ReadOnly;
     std::size_t argument = 0;
     bool receiver = false;
@@ -5327,11 +5585,19 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
         composedCarrierPaths(storedReferencePaths(parameter))) {
       for (const auto &dependency :
            storedBorrowDependencies(*arguments[index])) {
-        places.push_back({.place = dependency.place,
+        places.push_back({.origins = {dependency.place},
                           .access = dependency.access,
                           .argument = index});
       }
       continue;
+    }
+    if (referenceParameter) {
+      if (selectedReferenceDependencies(semanticPlace(*arguments[index]))) {
+        places.push_back({.origins = loanPlaces(*arguments[index]),
+                          .access = parameter.referenceAccess,
+                          .argument = index});
+        continue;
+      }
     }
     std::optional<TransientBorrowProduction> production =
         transientBorrowProduction(*arguments[index]);
@@ -5352,7 +5618,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
                                          : loanPlace(*arguments[index]);
     if (place.root != 0 || place.receiver) {
       places.push_back(
-          {.place = std::move(place),
+          {.origins = {std::move(place)},
            .access = production && production->access == AccessMode::Mutable
                          ? AccessMode::Mutable
                      : referenceParameter ? parameter.referenceAccess
@@ -5367,17 +5633,31 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
            "GTI-S2054");
   }
   if (receiver && (receiver->root != 0 || receiver->receiver)) {
-    places.push_back({.place = std::move(*receiver),
+    std::vector<SemanticLoanPlace> origins(receiverOrigins.begin(),
+                                           receiverOrigins.end());
+    if (origins.empty())
+      origins.push_back(std::move(*receiver));
+    places.push_back({.origins = std::move(origins),
                       .access = receiverAccess,
                       .argument = arguments.size(),
                       .receiver = true,
                       .transient = transientReceiver});
   }
+  const auto overlaps = [&](const CallPlace &access,
+                            const SemanticLoanPlace &origin) {
+    return std::any_of(access.origins.begin(), access.origins.end(),
+                       [&](const auto &candidate) {
+                         return loanPlacesOverlap(candidate, origin);
+                       });
+  };
   for (std::size_t left = 0; left < places.size(); ++left) {
     for (std::size_t right = left + 1; right < places.size(); ++right) {
       if ((places[left].access == AccessMode::Mutable ||
            places[right].access == AccessMode::Mutable) &&
-          loanPlacesOverlap(places[left].place, places[right].place)) {
+          std::any_of(places[right].origins.begin(),
+                      places[right].origins.end(), [&](const auto &origin) {
+                        return overlaps(places[left], origin);
+                      })) {
         report(location,
                "Call creates overlapping reference accesses while at least "
                "one access is mutable.",
@@ -5391,8 +5671,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
       continue;
     }
     for (const auto &[argument, mutation] : mutations) {
-      if (argument != retained.argument &&
-          loanPlacesOverlap(retained.place, mutation)) {
+      if (argument != retained.argument && overlaps(retained, mutation)) {
         const std::size_t retainedSequence =
             retained.receiver ? 0 : retained.argument + 1;
         const std::size_t mutationSequence = argument + 1;
@@ -5448,10 +5727,11 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
   }
   for (const CallPlace &retained : places) {
     if (retained.receiver && retained.transient) {
-      productions.push_back({.sequence = 0,
-                             .argument = std::nullopt,
-                             .place = retained.place,
-                             .access = retained.access});
+      for (const auto &origin : retained.origins)
+        productions.push_back({.sequence = 0,
+                               .argument = std::nullopt,
+                               .place = origin,
+                               .access = retained.access});
     }
   }
   for (const RetainedProduction &retained : productions) {
@@ -5504,7 +5784,8 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivity(
     std::span<const SemanticType> parameterTypes,
     std::span<const ExprPtr> arguments, const Token &location,
     std::optional<SemanticLoanPlace> receiver, AccessMode receiverAccess,
-    bool transientReceiver) -> void {
+    bool transientReceiver, std::span<const SemanticLoanPlace> receiverOrigins)
+    -> void {
   std::vector<const ExprPtr *> argumentReferences;
   argumentReferences.reserve(arguments.size());
   for (const ExprPtr &argument : arguments) {
@@ -5512,7 +5793,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivity(
   }
   validateCallPlaceExclusivityImpl(parameterTypes, argumentReferences, location,
                                    std::move(receiver), receiverAccess,
-                                   transientReceiver);
+                                   transientReceiver, receiverOrigins);
 }
 
 auto SemanticVisitor::Impl::noteUnsupportedNestedLoanControlFlow() -> void {
@@ -5732,6 +6013,13 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   Symbol *carrier = resolveMutable(parameter.name);
   if (carrier == nullptr) {
     return;
+  }
+  if (carrier->type.kind == SemanticType::Enum) {
+    const auto inventory = storedReferenceInventory(carrier->type);
+    auto alternatives = storedBorrowAlternativeInventory(carrier->type);
+    if (inventory && inventory->empty() && alternatives)
+      carrier->completeBorrowSet = SemanticBorrowDependencySet{
+          .possibleAlternatives = std::move(*alternatives)};
   }
   const auto carriesOpaqueWitness = [&](const SemanticType &type) {
     const auto *owner =
