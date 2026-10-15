@@ -1,0 +1,154 @@
+// A field read straight off a value moved out of a named local or by-value
+// parameter, as in `std::move(a).value`, reads the moved temporary. The source
+// is left moved-from, so its cleanup body never runs, and the temporary is
+// destroyed once at the end of the full expression: after the read, on the
+// failure of a later operand, inside a conditional arm or a short-circuit
+// operand, on each loop iteration, in a lambda, a member initializer and a
+// generic body. An operand that fails before the move leaves the source live.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// How many times `flag` was passed.
+int32_t seen(std::vector<std::string>& argv, std::string_view flag) {
+  mut int32_t found = 0;
+  for (std::string& item : argv) {
+    if (item == flag) {
+      found = found + 1;
+    }
+  }
+  return found;
+}
+
+// One, or a failure once `flag` was passed twice.
+int32_t check(std::vector<std::string>& argv, std::string_view flag) {
+  return 2 / (2 - seen(argv, flag));
+}
+
+// Copied by value; nothing to destroy.
+class point {
+public:
+  int32_t value;
+  point(int32_t value) : value(value) {}
+};
+
+// Records its value when destroyed, without any way to fail, so the bodies
+// reading it keep their plain form.
+mut int32_t quietly_destroyed = 0;
+
+class quiet {
+public:
+  int32_t value;
+  quiet(int32_t value) : value(value) {}
+  ~quiet() { quietly_destroyed = this.value; }
+};
+
+// Reports its value when destroyed.
+class loud {
+public:
+  int32_t value;
+  loud(int32_t value) : value(value) {}
+  ~loud() { std::println(this.value); }
+};
+
+class box<T> {
+public:
+  T value;
+  box(T value) : value(value) {}
+};
+
+// The member initializer reads the moved parameter.
+class holder {
+public:
+  int32_t value;
+  holder(loud source) : value(std::move(source).value + 1) {}
+};
+
+int32_t point_local(int32_t seed) {
+  point a{seed};
+  return std::move(a).value;
+}
+
+int32_t point_parameter(point a) { return (std::move(a)).value; }
+
+int32_t quiet_local(int32_t seed) {
+  quiet a{seed};
+  return std::move(a).value;
+}
+
+int32_t quiet_parameter(quiet a) { return std::move(a).value; }
+
+// Prints the read value, then the temporary's.
+void loud_local(int32_t seed) {
+  loud a{seed};
+  std::println(std::move(a).value + 100);
+}
+
+int32_t loud_parameter(loud a) {
+  int32_t read = std::move(a).value;
+  return read;
+}
+
+// A later operand of the same full expression may fail after the read.
+int32_t loud_then_check(std::vector<std::string>& argv, int32_t seed) {
+  loud a{seed};
+  return std::move(a).value + check(argv, "after");
+}
+
+// An earlier operand may fail before the move; the local is still live.
+int32_t check_then_loud(std::vector<std::string>& argv, int32_t seed) {
+  loud a{seed};
+  return check(argv, "before") + std::move(a).value;
+}
+
+int32_t loud_arm(bool take, int32_t seed) {
+  loud a{seed};
+  return take ? std::move(a).value : 0;
+}
+
+bool loud_operand(bool test, int32_t seed) {
+  loud a{seed};
+  return test && std::move(a).value == seed;
+}
+
+int32_t loud_loop(int32_t seed) {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 2; index = index + 1) {
+    loud a{seed + index};
+    total = total + std::move(a).value;
+  }
+  return total;
+}
+
+T unbox<T>(box<T> a) { return std::move(a).value; }
+
+int main(int argc, std::vector<std::string> argv) {
+  if (point_local(1) + point_parameter(point(2)) != 3) {
+    return 1;
+  }
+  if (quiet_local(3) != 3 || quietly_destroyed != 3) {
+    return 2;
+  }
+  if (quiet_parameter(quiet(4)) != 4 || quietly_destroyed != 4) {
+    return 3;
+  }
+  loud_local(5);
+  std::println(loud_parameter(loud(6)) + 100);
+  std::println(loud_then_check(argv, 7) + 100);
+  std::println(check_then_loud(argv, 8) + 100);
+  std::println(loud_arm(true, 9) + 100);
+  std::println(loud_arm(false, 10) + 100);
+  if (!loud_operand(true, 11) || loud_operand(false, 12)) {
+    return 4;
+  }
+  std::println(loud_loop(13) + 100);
+  auto read = [](int32_t seed) -> int32_t {
+    loud a{seed};
+    return std::move(a).value;
+  };
+  std::println(read(15) + 100);
+  holder made{loud(16)};
+  std::println(made.value + 100);
+  std::println(unbox<int32_t>(box<int32_t>(18)) + 100);
+  return 0;
+}

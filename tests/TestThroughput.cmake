@@ -38,6 +38,7 @@ if(Python3_Interpreter_FOUND)
     conditional_cleanup_free_nested_join_runtime
     conditional_cleanup_free_receiver_runtime
     conditional_moved_local_join_runtime
+    moved_local_field_read_runtime
     conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime

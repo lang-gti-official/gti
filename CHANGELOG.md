@@ -49,6 +49,15 @@ for what minor and patch releases mean.
   work now, in functions that can fail too, as do by-value parameters and an
   arm that moves a local beside one that constructs, copies or calls.
 
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR") when a field is read straight off a local or by-value parameter moved
+  with `std::move`, as in `return std::move(a).x;`, `(std::move(a)).x` or
+  `int v = std::move(a).x;`, including for a field of a generic class. The
+  move leaves `a` moved-from and the field is read from the moved value, which
+  is destroyed at the end of the full expression; a class with a destructor
+  runs it exactly once, also when a later part of the expression fails, inside
+  a `?:` arm or `&&`/`||` operand, or in a member initializer.
+
 ## 0.441.0 — `?` on payload enums
 
 - `?` works directly on a payload enum that has a `std::tryable` block, such
