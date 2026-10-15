@@ -714,6 +714,13 @@ const testAttributeRow = fixtureLines.findIndex((line) =>
 requireCapture(testAttributeRow, "test", "attribute");
 requireCapture(testAttributeRow, "annotated_test_highlight", "function");
 
+const foreignVariableRow = fixtureLines.findIndex((line) =>
+  line.includes("mut c_int foreign_counter_highlight;"),
+);
+requireCapture(foreignVariableRow, "foreign_counter_highlight", "variable");
+requireCapture(foreignVariableRow, "mut", "keyword.modifier");
+requireCapture(foreignVariableRow, "link_name", "attribute");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

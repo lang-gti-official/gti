@@ -969,7 +969,8 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
     return;
   }
   const auto *variable = stmtAs<VariableDecl>(&statement);
-  if (variable == nullptr || (enclosingClass && !variable->isStatic())) {
+  if (variable == nullptr || variable->linkage() == LanguageLinkage::C ||
+      (enclosingClass && !variable->isStatic())) {
     return;
   }
   const BindingInfo *binding = semanticModel.findBinding(*variable);
@@ -1595,7 +1596,9 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
     if (borrowedTextType(type) && symbol != nullptr &&
-        symbol->retainedLoan != 0) {
+        (symbol->retainedLoan != 0 ||
+         (symbol->ownerClass != 0 && !symbol->staticMember &&
+          symbol->type.kind == SemanticType::Reference))) {
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
@@ -1735,6 +1738,15 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                         : objectInfo != nullptr &&
                               objectInfo->category == ValueCategory::Place &&
                               objectInfo->access == AccessMode::Mutable));
+    // Reading a checked text-reference field copies its dependent view, not
+    // an ownerless value. The receiver's stored-reference contract supplies
+    // the external lifetime for explicit and implicit field spelling alike.
+    if (borrowedTextType(type) && member != nullptr &&
+        member->symbol.type.kind == SemanticType::Reference) {
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
@@ -2751,7 +2763,49 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     symbolId = symbolForDeclaration(functionItemDeclaration->name());
   }
   semanticModel.recordResolvedSymbol(expr, symbolId);
-  recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  const bool crossesIndirection = std::any_of(
+      expressionPlace.projections.begin(), expressionPlace.projections.end(),
+      [](const PlaceProjection &projection) {
+        return projection.kind == PlaceProjectionKind::Dereference;
+      });
+  const ForeignStorageInfo *foreign =
+      crossesIndirection ? nullptr : semanticModel.findForeignStorage(symbolId);
+  if (foreign == nullptr && !crossesIndirection &&
+      expressionPlace.root != nullptr)
+    foreign = semanticModel.findForeignStorage(
+        toolingSymbolFor(*expressionPlace.root));
+  if (foreign != nullptr) {
+    const auto address =
+        std::find(requestSession.foreignAddressPlaces.begin(),
+                  requestSession.foreignAddressPlaces.end(), &expr);
+    bool addressOnly = address != requestSession.foreignAddressPlaces.end();
+    if (addressOnly && info.type.kind == SemanticType::RawPointer) {
+      // Taking a pointer slot's address is inert. Computing the address of
+      // one of its pointees first loads that slot, including through grouping
+      // and inline record/array projections.
+      auto addressBegin = address;
+      while (addressBegin != requestSession.foreignAddressPlaces.begin() &&
+             *(addressBegin - 1) != nullptr) {
+        --addressBegin;
+      }
+      addressOnly = std::none_of(addressBegin, address, [](const Expr *parent) {
+        return exprAs<Index>(parent) != nullptr;
+      });
+    }
+    const bool transparent =
+        kind == ExprKind::Grouping ||
+        (kind == ExprKind::Binary &&
+         static_cast<const Binary &>(expr).oper().kind == TokenKind::COMMA);
+    if (!addressOnly && !transparent &&
+        (semanticModel.unsafeOperation(expr) == UnsafeOperationKind::None ||
+         semanticModel.unsafeOperation(expr) ==
+             UnsafeOperationKind::ForeignStorage)) {
+      requireUnsafe(expr, UnsafeOperationKind::ForeignStorage,
+                    expressionToken(expr), "Access to foreign storage");
+    }
+  } else {
+    recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  }
   if (hasRole(roles, OccurrenceRole::Write)) {
     if (expressionPlace.root != nullptr) {
       recordMutableBindingUse(toolingSymbolFor(*expressionPlace.root));
@@ -5260,6 +5314,21 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
   }
   if (requester != nullptr && target != nullptr) {
     diagnostic.missingIncludeName = use.lexeme;
+    // The defining unit is known even when adding it would expose other
+    // errors (for example, missing operations in a conformance block). Give
+    // that information as a hint; automatic edits still require a successful
+    // include-suggestion trial.
+    const std::string relative =
+        target->path.lexically_relative(requester->path.parent_path())
+            .generic_string();
+    if (!relative.empty() &&
+        relative.find_first_of("\r\n\"") == std::string::npos) {
+      const std::string spelling =
+          target->standardLibraryName ? "<" + *target->standardLibraryName + ">"
+                                      : "\"" + relative + "\"";
+      diagnostic.hints.push_back("Add #include " + spelling +
+                                 " to this source file.");
+    }
   }
   diagnostics.push_back(std::move(diagnostic));
   return true;
@@ -11599,7 +11668,46 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
 
 auto SemanticVisitor::Impl::isOwnershipAssignment(
     const SemanticType &target, const SemanticType &value,
-    const ExprPtr &expression) const -> bool {
+    const ExprPtr &expression, const SemanticPlace &destination) -> bool {
+  const bool indirect = std::any_of(
+      destination.projections.begin(), destination.projections.end(),
+      [](const PlaceProjection &projection) {
+        return projection.kind == PlaceProjectionKind::Dereference;
+      });
+  const SymbolId root = destination.root == nullptr
+                            ? destination.rootIdentity
+                            : toolingSymbolFor(*destination.root);
+  if (!indirect && semanticModel.findForeignStorage(root) != nullptr) {
+    // External storage has no GTI replacement authority. A whole-record store
+    // must respect every embedded field's access policy, while a local value
+    // copied from it keeps the ordinary GTI replacement rules (ADR 013).
+    const auto writable = [&](const auto &self,
+                              const SemanticType &type) -> bool {
+      if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+        return self(self, type.arguments.front());
+      if (type.kind != SemanticType::Class)
+        return true;
+      if (type.classId == 0 || type.classId > classes.size())
+        return false;
+      const ClassInfo &record = classInfo(type.classId);
+      if (!record.cAbiRecord)
+        return false;
+      const GenericSubstitution substitution = classSubstitution(type);
+      for (const FieldInfo &field : record.fields) {
+        if (field.declaration == nullptr || !field.declaration->isMutable())
+          return false;
+        const auto member =
+            record.members.find(field.declaration->name().lexeme);
+        if (member == record.members.end() ||
+            !self(self,
+                  substituteType(member->second.symbol.type, substitution)))
+          return false;
+      }
+      return true;
+    };
+    if (!writable(writable, target))
+      return false;
+  }
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
   const bool moving = info != nullptr && info->category == ValueCategory::Value;

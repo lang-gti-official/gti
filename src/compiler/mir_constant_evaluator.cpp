@@ -1958,9 +1958,29 @@ private:
     }
     for (const auto &loan : body.loans) {
       const auto *source = body.findPlace(loan.source);
-      if (loan.storedDependency != 0 || !loan.additionalSources().empty() ||
-          loan.lifecycleBound || source == nullptr ||
-          !observedStorageType(source->type)) {
+      const auto *dependency = body.findLoan(loan.storedDependency);
+      // A constant text value owns its literal bytes in ConstantValue. A
+      // checked reference formal still carries the ordinary MIR's separate
+      // owner witness, but needs no transient allocation or stored-reference
+      // object to execute. Keep both entry loans and their verified endpoints;
+      // this does not admit nominal stored carriers or runtime text storage.
+      const bool constantTextDependency =
+          source && source->root == MirPlaceRootKind::Binding &&
+          source->initiallyAvailable && source->projections.empty() &&
+          source->type.kind == SemanticType::Reference &&
+          source->type.referenceAccess == AccessMode::ReadOnly &&
+          source->type.arguments.size() == 1 &&
+          source->type.arguments.front().kind == SemanticType::StringView &&
+          loan.access == AccessMode::ReadOnly && dependency &&
+          dependency->entry && dependency->kind == MirLoanKind::Stored &&
+          dependency->access == AccessMode::ReadOnly &&
+          dependency->source == loan.source &&
+          dependency->storedDependency == 0 &&
+          dependency->designatedFields.empty() &&
+          dependency->additionalDependencies.empty();
+      if ((loan.storedDependency != 0 && !constantTextDependency) ||
+          !loan.additionalSources().empty() || loan.lifecycleBound ||
+          source == nullptr || !observedStorageType(source->type)) {
         return fail(frame, ConstantEvaluationFailure::UnsupportedType,
                     "Constant MIR only admits checked loans to supported "
                     "values, without stored reference carriers.");

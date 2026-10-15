@@ -2104,6 +2104,40 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                 selected.constructor->declaration->parameters(),
                 arguments.size());
   recordDefaultArgumentDependencies(defaultArguments);
+  if (selected.constructor != nullptr) {
+    for (const auto &[index, initializer] : ownerlessTextConstructorInputs(
+             constructedType, selected.constructor->declaration,
+             selected.parameterTypes)) {
+      const ExprPtr *argument = nullptr;
+      bool potentialPackView = false;
+      if (index < arguments.size()) {
+        // A concrete by-value pack element is a callee parameter, so its text
+        // storage may be dynamic even though the pack expression has no single
+        // text-owner trait. Open packs never reach constructor selection.
+        potentialPackView = arguments[index].forwardedPackElement;
+        argument = arguments[index].expression;
+      } else if (index <
+                 selected.constructor->declaration->parameters().size()) {
+        const auto &parameter =
+            selected.constructor->declaration->parameters()[index];
+        if (parameter.defaultArgument)
+          argument = &parameter.defaultArgument->expression;
+      }
+      if (argument == nullptr || !*argument ||
+          (!potentialPackView && !isOwnerDependentTextExpression(*argument)))
+        continue;
+      reportOwnerDependentTextStorage(
+          *argument, "passed to a constructor that stores it in a field");
+      diagnostics.back().related.push_back(
+          {tokenSpan(initializer->target.name.last()),
+           "This initializer stores the view by value and requires an "
+           "ownerless argument."});
+      diagnostics.back().hints.clear();
+      diagnostics.back().hints.emplace_back(
+          "Pass a literal-backed value, store owned text instead, or use a "
+          "checked reference field to retain the view and its owner.");
+    }
+  }
   std::optional<std::size_t> storedParameter =
       selected.constructor == nullptr ? std::nullopt
                                       : selected.constructor->borrowParameter;
@@ -4342,6 +4376,9 @@ auto SemanticVisitor::Impl::isPublicBaseConversion(
 auto SemanticVisitor::Impl::validateReferenceBinding(
     const SemanticType &reference, const SemanticType &initializerType,
     const ExprPtr &initializer) -> void {
+  if (!validateForeignStorageBorrow(initializer)) {
+    return;
+  }
   if (reference.arguments.size() != 1) {
     return;
   }
@@ -4747,6 +4784,9 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     return;
   }
   if (analyzeRawReferenceReturn(value)) {
+    return;
+  }
+  if (!validateForeignStorageBorrow(value)) {
     return;
   }
   if (isBorrowedCarrierReference(reference)) {
@@ -6759,6 +6799,10 @@ auto SemanticVisitor::Impl::resolveRequirements(
     return result;
   }
 
+  // A conformance operation inherits its block's checked header. Resolve its
+  // requirement facts here without diagnosing the same written header again.
+  const bool restated = clause->keyword.generated;
+
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   currentNamespace = scope;
   std::vector<const TypeRef *> argumentsToValidate;
@@ -6786,10 +6830,14 @@ auto SemanticVisitor::Impl::resolveRequirements(
     if (reportCompilerPrivatePath(application.name)) {
       continue;
     }
-    recordQualifiedPathUses(application.name);
+    if (!restated)
+      recordQualifiedPathUses(application.name);
     const std::optional<ConceptId> resolved =
         resolveConceptPath(application.name, scope);
     if (!resolved) {
+      if (restated) {
+        continue;
+      }
       const std::optional<ConceptId> global =
           resolveConceptPathGlobally(application.name, scope);
       if (!(global && *global != 0 && *global <= concepts.size() &&
@@ -6807,27 +6855,30 @@ auto SemanticVisitor::Impl::resolveRequirements(
     }
 
     RegisteredConcept &conceptInfo = concepts[*resolved - 1];
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(application.name.last()),
-         .kind = SemanticOccurrenceKind::Symbol,
-         .symbol = conceptInfo.symbol,
-         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
-         .name = application.name.last().lexeme});
+    if (!restated)
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(application.name.last()),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = conceptInfo.symbol,
+           .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+           .name = application.name.last().lexeme});
     (void)resolveConcept(*resolved, &application.name.last());
     if (conceptInfo.resolution != ConceptResolution::Resolved) {
       continue;
     }
     if (application.arguments.size() !=
         conceptInfo.declaration->typeParameters().size()) {
-      report(
-          application.name.last(),
-          "Concept '" + conceptInfo.qualifiedName + "' requires " +
-              std::to_string(conceptInfo.declaration->typeParameters().size()) +
-              " type argument" +
-              (conceptInfo.declaration->typeParameters().size() == 1 ? "."
-                                                                     : "s."),
-          "GTI-S2049");
+      if (!restated)
+        report(application.name.last(),
+               "Concept '" + conceptInfo.qualifiedName + "' requires " +
+                   std::to_string(
+                       conceptInfo.declaration->typeParameters().size()) +
+                   " type argument" +
+                   (conceptInfo.declaration->typeParameters().size() == 1
+                        ? "."
+                        : "s."),
+               "GTI-S2049");
       continue;
     }
 
@@ -6845,10 +6896,11 @@ auto SemanticVisitor::Impl::resolveRequirements(
                                   !argument.reference &&
                                   argument.arrayExtents.empty();
       if (plainParameter && isActiveTypePack(argument)) {
-        report(argument.name.last(),
-               "Requires-clause arguments cannot use an unexpanded type "
-               "pack.",
-               "GTI-S2049");
+        if (!restated)
+          report(argument.name.last(),
+                 "Requires-clause arguments cannot use an unexpanded type "
+                 "pack.",
+                 "GTI-S2049");
         requirement.arguments.emplace_back(SemanticType::Unknown);
         valid = false;
         continue;
@@ -6881,7 +6933,6 @@ auto SemanticVisitor::Impl::resolveRequirements(
   // A generated clause is a conformance block's application, restated on
   // each of its operations. validateConformanceTypes validates the block's
   // patterns once, so a restated copy does not report them again.
-  const bool restated = clause->keyword.generated;
   for (const TypeRef *argument : argumentsToValidate) {
     if (!restated) {
       validateType(*argument);
@@ -7823,6 +7874,74 @@ auto SemanticVisitor::Impl::validateNativeLinkNameAttribute(
                                           true, true, true);
 }
 
+auto SemanticVisitor::Impl::validateExternCVariable(
+    const VariableDecl &variable, const SemanticType &type, SymbolId symbol)
+    -> void {
+  const auto fail = [&](const Token &where, std::string message) {
+    report(where, std::move(message), "GTI-S2054");
+  };
+  const std::string name = variable.nativeLinkName()
+                               ? std::string(variable.nativeLinkName()->name())
+                               : variable.name().lexeme;
+  const Token &location = variable.nativeLinkName()
+                              ? variable.nativeLinkName()->symbol
+                              : variable.name();
+  (void)validateNativeCIdentifierSpelling(
+      name, location, "GTI-S2054", "extern C variable", true, true, true);
+  if (functionDepth != 0 || currentClass || variable.isStatic() ||
+      variable.isConstexpr() || variable.initializer())
+    fail(variable.name(),
+         "An extern C variable must be a namespace-scope "
+         "declaration without static, constexpr, or an initializer.");
+  if (name == "main")
+    fail(location,
+         "The native symbol main is reserved for the GTI entry point.");
+  if (!(isCAbiScalar(type) || isCAbiRawPointer(type) ||
+        isCAbiRecordType(type) || isCAbiNativeFunction(type)))
+    fail(variable.type().name.last(),
+         "Foreign variables require a C ABI scalar, "
+         "raw pointer, named native function pointer, or passive C ABI record "
+         "type.");
+  if (typeTraits(type).containsBorrowedState || requiresActiveCleanupFor(type))
+    fail(variable.name(),
+         "Foreign storage cannot carry GTI loans or cleanup obligations.");
+  const auto [previous, inserted] =
+      requestSession.externCVariables.emplace(name, &variable);
+  if (!inserted && previous->second != &variable) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2054", DiagnosticPhase::Semantics, location,
+                       "C symbol '" + name + "' is declared more than once.");
+    diagnostic.related.push_back(
+        {tokenSpan(previous->second->name()), "Previous declaration is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+  if (const auto function = externCSymbols.find(name);
+      function != externCSymbols.end()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2054", DiagnosticPhase::Semantics, location,
+        "C symbol '" + name + "' conflicts with a C function declaration.");
+    diagnostic.related.push_back(
+        {tokenSpan(function->second->name()), "Conflicting function is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+  if (const auto local = rootNativeStorageSymbols.find(name);
+      local != rootNativeStorageSymbols.end() && local->second != &variable) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2054", DiagnosticPhase::Semantics, location,
+                       "C symbol '" + name +
+                           "' conflicts with a root namespace GTI variable.");
+    diagnostic.related.push_back(
+        {tokenSpan(local->second->name()), "Conflicting storage is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+  semanticModel.recordForeignStorage({.symbol = symbol,
+                                      .type = type,
+                                      .access = variable.isMutable()
+                                                    ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly,
+                                      .externalSymbol = name});
+}
+
 auto SemanticVisitor::Impl::validateExternCFunction(
     const FunctionDecl &function, bool methodDeclaration,
     const SemanticType &returnType) -> void {
@@ -7911,6 +8030,17 @@ auto SemanticVisitor::Impl::validateExternCFunction(
     }
   }
 
+  if (const auto variable =
+          requestSession.externCVariables.find(std::string(externalSymbol));
+      variable != requestSession.externCVariables.end()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2054", DiagnosticPhase::Semantics, externalLocation,
+        "C symbol '" + std::string(externalSymbol) +
+            "' conflicts with a C variable declaration.");
+    diagnostic.related.push_back(
+        {tokenSpan(variable->second->name()), "Conflicting storage is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   const auto [previous, inserted] =
       externCSymbols.emplace(std::string(externalSymbol), &function);
   if (!inserted && previous->second != &function) {

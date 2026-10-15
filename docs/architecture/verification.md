@@ -1,5 +1,31 @@
 # Compiler Verification
 
+## Constructor text-view lifetimes (0.440.3)
+
+`compiler_pipeline` covers direct, generic, defaulted and constexpr ownerless
+constructor inputs, rejected dynamic field storage and computed initializers,
+and diagnostic source relationships. `carrier_shell_references` checks the
+independent physical-view and external-owner dependencies, rejects missing or
+forged authority and early retirement, and exercises production C++ emission.
+The owner-dependent-view selection in `lsp_protocol` verifies the same diagnostic
+and related initializer span, including UTF-16 offsets and unsaved corrections.
+
+`constructor_text_reference_runtime` observes successful resource cleanup and
+constructor rollback across C++20/C++23 at O0/O1/O3, disabled copy elision and
+ASan/UBSan. Named shared-reference aliases are exercised both directly and
+through nested accessor returns, including actual C-string reads. The carrier
+suite rejects detached accessor parents and invalidation of either the view
+object or its backing owner. `json_runtime` and the two production corpus sweeps
+cover the
+source-defined JSON adapters and example 026. A text reference does not turn a
+dynamic view into ownerless storage: its character-owner dependency must remain
+live until the last dependent reference retires. A literal exception requires
+independent MIR proof, not merely a cleared borrowed-state trait.
+The existing constexpr reference-observer suite also retains its text-owner
+witnesses: literal bytes are owned by the constant value, while ordinary MIR
+verification still rejects a missing owner link before execution. Nominal
+stored-reference objects remain outside that constant-execution profile.
+
 ## Consuming payload-enum matches (0.438.0)
 
 `sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
@@ -7532,8 +7558,9 @@ outside the temporary's class hierarchy.
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
 receiver cleanup and that producer failure does not activate a receiver drop.
-The LSP smoke matrix owns `GTI-S2081` publication and clearing plus
-hover/signature selection.
+The LSP smoke matrix owns `GTI-S2081` publication for a borrowed return from a
+temporary and clearing after correction, plus hover/signature selection. Virtual
+temporary receiver calls are positive cases, not a stale rejection boundary.
 
 `temporary_constructor_argument_runtime` composes an owning constructed
 argument with read-only/grouped mutable receivers and read-borrowed temporary

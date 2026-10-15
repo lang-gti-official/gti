@@ -208,15 +208,43 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     }
     currentSourceUnit = sourceUnitFor(declaration->forKeyword());
     currentNamespace = enclosing;
+    // The header owns these parameters and their diagnostics. Operations share
+    // their resolved identities, rather than registering each written copy.
+    std::vector<GenericParameterInfo> parameters = makeGenericParameters(
+        declaration->genericParameters(), declaration->forKeyword(), enclosing);
+    for (const StmtPtr &member : declaration->members()) {
+      if (const auto *function = stmtAs<FunctionDecl>(member.get())) {
+        functionGenericParameters.emplace(function, parameters);
+      }
+    }
     const ConceptApplication &target = declaration->target();
     const Token &site = target.name.last();
+    if (reportCompilerPrivatePath(target.name)) {
+      continue;
+    }
     const std::optional<ConceptId> conceptId =
         resolveConceptPath(target.name, enclosing);
     if (!conceptId || *conceptId == 0 || *conceptId > concepts.size()) {
-      reportConformanceError(site, "Unknown or invisible concept '" +
-                                       pathSpelling(target.name) + "'.");
+      const auto global = resolveConceptPathGlobally(target.name, enclosing);
+      if (!(global && *global != 0 && *global <= concepts.size() &&
+            reportInvisibleDeclaration(
+                site, pathSpelling(target.name),
+                concepts[*global - 1].declaration->name(),
+                concepts[*global - 1].sourceUnit))) {
+        reportConformanceError(site, "Unknown or invisible concept '" +
+                                         pathSpelling(target.name) + "'.");
+        diagnostics.back().missingIncludeName = site.lexeme;
+      }
       continue;
     }
+    recordQualifiedPathUses(target.name);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(site),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = concepts[*conceptId - 1].symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+         .name = site.lexeme});
     (void)resolveConcept(*conceptId, &site);
     const RegisteredConcept &conceptInfo = concepts[*conceptId - 1];
     if (!conceptInfo.protocol) {
@@ -237,21 +265,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       continue;
     }
 
-    const bool hasFunctions =
-        std::any_of(declaration->members().begin(),
-                    declaration->members().end(), [](const StmtPtr &member) {
-                      return stmtAs<FunctionDecl>(member.get()) != nullptr;
-                    });
-    // Every block function carries these parameters and reports their
-    // problems itself; the block reports them only when it has no function.
-    const std::size_t parameterDiagnostics = diagnostics.size();
-    std::vector<GenericParameterInfo> parameters = makeGenericParameters(
-        declaration->genericParameters(), declaration->forKeyword(), enclosing);
-    if (hasFunctions) {
-      diagnostics.erase(diagnostics.begin() +
-                            static_cast<std::ptrdiff_t>(parameterDiagnostics),
-                        diagnostics.end());
-    }
     bool valid = parameters.size() == declaration->genericParameters().size();
     for (const GenericParameterInfo &parameter : parameters) {
       if (parameter.pack || parameter.value) {

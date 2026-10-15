@@ -145,9 +145,9 @@ void testStrayContinuationRecovery() {
     lang::Parser externParser(
         externLexer.scan(externSource, std::string(externName)));
     const lang::Program externProgram = externParser.parse();
-    expectSingleDiagnostic(
-        externParser, externName, externSource, continuation,
-        "An extern \"C\" block may contain only function declarations.");
+    expectSingleDiagnostic(externParser, externName, externSource, continuation,
+                           "An extern \"C\" block may contain only function or "
+                           "variable declarations.");
     expect(findFunction(externProgram.declarations(), "recovered_after") !=
                nullptr,
            "stray extern continuations should be consumed and preserve later "
@@ -238,9 +238,9 @@ int recovered_after() { return 0; }
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(std::string(source), std::string(sourceName)));
   const lang::Program program = parser.parse();
-  expectSingleDiagnostic(
-      parser, sourceName, source, "#endif",
-      "An extern \"C\" block may contain only function declarations.");
+  expectSingleDiagnostic(parser, sourceName, source, "#endif",
+                         "An extern \"C\" block may contain only function or "
+                         "variable declarations.");
   const lang::ConditionalStmt *conditional =
       findConditional(program.declarations());
   expect(conditional != nullptr && conditional->branches().size() == 1 &&
