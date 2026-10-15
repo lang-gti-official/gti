@@ -70,7 +70,8 @@ int main() {
                     f"{name} {optimization}: relocating source or stdlib changed C++")
             if name == "nominal":
                 env = dict(os.environ, GTI_STDLIB_PATH=str(moved_stdlib))
-                executable = base / ("nominal.exe" if os.name == "nt" else "nominal")
+                executable = base / ("nominal-program.exe" if os.name == "nt"
+                                     else "nominal-program")
                 run([compiler, "main.gti", "-O3", "-o", str(executable)],
                     projects[1] / "app", env)
                 run([str(executable)], projects[1] / "app", env)
