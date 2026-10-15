@@ -9,7 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.5 — Reproducible generated names and conformance diagnostics
+## 0.442.0 — Native interoperability and compiler correctness
+
+- Declare externally owned C scalar, pointer, callback and passive record objects
+  in `extern "C"` blocks, with `mut` for mutable objects and `link_name` for a
+  different native symbol. Reads and writes require `unsafe`; inert raw addresses
+  preserve their native identity without adding GTI initialization or cleanup.
+- Import these objects through bindgen with object constness, callback aliases,
+  nested record/union layouts and renamed symbols preserved. Generated native
+  headers and editor queries cover the same declarations. Unsupported TLS,
+  volatile, address-space and array-object forms receive explicit import results.
+- Admit passive `[[c_abi]] union` layouts, nested native records and named C union
+  imports, preserving explicit unsafe member access and compiler-owned layout
+  checks.
 
 - Generated C++ identifiers remain the same when a project or its standard
   library moves to another directory. Distinct source units retain distinct

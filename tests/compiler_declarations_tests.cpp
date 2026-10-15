@@ -10969,10 +10969,9 @@ int main() { return 0; }
 )");
   lang::Parser variableParser(std::move(variableTokens));
   variableParser.parse();
-  expect(variableParser.hadError() &&
-             hasDiagnostic(variableParser.errors(),
-                           "may contain only function declarations"),
-         "extern C blocks should reject native variables in the bounded ABI");
+  expect(
+      !variableParser.hadError(),
+      "extern C blocks should accept bodyless foreign variable declarations");
 
   auto duplicateAttributeTokens = lexer.scan(R"(
 extern "C" {

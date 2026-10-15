@@ -4341,6 +4341,9 @@ auto SemanticVisitor::Impl::isPublicBaseConversion(
 auto SemanticVisitor::Impl::validateReferenceBinding(
     const SemanticType &reference, const SemanticType &initializerType,
     const ExprPtr &initializer) -> void {
+  if (!validateForeignStorageBorrow(initializer)) {
+    return;
+  }
   if (reference.arguments.size() != 1) {
     return;
   }
@@ -4746,6 +4749,9 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     return;
   }
   if (analyzeRawReferenceReturn(value)) {
+    return;
+  }
+  if (!validateForeignStorageBorrow(value)) {
     return;
   }
   if (isBorrowedCarrierReference(reference)) {
@@ -7833,6 +7839,74 @@ auto SemanticVisitor::Impl::validateNativeLinkNameAttribute(
                                           true, true, true);
 }
 
+auto SemanticVisitor::Impl::validateExternCVariable(
+    const VariableDecl &variable, const SemanticType &type, SymbolId symbol)
+    -> void {
+  const auto fail = [&](const Token &where, std::string message) {
+    report(where, std::move(message), "GTI-S2054");
+  };
+  const std::string name = variable.nativeLinkName()
+                               ? std::string(variable.nativeLinkName()->name())
+                               : variable.name().lexeme;
+  const Token &location = variable.nativeLinkName()
+                              ? variable.nativeLinkName()->symbol
+                              : variable.name();
+  (void)validateNativeCIdentifierSpelling(
+      name, location, "GTI-S2054", "extern C variable", true, true, true);
+  if (functionDepth != 0 || currentClass || variable.isStatic() ||
+      variable.isConstexpr() || variable.initializer())
+    fail(variable.name(),
+         "An extern C variable must be a namespace-scope "
+         "declaration without static, constexpr, or an initializer.");
+  if (name == "main")
+    fail(location,
+         "The native symbol main is reserved for the GTI entry point.");
+  if (!(isCAbiScalar(type) || isCAbiRawPointer(type) ||
+        isCAbiRecordType(type) || isCAbiNativeFunction(type)))
+    fail(variable.type().name.last(),
+         "Foreign variables require a C ABI scalar, "
+         "raw pointer, named native function pointer, or passive C ABI record "
+         "type.");
+  if (typeTraits(type).containsBorrowedState || requiresActiveCleanupFor(type))
+    fail(variable.name(),
+         "Foreign storage cannot carry GTI loans or cleanup obligations.");
+  const auto [previous, inserted] =
+      requestSession.externCVariables.emplace(name, &variable);
+  if (!inserted && previous->second != &variable) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2054", DiagnosticPhase::Semantics, location,
+                       "C symbol '" + name + "' is declared more than once.");
+    diagnostic.related.push_back(
+        {tokenSpan(previous->second->name()), "Previous declaration is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+  if (const auto function = externCSymbols.find(name);
+      function != externCSymbols.end()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2054", DiagnosticPhase::Semantics, location,
+        "C symbol '" + name + "' conflicts with a C function declaration.");
+    diagnostic.related.push_back(
+        {tokenSpan(function->second->name()), "Conflicting function is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+  if (const auto local = rootNativeStorageSymbols.find(name);
+      local != rootNativeStorageSymbols.end() && local->second != &variable) {
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2054", DiagnosticPhase::Semantics, location,
+                       "C symbol '" + name +
+                           "' conflicts with a root namespace GTI variable.");
+    diagnostic.related.push_back(
+        {tokenSpan(local->second->name()), "Conflicting storage is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+  semanticModel.recordForeignStorage({.symbol = symbol,
+                                      .type = type,
+                                      .access = variable.isMutable()
+                                                    ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly,
+                                      .externalSymbol = name});
+}
+
 auto SemanticVisitor::Impl::validateExternCFunction(
     const FunctionDecl &function, bool methodDeclaration,
     const SemanticType &returnType) -> void {
@@ -7921,6 +7995,17 @@ auto SemanticVisitor::Impl::validateExternCFunction(
     }
   }
 
+  if (const auto variable =
+          requestSession.externCVariables.find(std::string(externalSymbol));
+      variable != requestSession.externCVariables.end()) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2054", DiagnosticPhase::Semantics, externalLocation,
+        "C symbol '" + std::string(externalSymbol) +
+            "' conflicts with a C variable declaration.");
+    diagnostic.related.push_back(
+        {tokenSpan(variable->second->name()), "Conflicting storage is here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
   const auto [previous, inserted] =
       externCSymbols.emplace(std::string(externalSymbol), &function);
   if (!inserted && previous->second != &function) {

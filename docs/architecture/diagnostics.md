@@ -681,7 +681,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   do not attach a fix-it because choosing a target function, parameter access,
   or pack is not mechanical. Parser-owned incomplete folds remain
   `GTI-P0001` and must recover the surrounding function.
-- `GTI-S2054` owns an invalid `extern "C"` declaration, including misplaced
+- `GTI-S2054` owns an invalid `extern "C"` declaration and an attempt to
+  derive an implicit checked loan from foreign storage without a GTI owner
+  witness. Foreign load/store permission uses the ordinary `GTI-S2055` unsafe
+  obligation; taking an inert raw address is distinct from a load.
+  Invalid declarations include misplaced
   or invalid `[[link_name]]` metadata and an exact symbol or parameter spelling
   that cannot be represented portably in the generated C17/C++ header. A link
   name points at its string literal; an ordinary symbol points at its source

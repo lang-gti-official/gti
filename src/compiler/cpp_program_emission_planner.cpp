@@ -1906,6 +1906,29 @@ public:
     output << "extern \"C\" {\n";
     ++indentation;
     for (const LoweredDeclaration *declaration : loweredChildren(linkage.id)) {
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&declaration->payload)) {
+        if (storage->externalSymbol.empty()) {
+          throw std::logic_error("C linkage storage lacks native identity");
+        }
+        writeIndent();
+        output << "extern ";
+        emitLoweredCAbiType(storage->type);
+        if (storage->access == AccessMode::ReadOnly) {
+          output << " const";
+        }
+        const std::string name = cppForeignStorageSpelling(storage->symbol);
+        output << ' ' << name;
+        const std::string &os = loweredProgram.target().os;
+        if (os == "windows") {
+          output << ";\n#pragma comment(linker, \"/alternatename:" << name
+                 << '=' << storage->externalSymbol << "\")\n";
+        } else {
+          output << " __asm__(\"" << (os == "macos" ? "_" : "")
+                 << storage->externalSymbol << "\");\n";
+        }
+        continue;
+      }
       const auto *function =
           std::get_if<LoweredFunctionDeclaration>(&declaration->payload);
       if (function == nullptr) {
@@ -2271,6 +2294,9 @@ public:
       const LoweredDeclaration &row, const LoweredStorageDeclaration &storage,
       bool insideClass, const LoweredClassDeclaration *owner = nullptr,
       const LoweredClassInitializerSelection *classInitializers = nullptr) {
+    if (!storage.externalSymbol.empty()) {
+      throw std::logic_error("foreign storage cannot emit a GTI definition");
+    }
     const bool runtime = loweredRuntimeProgramStorage(storage);
     const bool rawPointer = storage.type.kind == SemanticType::RawPointer;
     const bool moveOnly =

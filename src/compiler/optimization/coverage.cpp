@@ -566,6 +566,7 @@ MirOptimizationCoverage optimizationCoverage(UnsafeOperationKind kind) {
   case UnsafeOperationKind::UnionMember:
   case UnsafeOperationKind::PointerArithmetic:
   case UnsafeOperationKind::ForeignPointerCall:
+  case UnsafeOperationKind::ForeignStorage:
   case UnsafeOperationKind::DeclaredUnsafeCall:
   case UnsafeOperationKind::DeclaredUnsafeConstruction:
   case UnsafeOperationKind::ErasedReferenceRestore:
