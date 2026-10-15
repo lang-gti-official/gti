@@ -623,6 +623,28 @@ int main() {
            "MIR must reject omitted destructor-bound dependency retention");
   }
   if (proof.canGenerateCode()) {
+    for (bool primary : {true, false}) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &loan : function.body.loans) {
+          if (changed || loan.kind != lang::MirLoanKind::Stored)
+            continue;
+          const lang::BorrowDependencyCondition forged{
+              .enumeration = lang::SemanticType::enumType(1), .variant = 0};
+          if (primary)
+            loan.conditions.push_back(forged);
+          else
+            loan.additionalDependencies.push_back({.source = loan.source,
+                                                   .access = loan.access,
+                                                   .conditions = {forged}});
+          changed = true;
+        }
+      expect(changed, "conditional mutation must select a stored dependency");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "primary and additional dependencies both require exact "
+             "active-alternative proofs");
+    }
     for (int corruption = 0; corruption < 4; ++corruption) {
       auto malformed = proof.mir;
       bool changed = false;

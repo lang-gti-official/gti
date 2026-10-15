@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v106 valid=" << program.valid() << '\n';
+    output << "mir-v107 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -806,7 +806,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v87\n";
+    output << "mir-body-v88\n";
     body(value, 0);
   }
 
@@ -1409,7 +1409,9 @@ private:
       separator(index);
       output << value.designatedFields[index];
     }
-    output << "] lifecycle-bound=" << value.lifecycleBound
+    output << "] conditions=";
+    borrowConditions(value.conditions);
+    output << " lifecycle-bound=" << value.lifecycleBound
            << " additional-dependencies=[";
     for (std::size_t index = 0; index < value.additionalDependencies.size();
          ++index) {

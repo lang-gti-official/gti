@@ -122,6 +122,9 @@ struct SemanticLoanInfo {
   // For a StoredValue parameter loan, this exact nominal field path ends at
   // the reference designating its external referent. Empty for other loans.
   std::vector<SymbolId> designatedFields;
+  // The primary dependency has the same typed alternative qualification as
+  // additionalDependencies. An empty list denotes an unconditional path.
+  std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;

@@ -1954,6 +1954,10 @@ private:
 
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBorrowDependencySet(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  payloadBorrowDependencySet(const Call &call,
+                             const EnumeratorRecord &enumerator);
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   joinedBorrowDependencySets(
       const std::optional<SemanticBorrowDependencySet> &left,
@@ -2211,7 +2215,8 @@ private:
       const Expr *origin, SemanticLoanPlace place, SymbolId owner,
       bool receiverOrigin, AccessMode access, bool protectsStorage,
       SemanticLoanId parent = 0, bool entry = false,
-      std::vector<SymbolId> designatedFields = {});
+      std::vector<SymbolId> designatedFields = {},
+      std::vector<BorrowDependencyCondition> conditions = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
   SemanticLoanId recordStoredEntryDependency(Symbol &carrier,

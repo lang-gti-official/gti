@@ -143,6 +143,7 @@ struct HirLoan {
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<SymbolId> designatedFields;
+  std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
