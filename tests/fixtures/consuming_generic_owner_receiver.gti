@@ -1,0 +1,192 @@
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+// A consuming (`&&`) member call on a generic owner moved out of a named
+// binding or parameter. Each owner class declares a default constructor and
+// leaves its copy constructor to the generic declaration, while its instance
+// over a cleanup-bearing payload is move-only. The moved receiver lives in
+// its own full-expression slot and the call reads it through its receiver
+// stage, so the receiver is destroyed exactly once, at the end of the full
+// expression that consumed it.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) { std::println(value); }
+  ~Tracked() { std::println(-this.id); }
+  int read() { return this.id; }
+};
+
+// A payload whose destructor can fail.
+class Fragile {
+  int id;
+  int divisor;
+public:
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {
+    std::println(value);
+  }
+  ~Fragile() {
+    std::println(-this.id);
+    int fragile = 1 / this.divisor;
+  }
+};
+
+enum class slot<T> { empty, engaged(T value) };
+
+// An optional-like owner of an owning payload enum.
+class maybe<T> {
+  mut slot<T> state;
+  int divisor = 1;
+public:
+  maybe() : state(slot<T>::empty) {}
+  maybe(T value) : state(slot<T>::engaged(std::move(value))) {}
+  maybe(T value, int divisor)
+      : state(slot<T>::engaged(std::move(value))), divisor(divisor) {}
+  // These leave the payload in place, so the receiver is dropped whole.
+  int probe() && { return 1; }
+  void finish() && {}
+  int divide() && { return 10 / this.divisor; }
+  bool engaged() && {
+    switch (this.state) {
+    case slot<T>::engaged:
+      return true;
+    case slot<T>::empty:
+      return false;
+    }
+  }
+  // This one moves the payload out first.
+  T value() && {
+    switch (std::move(this.state)) {
+    case slot<T>::engaged(payload):
+      return payload;
+    case slot<T>::empty:
+      std::panic("maybe::value() on an empty owner");
+    }
+  }
+};
+
+// The same owner with a field declaration default.
+class lazy<T> {
+  mut slot<T> state = slot<T>::empty;
+public:
+  lazy() {}
+  lazy(T value) : state(slot<T>::engaged(std::move(value))) {}
+  int probe() && { return 2; }
+};
+
+// A direct payload field. Tracked has no default constructor, so box<Tracked>
+// cannot use box() even though the generic class declares it.
+class box<T> {
+  mut T item;
+public:
+  box() requires std::default_initializable<T> : item(T()) {}
+  box(T value) : item(std::move(value)) {}
+  int probe() && { return 3; }
+  T release() && { return std::move(this.item); }
+};
+
+int from_parameter(maybe<Tracked> owner) {
+  int result = std::move(owner).probe();
+  std::println("parameter");
+  return result;
+}
+
+int returned(maybe<Tracked> owner) { return std::move(owner).probe(); }
+
+Tracked returned_value(maybe<Tracked> owner) {
+  return std::move(owner).value();
+}
+
+int generic_probe<T>(maybe<T> owner) { return std::move(owner).probe(); }
+
+expected<int, int> expected_probe(maybe<Tracked> owner) {
+  return std::move(owner).probe();
+}
+
+int pick(bool left, maybe<Tracked> a, maybe<Tracked> b) {
+  return left ? std::move(a).probe() : std::move(b).probe();
+}
+
+class Holder {
+  int value;
+public:
+  Holder(maybe<Tracked> source) : value(std::move(source).probe()) {}
+  int read() { return this.value; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int total = 0;
+  {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(1));
+    total += std::move(owner).probe();
+    std::println("probed");
+  }
+  {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(2));
+    std::move(owner).finish();
+    std::println("finished");
+  }
+  {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(3));
+    total += std::move(owner).engaged() ? 1 : 0;
+    std::println("tested");
+  }
+  {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(4));
+    Tracked kept = std::move(owner).value();
+    std::println("taken");
+    total += kept.read();
+  }
+  {
+    maybe<Tracked> empty = maybe<Tracked>();
+    total += std::move(empty).engaged() ? 100 : 1;
+    std::println("empty");
+  }
+  total += from_parameter(maybe<Tracked>(Tracked(5)));
+  total += returned(maybe<Tracked>(Tracked(6)));
+  {
+    Tracked kept = returned_value(maybe<Tracked>(Tracked(7)));
+    total += kept.read();
+  }
+  {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(8));
+    total += generic_probe(std::move(owner));
+  }
+  {
+    expected<int, int> probed = expected_probe(maybe<Tracked>(Tracked(9)));
+    total += probed.value();
+  }
+  total += pick(true, maybe<Tracked>(Tracked(10)), maybe<Tracked>(Tracked(11)));
+  total += pick(false, maybe<Tracked>(Tracked(12)), maybe<Tracked>(Tracked(13)));
+  {
+    Holder holder = Holder(maybe<Tracked>(Tracked(14)));
+    total += holder.read();
+  }
+  for (mut int i = 15; i < 17; i += 1) {
+    maybe<Tracked> owner = maybe<Tracked>(Tracked(i));
+    total += std::move(owner).probe();
+  }
+  {
+    lazy<Tracked> owner = lazy<Tracked>(Tracked(17));
+    total += std::move(owner).probe();
+    std::println("lazy");
+  }
+  {
+    box<Tracked> owner = box<Tracked>(Tracked(18));
+    total += std::move(owner).probe();
+    box<Tracked> other = box<Tracked>(Tracked(19));
+    Tracked kept = std::move(other).release();
+    total += kept.read();
+  }
+  // Failure cleanup. Scenario 1 fails the consuming call itself, 2 the
+  // receiver's payload destructor at the end of the full expression, and 3
+  // the call and then the payload destructor during its cleanup.
+  int scenario = argc - 1;
+  maybe<Tracked> spare = maybe<Tracked>(Tracked(20));
+  maybe<Fragile> risky = maybe<Fragile>(
+      Fragile(21, scenario == 2 || scenario == 3 ? 0 : 1),
+      scenario == 1 || scenario == 3 ? 0 : 1);
+  int divided = std::move(risky).divide();
+  std::println("divided");
+  return total + divided - 57;
+}
