@@ -27,12 +27,17 @@ def member_call_field_cases(name="constructor_member_call_field"):
     # receiver's drop fails. A failing consuming call publishes nothing and
     # failure cleanup destroys its named (-7) or fresh (-8) receiver.
     before = "-1\n-2\n-3\n-5\n-4\n-6\n-14\n-13\n"
-    published = before + "-7\n-8\n"
+    taken = before + "-7\n-8\n"
+    published = taken + "-12\n-11\n"
     call = division("int guard = 1 / divisor;")
     return {fixture.stem: [
         ((), (0, published + "kept\n-10\n-8\n-9\n", "")),
         (("call",), (70, before + "-7\n", call)),
-        (("fresh",), (70, published, call)),
+        (("fresh",), (70, taken, call)),
+        # A cleanup-free receiver was transferred to the failing callee; only
+        # the published first field remains to roll back.
+        (("plain",), (70, taken + "-11\n",
+                      division("Tracked take_checked(int divisor) &&"))),
         (("later",), (70, published + "-9\n",
                       division("return Tracked(this.base / divisor)"))),
         (("receiver",), (70, published + "-10\n-8\n-9\n",
