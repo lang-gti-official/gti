@@ -309,17 +309,49 @@ void testForwardDefaultsAndLatePayloadValidation() {
 }
 
 void testRecursivePayloadComposition() {
-  for (const auto source : {
-           "enum Event<T> { empty, item(T value) }; "
-           "int main() { auto value = Event<Event<int>>::item("
-           "Event<int>::item(7)); return 0; }",
-           "enum Event<T> { empty, item(T value) }; "
-           "using Row = int[2]; int main() { auto value = "
-           "Event<Row>::item({3, 4}); return 0; }",
-           "enum Event<T> { empty, item(T value) }; "
-           "enum Error { failed }; int main() { expected<int, Error> "
-           "result = 7; auto value = Event<expected<int, Error>>::item(result); "
-           "return 0; }"}) {
+  const auto directClosure = lang::Frontend().analyze("closure-payload.gti", R"(
+enum Event<T> { empty, item(T value) };
+int keep<T>(T callable) {
+  auto value = Event<T>::item(callable);
+  return 0;
+}
+int main() { return keep([]() -> int { return 1; }); }
+)");
+  expect(!directClosure.canGenerateCode() &&
+             std::any_of(directClosure.diagnostics.begin(),
+                         directClosure.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2067";
+                         }),
+         "direct lexical closure payloads retain their semantic boundary "
+         "until closure fields have a concrete representation");
+  const auto errorAdapter = lang::Frontend().analyze("adapter-payload.gti", R"(
+enum Event<T> { empty, item(T value) };
+int keep<T>(T error) {
+  auto value = Event<T>::empty;
+  return 0;
+}
+int main() { return keep(unexpected(1)); }
+)");
+  expect(!errorAdapter.canGenerateCode() &&
+             std::any_of(errorAdapter.diagnostics.begin(),
+                         errorAdapter.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2067";
+                         }),
+         "temporary error adapters must become result alternatives before "
+         "they are stored as payload fields");
+  for (const auto source :
+       {"enum Event<T> { empty, item(T value) }; "
+        "int main() { auto value = Event<Event<int>>::item("
+        "Event<int>::item(7)); return 0; }",
+        "enum Event<T> { empty, item(T value) }; "
+        "using Row = int[2]; int main() { auto value = "
+        "Event<Row>::item({3, 4}); return 0; }",
+        "enum Event<T> { empty, item(T value) }; "
+        "enum Error { failed }; int main() { expected<int, Error> "
+        "result = 7; auto value = Event<expected<int, Error>>::item(result); "
+        "return 0; }"}) {
     const auto result =
         lang::Frontend().analyze("composed-enum-payloads.gti", source);
     expect(result.canGenerateCode(),
@@ -329,12 +361,12 @@ void testRecursivePayloadComposition() {
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
-  for (const auto source : {
-           "enum Loop { item(Loop value) }; int main() { return 0; }",
-           "enum First { item(Second value) }; "
-           "enum Second { item(First value) }; int main() { return 0; }",
-           "enum Growing<T> { empty, item(Growing<Growing<T>> value) }; "
-           "int main() { auto value = Growing<int>::empty; return 0; }"}) {
+  for (const auto source :
+       {"enum Loop { item(Loop value) }; int main() { return 0; }",
+        "enum First { item(Second value) }; "
+        "enum Second { item(First value) }; int main() { return 0; }",
+        "enum Growing<T> { empty, item(Growing<Growing<T>> value) }; "
+        "int main() { auto value = Growing<int>::empty; return 0; }"}) {
     const auto result =
         lang::Frontend().analyze("recursive-enum-layout.gti", source);
     expect(!result.semanticValid &&
@@ -346,7 +378,8 @@ void testRecursivePayloadComposition() {
                                     !diagnostic.related.empty() &&
                                     !diagnostic.hints.empty();
                            }) &&
-               std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+               std::none_of(result.diagnostics.begin(),
+                            result.diagnostics.end(),
                             [](const auto &diagnostic) {
                               return diagnostic.code == "GTI-B0001";
                             }),

@@ -2462,6 +2462,17 @@ representation-only storage. Its success edge must dominate the sole
 must record no value-rooted place or drop for it. The alternative moves the
 completed value, and the moved-from shell is destroyed immediately afterward.
 
+The same exact transfer proof stages owning array and result operands
+into their value-rooted slots. Empty-slot relocation must be defined-failure
+free; this is distinct from assignment into a live destination, whose old
+value may have a fallible destructor. Consuming `PayloadExtract` initializes
+its one pattern binding directly for every admitted value family, including
+nested enums, instead of reading an uninitialized intermediate slot.
+Recursive enum cleanup emits distinct local sequence names at each depth:
+an inner sequence's initializer must read the outer record/unwinding state,
+not a shadowing, not-yet-initialized local. Both ordinary and secondary failure
+reports are checked by the composition runtime matrix.
+
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
 native argument and moves it into its canonical MIR place. Expansions and
