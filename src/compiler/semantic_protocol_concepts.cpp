@@ -11,7 +11,9 @@
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
+#include <map>
 #include <unordered_set>
+#include <utility>
 
 namespace lang {
 
@@ -44,6 +46,18 @@ operationIndex(const Operations &operations, std::string_view name) {
   return std::nullopt;
 }
 
+// `C<A, B>` for diagnostics.
+template <class Spell>
+[[nodiscard]] std::string
+applicationText(const std::string &name,
+                const std::vector<SemanticType> &arguments, Spell spell) {
+  std::string text = name + "<";
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    text += (index == 0 ? "" : ", ") + spell(arguments[index]);
+  }
+  return text + ">";
+}
+
 } // namespace
 
 auto SemanticVisitor::Impl::reportConformanceError(const Token &site,
@@ -68,22 +82,25 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
   conceptInfo.protocol = true;
   conceptInfo.associatedTypes.clear();
   conceptInfo.operations.clear();
-  if (declaration.typeParameters().size() != 1 ||
-      conceptInfo.parameterIds.size() != 1) {
+  if (declaration.typeParameters().empty() ||
+      conceptInfo.parameterIds.size() != declaration.typeParameters().size()) {
     reportConformanceError(
         declaration.name(),
-        "A concept with a body declares exactly one type parameter.");
+        "A concept with a body declares at least one type parameter.");
     valid = false;
     return;
   }
-  const Token &parameterName = declaration.typeParameters().front();
-  const SemanticType parameter =
-      SemanticType::typeParameter(conceptInfo.parameterIds.front());
+  std::vector<SemanticType> parameters;
+  for (const GenericParameterId id : conceptInfo.parameterIds) {
+    parameters.push_back(SemanticType::typeParameter(id));
+  }
   std::unordered_set<std::string> names;
+  for (const Token &parameter : declaration.typeParameters()) {
+    names.insert(parameter.lexeme);
+  }
+  names.insert(declaration.name().lexeme);
   const auto claim = [&](const Token &name) {
-    if (name.lexeme == parameterName.lexeme ||
-        name.lexeme == declaration.name().lexeme ||
-        !names.insert(name.lexeme).second) {
+    if (!names.insert(name.lexeme).second) {
       reportConformanceError(name, "Duplicate member name '" + name.lexeme +
                                        "' in concept '" +
                                        conceptInfo.qualifiedName + "'.");
@@ -93,7 +110,7 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     return true;
   };
 
-  // Associated names type as projections of the parameter, so an operation
+  // Associated names type as projections of the parameters, so an operation
   // signature can name them directly.
   for (const ProtocolAssociatedType &associated : body.associatedTypes) {
     if (!claim(associated.name)) {
@@ -104,8 +121,12 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     conceptInfo.associatedTypes.push_back(associated.name.lexeme);
     typeParameterScopes.back().emplace(
         associated.name.lexeme,
-        associatedTypeProjection(conceptInfo.id, member, parameter));
+        associatedTypeProjection(conceptInfo.id, member, parameters));
   }
+
+  semanticModel.recordProtocolConcept(
+      conceptInfo.id, {.qualifiedName = conceptInfo.qualifiedName,
+                       .associatedTypes = conceptInfo.associatedTypes});
 
   for (const StmtPtr &statement : body.operations) {
     const auto *operation = stmtAs<FunctionDecl>(statement.get());
@@ -207,10 +228,12 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
           &conceptInfo.declaration->name(), "Concept declared here.");
       continue;
     }
-    if (target.arguments.size() != 1) {
+    const std::size_t arity = conceptInfo.parameterIds.size();
+    if (target.arguments.size() != arity) {
       reportConformanceError(site, "A conformance block applies concept '" +
-                                       conceptInfo.qualifiedName +
-                                       "' to exactly one type.");
+                                       conceptInfo.qualifiedName + "' to " +
+                                       std::to_string(arity) + " type" +
+                                       (arity == 1 ? "" : "s") + ".");
       continue;
     }
 
@@ -240,97 +263,112 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
 
+    // Each argument is a closed type, or one class template applied to block
+    // parameters; every block parameter appears in some argument. A repeated
+    // parameter must bind the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
-    validateType(target.arguments.front());
-    SemanticType pattern = typeOf(target.arguments.front(), enclosing);
-    ClassId patternTemplate = 0;
-    if (pattern == SemanticType::Unknown) {
-      valid = false;
-    } else if (parameters.empty()) {
-      if (containsOpenTypeParameter(pattern)) {
-        reportConformanceError(site, "A conformance block without parameters "
-                                     "needs a concrete type.");
+    std::vector<SemanticType> patterns;
+    std::vector<ClassId> patternTemplates;
+    std::unordered_set<GenericParameterId> used;
+    const auto ownParameter = [&](const SemanticType &type) {
+      return type.kind == SemanticType::TypeParameter &&
+             !type.isAssociatedTypeProjection() &&
+             std::any_of(parameters.begin(), parameters.end(),
+                         [&](const GenericParameterInfo &parameter) {
+                           return parameter.id == type.genericParameterId;
+                         });
+    };
+    for (const TypeRef &argument : target.arguments) {
+      validateType(argument);
+      SemanticType pattern = typeOf(argument, enclosing);
+      ClassId patternTemplate = 0;
+      if (pattern == SemanticType::Unknown) {
         valid = false;
-      }
-      pattern = canonicalExactSpecializationType(std::move(pattern));
-    } else {
-      // A class template applied to each block parameter exactly once.
-      bool shape = pattern.kind == SemanticType::Class &&
-                   pattern.classId != 0 && pattern.classId <= classes.size() &&
-                   classInfo(pattern.classId).exactSpecializationPrimary == 0 &&
-                   pattern.valueArguments.empty() &&
-                   pattern.arguments.size() == parameters.size();
-      std::unordered_set<GenericParameterId> used;
-      if (shape) {
-        for (const SemanticType &argument : pattern.arguments) {
-          shape = shape && argument.kind == SemanticType::TypeParameter &&
-                  !argument.isAssociatedTypeProjection() &&
-                  used.insert(argument.genericParameterId).second;
-        }
-        for (const GenericParameterInfo &parameter : parameters) {
-          shape = shape && used.contains(parameter.id);
-        }
-      }
-      if (!shape) {
-        reportConformanceError(
-            site, "A generic conformance block's pattern applies one class "
-                  "template to each of the block's parameters exactly once, "
-                  "such as 'Box<T>'.");
-        valid = false;
+      } else if (!containsOpenTypeParameter(pattern)) {
+        pattern = canonicalExactSpecializationType(std::move(pattern));
       } else {
-        patternTemplate = pattern.classId;
+        bool shape =
+            pattern.kind == SemanticType::Class && pattern.classId != 0 &&
+            pattern.classId <= classes.size() &&
+            classInfo(pattern.classId).exactSpecializationPrimary == 0 &&
+            pattern.valueArguments.empty() && !pattern.arguments.empty() &&
+            std::all_of(pattern.arguments.begin(), pattern.arguments.end(),
+                        ownParameter);
+        if (!shape) {
+          reportConformanceError(
+              argument.name.last(),
+              "Each argument of a conformance block is a concrete type or "
+              "one class template applied to the block's parameters, such "
+              "as 'Box<T>'.");
+          valid = false;
+        } else {
+          patternTemplate = pattern.classId;
+          for (const SemanticType &parameter : pattern.arguments) {
+            used.insert(parameter.genericParameterId);
+          }
+        }
+      }
+      patterns.push_back(std::move(pattern));
+      patternTemplates.push_back(patternTemplate);
+    }
+    if (valid) {
+      for (const GenericParameterInfo &parameter : parameters) {
+        if (!used.contains(parameter.id)) {
+          reportConformanceError(parameter.name,
+                                 "Block parameter '" + parameter.name.lexeme +
+                                     "' does not appear in the concept's "
+                                     "arguments.");
+          valid = false;
+        }
       }
     }
+    std::string application = conceptInfo.qualifiedName + "<";
+    for (std::size_t position = 0; position < patterns.size(); ++position) {
+      application +=
+          (position == 0 ? "" : ", ") + typeSpelling(patterns[position]);
+    }
+    application += ">";
 
     if (valid) {
-      const bool ownsConcept =
+      bool owns =
           samePackageOwnershipDomain(currentSourceUnit, conceptInfo.sourceUnit);
-      const bool ownsType =
-          patternTemplate != 0
-              ? samePackageOwnershipDomain(
-                    currentSourceUnit, classInfo(patternTemplate).sourceUnit)
-              : ownsNominalSpecializationArgument(currentSourceUnit, pattern);
-      if (!ownsConcept && !ownsType) {
+      for (std::size_t position = 0; !owns && position < patterns.size();
+           ++position) {
+        owns = patternTemplates[position] != 0
+                   ? samePackageOwnershipDomain(
+                         currentSourceUnit,
+                         classInfo(patternTemplates[position]).sourceUnit)
+                   : ownsNominalSpecializationArgument(currentSourceUnit,
+                                                       patterns[position]);
+      }
+      if (!owns) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2123", DiagnosticPhase::Semantics, site,
             "This package cannot declare a conformance block for '" +
-                conceptInfo.qualifiedName + "<" + typeSpelling(pattern) +
-                ">'; it owns neither the concept nor the type.");
+                application + "'; it owns neither the concept nor " +
+                (arity == 1 ? "the type." : "any of the argument types."));
         diagnostic.related.push_back(
             {tokenSpan(conceptInfo.declaration->name()),
              "Concept declared here."});
         diagnostic.hints.emplace_back(
-            "Declare the block in the concept's or the type's package, or "
-            "wrap the type in one this package owns.");
+            "Declare the block in the concept's package or in the package of "
+            "one of its argument types, or wrap a type in one this package "
+            "owns.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
       }
     }
 
     if (valid) {
-      const auto instanceOf = [&](const SemanticType &type, ClassId owner) {
-        return type.kind == SemanticType::Class && type.classId != 0 &&
-               type.classId <= classes.size() &&
-               (type.classId == owner ||
-                classInfo(type.classId).exactSpecializationPrimary == owner);
-      };
       for (const RegisteredConformance &other : conformances) {
-        if (other.conceptId != *conceptId) {
-          continue;
-        }
-        const bool overlap = other.patternTemplate != 0 && patternTemplate != 0
-                                 ? other.patternTemplate == patternTemplate
-                             : other.patternTemplate != 0
-                                 ? instanceOf(pattern, other.patternTemplate)
-                             : patternTemplate != 0
-                                 ? instanceOf(other.pattern, patternTemplate)
-                                 : other.pattern == pattern;
-        if (overlap) {
+        if (other.conceptId == *conceptId &&
+            conformancePatternsOverlap(other, patterns, patternTemplates)) {
           reportConformanceError(
               site,
               "This conformance block for concept '" +
                   conceptInfo.qualifiedName +
-                  "' overlaps another; a type matches at most one block.",
+                  "' overlaps another; the same types match at most one "
+                  "block.",
               &other.declaration->target().name.last(),
               "Overlapping conformance block is here.");
           valid = false;
@@ -387,8 +425,8 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                             .namespaceScope = enclosing,
                             .functionScope = scope,
                             .genericParameters = std::move(parameters),
-                            .pattern = std::move(pattern),
-                            .patternTemplate = patternTemplate,
+                            .patterns = std::move(patterns),
+                            .patternTemplates = std::move(patternTemplates),
                             .associatedTypes = std::move(associatedTypes)});
   }
   currentSourceUnit = enclosingSourceUnit;
@@ -411,13 +449,12 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
     currentNamespace = conformance.namespaceScope;
 
     // Both signatures in the block's parameter space, with projections of
-    // the block's own pattern resolved to its types.
+    // the block's own patterns resolved to its types.
     const auto resolveOwn = [&](const auto &self,
                                 SemanticType value) -> SemanticType {
       if (value.isAssociatedTypeProjection() &&
           value.projectionConcept == conformance.conceptId &&
-          value.arguments.size() == 1 &&
-          value.arguments.front() == conformance.pattern &&
+          value.arguments == conformance.patterns &&
           value.projectionMember < conformance.associatedTypes.size()) {
         return conformance.associatedTypes[value.projectionMember];
       }
@@ -427,8 +464,11 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       return value;
     };
     GenericSubstitution toBlock;
-    toBlock.types.emplace(conceptInfo.parameterIds.front(),
-                          conformance.pattern);
+    for (std::size_t position = 0; position < conceptInfo.parameterIds.size();
+         ++position) {
+      toBlock.types.emplace(conceptInfo.parameterIds[position],
+                            conformance.patterns[position]);
+    }
     const auto expected = [&](const SemanticType &type) {
       return resolveOwn(resolveOwn, substituteType(type, toBlock));
     };
@@ -542,54 +582,175 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
   }
 }
 
-auto SemanticVisitor::Impl::matchConformance(ConceptId id,
-                                             const SemanticType &argument) const
-    -> std::optional<ConformanceMatch> {
-  if (containsOpenTypeParameter(argument)) {
+auto SemanticVisitor::Impl::classTemplateArguments(const SemanticType &type,
+                                                   ClassId owner) const
+    -> std::optional<std::vector<SemanticType>> {
+  if (type.kind != SemanticType::Class || type.classId == 0 ||
+      type.classId > classes.size()) {
     return std::nullopt;
   }
-  const SemanticType key = canonicalExactSpecializationType(argument);
+  if (type.classId == owner) {
+    return type.arguments;
+  }
+  const ClassInfo &info = classInfo(type.classId);
+  if (info.exactSpecializationPrimary != 0 &&
+      info.exactSpecializationPrimary == owner) {
+    return info.exactTypeArguments;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::matchConformance(
+    ConceptId id, const std::vector<SemanticType> &arguments) const
+    -> std::optional<ConformanceMatch> {
+  if (std::any_of(arguments.begin(), arguments.end(),
+                  [&](const SemanticType &argument) {
+                    return containsOpenTypeParameter(argument);
+                  })) {
+    return std::nullopt;
+  }
   for (std::size_t index = 0; index < conformances.size(); ++index) {
     const RegisteredConformance &conformance = conformances[index];
-    if (conformance.conceptId != id) {
-      continue;
-    }
-    if (conformance.patternTemplate == 0) {
-      if (conformance.pattern == key) {
-        return ConformanceMatch{.conformance = index + 1};
-      }
-      continue;
-    }
-    if (argument.kind != SemanticType::Class || argument.classId == 0 ||
-        argument.classId > classes.size()) {
-      continue;
-    }
-    ClassId owner = argument.classId;
-    std::vector<SemanticType> arguments = argument.arguments;
-    if (const ClassInfo &info = classInfo(owner);
-        info.exactSpecializationPrimary != 0) {
-      owner = info.exactSpecializationPrimary;
-      arguments = info.exactTypeArguments;
-    }
-    if (owner != conformance.patternTemplate ||
-        arguments.size() != conformance.pattern.arguments.size()) {
+    if (conformance.conceptId != id ||
+        conformance.patterns.size() != arguments.size()) {
       continue;
     }
     ConformanceMatch match{.conformance = index + 1};
     match.binding.assign(conformance.genericParameters.size(),
                          SemanticType::Unknown);
-    for (std::size_t position = 0; position < arguments.size(); ++position) {
-      for (std::size_t parameter = 0;
-           parameter < conformance.genericParameters.size(); ++parameter) {
-        if (conformance.genericParameters[parameter].id ==
-            conformance.pattern.arguments[position].genericParameterId) {
-          match.binding[parameter] = arguments[position];
+    // A repeated parameter binds once and must agree at later occurrences.
+    const auto bind = [&](GenericParameterId parameter, SemanticType type) {
+      type = canonicalExactSpecializationType(std::move(type));
+      for (std::size_t slot = 0; slot < conformance.genericParameters.size();
+           ++slot) {
+        if (conformance.genericParameters[slot].id != parameter) {
+          continue;
         }
+        if (match.binding[slot] == SemanticType::Unknown) {
+          match.binding[slot] = std::move(type);
+          return true;
+        }
+        return match.binding[slot] == type;
+      }
+      return false;
+    };
+    bool matches = true;
+    for (std::size_t position = 0; matches && position < arguments.size();
+         ++position) {
+      const SemanticType &pattern = conformance.patterns[position];
+      if (conformance.patternTemplates[position] == 0) {
+        matches =
+            pattern == canonicalExactSpecializationType(arguments[position]);
+        continue;
+      }
+      const std::optional<std::vector<SemanticType>> instance =
+          classTemplateArguments(arguments[position],
+                                 conformance.patternTemplates[position]);
+      matches = instance && instance->size() == pattern.arguments.size();
+      for (std::size_t inner = 0; matches && inner < pattern.arguments.size();
+           ++inner) {
+        matches = bind(pattern.arguments[inner].genericParameterId,
+                       (*instance)[inner]);
       }
     }
-    return match;
+    if (matches) {
+      return match;
+    }
   }
   return std::nullopt;
+}
+
+// Whether some concrete arguments match both blocks. Every pattern is a
+// closed type or a class template applied to block parameters, so unifying
+// two blocks binds parameters only to closed types or to each other: a
+// union-find over both blocks' parameters, each class carrying at most one
+// closed type, decides it.
+auto SemanticVisitor::Impl::conformancePatternsOverlap(
+    const RegisteredConformance &existing,
+    const std::vector<SemanticType> &patterns,
+    const std::vector<ClassId> &templates) const -> bool {
+  if (existing.patterns.size() != patterns.size()) {
+    return false;
+  }
+  // Parameters are keyed by block (0: existing, 1: candidate) and identity.
+  using Variable = std::pair<int, GenericParameterId>;
+  std::map<Variable, Variable> parent;
+  std::map<Variable, SemanticType> closed;
+  const auto find = [&](Variable variable) {
+    while (true) {
+      const auto found = parent.find(variable);
+      if (found == parent.end() || found->second == variable) {
+        return variable;
+      }
+      variable = found->second;
+    }
+  };
+  const auto assign = [&](Variable variable, SemanticType type) {
+    type = canonicalExactSpecializationType(std::move(type));
+    const Variable root = find(variable);
+    const auto found = closed.find(root);
+    if (found == closed.end()) {
+      closed.emplace(root, std::move(type));
+      return true;
+    }
+    return found->second == type;
+  };
+  const auto unite = [&](Variable left, Variable right) {
+    const Variable leftRoot = find(left);
+    const Variable rightRoot = find(right);
+    if (leftRoot == rightRoot) {
+      return true;
+    }
+    parent[leftRoot] = rightRoot;
+    const auto leftClosed = closed.find(leftRoot);
+    if (leftClosed == closed.end()) {
+      return true;
+    }
+    SemanticType type = leftClosed->second;
+    closed.erase(leftClosed);
+    return assign(rightRoot, std::move(type));
+  };
+  for (std::size_t position = 0; position < patterns.size(); ++position) {
+    const SemanticType &left = existing.patterns[position];
+    const SemanticType &right = patterns[position];
+    const ClassId leftTemplate = existing.patternTemplates[position];
+    const ClassId rightTemplate = templates[position];
+    if (leftTemplate == 0 && rightTemplate == 0) {
+      if (left != right) {
+        return false;
+      }
+      continue;
+    }
+    if (leftTemplate != 0 && rightTemplate != 0) {
+      if (leftTemplate != rightTemplate ||
+          left.arguments.size() != right.arguments.size()) {
+        return false;
+      }
+      for (std::size_t inner = 0; inner < left.arguments.size(); ++inner) {
+        if (!unite({0, left.arguments[inner].genericParameterId},
+                   {1, right.arguments[inner].genericParameterId})) {
+          return false;
+        }
+      }
+      continue;
+    }
+    // One side is closed: it must be an instance of the other's template.
+    const bool leftOpen = leftTemplate != 0;
+    const SemanticType &open = leftOpen ? left : right;
+    const std::optional<std::vector<SemanticType>> instance =
+        classTemplateArguments(leftOpen ? right : left,
+                               leftOpen ? leftTemplate : rightTemplate);
+    if (!instance || instance->size() != open.arguments.size()) {
+      return false;
+    }
+    for (std::size_t inner = 0; inner < open.arguments.size(); ++inner) {
+      if (!assign({leftOpen ? 0 : 1, open.arguments[inner].genericParameterId},
+                  (*instance)[inner])) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 auto SemanticVisitor::Impl::protocolConceptOwner(
@@ -606,9 +767,9 @@ auto SemanticVisitor::Impl::protocolConceptOwner(
 }
 
 auto SemanticVisitor::Impl::associatedTypeProjection(
-    ConceptId id, std::uint32_t member, SemanticType argument) const
-    -> SemanticType {
-  SemanticType projection(SemanticType::TypeParameter, {std::move(argument)});
+    ConceptId id, std::uint32_t member,
+    std::vector<SemanticType> arguments) const -> SemanticType {
+  SemanticType projection(SemanticType::TypeParameter, std::move(arguments));
   projection.projectionConcept = id;
   projection.projectionMember = member;
   return reduceAssociatedTypeProjection(std::move(projection));
@@ -617,12 +778,15 @@ auto SemanticVisitor::Impl::associatedTypeProjection(
 auto SemanticVisitor::Impl::reduceAssociatedTypeProjection(
     SemanticType projection) const -> SemanticType {
   if (!projection.isAssociatedTypeProjection() ||
-      projection.arguments.size() != 1 ||
-      containsOpenTypeParameter(projection.arguments.front())) {
+      projection.arguments.empty() ||
+      std::any_of(projection.arguments.begin(), projection.arguments.end(),
+                  [&](const SemanticType &argument) {
+                    return containsOpenTypeParameter(argument);
+                  })) {
     return projection;
   }
-  const std::optional<ConformanceMatch> match = matchConformance(
-      projection.projectionConcept, projection.arguments.front());
+  const std::optional<ConformanceMatch> match =
+      matchConformance(projection.projectionConcept, projection.arguments);
   if (!match) {
     return projection;
   }
@@ -701,25 +865,36 @@ auto SemanticVisitor::Impl::blockAssociatedType(
 }
 
 auto SemanticVisitor::Impl::ownBlockProjection(
-    ConceptId id, std::uint32_t member, const SemanticType &argument,
+    ConceptId id, std::uint32_t member,
+    const std::vector<SemanticType> &arguments,
     const std::vector<std::string> &fromScope) const
     -> std::optional<SemanticType> {
   const RegisteredConformance *conformance = enclosingConformance(fromScope);
   if (conformance == nullptr || conformance->conceptId != id ||
       member >= conformance->associatedTypes.size() ||
-      typeOf(conformance->declaration->target().arguments.front(), fromScope) !=
-          argument) {
+      conformance->declaration->target().arguments.size() != arguments.size()) {
     return std::nullopt;
+  }
+  for (std::size_t position = 0; position < arguments.size(); ++position) {
+    if (typeOf(conformance->declaration->target().arguments[position],
+               fromScope) != arguments[position]) {
+      return std::nullopt;
+    }
   }
   return blockScopeType(*conformance, conformance->associatedTypes[member]);
 }
 
 auto SemanticVisitor::Impl::protocolOperationType(
-    ConceptId id, const SemanticType &type, const SemanticType &argument) const
-    -> SemanticType {
+    ConceptId id, const SemanticType &type,
+    const std::vector<SemanticType> &arguments) const -> SemanticType {
   const RegisteredConcept &conceptInfo = concepts[id - 1];
   GenericSubstitution substitution;
-  substitution.types.emplace(conceptInfo.parameterIds.front(), argument);
+  for (std::size_t position = 0; position < conceptInfo.parameterIds.size() &&
+                                 position < arguments.size();
+       ++position) {
+    substitution.types.emplace(conceptInfo.parameterIds[position],
+                               arguments[position]);
+  }
   return substituteType(type, substitution);
 }
 
@@ -744,13 +919,17 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
       .application = requirement.syntax,
       .leafApplication = requirement.syntax,
       .applicationArgumentIndex = 0,
-      .missingConformance = true};
-  if (requirement.arguments.size() != 1 ||
-      containsOpenTypeParameter(argument)) {
+      .missingConformance = true,
+      .conformanceArguments = requirement.arguments};
+  if (requirement.arguments.size() != conceptInfo.parameterIds.size() ||
+      std::any_of(requirement.arguments.begin(), requirement.arguments.end(),
+                  [&](const SemanticType &type) {
+                    return containsOpenTypeParameter(type);
+                  })) {
     return failure;
   }
   const std::optional<ConformanceMatch> match =
-      matchConformance(requirement.conceptId, argument);
+      matchConformance(requirement.conceptId, requirement.arguments);
   if (!match) {
     return failure;
   }
@@ -767,9 +946,12 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
     validateType(argument);
   }
   const Token &site = type.name.last();
-  if (owner.arguments.size() != 1) {
+  const std::size_t arity = conceptInfo.parameterIds.size();
+  if (owner.arguments.size() != arity) {
     reportConformanceError(site, "Concept '" + conceptInfo.qualifiedName +
-                                     "' takes exactly one type argument.");
+                                     "' takes " + std::to_string(arity) +
+                                     " type argument" +
+                                     (arity == 1 ? "" : "s") + ".");
     return;
   }
   if (!type.arguments.empty()) {
@@ -783,25 +965,31 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
                                      site.lexeme + "'.");
     return;
   }
-  const SemanticType argument = typeOf(owner.arguments.front());
-  if (argument == SemanticType::Unknown) {
-    return;
+  std::vector<SemanticType> arguments;
+  for (const TypeRef &argument : owner.arguments) {
+    arguments.push_back(typeOf(argument));
+    if (arguments.back() == SemanticType::Unknown) {
+      return;
+    }
   }
-  if (containsOpenTypeParameter(argument)) {
+  const std::string application = applicationText(
+      conceptInfo.qualifiedName, arguments,
+      [&](const SemanticType &argument) { return typeSpelling(argument); });
+  if (std::any_of(arguments.begin(), arguments.end(),
+                  [&](const SemanticType &argument) {
+                    return containsOpenTypeParameter(argument);
+                  })) {
     if (firstConceptApplicationFailure(
-            {.conceptId = id, .arguments = {argument}})) {
-      reportConformanceError(
-          site, "'" + conceptInfo.qualifiedName + "<" + typeSpelling(argument) +
-                    ">::" + site.lexeme + "' requires 'requires " +
-                    conceptInfo.qualifiedName + "<" + typeSpelling(argument) +
-                    ">' on the enclosing declaration.");
+            {.conceptId = id, .arguments = arguments})) {
+      reportConformanceError(site, "'" + application + "::" + site.lexeme +
+                                       "' requires 'requires " + application +
+                                       "' on the enclosing declaration.");
     }
     return;
   }
-  if (!matchConformance(id, argument)) {
-    reportConformanceError(
-        site, "No conformance block 'for concept " + conceptInfo.qualifiedName +
-                  "<" + typeSpelling(argument) + ">' is declared.");
+  if (!matchConformance(id, arguments)) {
+    reportConformanceError(site, "No conformance block 'for concept " +
+                                     application + "' is declared.");
   }
 }
 
@@ -813,14 +1001,18 @@ auto SemanticVisitor::Impl::protocolOperationTarget(const QualifiedName &callee)
   const TypeRef &owner = *callee.ownerType();
   const std::optional<ConceptId> id =
       protocolConceptOwner(owner, currentNamespace);
-  if (!id || owner.arguments.size() != 1) {
+  if (!id || owner.arguments.size() != concepts[*id - 1].parameterIds.size()) {
     return std::nullopt;
   }
-  const SemanticType argument =
-      substituteType(typeOf(owner.arguments.front()),
-                     GenericSubstitution{.types = instanceTypeSubstitution,
-                                         .values = instanceValueSubstitution});
-  const std::optional<ConformanceMatch> match = matchConformance(*id, argument);
+  std::vector<SemanticType> arguments;
+  for (const TypeRef &argument : owner.arguments) {
+    arguments.push_back(substituteType(
+        typeOf(argument),
+        GenericSubstitution{.types = instanceTypeSubstitution,
+                            .values = instanceValueSubstitution}));
+  }
+  const std::optional<ConformanceMatch> match =
+      matchConformance(*id, arguments);
   if (!match) {
     return std::nullopt;
   }
@@ -854,9 +1046,12 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
     validateType(argument);
   }
   const Token &site = callee.name().last();
-  if (owner.arguments.size() != 1) {
+  const std::size_t arity = conceptInfo.parameterIds.size();
+  if (owner.arguments.size() != arity) {
     reportConformanceError(site, "Concept '" + conceptInfo.qualifiedName +
-                                     "' takes exactly one type argument.");
+                                     "' takes " + std::to_string(arity) +
+                                     " type argument" +
+                                     (arity == 1 ? "" : "s") + ".");
     return fail();
   }
   if (!expr.typeArguments().empty()) {
@@ -872,30 +1067,36 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
                                      "'.");
     return fail();
   }
-  const SemanticType argument =
-      substituteType(typeOf(owner.arguments.front()),
-                     GenericSubstitution{.types = instanceTypeSubstitution,
-                                         .values = instanceValueSubstitution});
-  if (argument == SemanticType::Unknown) {
-    return fail();
+  std::vector<SemanticType> arguments;
+  for (const TypeRef &argument : owner.arguments) {
+    arguments.push_back(substituteType(
+        typeOf(argument),
+        GenericSubstitution{.types = instanceTypeSubstitution,
+                            .values = instanceValueSubstitution}));
+    if (arguments.back() == SemanticType::Unknown) {
+      return fail();
+    }
   }
-  if (!containsOpenTypeParameter(argument)) {
+  const std::string application = applicationText(
+      conceptInfo.qualifiedName, arguments,
+      [&](const SemanticType &argument) { return typeSpelling(argument); });
+  if (std::none_of(arguments.begin(), arguments.end(),
+                   [&](const SemanticType &argument) {
+                     return containsOpenTypeParameter(argument);
+                   })) {
     if (!protocolOperationTarget(callee)) {
       reportConformanceError(site, "No conformance block 'for concept " +
-                                       conceptInfo.qualifiedName + "<" +
-                                       typeSpelling(argument) +
-                                       ">' is declared.");
+                                       application + "' is declared.");
       return fail();
     }
     return false;
   }
   if (firstConceptApplicationFailure(
-          {.conceptId = id, .arguments = {argument}})) {
-    reportConformanceError(
-        site, "Calling '" + conceptInfo.qualifiedName + "<" +
-                  typeSpelling(argument) + ">::" + site.lexeme +
-                  "' requires 'requires " + conceptInfo.qualifiedName + "<" +
-                  typeSpelling(argument) + ">' on the enclosing declaration.");
+          {.conceptId = id, .arguments = arguments})) {
+    reportConformanceError(site, "Calling '" + application +
+                                     "::" + site.lexeme +
+                                     "' requires 'requires " + application +
+                                     "' on the enclosing declaration.");
     return fail();
   }
 
@@ -906,10 +1107,10 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
   std::vector<SemanticType> parameterTypes;
   parameterTypes.reserve(operation.parameterTypes.size());
   for (const SemanticType &parameter : operation.parameterTypes) {
-    parameterTypes.push_back(protocolOperationType(id, parameter, argument));
+    parameterTypes.push_back(protocolOperationType(id, parameter, arguments));
   }
   const SemanticType returnType =
-      protocolOperationType(id, operation.returnType, argument);
+      protocolOperationType(id, operation.returnType, arguments);
   if (expr.arguments().size() != parameterTypes.size()) {
     report(expr.paren(),
            "Function expects " + std::to_string(parameterTypes.size()) +

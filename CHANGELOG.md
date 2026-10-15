@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.434.3 — Method calls in constructor member initializers
+## 0.435.2 — Method calls in constructor member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a constructor's member initializer
@@ -19,13 +19,51 @@ for what minor and patch releases mean.
   (`&&`) method, such as `Holder(Single box) : kept(std::move(box).release()) {}`
   or `Holder(int v) : kept(Single(v).release()) {}`. Receivers include
   by-value, reference and `mut` reference parameters and temporaries, in
-  ordinary and generic classes. A consumed receiver is destroyed after the
-  field is initialized; if its destructor fails, the field is destroyed
-  before the failure propagates.
-- A consuming call in a member initializer still stops with this error when
-  its receiver is moved out of a variable whose class has no destructor and no
-  fields that need one, such as `kept(std::move(source).take())` for a
-  `Source` holding only an `int`.
+  ordinary and generic classes. Field defaults that call a method on a
+  temporary, such as `Tracked kept = Source(3).make();`, are fixed too. A
+  consumed receiver is destroyed after the field is initialized; if its
+  destructor fails, the field is destroyed before the failure propagates.
+- A member initializer still stops with this error in these cases:
+  - a consuming call whose receiver is moved out of a variable whose class
+    has no destructor and no fields that need one, such as
+    `kept(std::move(source).take())` for a `Source` holding only an `int`
+  - a call to a `virtual` method whose result needs cleanup, such as
+    `kept(maker.make())`
+
+## 0.435.1 — Constructors that move a lambda parameter into a field
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class moves a lambda
+  parameter into a field and the constructor can fail afterwards, for example
+  `Keeper(F f) : callback(std::move(f)), seen(0) { this.seen = call(this.callback); }`,
+  or with a later member initializer that can fail, such as
+  `seen(call(...))`. Lambdas capturing numbers and lambdas capturing structs
+  both failed; copying the lambda (`callback(f)`) already worked.
+- The same fix covers moving an enum value with a payload into a field in a
+  constructor whose body can fail.
+- A lambda field that is moved after another member initializer that can
+  fail, or a lambda capturing a struct that cannot be copied, is still
+  rejected with `GTI-B0001`.
+
+## 0.435.0 — Protocol concepts over several types
+
+- A concept with a body can now take several type parameters, so it can
+  relate types to each other. An associated type then depends on all of
+  them:
+  `concept adds_to<Left, Right> { typename sum_type; sum_type add(Left& left, Right& right); };`.
+- A block gives one pattern per parameter. Each is a concrete type or one
+  class template over the block's parameters, such as
+  `for <T> concept adds_to<Tally<T>, Tally<T>> { ... }`. A parameter may
+  repeat, and every occurrence must be the same type, so that block applies
+  only to two tallies of the same kind.
+- Two blocks that some types could both match are rejected as overlapping,
+  as before. A package may write a block when it owns the concept or the
+  outermost type of any argument.
+- Generic code names the application it needs, as in
+  `adds_to<L, R>::sum_type total<L, R>(L& left, R& right) requires adds_to<L, R>`.
+- Diagnostics now spell an associated type through its concept, such as
+  `scaled<A, B>::factor_type`, instead of "type parameter".
+- Example 158 demonstrates a two-parameter concept.
 
 ## 0.434.2 — Returning the result of a consuming method
 
