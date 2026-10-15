@@ -2435,6 +2435,104 @@ void testBorrowedArgumentFallibleConditionAdmission() {
          "must fail admission");
 }
 
+// A borrowed argument stays representation-erased across a later conditional
+// argument whose nested call takes an owning class argument by value. Each
+// prepared argument hands off by one TransferOut, and a failure between its
+// preparation and the nested call destroys it.
+void testBorrowedArgumentNestedOwningArgumentAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_argument_nested_owning_argument.gti";
+  std::ifstream input(path);
+  expect(input.good(), "the nested owning argument fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "the nested owning argument fixture must pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the nested owning argument fixture needs a complete backend "
+         "representation");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None)
+      entry = &candidate;
+  }
+  expect(entry != nullptr, "the fixture must retain its entry body");
+  if (entry == nullptr)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "borrowed arguments before a nested call taking an owning argument "
+         "should stay admissible");
+
+  // Calls consuming prepared arguments, and the failure-edge drops of
+  // prepared arguments that a later argument's failure abandons.
+  std::vector<lang::MirInstructionId> handoffs;
+  std::vector<lang::MirInstructionId> cleanups;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      const auto prepared = [&](lang::MirDropObligationId id) {
+        const lang::MirDropObligation *drop =
+            entry->body.findDropObligation(id);
+        return drop != nullptr &&
+               drop->kind == lang::MirDropObligationKind::PreparedParameter;
+      };
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          !instruction.lifecycle.empty() &&
+          std::all_of(
+              instruction.lifecycle.begin(), instruction.lifecycle.end(),
+              [&](const lang::MirLifecycleEvent &event) {
+                return event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                       prepared(event.source);
+              }))
+        handoffs.push_back(instruction.id);
+      if (instruction.kind == lang::MirInstructionKind::Drop &&
+          instruction.lifecycle.size() == 1 &&
+          instruction.lifecycle.front().failureCleanup &&
+          prepared(instruction.lifecycle.front().source))
+        cleanups.push_back(instruction.id);
+    }
+  }
+  expect(handoffs.size() == 7,
+         "the fixture should hand seven prepared arguments to their calls");
+  expect(!cleanups.empty(),
+         "the fixture should destroy a prepared argument on a failure edge");
+
+  const auto admitted = [&](lang::MirInstructionId id, bool duplicate) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != entry->id)
+        continue;
+      lang::MirInstruction *instruction =
+          findPreflightInstruction(function.body, id);
+      if (duplicate)
+        instruction->lifecycle.push_back(instruction->lifecycle.front());
+      else
+        instruction->tombstone = true;
+      expect(lang::rebuildMirValueUses(function.body),
+             "the forged nested owning argument body should retain a "
+             "rebuildable use index");
+    }
+    return lang::CppMirBodyEmitter(forged, map)
+        .supportsFailureBodyText(address);
+  };
+  for (const lang::MirInstructionId id : handoffs)
+    expect(!admitted(id, true),
+           "a call that hands off a prepared argument twice must fail "
+           "admission");
+  for (const lang::MirInstructionId id : cleanups)
+    expect(!admitted(id, false),
+           "a failure edge that abandons a prepared argument must fail "
+           "admission");
+}
+
 void testConditionalExpectedArgumentReceiverAdmission() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/conditional_expected_argument_receiver.gti";
@@ -6172,6 +6270,8 @@ constexpr NamedTest kTests[] = {
      testConditionalOwningArgumentReceiverAdmission},
     {"testBorrowedArgumentFallibleConditionAdmission",
      testBorrowedArgumentFallibleConditionAdmission},
+    {"testBorrowedArgumentNestedOwningArgumentAdmission",
+     testBorrowedArgumentNestedOwningArgumentAdmission},
     {"testConditionalExpectedArgumentReceiverAdmission",
      testConditionalExpectedArgumentReceiverAdmission},
     {"testFreshClassPayloadOperandStaging",
