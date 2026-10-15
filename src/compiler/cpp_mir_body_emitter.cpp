@@ -4940,8 +4940,15 @@ ownedExpectedExtractionProducer(const MirBody &body, MirValueId valueId);
 passiveResultReturnBlock(const MirBody &body, const MirValue &value,
                          const MirInstruction &producer);
 
-[[nodiscard]] bool exactPreparedInputTransfers(const MirBody &body,
-                                               const MirInstruction &call);
+// Whether an input-transfer proof counts a cleanup-free receiver moved out of
+// a place, which the call transfers like an owning argument, among the call's
+// prepared inputs. A result proof admits it only where its schedule accounts
+// for that receiver; other proofs keep refusing such calls.
+enum class PreparedReceiverInput { Refused, Admitted };
+
+[[nodiscard]] bool exactPreparedInputTransfers(
+    const MirBody &body, const MirInstruction &call,
+    PreparedReceiverInput receiver = PreparedReceiverInput::Refused);
 
 [[nodiscard]] bool
 cleanupFreeExpectedClassExtractionProducer(const MirBody &body,
@@ -16751,9 +16758,87 @@ exactMemberBorrowReceiver(const MirProgram &program, const MirBody &body,
          classTypeIsOrDerivesFrom(program, receiver->type, owner->id);
 }
 
+// A receiver moved out of a place without a Value obligation of its own (a
+// cleanup-free class) is staged as a prepared parameter instead. Its CallInput
+// activates a PreparedParameter obligation on its Temporary destination, and
+// the call transfers that obligation to the callee exactly like an owning
+// argument's. Ordinary call admission spells that destination as the moved
+// source (`copyStagedCallInput`); this proof names the stage it consumes, so
+// result and input-transfer proofs can account for the receiver's handoff.
+[[nodiscard]] const MirInstruction *
+preparedReceiverStage(const MirBody &body, const MirInstruction &call) {
+  if (call.kind != MirInstructionKind::Call || !call.receiver ||
+      call.receiver->kind != MirOperandKind::Value || call.callSite == 0)
+    return nullptr;
+  const MirInstruction *stage = copyStagedCallInput(body, call.receiver->value);
+  const MirDropObligation *prepared =
+      stage != nullptr && stage->preparedParameterDrop
+          ? body.findDropObligation(*stage->preparedParameterDrop)
+          : nullptr;
+  const MirPlace *slot =
+      prepared != nullptr ? body.findPlace(*stage->destination) : nullptr;
+  if (slot == nullptr || stage->callSite != call.callSite ||
+      stage->callInputRole != MirCallInputRole::Receiver ||
+      stage->callInputIndex != 0 ||
+      stage->callInputKind != HirCallInputKind::MoveValue ||
+      stage->result != call.receiver->value ||
+      stage->info.type != call.receiver->type ||
+      !stage->definedFailure.empty() || !stage->localFailureSites.empty() ||
+      !stagedTemporarySourceFor(body, *stage).moved ||
+      prepared->kind != MirDropObligationKind::PreparedParameter ||
+      prepared->initiallyActive || prepared->place != slot->id ||
+      prepared->dropType.type != call.receiver->type ||
+      slot->root != MirPlaceRootKind::Temporary || !slot->projections.empty() ||
+      slot->type != call.receiver->type ||
+      slot->access != AccessMode::Mutable || stage->lifecycle.size() != 1 ||
+      stage->lifecycle.front() !=
+          MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                            .target = prepared->id})
+    return nullptr;
+  const auto touches = [&](const MirLifecycleEvent &event) {
+    return event.source == prepared->id || event.target == prepared->id;
+  };
+  const auto handoff =
+      std::find_if(call.lifecycle.begin(), call.lifecycle.end(), touches);
+  if (handoff == call.lifecycle.end() ||
+      *handoff != MirLifecycleEvent{.kind = MirLifecycleEventKind::TransferOut,
+                                    .source = prepared->id} ||
+      std::any_of(std::next(handoff), call.lifecycle.end(), touches))
+    return nullptr;
+  // Nothing else names the prepared slot or its obligation: no edge destroys
+  // the receiver before the call, and nothing observes it afterwards.
+  for (const auto &touch :
+       placeOrObligationTouches(body, slot->id, prepared->id)) {
+    if (touch.instruction == nullptr) {
+      const auto &terminator = touch.block->terminator;
+      if ((terminator.value && terminator.value->place == slot->id) ||
+          std::any_of(terminator.successLifecycle.begin(),
+                      terminator.successLifecycle.end(), touches))
+        return nullptr;
+      continue;
+    }
+    const MirInstruction &member = *touch.instruction;
+    if (member.id == stage->id || member.id == call.id)
+      continue;
+    if (member.destination == slot->id ||
+        member.successResultDestination == slot->id ||
+        (member.receiver && member.receiver->place == slot->id) ||
+        std::any_of(member.operands.begin(), member.operands.end(),
+                    [&](const MirOperand &operand) {
+                      return operand.place == slot->id;
+                    }) ||
+        std::any_of(member.lifecycle.begin(), member.lifecycle.end(), touches))
+      return nullptr;
+  }
+  return stage;
+}
+
 // A consuming source member uses the same materialized receiver identity as
-// ordinary call admission. Its receiver lifetime stays active until MIR's
-// scheduled Drop; unlike an owning argument, it is not transferred at Call.
+// ordinary call admission. A receiver that owns cleanup stays active until
+// MIR's scheduled Drop; unlike an owning argument, it is not transferred at
+// Call. A cleanup-free receiver moved out of a place is instead its prepared
+// parameter, which the Call does transfer. That slot is the consumed object
+// whatever the access of the moved-from source binding.
 [[nodiscard]] bool
 exactMemberConsumingReceiver(const MirProgram &program, const MirBody &body,
                              const MirInstruction &call,
@@ -16767,11 +16852,8 @@ exactMemberConsumingReceiver(const MirProgram &program, const MirBody &body,
     return false;
   const auto *receiver = consumedReceiverStageSlot(body, call.receiver->value);
   if (receiver == nullptr) {
-    if (const auto *stage = copyStagedCallInput(body, call.receiver->value)) {
-      const auto source = stagedTemporarySourceFor(body, *stage);
-      if (source.moved)
-        receiver = source.place;
-    }
+    if (const auto *stage = preparedReceiverStage(body, call))
+      receiver = body.findPlace(*stage->destination);
   }
   if (receiver == nullptr)
     receiver = directTemporaryReceiver(body, call).slot;
@@ -19448,7 +19530,9 @@ expectedClassResultDestinationSlot(const MirProgram &program,
         target != nullptr && !target->mayRaiseDefinedFailure &&
         !definition->successResultDestination &&
         definition->definedFailure.empty() &&
-        exactPreparedInputTransfers(body, *definition) && [&] {
+        exactPreparedInputTransfers(body, *definition,
+                                    PreparedReceiverInput::Admitted) &&
+        [&] {
           const MirBlock *block = body.findBlock(value->definitionBlock);
           if (block == nullptr)
             return false;
@@ -19519,7 +19603,8 @@ expectedClassResultDestinationSlot(const MirProgram &program,
         invokeSuccessActivates(body, *definition, valueDrop->id)) ||
        (target != nullptr && !target->mayRaiseDefinedFailure &&
         plainCallActivates(body, *definition, valueDrop->id) &&
-        exactPreparedInputTransfers(body, *definition)) ||
+        exactPreparedInputTransfers(body, *definition,
+                                    PreparedReceiverInput::Admitted)) ||
        restoringPublication) &&
       publication.kind == MirLifecycleEventKind::Reparent &&
       publication.source == valueDrop->id &&
@@ -19531,7 +19616,8 @@ expectedClassResultDestinationSlot(const MirProgram &program,
       target != nullptr && !target->mayRaiseDefinedFailure &&
       !definition->successResultDestination && !definition->successResultDrop &&
       valueDrop == nullptr && definition->definedFailure.empty() &&
-      exactPreparedInputTransfers(body, *definition) &&
+      exactPreparedInputTransfers(body, *definition,
+                                  PreparedReceiverInput::Admitted) &&
       publication.kind == MirLifecycleEventKind::Initialize &&
       publication.source == 0 && publication.target == bindingDrop->id && [&] {
         const MirBlock *block = body.findBlock(value->definitionBlock);
@@ -21341,10 +21427,16 @@ virtualFailureCallee(const MirProgram &program,
 // Prepared argument lifetimes transfer at invocation, independently of the
 // result's storage. A same-block sequenced Move can also supply a value-owned
 // argument without a CallInput shell. Require its exact Move/TransferOut pair
-// as well, rather than dropping that ownership fact from the result proof.
+// as well, rather than dropping that ownership fact from the result proof. A
+// cleanup-free receiver moved out of a place is one more prepared input that
+// the call hands to its callee, when the caller admits it.
 [[nodiscard]] bool exactPreparedInputTransfers(const MirBody &body,
-                                               const MirInstruction &call) {
+                                               const MirInstruction &call,
+                                               PreparedReceiverInput receiver) {
   std::unordered_set<MirDropObligationId> inputs;
+  if (receiver == PreparedReceiverInput::Admitted)
+    if (const MirInstruction *stage = preparedReceiverStage(body, call))
+      inputs.insert(*stage->preparedParameterDrop);
   for (std::size_t index = 0; index < call.operands.size(); ++index) {
     const MirOperand &operand = call.operands[index];
     const MirValue *input = operand.kind == MirOperandKind::Value
@@ -21415,6 +21507,9 @@ virtualFailureCallee(const MirProgram &program,
 // edge and inert lifetime/loan boundaries before one exact return. Share this
 // proof between direct result forwarding and wrapping a class payload: neither
 // representation may publish early across executable work or invent cleanup.
+// A call whose cleanup-free receiver is a prepared input is not forwarded
+// (PreparedReceiverInput::Refused); direct placement then keeps that result
+// in its staged slot.
 [[nodiscard]] const MirBlock *
 passiveResultReturnBlock(const MirBody &body, const MirValue &value,
                          const MirInstruction &producer) {
@@ -22763,7 +22858,8 @@ conditionalTemporaryViewedResult(const MirProgram &program,
     if (drop != nullptr && drop->place != *producer->destination)
       drop = nullptr;
   } else if (!producer->destination && producer->successResultDrop &&
-             exactPreparedInputTransfers(body, *producer)) {
+             exactPreparedInputTransfers(body, *producer,
+                                         PreparedReceiverInput::Admitted)) {
     drop = body.findDropObligation(*producer->successResultDrop);
     if (drop != nullptr && !invokeSuccessActivates(body, *producer, drop->id))
       drop = nullptr;
@@ -27654,8 +27750,11 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
 // the Return transfers it out, so the scheduled drops still run in MIR order
 // between them. A failure-capable call instead constructs straight into its
 // caller's result storage. A consuming (`&&`) member call qualifies through
-// the shared consuming-receiver proof: its receiver is not transferred at
-// Call, so the receiver's full-expression drop is one of those later drops.
+// the shared consuming-receiver proof. A receiver that owns cleanup is not
+// transferred at Call, so its full-expression drop is one of those later
+// drops. A cleanup-free receiver moved out of a place is a prepared input
+// that the Call transfers, like an owning argument; its moved-from source's
+// drop may still follow.
 [[nodiscard]] const MirPlace *returnedCallResultSlot(const MirProgram &program,
                                                      const MirBody &body,
                                                      MirValueId valueId) {
@@ -27694,7 +27793,8 @@ nativeExpectedValueOrResult(const MirProgram &program, const MirBody &body,
       slot->root != MirPlaceRootKind::Value || slot->value != valueId ||
       !slot->projections.empty() || slot->type != value->info.type ||
       !plainCallActivates(body, *call, drop->id) ||
-      !exactPreparedInputTransfers(body, *call))
+      !exactPreparedInputTransfers(body, *call,
+                                   PreparedReceiverInput::Admitted))
     return nullptr;
   const std::vector<MirValueUse> uses = body.usesOf(valueId);
   bool rooted = false;
