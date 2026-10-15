@@ -2581,9 +2581,10 @@ rolls the published field back; the backend emits that schedule unchanged.
 Field declaration defaults such as `Tracked kept = Source(3).make();` run as
 the same constructor-initializer stages. A cleanup-free receiver moved out of
 a binding is instead a prepared parameter that the call transfers out. The
-consuming-receiver proof does not admit that transport yet, so this proof
-still refuses `kept(std::move(source).take())` when `source`'s class needs no
-cleanup. A virtual member call, as in `kept(maker.make())` through a
+consuming-receiver proof names that stage, but this proof's input-transfer
+checks do not count the receiver's handoff yet, so it still refuses
+`kept(std::move(source).take())` when `source`'s class needs no cleanup. A
+virtual member call, as in `kept(maker.make())` through a
 `Maker &` or `kept(factory.build(d))` through a `mut` interface reference,
 takes the transformed route through its exact virtual failure contract: MIR
 gives it `VirtualCall` propagation and an `Invoke` edge whose success edge
