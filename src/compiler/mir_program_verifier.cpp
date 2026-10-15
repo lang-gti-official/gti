@@ -6671,6 +6671,27 @@ verifyMirPayloadEnums(const MirProgram &program) {
                       variant->payloadTypes[*instruction.payloadIndex];
           const bool consuming = exact && instruction.operands.front().kind ==
                                               MirOperandKind::Move;
+          // Extraction meaning is resolved before HIR, then checked against
+          // the concrete field and operand here. A reference-typed field is
+          // not an owning value, even when its carrier is consumed. Admission
+          // of those modes additionally needs the external dependency proof.
+          if (exact && instruction.payloadExtractionKind) {
+            const auto kind = *instruction.payloadExtractionKind;
+            const SemanticType &field =
+                variant->payloadTypes[*instruction.payloadIndex];
+            exact = field.kind != SemanticType::Reference &&
+                    !isStoredReferenceExtraction(kind) &&
+                    isConsumingPayloadExtraction(kind) == consuming &&
+                    value->info.category ==
+                        (kind == PayloadExtractionKind::BorrowValue
+                             ? ValueCategory::Place
+                             : ValueCategory::Value) &&
+                    (kind == PayloadExtractionKind::CopyValue ||
+                     kind == PayloadExtractionKind::MoveValue ||
+                     kind == PayloadExtractionKind::BorrowValue);
+          } else {
+            exact = false;
+          }
           exact = exact && (consuming || instruction.lifecycle.empty());
           if (consuming) {
             // A consuming extraction moves one field out of a switch-owned
@@ -6683,7 +6704,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
             // enum's obligation out, so the drained shell is never dropped.
             const MirOperand &operand = instruction.operands.front();
             const MirPlace *subject = body->findPlace(operand.place);
-            exact = value->info.category == ValueCategory::Value &&
+            exact = exact && value->info.category == ValueCategory::Value &&
                     subject != nullptr &&
                     subject->root == MirPlaceRootKind::Binding &&
                     subject->projections.empty() &&

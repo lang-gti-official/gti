@@ -71,6 +71,35 @@ int main() {
   expect(frontend.hir.enumDeclarations().size() == 2 &&
              frontend.mir.payloadEnums().size() == 2,
          "two exact instances coexist without a symbolic primary");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = frontend.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged)) {
+      for (auto &block : function.body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (changed ||
+              instruction.operation != lang::MirOperation::PayloadExtract)
+            continue;
+          expect(instruction.payloadExtractionKind.has_value(),
+                 "payload extraction preserves the resolved pattern mode");
+          if (mutation == 0)
+            instruction.payloadExtractionKind.reset();
+          else if (mutation == 1)
+            instruction.payloadExtractionKind =
+                lang::PayloadExtractionKind::TransferReference;
+          else
+            instruction.payloadExtractionKind =
+                instruction.info.category == lang::ValueCategory::Place
+                    ? lang::PayloadExtractionKind::CopyValue
+                    : lang::PayloadExtractionKind::BorrowValue;
+          changed = true;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "missing or substituted extraction modes cannot change storage "
+           "borrowing into reference transfer or value copying");
+  }
   if (frontend.mir.payloadEnums().size() != 2)
     return 1;
   const auto &left = frontend.mir.payloadEnums()[0];
