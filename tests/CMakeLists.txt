@@ -3861,6 +3861,14 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(short_circuit_class_temporary_runtime
                        PROPERTIES TIMEOUT 300)
   add_test(
+    NAME short_circuit_temporary_argument_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/short_circuit_temporary_argument_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(short_circuit_temporary_argument_runtime
+                       PROPERTIES TIMEOUT 300)
+  add_test(
     NAME nested_reference_return_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/nested_reference_return_runtime_test.py"
