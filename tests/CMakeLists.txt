@@ -3347,6 +3347,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(consuming_conditional_receiver_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME consuming_generic_owner_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_generic_owner_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_generic_owner_receiver_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_lambda_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_lambda_runtime_test.py"
