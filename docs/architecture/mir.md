@@ -2388,6 +2388,10 @@ derived from the same semantic computation; verification rejects disagreement
 in size, alignment, field identities, types or field layouts between those
 views. Existing verified union field places and load/store operations own
 execution; ABI opt-in adds no new body operation or recursive emitter path.
+Passive ABI result copies include unions inside source wrappers. When a call
+result has a verified placement slot, publication uses that slot even when the
+result is also a passive ABI value; raw value assignment and placement-factory
+publication are mutually exclusive emission choices.
 MIR does not contain a native-layout instruction.
 
 Floating literals lower as ordinary `MirOperation::Literal` values tagged by
