@@ -158,7 +158,8 @@
     "158-multi-parameter-concepts.gti": 135,
     "159-tryable-propagation.gti": 135,
     "160-borrowed-callback-results.gti": 145,
-    "161-consuming-matches.gti": 237
+    "161-consuming-matches.gti": 237,
+    "162-experimental-optional.gti": 157
   },
-  "total": 17767
+  "total": 17924
 }
