@@ -8429,9 +8429,11 @@ consuming extraction keeps an exact owning shell's fact until its final
 `TransferOut`; ordinary whole-value moves still invalidate facts immediately.
 Tag dominance, unique field consumption and final shell retirement remain
 separate mandatory lifecycle proofs. Reordered, duplicate and missing exact
-retirement mutations accompany this seam. Syntax checks establish only that
-the scaffold compiles; focused semantic/MIR tests and reference-payload runtime
-evidence remain pending for this checkpoint.
+retirement mutations accompany this seam. After integration with the MIR
+selection identity, the optimized compiler rebuild and `sum_type_pipeline`,
+`complete_borrow_summaries`, `tryable_propagation`, `protocol_concepts`, and
+`cleanup_bound_borrow` pass. These are prerequisite/regression checks, not
+reference-payload runtime acceptance; nonempty publication remains closed.
 
 The MIR bridge now retains the selected extraction's exact SSA value and
 physical carrier place separately from its possible external owner places.
