@@ -169,3 +169,111 @@ measurable<T>::unit_type total<T>(T& item) requires measurable<T> {
             (argument_list
               (primary_expression
                 (identifier)))))))))
+
+================================================================================
+Concepts over several types
+================================================================================
+
+concept adds_to<Left, Right> {
+  typename sum_type;
+  sum_type add(Left& left, Right& right);
+};
+
+for <T> concept adds_to<Tally<T>, Tally<T>> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, Tally<T>& right) { return left; }
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (concept_body
+      (associated_type_declaration
+        (identifier))
+      (function_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier))
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier))))))
+  (conformance_declaration
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (concept_application
+      (identifier)
+      (type
+        (user_type
+          (identifier)
+          (type_argument_clause
+            (type
+              (user_type
+                (identifier))))))
+      (type
+        (user_type
+          (identifier)
+          (type_argument_clause
+            (type
+              (user_type
+                (identifier)))))))
+    (conformance_body
+      (type_alias_declaration
+        (identifier)
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))))))
+      (function_declaration
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier))))))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)
+                (type_argument_clause
+                  (type
+                    (user_type
+                      (identifier)))))
+              (reference_declarator))
+            (identifier))
+          (parameter
+            (type
+              (user_type
+                (identifier)
+                (type_argument_clause
+                  (type
+                    (user_type
+                      (identifier)))))
+              (reference_declarator))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))))))
