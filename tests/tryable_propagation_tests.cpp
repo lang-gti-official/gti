@@ -245,6 +245,36 @@ int main() { Token& value = escape(Token::item(7)); return inspect(value); }
            "GTI-S2017", "may return a reference");
   const auto enumProof = analyze(enumProtocol);
   if (enumProof.canGenerateCode()) {
+    for (int corruption = 0; corruption != 6; ++corruption) {
+      auto malformed = enumProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &value : function.body.values) {
+          if (changed || !value.borrowDependencies ||
+              value.borrowDependencies->possibleAlternatives.empty())
+            continue;
+          auto &set = *value.borrowDependencies;
+          if (corruption == 0)
+            value.borrowDependencies.reset();
+          if (corruption == 1)
+            ++set.possibleAlternatives.front().conditions.front().variant;
+          if (corruption == 2)
+            set.possibleAlternatives.front().conditions.front().enumeration =
+                lang::SemanticType::Unknown;
+          if (corruption == 3)
+            set.possibleAlternatives.push_back(
+                set.possibleAlternatives.front());
+          if (corruption == 4)
+            set.dependencies.push_back({});
+          if (corruption == 5)
+            set.possibleAlternatives.front().conditions.front().subobject = {1};
+          changed = true;
+        }
+      expect(changed, "empty-set mutation must select a proven enum producer");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR rejects missing empty evidence, wrong typed alternatives, "
+             "invented dependencies and substituted nested paths");
+    }
     for (int corruption = 0; corruption != 9; ++corruption) {
       auto malformed = enumProof.mir;
       bool changed = false;

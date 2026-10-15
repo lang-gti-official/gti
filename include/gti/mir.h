@@ -334,9 +334,21 @@ struct MirLoanDependency {
   MirLoanId parent = 0;
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
+  std::vector<BorrowDependencyCondition> conditions;
 
   friend bool operator==(const MirLoanDependency &,
                          const MirLoanDependency &) = default;
+};
+
+// Complete producer-attached borrow facts. Loan identity remains the authority
+// for origin, access and liveness; the set records which typed alternative
+// paths can carry those loans, including an explicitly proven empty set.
+struct MirBorrowDependencySet {
+  std::vector<MirLoanDependency> dependencies;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+
+  friend bool operator==(const MirBorrowDependencySet &,
+                         const MirBorrowDependencySet &) = default;
 };
 
 struct MirLoan {
@@ -976,6 +988,7 @@ struct MirValue {
   ExpressionInfo info;
   MirBlockId definitionBlock = 0;
   MirInstructionId definition = 0;
+  std::optional<MirBorrowDependencySet> borrowDependencies;
 
   friend bool operator==(const MirValue &, const MirValue &) = default;
 };

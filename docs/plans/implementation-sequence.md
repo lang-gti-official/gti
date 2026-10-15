@@ -8296,9 +8296,19 @@ including instance overlays and rebasing. Its concrete type-inventory query
 rejects unresolved children; symbolic generic path enumeration remains a
 separate contract and never supplies completeness evidence.
 
-Native acceptance is **not yet passing**: example 164's class wrapper with an
-owned string error exposes a representation decline in the shared-reference
-propagation function. A named passive enum operand also exposed a
+The next checkpoint carries complete sets through semantics/HIR/MIR and emits
+exact empty evidence for dependency-free payload constructors and unit
+alternatives. MIR recomputes the selected alternative's field traits and
+rejects absent evidence, wrong enum/tag/path, duplicate alternatives and
+invented dependencies. Optimized focused protocol, propagation, generic-enum
+backend and cleanup-bound tests pass. Nonempty conditional construction,
+binding/flow transfer and declaration-owned result summaries are not yet
+implemented; guards on those unsupported loan/call records fail closed.
+
+Native acceptance is **not yet passing**: example 164's shared-reference
+wrapper now compiles/runs after a general constructor argument-staging fix
+for a text view across a conditional expression. The mutable-reference
+`edit` function still exposes a representation decline. A named passive enum operand also exposed a
 branch-dominance lowering failure in an earlier probe. These remain acceptance
 gates, and the example has not yet passed its native matrix. This is an honest
 WIP recovery checkpoint, not permission to admit reference-bearing payloads or

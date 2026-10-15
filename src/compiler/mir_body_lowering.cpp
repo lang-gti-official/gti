@@ -9696,6 +9696,20 @@ private:
       }
     }
     instruction.result = resultFor(*value);
+    if (value->kind == HirValueKind::PayloadConstruction &&
+        instruction.result && value->borrowDependencies) {
+      // Empty sets already have exact constructor-alternative evidence.
+      // Nonempty conditional sets will be bound to real MIR loans by the
+      // borrowed-construction path, never by manufacturing an empty loan.
+      if (!value->borrowDependencies->dependencies.empty()) {
+        valid = false;
+        return;
+      }
+      output.values[*instruction.result - 1].borrowDependencies =
+          MirBorrowDependencySet{
+              .possibleAlternatives =
+                  value->borrowDependencies->possibleAlternatives};
+    }
     if (value->kind == HirValueKind::ArrayInitializer ||
         value->kind == HirValueKind::PayloadConstruction ||
         value->kind == HirValueKind::Unexpected ||
@@ -9714,10 +9728,11 @@ private:
         value->info.category != ValueCategory::Place)
       (void)initializeValueLifecycle(instruction, *value);
     if (instruction.operation == MirOperation::Closure &&
-        value->borrowDependencies && !value->borrowDependencies->empty()) {
+        value->borrowDependencies &&
+        !value->borrowDependencies->dependencies.empty()) {
       const auto *target = program.findLambda(*instruction.lambdaTarget);
       std::vector<MirLoanDependency> dependencies;
-      for (const auto &dependency : *value->borrowDependencies) {
+      for (const auto &dependency : value->borrowDependencies->dependencies) {
         const auto capture = target == nullptr ? 0 : [&] {
           for (std::size_t index = 0; index < target->captures.size(); ++index)
             if (!dependency.designatedFields.empty() &&

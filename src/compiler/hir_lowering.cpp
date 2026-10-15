@@ -2685,7 +2685,7 @@ private:
     }
     for (const auto &value : body.values)
       if (value.borrowDependencies)
-        for (const auto &dependency : *value.borrowDependencies)
+        for (const auto &dependency : value.borrowDependencies->dependencies)
           if (dependency.parent != 0)
             pending.push_back(dependency.parent);
     while (!pending.empty()) {
@@ -5992,11 +5992,12 @@ private:
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
     if (const auto *complete = model.findBorrowDependencySet(*raw)) {
-      value.borrowDependencies.emplace();
-      for (const auto &dependency : *complete) {
+      value.borrowDependencies = *complete;
+      value.borrowDependencies->dependencies.clear();
+      for (const auto &dependency : complete->dependencies) {
         auto lowered = dependency;
         lowered.place = qualifyPlace(dependency.place, body.placeDomain);
-        value.borrowDependencies->push_back(std::move(lowered));
+        value.borrowDependencies->dependencies.push_back(std::move(lowered));
       }
     }
     if (const auto *call = exprAs<Call>(raw);

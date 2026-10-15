@@ -10466,6 +10466,87 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
 }
 
 [[nodiscard]] MirVerificationResult
+verifyCompleteBorrowDependencySets(const MirProgram &program,
+                                   const MirBody &body, std::size_t owner) {
+  // Nonempty conditional borrowing is not admitted until its full loan/tag
+  // proof is implemented. Do not silently ignore newly represented guards.
+  const auto conditionalMapping = [](const BorrowedFieldOrigin &field) {
+    return !field.resultConditions.empty() || !field.sourceConditions.empty();
+  };
+  if (body.kind == MirBodyKind::Function)
+    if (const auto *function = program.findFunctionInstance(owner);
+        function != nullptr &&
+        std::any_of(function->returnBorrowFields.begin(),
+                    function->returnBorrowFields.end(), conditionalMapping))
+      return verificationFailure(body, owner,
+                                 "conditional result dependencies require an "
+                                 "implemented complete-set contract proof");
+  for (const auto &loan : body.loans)
+    for (const auto &dependency : loan.additionalDependencies)
+      if (!dependency.conditions.empty())
+        return verificationFailure(body, owner,
+                                   "conditional loan dependencies require "
+                                   "an implemented active-alternative proof");
+  std::unordered_map<MirValueId, const MirInstruction *> producers;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (std::any_of(instruction.borrowFields.begin(),
+                      instruction.borrowFields.end(), conditionalMapping))
+        return verificationFailure(body, owner,
+                                   "conditional call dependencies require an "
+                                   "implemented complete-set contract proof");
+      if (instruction.result) {
+        const auto [entry, inserted] =
+            producers.emplace(*instruction.result, &instruction);
+        if (!inserted)
+          entry->second = nullptr;
+      }
+    }
+  for (const auto &value : body.values) {
+    const auto found = producers.find(value.id);
+    const auto *producer = found == producers.end() ? nullptr : found->second;
+    const bool payload = producer != nullptr &&
+                         producer->kind == MirInstructionKind::Compute &&
+                         producer->operation == MirOperation::PayloadConstruct;
+    if (!payload && !value.borrowDependencies)
+      continue;
+    if (!payload || producer->id != value.definition ||
+        producer->info != value.info || !producer->enumVariant)
+      return verificationFailure(
+          body, owner,
+          "complete borrow dependency set lacks its exact supported producer");
+    const auto *enumeration = program.findPayloadEnum(value.info.type);
+    if (enumeration == nullptr ||
+        producer->enumOwner != enumeration->declaration ||
+        *producer->enumVariant >= enumeration->variants.size())
+      return verificationFailure(
+          body, owner,
+          "complete borrow dependency set lacks its exact typed alternative");
+    const auto &variant = enumeration->variants[*producer->enumVariant];
+    const bool dependencyFree =
+        std::all_of(variant.payloadTypes.begin(), variant.payloadTypes.end(),
+                    [&](const SemanticType &field) {
+                      if (field.kind == SemanticType::Unknown ||
+                          field.kind == SemanticType::TypeParameter)
+                        return false;
+                      const auto traits = storagePayloadTraits(program, field);
+                      return traits && !traits->containsBorrowedState;
+                    });
+    const std::vector<BorrowAlternativePath> exactAlternative{
+        {.conditions = {{.enumeration = value.info.type,
+                         .variant = *producer->enumVariant}}}};
+    if (!dependencyFree || !value.borrowDependencies ||
+        !value.borrowDependencies->dependencies.empty() ||
+        value.borrowDependencies->possibleAlternatives != exactAlternative)
+      return verificationFailure(
+          body, owner,
+          "payload construction requires its complete dependency set; empty "
+          "evidence must name the exact dependency-free active alternative");
+  }
+  return {};
+}
+
+[[nodiscard]] MirVerificationResult
 verifyLifecycleBoundLoanContracts(const MirProgram &program,
                                   const MirBody &body, std::size_t owner) {
   struct InstructionLocation {
@@ -11571,6 +11652,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                                    failureOrigins, body, owner));
     appendVerification(result,
                        verifyLifecycleBoundLoanContracts(program, body, owner));
+    appendVerification(
+        result, verifyCompleteBorrowDependencySets(program, body, owner));
     const std::vector<HirBindingId> *parameters = nullptr;
     const std::vector<SemanticType> *parameterTypes = nullptr;
     if (body.kind == MirBodyKind::Function) {

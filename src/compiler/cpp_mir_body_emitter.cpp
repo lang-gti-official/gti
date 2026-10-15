@@ -56977,9 +56977,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          producer->operands.begin(), producer->operands.end(),
                          [&](const MirOperand &operand) {
                            return operand.kind == MirOperandKind::Value &&
-                                  cppMirExpectedTypeRepresentation(
-                                      operand.type) ==
-                                      CppMirTypeRepresentationKind::Scalar;
+                                  passiveRegionValue(operand.type);
                          });
             };
         if ((instruction.kind == MirInstructionKind::Call ||
@@ -57002,14 +57000,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.receiver ||
               (receiver != nullptr &&
                receiver->callInputKind == HirCallInputKind::ReadBorrow);
-          const bool scalarArguments = std::all_of(
+          const bool passiveArguments = std::all_of(
               instruction.operands.begin(), instruction.operands.end(),
               [&](const MirOperand &operand) {
                 return operand.kind == MirOperandKind::Value &&
-                       cppMirExpectedTypeRepresentation(operand.type) ==
-                           CppMirTypeRepresentationKind::Scalar;
+                       passiveRegionValue(operand.type);
               });
-          if (readReceiver && scalarArguments)
+          if (readReceiver && passiveArguments)
             continue;
         }
         if (nestedArgument.stage == &instruction &&
