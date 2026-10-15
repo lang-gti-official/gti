@@ -1810,6 +1810,38 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
             functionTarget != nullptr && functionTarget->owner
                 ? program.findClassInstance(*functionTarget->owner)
                 : nullptr;
+        // The materialized temporary is exactly its producer's class. The
+        // selected member may be declared by that class or inherited from one
+        // of its recorded base instances; the borrow is of the whole object
+        // either way, and dispatch below remains the member's own.
+        const auto receiverInstance =
+            receiverPlace == nullptr
+                ? program.classInstances().end()
+                : std::find_if(program.classInstances().begin(),
+                               program.classInstances().end(),
+                               [&](const MirClassInstance &candidate) {
+                                 return candidate.type == receiverPlace->type;
+                               });
+        const MirClassInstance *receiverClass =
+            receiverInstance == program.classInstances().end()
+                ? nullptr
+                : &*receiverInstance;
+        const auto inheritsOwner = [&](const auto &self,
+                                       const MirClassInstance &candidate,
+                                       std::size_t depth) -> bool {
+          if (ownerClass == nullptr || depth > program.classInstances().size())
+            return false;
+          if (candidate.id == ownerClass->id)
+            return true;
+          return std::any_of(candidate.bases.begin(), candidate.bases.end(),
+                             [&](const HirBaseInstance &base) {
+                               const MirClassInstance *instance =
+                                   program.findClassInstance(base.instance);
+                               return instance != nullptr &&
+                                      instance->type == base.type &&
+                                      self(self, *instance, depth + 1);
+                             });
+        };
         const bool mutableInput = receiverInput->callInputKind ==
                                   HirCallInputKind::MutableTemporaryBorrow;
         const bool borrowedCarrier =
@@ -1851,14 +1883,14 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
               target != nullptr && producerOwner != nullptr &&
               producerOwner->type == receiverPlace->type &&
               producer->constructorKind == ConstructorKind::Ordinary;
-          if (!producer->constructorTarget && ownerClass != nullptr &&
-              ownerClass->type == receiverPlace->type) {
+          if (!producer->constructorTarget && receiverClass != nullptr) {
             exactProducer =
                 (producer->constructorKind == ConstructorKind::Copy &&
-                 ownerClass->copyConstructor ==
+                 receiverClass->copyConstructor ==
                      SpecialMemberStatus::Generated) ||
                 (producer->constructorKind == ConstructorKind::Move &&
-                 ownerClass->moveConstructor == SpecialMemberStatus::Generated);
+                 receiverClass->moveConstructor ==
+                     SpecialMemberStatus::Generated);
           }
         } else if (producer != nullptr &&
                    producer->kind == MirInstructionKind::Call) {
@@ -1881,7 +1913,7 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                             lambda->returnType == receiverPlace->type &&
                             !producer->info.traits.containsBorrowedState;
           }
-          if (!producer->functionTarget && ownerClass != nullptr &&
+          if (!producer->functionTarget && receiverClass != nullptr &&
               (producer->intrinsic == IntrinsicKind::ExpectedValue ||
                producer->intrinsic == IntrinsicKind::ExpectedError) &&
               producer->receiver &&
@@ -1893,15 +1925,15 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
             exactProducer = producer->receiver->type.arguments[alternative] ==
                             receiverPlace->type;
           }
-          if (!producer->functionTarget && ownerClass != nullptr &&
-              ownerClass->defaultConstructor ==
+          if (!producer->functionTarget && receiverClass != nullptr &&
+              receiverClass->defaultConstructor ==
                   SpecialMemberStatus::Generated &&
               !producer->constructorTarget && !producer->lambdaTarget &&
               !producer->receiver && !producer->loan && !producer->ownership &&
               producer->operands.empty() && producer->parameterTypes.empty() &&
               producer->constructorKind == ConstructorKind::Ordinary &&
               producer->intrinsic == IntrinsicKind::None &&
-              producer->info.type == ownerClass->type) {
+              producer->info.type == receiverClass->type) {
             exactProducer = true;
           }
         }
@@ -1918,17 +1950,18 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
             functionTarget->returnType.kind != SemanticType::Reference &&
             functionTarget->returnBorrowOrigin == BorrowOriginKind::None &&
             !instruction.info.traits.containsBorrowedState;
+        // Dispatch is exactly the target's own: a virtual member keeps its
+        // dynamic dispatch and failure contract over the borrowed temporary,
+        // and a non-virtual member is never dispatched through the table.
+        const CallDispatch exactDispatch =
+            functionTarget != nullptr && functionTarget->virtualMethod
+                ? CallDispatch::Virtual
+                : CallDispatch::Static;
         if (functionTarget == nullptr || receiverPlace == nullptr ||
             ownerClass == nullptr || functionTarget->staticMember ||
-            (functionTarget->virtualMethod &&
-             functionTarget->receiverMutability !=
-                 ReceiverMutability::Consuming) ||
             functionTarget->linkage != LanguageLinkage::Gti ||
-            (instruction.dispatch != CallDispatch::Static &&
-             !(instruction.dispatch == CallDispatch::Virtual &&
-               functionTarget->receiverMutability ==
-                   ReceiverMutability::Consuming)) ||
-            ownerClass->type != receiverPlace->type ||
+            instruction.dispatch != exactDispatch || receiverClass == nullptr ||
+            !inheritsOwner(inheritsOwner, *receiverClass, 0) ||
             !exactReceiverQualifier || !exactProducer ||
             receiverObligations != 1 || (!readObservation && !ownedResult) ||
             (borrowedCarrier && !supportsEphemeralBorrowResult(

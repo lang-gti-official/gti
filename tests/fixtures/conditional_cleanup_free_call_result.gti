@@ -1,0 +1,262 @@
+#include <std/string>
+#include <std/vector>
+
+// A cleanup-free class result produced in each arm of a conditional
+// expression by a member call, or by a call that consumes a value moved into
+// it, then bound, returned, assigned, passed on or read through a field.
+// The receiver may be borrowed, read-only or mutable, or consumed by a `&&`
+// member; a moved cleanup-free receiver or by-value argument is a prepared
+// input that the call transfers to its callee. Only the arm that runs calls
+// its callee and consumes its input.
+//
+// Pod has no destructor. Inputs with cleanup of their own print the negated
+// id when destroyed. Nothing else prints outside main and run, which keeps
+// the shape functions below in the plain form.
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+
+// The cleanup-free input.
+class Plain {
+  int base;
+public:
+  Plain(int base) : base(base) {}
+  int get() { return this.base; }
+  Pod pod() && { return Pod(this.base); }
+  Pod peek() { return Pod(this.base + 1000); }
+  Pod divide(int divisor) && { return Pod(this.base / divisor); }
+  Pod split(int divisor) { return Pod(this.base / divisor + 1000); }
+};
+
+// A mutable borrowed receiver.
+class Counter {
+  mut int count;
+public:
+  Counter(int count) : count(count) {}
+  Pod next() mut {
+    this.count += 1;
+    return Pod(this.count);
+  }
+  int get() { return this.count; }
+};
+
+// An input with cleanup of its own.
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(-this.id); }
+  Pod pod() && { return Pod(this.id); }
+  Pod peek() { return Pod(this.id + 1000); }
+};
+
+// A generic consumed receiver.
+class Token<T> {
+  T value;
+public:
+  Token(T value) : value(value) {}
+  Pod make(int id) && { return Pod(id); }
+};
+
+Pod make_pod(Plain source) { return Pod(source.get()); }
+
+Pod divided(Plain source, int divisor) { return Pod(source.get() / divisor); }
+
+Pod combine(Plain first, Plain second) {
+  return Pod(first.get() + second.get());
+}
+
+Pod fresh(int id) { return Pod(id); }
+
+Pod lift(int id) { return Pod(id + 1000); }
+
+Pod forward<T>(T input, int id) { return Pod(id); }
+
+Pod rewrap(Tracked input) { return Pod(input.id + 100); }
+
+int consume(Pod input) { return input.read(); }
+
+// Plain bodies. A result published into the wrong storage, or an arm that
+// ran the other arm's callee, reads back a different value.
+int bound_receiver(bool left, Plain a, Plain b) {
+  Pod kept = left ? std::move(a).pod() : std::move(b).pod();
+  return kept.read();
+}
+
+int bound_argument(bool left, Plain a, Plain b) {
+  Pod kept = left ? make_pod(std::move(a)) : make_pod(std::move(b));
+  return kept.read();
+}
+
+int bound_borrowed(bool left, Plain a, Plain b) {
+  Pod kept = left ? a.peek() : b.peek();
+  return kept.read() + a.get() - b.get();
+}
+
+int bound_mutable(bool left, int start) {
+  mut Counter a{start};
+  mut Counter b{start + 10};
+  Pod kept = left ? a.next() : b.next();
+  return kept.read() * 100 + a.get() - b.get();
+}
+
+Pod returned_receiver(bool left, Plain a, Plain b) {
+  return left ? std::move(a).pod() : std::move(b).pod();
+}
+
+Pod returned_argument(bool left, Plain a, Plain b) {
+  return left ? make_pod(std::move(a)) : make_pod(std::move(b));
+}
+
+Pod returned_borrowed(bool left, Plain a, Plain b) {
+  return left ? a.peek() : b.peek();
+}
+
+Pod returned_mixed(bool left, Plain a, Plain b) {
+  return left ? std::move(a).pod() : b.peek();
+}
+
+// Callees that can fail.
+int bound_raising(bool left, Plain a, Plain b, int divisor) {
+  Pod kept = left ? std::move(a).divide(divisor) : divided(std::move(b), divisor);
+  return kept.read();
+}
+
+Pod returned_raising(bool left, Plain a, Plain b, int divisor) {
+  return left ? a.split(divisor) : std::move(b).divide(divisor);
+}
+
+// Ordinary calls that can fail, returned from a join.
+Pod returned_lifted(bool left, int a, int b) { return left ? lift(a) : lift(b); }
+
+// Runs every shape through one arm; `base` keeps the two runs apart.
+int run(bool left, int base) {
+  mut int total = 0;
+  total += bound_receiver(left, Plain(base + 1), Plain(base + 2));
+  total += bound_argument(left, Plain(base + 3), Plain(base + 4));
+  total += bound_borrowed(left, Plain(base + 5), Plain(base + 6));
+  total += bound_mutable(left, base + 7);
+  total += returned_receiver(left, Plain(base + 8), Plain(base + 9)).read();
+  total += returned_argument(left, Plain(base + 10), Plain(base + 11)).read();
+  total += returned_borrowed(left, Plain(base + 12), Plain(base + 13)).read();
+  total += returned_mixed(left, Plain(base + 14), Plain(base + 15)).read();
+  total += bound_raising(left, Plain(base + 16), Plain(base + 17), 1);
+  total += returned_raising(left, Plain(base + 18), Plain(base + 19), 1).read();
+  total += returned_lifted(left, base + 20, base + 120).read();
+  std::println(total);
+  total = 0;
+  {
+    // Consuming receivers, bound in a body that can fail.
+    Plain a{base + 21};
+    Plain b{base + 22};
+    Pod kept = left ? std::move(a).pod() : std::move(b).pod();
+    total += kept.read();
+  }
+  {
+    // Moved by-value arguments.
+    Plain a{base + 23};
+    Plain b{base + 24};
+    Pod kept = left ? make_pod(std::move(a)) : make_pod(std::move(b));
+    total += kept.read();
+  }
+  {
+    // Borrowed receivers stay usable after the merge.
+    Plain a{base + 25};
+    Plain b{base + 26};
+    Pod kept = left ? a.peek() : b.peek();
+    total += kept.read() + a.get() - b.get();
+  }
+  {
+    // Raising callees, consuming and borrowed.
+    Plain a{base + 27};
+    Plain b{base + 28};
+    Pod kept = left ? std::move(a).divide(1) : b.split(1);
+    total += kept.read();
+  }
+  {
+    // Only one arm consumes; the other calls an ordinary function whose
+    // checked argument is computed in its arm.
+    Plain a{base + 29};
+    Pod kept = left ? std::move(a).pod() : fresh(base + 30);
+    total += kept.read();
+  }
+  {
+    // Two moved arguments in one arm, a moved receiver in the other.
+    Plain a{base + 31};
+    Plain b{100};
+    Plain c{base + 33};
+    Pod kept = left ? combine(std::move(a), std::move(b)) : std::move(c).pod();
+    total += kept.read();
+  }
+  {
+    // A nested conditional inside one arm.
+    Plain a{base + 34};
+    Plain b{base + 35};
+    Pod kept = left ? (left ? std::move(a).pod() : b.peek()) : fresh(base + 36);
+    total += kept.read();
+  }
+  {
+    // Assignment replaces the old value.
+    Plain a{base + 37};
+    Plain b{base + 38};
+    mut Pod kept{base};
+    kept = left ? std::move(a).pod() : make_pod(std::move(b));
+    total += kept.read();
+  }
+  {
+    // Passed on by value, and read through a field.
+    Plain a{base + 39};
+    Plain b{base + 40};
+    Plain c{base + 41};
+    Plain d{base + 42};
+    total += consume(left ? std::move(a).pod() : std::move(b).pod());
+    total += (left ? c.peek() : make_pod(std::move(d))).x;
+  }
+  {
+    // A generic receiver and a generic callee, each with a checked argument.
+    Token<int> a{base};
+    Plain b{base};
+    Pod kept = left ? std::move(a).make(base + 43)
+                    : forward<Plain>(std::move(b), base + 44);
+    total += kept.read();
+  }
+  {
+    // Receivers and a moved argument with cleanup of their own: the moved
+    // ones are destroyed by their callee, the borrowed one at scope exit.
+    Tracked a{base + 45};
+    Tracked b{base + 46};
+    Pod kept = left ? std::move(a).pod() : b.peek();
+    total += kept.read();
+    Tracked c{base + 47};
+    Tracked d{base + 48};
+    Pod wrapped = left ? rewrap(std::move(c)) : std::move(d).pod();
+    total += wrapped.read();
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true, 0));
+  std::println(run(false, 100));
+  // Failure cleanup. Scenario 1 fails a consuming callee in a bound arm, 2 a
+  // borrowed callee in a returned arm, and 3 a callee taking a moved
+  // argument. Cleanup destroys only what was constructed before it.
+  int scenario = argc - 1;
+  Tracked first{201};
+  Plain a{202};
+  Plain b{203};
+  Pod kept = scenario == 1 ? std::move(a).divide(0) : std::move(b).divide(1);
+  std::println("kept");
+  Tracked second{204};
+  Pod returned = returned_raising(scenario == 2, Plain(205), Plain(206),
+                                  scenario == 2 ? 0 : 1);
+  std::println("returned");
+  Tracked third{207};
+  int got = bound_raising(scenario != 3, Plain(208), Plain(209),
+                          scenario == 3 ? 0 : 1);
+  std::println("last");
+  return kept.read() + returned.read() + got - 617;
+}

@@ -4859,6 +4859,144 @@ int main() { return take(Maker(1), 1) - 2; }
   }
 }
 
+// A cleanup-free class result needs no obligation, so both arms of its
+// conditional publish into one representation-only join. A member call arm
+// keeps the receiver identity ordinary call admission proves (its exact
+// borrow, or a moved receiver staged as a prepared input), and a call that
+// consumes prepared inputs transfers each one out and records nothing else.
+// Removed, duplicated or conditional transfers, a forged result activation
+// and a forged consuming capability on a borrowed receiver are refused.
+void testCleanupFreeConditionalCallArms() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-cleanup-free-conditional-call-arms.gti", R"(
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  int get() { return this.base; }
+  Pod make() && { return Pod(this.base); }
+  Pod peek() { return Pod(this.base + 10); }
+};
+Pod build(Maker maker) { return Pod(maker.get()); }
+int bound(bool left, Maker a, Maker b) {
+  Pod kept = left ? std::move(a).make() : build(std::move(b));
+  return kept.read();
+}
+Pod returned(bool left, Maker a, Maker b) {
+  return left ? build(std::move(a)) : std::move(b).make();
+}
+int borrowed(bool left, Maker a, Maker b) {
+  Pod kept = left ? a.peek() : b.peek();
+  return kept.read() + a.get();
+}
+int main() {
+  return bound(true, Maker(1), Maker(2)) +
+         returned(false, Maker(3), Maker(4)).read() +
+         borrowed(true, Maker(5), Maker(6)) - 25;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "cleanup-free conditional call arms verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t transferring = 0;
+  std::size_t borrowing = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arm calls returning the cleanup-free class: each transfers its
+    // one prepared input, or borrows its receiver and records nothing.
+    std::vector<lang::MirInstructionId> transfers;
+    std::vector<lang::MirInstructionId> borrows;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.result ||
+            instruction.info.type.kind != lang::SemanticType::Class)
+          continue;
+        if (instruction.lifecycle.size() == 1 &&
+            instruction.lifecycle[0].kind ==
+                lang::MirLifecycleEventKind::TransferOut)
+          transfers.push_back(instruction.id);
+        else if (instruction.receiver && instruction.lifecycle.empty() &&
+                 !instruction.callableInvocation)
+          borrows.push_back(instruction.id);
+      }
+    if (transfers.size() + borrows.size() != 2 ||
+        (!transfers.empty() && !borrows.empty()))
+      continue;
+    transferring += transfers.size() == 2;
+    borrowing += borrows.size() == 2;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    // A raising callee selects the caller's failure form.
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional admits its member-call and "
+           "input-consuming arms");
+    const auto refused = [&](auto &&mutate, bool verifierRejects,
+                             const std::string &what) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          mutate(instruction);
+      if (verifierRejects)
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a forged cleanup-free conditional arm fails MIR "
+               "verification: " +
+                   what);
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(!rejected.analyze(address).ready() ||
+                 !supportsSelectedBodyText(malformed, map, function.id),
+             "a forged cleanup-free conditional arm cannot enter backend "
+             "emission: " +
+                 what);
+    };
+    for (const lang::MirInstructionId call : transfers) {
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        refused(
+            [&](lang::MirInstruction &instruction) {
+              if (instruction.id != call)
+                return;
+              const auto transfer = instruction.lifecycle[0];
+              if (mutation == 0)
+                instruction.lifecycle.clear();
+              else if (mutation == 1)
+                instruction.lifecycle.push_back(transfer);
+              else if (mutation == 2)
+                instruction.lifecycle[0].conditional = true;
+              else
+                instruction.lifecycle.push_back(
+                    {.kind = lang::MirLifecycleEventKind::Initialize,
+                     .target = transfer.source});
+            },
+            true, "transfer " + std::to_string(mutation));
+      }
+    }
+    for (const lang::MirInstructionId call : borrows) {
+      refused(
+          [&](lang::MirInstruction &instruction) {
+            if (instruction.id == call)
+              instruction.callableInvocation =
+                  lang::CallableInvocationCapability::Once;
+          },
+          false, "consuming capability on a borrowed receiver");
+    }
+  }
+  expect(transferring == 2 && borrowing == 1,
+         "the bound and returned transferring conditionals and the borrowed "
+         "one were exercised: " +
+             std::to_string(transferring) + ", " + std::to_string(borrowing));
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -5791,6 +5929,147 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+// Each arm of a cleanup-free conditional may evaluate its inputs before the
+// call producing its result: an overflow-checked argument, a call that can
+// fail, or a `?` operand. The branch then targets the start of that region,
+// not the block publishing the arm, and the join proves the region exactly.
+// A failure edge or an outside edge forged into an arm is refused.
+void testCheckedConditionalArmInputs() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-checked-conditional-arm-inputs.gti", R"(
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+enum class input_error { negative };
+Pod fresh(int id) { return Pod(id); }
+int quotient(int value, int divisor) { return value / divisor; }
+expected<int, input_error> checked(int value) {
+  if (value < 0) {
+    return unexpected(input_error::negative);
+  }
+  return value;
+}
+int bound(bool left, int base) {
+  Pod kept = left ? fresh(base + 29) : fresh(base + 30);
+  return kept.read();
+}
+Pod returned(bool left, int base, int divisor) {
+  return left ? fresh(quotient(base, divisor)) : fresh(base + 1);
+}
+expected<int, input_error> propagated(bool left, int base) {
+  Pod kept = left ? fresh(?checked(base + 31)) : fresh(?checked(base - 32));
+  return kept.read();
+}
+int main() {
+  return bound(true, 0) + returned(false, 1, 1).read() +
+         propagated(true, 1).value() - 63;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "conditional arms evaluating checked inputs verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t bodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arm publications: each Initializes one temporary from a class
+    // call result made in the same block.
+    std::vector<std::pair<lang::MirPlaceId, lang::MirBlockId>> publications;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *place =
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.destination && instruction.operands.size() == 1
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (place == nullptr ||
+            place->root != lang::MirPlaceRootKind::Temporary)
+          continue;
+        for (const auto &producer : block.instructions)
+          if (producer.kind == lang::MirInstructionKind::Call &&
+              producer.result &&
+              *producer.result == instruction.operands.front().value &&
+              producer.info.type.kind == lang::SemanticType::Class)
+            publications.emplace_back(place->id, block.id);
+      }
+    std::vector<lang::MirBlockId> entries;
+    for (const auto &[place, block] : publications)
+      if (std::count_if(publications.begin(), publications.end(),
+                        [&](const auto &publication) {
+                          return publication.first == place;
+                        }) == 2)
+        entries.push_back(block);
+    // No branch selects the two arm publications directly: each arm first
+    // evaluates its inputs.
+    const bool regions =
+        entries.size() == 2 &&
+        std::none_of(
+            function.body.blocks.begin(), function.body.blocks.end(),
+            [&](const lang::MirBlock &block) {
+              return block.terminator.kind == lang::MirTerminatorKind::Branch &&
+                     std::is_permutation(entries.begin(), entries.end(),
+                                         std::array{block.terminator.target,
+                                                    block.terminator.elseTarget}
+                                             .begin());
+            });
+    if (!regions)
+      continue;
+    ++bodies;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional admits arms that evaluate checked "
+           "inputs first");
+    // The first arm's region ends in its predecessor block.
+    lang::MirBlockId predecessor = 0;
+    lang::MirBlockId other = 0;
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.target == entries[0])
+        predecessor = block.id;
+      if (block.terminator.target == entries[1])
+        other = block.id;
+    }
+    const auto refused = [&](auto &&mutate, const std::string &what) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      for (auto &block : body->blocks)
+        mutate(block);
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a forged conditional arm region fails MIR verification: " + what);
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(!rejected.analyze(address).ready() ||
+                 !supportsSelectedBodyText(malformed, map, function.id),
+             "a forged conditional arm region cannot enter backend "
+             "emission: " +
+                 what);
+    };
+    const auto *invoke = function.body.findBlock(predecessor);
+    if (invoke != nullptr &&
+        invoke->terminator.kind == lang::MirTerminatorKind::Invoke)
+      refused(
+          [&](lang::MirBlock &block) {
+            if (block.id == predecessor)
+              block.terminator.elseTarget = entries[0];
+          },
+          "failure edge into the arm");
+    refused(
+        [&](lang::MirBlock &block) {
+          if (block.id == other)
+            block.terminator.target = entries[0];
+        },
+        "the other arm entering this one");
+  }
+  expect(bodies == 3, "the bound, returned and propagated conditionals were "
+                      "exercised: " +
+                          std::to_string(bodies));
+}
+
 void testShortCircuitOwnedFieldView() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-short-circuit-field-view.gti", R"(
@@ -6170,6 +6449,7 @@ constexpr NamedTest kTests[] = {
     {"testPreparedConsumingReceiverLaterFailure",
      testPreparedConsumingReceiverLaterFailure},
     {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
+    {"testCleanupFreeConditionalCallArms", testCleanupFreeConditionalCallArms},
     {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
@@ -6185,6 +6465,7 @@ constexpr NamedTest kTests[] = {
      testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
