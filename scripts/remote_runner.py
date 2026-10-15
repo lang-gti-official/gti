@@ -32,7 +32,7 @@ SCHEMA = 1
 SETTINGS_SCHEMA = 2
 DEFAULT_ROOT = "/private/tmp/gti-remote-runner"
 HOSTS = {
-    "mini": {"host": "lukeh@192.168.0.53", "root": DEFAULT_ROOT,
+    "mini": {"host": "lukeh@100.103.38.120", "root": DEFAULT_ROOT,
              "python": "/opt/homebrew/bin/python3", "transport": "ssh", "platform": "Darwin"},
     "ubuntu-6": {"host": "root@100.77.66.96", "root": "/tmp/gti-remote-runner",
                  "python": "/usr/bin/python3", "transport": "tailscale", "platform": "Linux",
