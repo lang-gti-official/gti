@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v104`, `mir-body-v85`).
+instruction, body, and caller-assignment facts (`mir-v105`, `mir-body-v86`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,7 +318,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v104`/`mir-body-v85`,
+The combined deterministic serialization is currently `mir-v105`/`mir-body-v86`,
 with `lowered-program-v17` declaration metadata. Version 104/body 85 records
 checked borrowing capture modes, each concrete environment's invocation
 capability, per-dependency loan parents, and exact stateless GTI function-pointer
@@ -327,6 +327,15 @@ carrier origins; mutable captures make the environment non-copyable and require
 exclusive invocation. Composed carriers retain every dependency and ancestor,
 including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
+
+Version 105/body 86 additionally distinguishes absent borrow-set evidence
+from a complete producer-attached set, including a proven empty set. An empty
+payload construction names its exact concrete enum alternative; MIR checks
+every active field's dependency-free traits against the sealed type tables.
+Typed nested alternative paths accompany the set, independently of the real
+origin-bearing loans. This schema increment establishes empty constructor
+evidence only: conditional nonempty transfer, joins and result-summary proofs
+remain the borrowed-payload implementation goal, not admitted semantics.
 
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. Restoration is explicitly unsafe and retains its
@@ -422,7 +431,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v104`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v105`/`lowered-program-v17`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

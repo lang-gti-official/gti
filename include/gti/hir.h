@@ -262,7 +262,7 @@ struct HirValue {
   // Presence is part of the proof: an empty complete set differs from missing
   // semantic evidence. Origin places are body-qualified; structural paths are
   // declaration identities and must not be retagged.
-  std::optional<std::vector<SemanticLoanDependency>> borrowDependencies;
+  std::optional<SemanticBorrowDependencySet> borrowDependencies;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
   std::optional<HirValueId> retainedReceiverOwner;

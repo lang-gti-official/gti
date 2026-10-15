@@ -9786,6 +9786,12 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
                                      .value = enumerator->value,
                                      .variantIndex = enumerator->variantIndex});
     if (type.enumId != 0 && type.enumId <= enums.size() &&
+        enums[type.enumId - 1].payload && enumerator->payloadTypes.empty())
+      semanticModel.recordBorrowDependencySet(
+          expr, {.possibleAlternatives = {
+                     {.conditions = {{.enumeration = type,
+                                      .variant = enumerator->variantIndex}}}}});
+    if (type.enumId != 0 && type.enumId <= enums.size() &&
         enums[type.enumId - 1].payload && !enumerator->payloadTypes.empty() &&
         !allowPayloadEnumeratorReference) {
       report(expr.name().last(),

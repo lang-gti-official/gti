@@ -2110,8 +2110,13 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   for (const auto &[_, unit] : semanticDatabase.occurrencesByUnit)
     occurrences += unit.size();
   std::size_t borrowedDependencies = 0;
-  for (const auto &[_, dependencies] : expressionBorrowDependencies)
-    borrowedDependencies += dependencies.size();
+  for (const auto &[_, complete] : expressionBorrowDependencies) {
+    borrowedDependencies += complete.dependencies.size();
+    for (const auto &dependency : complete.dependencies)
+      borrowedDependencies += dependency.conditions.size();
+    for (const auto &alternative : complete.possibleAlternatives)
+      borrowedDependencies += alternative.conditions.size();
+  }
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
@@ -2319,7 +2324,7 @@ void SemanticModel::recordPayloadBinding(const Token &name, BindingInfo info) {
   payloadBindings.insert_or_assign(&name, std::move(info));
 }
 
-const std::vector<SemanticLoanDependency> *
+const SemanticBorrowDependencySet *
 SemanticModel::findBorrowDependencySet(const Expr &expression) const {
   if (const auto found = expressionBorrowDependencies.find(&expression);
       found != expressionBorrowDependencies.end())
@@ -2332,11 +2337,17 @@ SemanticModel::findBorrowDependencies(const Expr &expression) const {
   const auto *complete = findBorrowDependencySet(expression);
   return complete == nullptr
              ? std::span<const SemanticLoanDependency>{}
-             : std::span<const SemanticLoanDependency>{*complete};
+             : std::span<const SemanticLoanDependency>{complete->dependencies};
 }
 
 void SemanticModel::recordBorrowDependencies(
     const Expr &expression, std::vector<SemanticLoanDependency> dependencies) {
+  recordBorrowDependencySet(expression,
+                            {.dependencies = std::move(dependencies)});
+}
+
+void SemanticModel::recordBorrowDependencySet(
+    const Expr &expression, SemanticBorrowDependencySet dependencies) {
   expressionBorrowDependencies.insert_or_assign(&expression,
                                                 std::move(dependencies));
 }

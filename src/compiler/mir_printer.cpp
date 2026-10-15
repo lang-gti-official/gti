@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v104 valid=" << program.valid() << '\n';
+    output << "mir-v105 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -799,7 +799,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v85\n";
+    output << "mir-body-v86\n";
     body(value, 0);
   }
 
@@ -1199,6 +1199,21 @@ private:
     output << "])";
   }
 
+  void
+  borrowConditions(const std::vector<BorrowDependencyCondition> &conditions) {
+    output << '[';
+    for (std::size_t index = 0; index < conditions.size(); ++index) {
+      separator(index);
+      const auto &condition = conditions[index];
+      output << "{path=[";
+      list(condition.subobject);
+      output << "];enum=";
+      type(condition.enumeration);
+      output << ";variant=" << condition.variant << '}';
+    }
+    output << ']';
+  }
+
   void borrowFields(const std::vector<BorrowedFieldOrigin> &fields) {
     output << '[';
     for (std::size_t index = 0; index < fields.size(); ++index) {
@@ -1215,7 +1230,11 @@ private:
         separator(path);
         output << field.sourceFields[path];
       }
-      output << "];access=" << number(field.access) << ')';
+      output << "];access=" << number(field.access) << ";result-conditions=";
+      borrowConditions(field.resultConditions);
+      output << ";source-conditions=";
+      borrowConditions(field.sourceConditions);
+      output << ')';
     }
     output << ']';
   }
@@ -1396,7 +1415,9 @@ private:
         separator(field);
         output << dependency.designatedFields[field];
       }
-      output << "]}";
+      output << "];conditions=";
+      borrowConditions(dependency.conditions);
+      output << '}';
     }
     output << ']' << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
@@ -1408,7 +1429,27 @@ private:
            << " source=v" << value.sourceValue << ' ';
     info(value.info);
     output << " defined=bb" << value.definitionBlock << ":i" << value.definition
-           << '\n';
+           << " dependency-set=";
+    if (!value.borrowDependencies) {
+      output << "absent";
+    } else {
+      output << "complete[";
+      for (const auto &dependency : value.borrowDependencies->dependencies) {
+        output << "p" << dependency.source << ":loan" << dependency.parent
+               << ":fields=";
+        list(dependency.designatedFields);
+        output << ":conditions=";
+        borrowConditions(dependency.conditions);
+        output << ';';
+      }
+      output << "] alternatives=[";
+      for (const auto &alternative :
+           value.borrowDependencies->possibleAlternatives) {
+        borrowConditions(alternative.conditions);
+      }
+      output << ']';
+    }
+    output << '\n';
   }
 
   void instruction(const MirInstruction &value) {

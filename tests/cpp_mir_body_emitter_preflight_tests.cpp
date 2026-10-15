@@ -4622,8 +4622,25 @@ void testScalarPrefixConstructorStatusAdmission() {
 }
 
 void testOwningConstructorAcrossArgumentDiamond() {
-  const auto frontend = analyzeWithStandardLibrary(
-      "cpp-mir-owning-constructor-argument-diamond.gti", R"(
+  const std::string sources[] = {R"(
+#include <std/string>
+class Reading {
+public:
+  int& value;
+  mut std::string text;
+  Reading(int& source, std::string input)
+      : value(source), text(std::move(input)) {}
+};
+int inspect(int& owner, bool choose) {
+  Reading result{owner, std::string(choose ? "present" : "")};
+  return result.value;
+}
+int main() {
+  int owner = 42;
+  return inspect(owner, true) + inspect(owner, false) - 84;
+}
+)",
+                                 R"(
 #include <std/string>
 class Parcel {
   std::string text;
@@ -4642,79 +4659,84 @@ int exercise(bool choose) {
   return 0;
 }
 int main() { return exercise(true); }
-)");
-  expect(frontend.canGenerateCode() && frontend.mir.valid(),
-         "owning constructor after scalar argument diamond must verify");
-  if (!frontend.canGenerateCode() || !frontend.mir.valid())
-    return;
-  lang::HirFunctionInstanceId owner = 0;
-  lang::MirInstructionId producerId = 0;
-  lang::MirInstructionId stageId = 0;
-  for (const auto &function : frontend.mir.functionInstances()) {
-    for (const auto &block : function.body.blocks) {
-      for (const auto &instruction : block.instructions) {
-        if (instruction.kind != lang::MirInstructionKind::CallInput ||
-            instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
-            instruction.operands.size() != 1 ||
-            !instruction.preparedParameterDrop ||
-            instruction.operands.front().kind != lang::MirOperandKind::Value)
-          continue;
-        const auto *value =
-            function.body.findValue(instruction.operands.front().value);
-        const auto *producer =
-            value ? findPreflightInstruction(function.body, value->definition)
-                  : nullptr;
-        if (producer && producer->kind == lang::MirInstructionKind::Construct &&
-            producer->successResultDrop) {
-          owner = function.id;
-          producerId = producer->id;
-          stageId = instruction.id;
+)"};
+  for (const auto &source : sources) {
+    const auto frontend = analyzeWithStandardLibrary(
+        "cpp-mir-owning-constructor-argument-diamond.gti", source);
+    expect(frontend.canGenerateCode() && frontend.mir.valid(),
+           "owning constructor after passive argument diamond must verify");
+    if (!frontend.canGenerateCode() || !frontend.mir.valid())
+      return;
+    lang::HirFunctionInstanceId owner = 0;
+    lang::MirInstructionId producerId = 0;
+    lang::MirInstructionId stageId = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::CallInput ||
+              instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+              instruction.operands.size() != 1 ||
+              !instruction.preparedParameterDrop ||
+              instruction.operands.front().kind != lang::MirOperandKind::Value)
+            continue;
+          const auto *value =
+              function.body.findValue(instruction.operands.front().value);
+          const auto *producer =
+              value ? findPreflightInstruction(function.body, value->definition)
+                    : nullptr;
+          if (producer &&
+              producer->kind == lang::MirInstructionKind::Construct &&
+              producer->successResultDrop) {
+            owner = function.id;
+            producerId = producer->id;
+            stageId = instruction.id;
+          }
         }
       }
     }
-  }
-  expect(owner && producerId && stageId,
-         "diamond must retain exact owning constructor result staging");
-  if (!owner)
-    return;
-  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                     .owner = owner};
-  const lang::CppMirBodyEmissionMap map(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  expect(
-      lang::CppMirBodyEmitter(frontend.mir, map)
-          .supportsFailureBodyText(address),
-      "owning constructor staging must preserve the earlier stable receiver");
-  const auto rejectMutation = [&](const auto &mutate,
-                                  std::string_view message) {
-    auto changed = frontend.mir;
-    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-        changed.functionInstances());
-    auto &body = functions[owner - 1].body;
-    auto *producer = findPreflightInstruction(body, producerId);
-    auto *stage = findPreflightInstruction(body, stageId);
-    mutate(body, *producer, *stage);
-    expect(!lang::verifyMirProgram(changed).valid(), message);
+    expect(owner && producerId && stageId,
+           "diamond must retain exact owning constructor result staging");
+    if (!owner)
+      return;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = owner};
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
     expect(
-        !lang::CppMirBodyEmitter(changed, map).supportsFailureBodyText(address),
-        message);
-  };
-  rejectMutation(
-      [](auto &, auto &, auto &stage) { stage.lifecycle.front().source = 0; },
-      "argument diamond cannot erase the owning result Reparent source");
-  rejectMutation(
-      [](auto &, auto &, auto &stage) {
-        stage.lifecycle.front().target = stage.lifecycle.front().source;
-      },
-      "argument diamond cannot reparent to the wrong prepared slot");
-  rejectMutation(
-      [](auto &body, auto &producer, auto &) {
-        for (auto &block : body.blocks) {
-          if (block.terminator.invokeInstruction == producer.id)
-            block.terminator.successLifecycle.clear();
-        }
-      },
-      "argument diamond cannot erase successful result activation");
+        lang::CppMirBodyEmitter(frontend.mir, map)
+            .supportsFailureBodyText(address),
+        "owning constructor staging must preserve the earlier stable receiver");
+    const auto rejectMutation = [&](const auto &mutate,
+                                    std::string_view message) {
+      auto changed = frontend.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          changed.functionInstances());
+      auto &body = functions[owner - 1].body;
+      auto *producer = findPreflightInstruction(body, producerId);
+      auto *stage = findPreflightInstruction(body, stageId);
+      mutate(body, *producer, *stage);
+      expect(!lang::verifyMirProgram(changed).valid(), message);
+      expect(!lang::CppMirBodyEmitter(changed, map)
+                  .supportsFailureBodyText(address),
+             message);
+    };
+    rejectMutation(
+        [](auto &, auto &, auto &stage) { stage.lifecycle.front().source = 0; },
+        "argument diamond cannot erase the owning result Reparent source");
+    rejectMutation(
+        [](auto &, auto &, auto &stage) {
+          stage.lifecycle.front().target = stage.lifecycle.front().source;
+        },
+        "argument diamond cannot reparent to the wrong prepared slot");
+    rejectMutation(
+        [](auto &body, auto &producer, auto &) {
+          for (auto &block : body.blocks) {
+            if (block.terminator.invokeInstruction == producer.id)
+              block.terminator.successLifecycle.clear();
+          }
+        },
+        "argument diamond cannot erase successful result activation");
+  }
 }
 
 void testOptionalPayloadCleanupComposition() {

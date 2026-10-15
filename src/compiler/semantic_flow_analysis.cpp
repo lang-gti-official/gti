@@ -5859,6 +5859,22 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
              .parameterTypes = enumerator.payloadTypes});
+  // Establish empty evidence only from a complete typed inventory of every
+  // active payload field. The selected tag is part of the producer's proof;
+  // absence of an origin/loan is never itself evidence that the set is empty.
+  const bool dependencyFree =
+      call.arguments().size() == enumerator.payloadTypes.size() &&
+      std::all_of(enumerator.payloadTypes.begin(),
+                  enumerator.payloadTypes.end(),
+                  [&](const SemanticType &field) {
+                    const auto inventory = storedReferenceInventory(field);
+                    return inventory && inventory->empty();
+                  });
+  if (dependencyFree)
+    semanticModel.recordBorrowDependencySet(
+        call, {.possibleAlternatives = {
+                   {.conditions = {{.enumeration = enumerator.symbol.type,
+                                    .variant = enumerator.variantIndex}}}}});
   currentType = enumerator.symbol.type;
 }
 

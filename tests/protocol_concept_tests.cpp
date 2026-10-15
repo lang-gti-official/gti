@@ -15,6 +15,10 @@ struct SemanticModelTestAccess {
                      std::vector<SemanticLoanDependency> dependencies) {
     model.recordBorrowDependencies(expression, std::move(dependencies));
   }
+  static void complete(SemanticModel &model, const Expr &expression,
+                       SemanticBorrowDependencySet dependencies) {
+    model.recordBorrowDependencySet(expression, std::move(dependencies));
+  }
   static void delta(SemanticModel &model, const SemanticModel &base) {
     model.beginInstanceDelta(base);
   }
@@ -50,19 +54,27 @@ int main() {
                                           {{.place = {.root = 1}}});
     lang::SemanticModel overlay;
     lang::SemanticModelTestAccess::delta(overlay, base);
-    expect(overlay.findBorrowDependencySet(expression) != nullptr &&
-               overlay.findBorrowDependencySet(expression)->size() == 1,
-           "an instance inherits the exact complete dependency set");
-    lang::SemanticModelTestAccess::record(overlay, expression, {});
-    expect(overlay.findBorrowDependencySet(expression) != nullptr &&
-               overlay.findBorrowDependencySet(expression)->empty(),
-           "complete-empty overrides an inherited nonempty set");
+    expect(
+        overlay.findBorrowDependencySet(expression) != nullptr &&
+            overlay.findBorrowDependencySet(expression)->dependencies.size() ==
+                1,
+        "an instance inherits the exact complete dependency set");
+    const lang::SemanticBorrowDependencySet emptyAlternative{
+        .possibleAlternatives = {
+            {.conditions = {{.enumeration = lang::SemanticType::enumType(1),
+                             .variant = 2}}}}};
+    lang::SemanticModelTestAccess::complete(overlay, expression,
+                                            emptyAlternative);
+    expect(
+        overlay.findBorrowDependencySet(expression) != nullptr &&
+            overlay.findBorrowDependencySet(expression)->dependencies.empty(),
+        "complete-empty overrides an inherited nonempty set");
     lang::SemanticModel relocated;
     lang::SemanticModelTestAccess::record(relocated, expression,
                                           {{.place = {.root = 2}}});
     lang::SemanticModelTestAccess::rebase(overlay, relocated);
     expect(overlay.findBorrowDependencySet(expression) != nullptr &&
-               overlay.findBorrowDependencySet(expression)->empty(),
+               *overlay.findBorrowDependencySet(expression) == emptyAlternative,
            "rebase preserves explicitly empty instance evidence");
     lang::SemanticModelTestAccess::clear(overlay);
     expect(overlay.findBorrowDependencySet(expression) == nullptr,
