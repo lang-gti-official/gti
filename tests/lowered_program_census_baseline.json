@@ -2399,11 +2399,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 50
       }
+    },
+    "163-payload-composition.gti": {
+      "declarations": 1251,
+      "bodies": 137,
+      "generated_items": 97,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 46
+      }
     }
   },
   "totals": {
-    "declarations": 121344,
-    "bodies": 17944,
-    "generated_items": 11331
+    "declarations": 122595,
+    "bodies": 18081,
+    "generated_items": 11428
   }
 }
