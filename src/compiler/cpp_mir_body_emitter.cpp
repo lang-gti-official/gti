@@ -6578,6 +6578,51 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
       if (nestedJoin || movedLocal)
         return destination;
     }
+    // A cleanup-free arm result has no obligation of its own, so its
+    // Initialize may instead activate the temporary's own full-expression
+    // obligation directly. MIR builds this join when a member call borrows
+    // the joined value as its receiver. A call, plain or on its Invoke
+    // success edge, and a copy of a place then construct the temporary right
+    // before that Initialize, as a construction arm does, and the
+    // temporary's Drop ends it.
+    const MirBlock *invoke = invokeProducerBlock(body, *definition);
+    const MirBlock *success =
+        invoke == nullptr ? nullptr : body.findBlock(invoke->terminator.target);
+    const MirBlock *published = body.findBlock(value->definitionBlock);
+    bool activatedNext = success != nullptr && !success->instructions.empty() &&
+                         success->instructions.front().id == initialize->id;
+    if (invoke == nullptr && published != nullptr)
+      for (std::size_t index = 1; index < published->instructions.size();
+           ++index)
+        activatedNext |=
+            published->instructions[index - 1].id == definition->id &&
+            published->instructions[index].id == initialize->id;
+    if ((directFunctionCall || directCopy) && activatedNext &&
+        initialize->lifecycle.size() == 1 && !definition->successResultDrop &&
+        onlyPreparedInputTransfers(body, *definition) &&
+        initialize->definedFailure.empty() &&
+        initialize->localFailureSites.empty() &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &drop) {
+                       const MirPlace *place = body.findPlace(drop.place);
+                       return drop.generatedValue == valueId ||
+                              (place != nullptr &&
+                               place->root == MirPlaceRootKind::Value &&
+                               place->value == valueId);
+                     })) {
+      const MirLifecycleEvent &activation = initialize->lifecycle.front();
+      const MirDropObligation *destinationDrop =
+          body.findDropObligation(activation.target);
+      if (activation.kind == MirLifecycleEventKind::Initialize &&
+          activation.source == 0 && !activation.conditional &&
+          !activation.failureCleanup && destinationDrop != nullptr &&
+          destinationDrop->kind == MirDropObligationKind::Value &&
+          !destinationDrop->initiallyActive &&
+          destinationDrop->place == destination->id &&
+          destinationDrop->dropType.type == destination->type &&
+          destinationDrop->fullExpression != 0)
+        return destination;
+    }
     // A temporary destination is a real slot only when MIR explicitly
     // initializes one produced-value obligation and reparents that obligation
     // into the temporary's own full-expression obligation. This is the shape
