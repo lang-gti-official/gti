@@ -1,0 +1,160 @@
+#include <std/string>
+#include <std/vector>
+
+// A non-consuming virtual member called on a fresh temporary borrows that
+// temporary exactly as a non-virtual member does: the value is materialized in
+// one slot, the call reads or mutates it through the member's own dynamic
+// dispatch, and the slot is destroyed at the end of the full expression, on
+// the success edge and when the selected override fails.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// A generated default constructor and no destructor.
+class Maker {
+public:
+  virtual Tracked make() { return Tracked(1); }
+};
+
+// A traced receiver family. Each receiver prints 100 + its tag when destroyed.
+class Source {
+  int tag;
+public:
+  Source(int tag) : tag(tag) {}
+  ~Source() { std::println(std::to_string(100 + this.tag)); }
+  virtual Tracked make() { return Tracked(this.tag); }
+  Tracked plain() { return Tracked(this.tag + 1); }
+  virtual Tracked split(int divisor) { return Tracked(3); }
+  virtual Tracked operator()(int value) { return Tracked(this.tag * value); }
+};
+
+class Doubling : public Source {
+  int twice;
+public:
+  Doubling(int tag) : Source(tag), twice(2 * tag) {}
+  Tracked make() override { return Tracked(this.twice); }
+};
+
+// Inherits every member; calls on its temporaries borrow the whole object.
+class Inheriting : public Source {
+public:
+  Inheriting(int tag) : Source(tag) {}
+};
+
+// The base member cannot fail; this override can.
+class Dividing : public Source {
+  int base;
+public:
+  Dividing(int base) : Source(base), base(base) {}
+  Tracked split(int divisor) override { return Tracked(this.base / divisor); }
+};
+
+// An interface contract root, called through a mutable temporary receiver.
+interface Factory {
+  Tracked build(int divisor) mut;
+};
+
+class Counting : public Factory {
+  mut int next;
+public:
+  Counting(int start) : next(start) {}
+  ~Counting() { std::println(std::to_string(200 + this.next)); }
+  Tracked build(int divisor) mut override {
+    this.next += 1;
+    return Tracked(this.next / divisor);
+  }
+};
+
+class Kept {
+  mut Tracked kept;
+public:
+  Kept() : kept(Maker().make()) {}
+  int read() { return this.kept.read(); }
+};
+
+// A declaration default runs as the selected constructor's initializer stage.
+class Defaulted {
+  mut Tracked kept = Maker().make();
+public:
+  Defaulted() {}
+  int read() { return this.kept.read(); }
+};
+
+class Assigned {
+  mut Tracked kept;
+public:
+  Assigned(int tag) : kept(Tracked(0)) { this.kept = Doubling(tag).make(); }
+  int read() { return this.kept.read(); }
+};
+
+// A failing override publishes nothing into the field.
+class SplitKept {
+  mut Tracked kept;
+public:
+  SplitKept(int divisor) : kept(Dividing(30).split(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
+int made() {
+  Tracked made = Maker().make();
+  return made.read();
+}
+
+int traced() {
+  Tracked made = Source(5).make();
+  return made.read();
+}
+
+// Each conditional arm borrows its own fresh receiver, so only the arm that
+// runs creates and destroys one. A conditional-joined receiver is destroyed
+// once, after the call.
+int chosen(bool left) {
+  Tracked made = left ? Maker().make() : Source(4).make();
+  return made.read();
+}
+
+int joined(bool left) {
+  Tracked made = (left ? Source(5) : Source(6)).make();
+  return made.read();
+}
+
+int built(int divisor) { return Counting(4).build(divisor).read(); }
+
+int split(int divisor) {
+  Tracked part = Dividing(18).split(divisor);
+  return part.read();
+}
+
+bool has(std::vector<std::string>& argv, std::string_view flag) {
+  for (std::string& item : argv) {
+    if (item == flag) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int build = has(argv, "build") ? 0 : 1;
+  int split_divisor = has(argv, "split") ? 0 : 2;
+  int kept_divisor = has(argv, "kept") ? 0 : 5;
+  mut int total = made() + traced();
+  total += Inheriting(7).make().read() + Inheriting(8).plain().read();
+  total += Source(2)(3).read();
+  total += chosen(false) + chosen(true) + joined(false);
+  {
+    Kept kept{};
+    Defaulted defaulted{};
+    Assigned assigned{4};
+    total += kept.read() + defaulted.read() + assigned.read();
+  }
+  total += built(build);
+  total += split(split_divisor);
+  SplitKept split_kept{kept_divisor};
+  std::println("kept");
+  return total + split_kept.read() - 69;
+}

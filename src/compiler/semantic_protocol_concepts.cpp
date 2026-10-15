@@ -268,6 +268,11 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     // repeated parameter must bind the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
     registeringConformanceParameters = &parameters;
+    // Registration needs only the types' identities; validateConformanceTypes
+    // validates the written types once what they depend on is known.
+    ConformanceTypeCheck typeCheck{.sourceUnit = currentSourceUnit,
+                                   .namespaceScope = enclosing,
+                                   .genericParameters = parameters};
     std::vector<SemanticType> patterns;
     std::unordered_set<GenericParameterId> used;
     const auto ownParameter = [&](const SemanticType &type) {
@@ -279,7 +284,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                          });
     };
     for (const TypeRef &argument : target.arguments) {
-      validateType(argument);
+      typeCheck.types.push_back(&argument);
       SemanticType pattern = typeOf(argument, enclosing);
       if (pattern == SemanticType::Unknown) {
         valid = false;
@@ -402,7 +407,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
         continue;
       }
       defined[*index] = true;
-      validateType(alias->target());
+      typeCheck.types.push_back(&alias->target());
       associatedTypes[*index] = typeOf(alias->target(), enclosing);
     }
     for (std::size_t index = 0; index < defined.size(); ++index) {
@@ -415,6 +420,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     }
     endTypeParameterScope();
     registeringConformanceParameters = nullptr;
+    conformanceTypeChecks.push_back(std::move(typeCheck));
     if (!valid) {
       continue;
     }
@@ -578,6 +584,33 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       }
     }
   }
+}
+
+// A block's patterns and `using` types are validated here, once, as a type
+// alias's constraints are: after every block is registered and each class's
+// members and lifecycle are known. Only then can a concrete type's
+// constraints, or a projection through a block declared later, be decided.
+// The requirement each operation restates is not validated again.
+auto SemanticVisitor::Impl::validateConformanceTypes() -> void {
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingClass = currentClass;
+  currentClass.reset();
+  for (const ConformanceTypeCheck &check :
+       std::exchange(conformanceTypeChecks, {})) {
+    currentSourceUnit = check.sourceUnit;
+    currentNamespace = check.namespaceScope;
+    beginTypeParameterScope(check.genericParameters);
+    registeringConformanceParameters = &check.genericParameters;
+    for (const TypeRef *type : check.types) {
+      validateType(*type);
+    }
+    registeringConformanceParameters = nullptr;
+    endTypeParameterScope();
+  }
+  currentSourceUnit = enclosingUnit;
+  currentNamespace = enclosingNamespace;
+  currentClass = enclosingClass;
 }
 
 auto SemanticVisitor::Impl::classTemplateArguments(const SemanticType &type,
