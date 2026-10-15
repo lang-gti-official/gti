@@ -1,0 +1,276 @@
+#include <std/string>
+#include <std/vector>
+
+// A cleanup-free class value joined by a conditional expression is the
+// receiver of a member call: read-only, mutable or consuming. Each arm
+// publishes into the join's temporary, the call borrows that temporary, and
+// the end of the full expression destroys it. The arms are ordinary calls,
+// member calls with a borrowed or consumed receiver, calls taking a moved
+// argument, copies of a place and constructions, in plain bodies and in
+// bodies whose callees can fail.
+//
+// Pod has no destructor. Tracked prints its negated id when destroyed.
+// Nothing else prints outside main and run. The plain shape functions below
+// do no checked arithmetic, which keeps them in the plain form.
+class Pod {
+public:
+  mut int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+  // Writes the borrowed object and returns its old value.
+  int swap(int v) mut {
+    int old = this.x;
+    this.x = v;
+    return old;
+  }
+  int take() && { return this.x; }
+  int bump() mut {
+    this.x += 1;
+    return this.x;
+  }
+  int twice() && { return this.x * 2; }
+  int ratio(int divisor) { return this.x / divisor; }
+};
+
+// A cleanup-free class with a class field.
+class Pair {
+public:
+  Pod first;
+  int second;
+  Pair(int v) : first(Pod(v)), second(v + 1000) {}
+  int sum() { return this.first.read() + this.second; }
+};
+
+// A cleanup-free generic class.
+class Holder<T> {
+  T value;
+public:
+  Holder(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+// A borrowed or consumed receiver producing an arm.
+class Plain {
+  int base;
+public:
+  Plain(int base) : base(base) {}
+  int get() { return this.base; }
+  Pod pod() && { return Pod(this.base); }
+  Pod peek() { return Pod(this.base); }
+  Pod split(int divisor) { return Pod(this.base / divisor + 2000); }
+};
+
+// A mutable borrowed receiver producing an arm.
+class Counter {
+  mut int count;
+public:
+  Counter(int count) : count(count) {}
+  Pod reset(int v) mut {
+    int old = this.count;
+    this.count = v;
+    return Pod(old);
+  }
+  Pod next() mut {
+    this.count += 1;
+    return Pod(this.count);
+  }
+  int get() { return this.count; }
+};
+
+// An input with cleanup of its own.
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(-this.id); }
+  Pod pod() && { return Pod(this.id); }
+  Pod peek() { return Pod(this.id); }
+};
+
+Pod fresh(int id) { return Pod(id); }
+
+Pod make_pod(Plain source) { return Pod(source.get()); }
+
+Pod unwrap(Tracked source) { return Pod(source.id); }
+
+Pair pair(int id) { return Pair(id); }
+
+Holder<T> hold<T>(T value) { return Holder<T>(value); }
+
+Pod risky(int id, int divisor) { return Pod(id / divisor); }
+
+Pod chancy(int id, int divisor) { return Pod(id / divisor + 1000); }
+
+// Plain bodies. A receiver borrowed from the wrong storage, or an arm that
+// ran the other arm's callee, reads back a different value.
+int read_calls(bool left, int a, int b) {
+  return (left ? fresh(a) : fresh(b)).read();
+}
+
+int swap_calls(bool left, int a, int b) {
+  return (left ? fresh(a) : fresh(b)).swap(0);
+}
+
+int take_calls(bool left, int a, int b) {
+  return (left ? fresh(a) : fresh(b)).take();
+}
+
+int read_borrowed(bool left, Plain a, Plain b) {
+  return (left ? a.peek() : b.peek()).read();
+}
+
+int swap_mutable(bool left, int a, int b) {
+  mut Counter first{a};
+  mut Counter second{b};
+  int old = (left ? first.reset(0) : second.reset(0)).swap(7);
+  // Only the arm that ran reset its counter. Test values are never 0.
+  return first.get() == (left ? 0 : a) && second.get() == (left ? b : 0)
+             ? old
+             : 0;
+}
+
+int swap_copies(bool left, int a, int b) {
+  Pod first{a};
+  Pod second{b};
+  // The copy is written, not the place it was copied from.
+  int old = (left ? first : second).swap(0);
+  return first.read() == a && second.read() == b ? old : 0;
+}
+
+int read_mixed(bool left, int a, int b) {
+  Pod first{a};
+  int copied = (left ? first : fresh(b)).read();
+  int built = (left ? Pod(b) : fresh(a)).take();
+  return copied == (left ? a : b) ? built : 0;
+}
+
+int get_held(bool left, int a, int b) {
+  return (left ? hold<int>(a) : hold<int>(b)).get();
+}
+
+// A consumed receiver and a moved argument are prepared inputs: only the arm
+// that runs transfers its input to its callee.
+int read_consumed(bool left, Plain a, Plain b) {
+  return (left ? std::move(a).pod() : std::move(b).pod()).read();
+}
+
+int swap_moved(bool left, Plain a, Plain b) {
+  return (left ? make_pod(std::move(a)) : b.peek()).swap(0);
+}
+
+// Bodies with checked arithmetic, in the arms or in the member call.
+int bump_calls(bool left, int a, int b) {
+  return (left ? fresh(a) : fresh(b)).bump();
+}
+
+int twice_calls(bool left, int a, int b) {
+  return (left ? fresh(a) : fresh(b)).twice();
+}
+
+int bump_mutable(bool left, int start) {
+  mut Counter a{start};
+  mut Counter b{start + 10};
+  int bumped = (left ? a.next() : b.next()).bump();
+  return bumped * 100 + a.get() - b.get();
+}
+
+int bump_copies(bool left, int a, int b) {
+  Pod first{a};
+  Pod second{b};
+  int bumped = (left ? first : second).bump();
+  return bumped * 100 + first.read() - second.read();
+}
+
+int sum_pairs(bool left, int a, int b) {
+  return (left ? pair(a) : pair(b)).sum();
+}
+
+int loop_calls(bool left, int count) {
+  mut int total = 0;
+  for (mut int i = 0; i < count; i += 1) {
+    total = total * 10 + (left ? fresh(i) : fresh(i + 5)).bump();
+  }
+  return total;
+}
+
+// Bodies whose callees can fail: an arm's callee, or the member call on the
+// joined value.
+int read_raising(bool left, int a, int b, int divisor) {
+  return (left ? risky(a, divisor) : chancy(b, divisor)).read();
+}
+
+int bump_raising(bool left, Plain a, int b, int divisor) {
+  return (left ? a.split(divisor) : fresh(b)).bump();
+}
+
+int ratio_calls(bool left, int a, int b, int divisor) {
+  return (left ? fresh(a) : fresh(b)).ratio(divisor);
+}
+
+// Runs every shape through one arm; `base` keeps the two runs apart.
+int run(bool left, int base) {
+  std::println(read_calls(left, base + 1, base + 2));
+  std::println(swap_calls(left, base + 3, base + 4));
+  std::println(take_calls(left, base + 5, base + 6));
+  std::println(read_borrowed(left, Plain(base + 7), Plain(base + 8)));
+  std::println(swap_mutable(left, base + 9, base + 10));
+  std::println(swap_copies(left, base + 11, base + 12));
+  std::println(read_mixed(left, base + 13, base + 14));
+  std::println(get_held(left, base + 15, base + 16));
+  std::println(read_consumed(left, Plain(base + 49), Plain(base + 50)));
+  std::println(swap_moved(left, Plain(base + 51), Plain(base + 52)));
+  std::println(bump_calls(left, base + 17, base + 18));
+  std::println(twice_calls(left, base + 19, base + 20));
+  std::println(bump_mutable(left, base + 21));
+  std::println(bump_copies(left, base + 23, base + 24));
+  std::println(sum_pairs(left, base + 25, base + 26));
+  std::println(loop_calls(left, 3));
+  std::println(read_raising(left, base + 27, base + 28, 1));
+  std::println(bump_raising(left, Plain(base + 29), base + 30, 1));
+  std::println(ratio_calls(left, base + 32, base + 34, 2));
+  mut int total = 0;
+  {
+    // In a body that can fail, beside a value with cleanup of its own,
+    // which is destroyed at scope exit after the joined value.
+    Tracked guard{base + 35};
+    Plain a{base + 36};
+    total += (left ? a.split(1) : risky(base + 37, 1)).bump();
+  }
+  {
+    // Inputs with cleanup of their own. A consumed receiver is destroyed at
+    // the end of its full expression, a moved argument inside its callee,
+    // and a borrowed one at scope exit.
+    Tracked a{base + 53};
+    Tracked b{base + 54};
+    total += (left ? std::move(a).pod() : b.peek()).read();
+    Tracked c{base + 55};
+    Tracked d{base + 56};
+    total += (left ? unwrap(std::move(c)) : std::move(d).pod()).swap(0);
+  }
+  {
+    // A mutable receiver whose arms also borrow mutably.
+    mut Counter a{base + 38};
+    mut Counter b{base + 48};
+    total += (left ? a.next() : b.next()).bump() * 100 + a.get() - b.get();
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true, 0));
+  std::println(run(false, 100));
+  // Failure cleanup. Scenario 1 fails the left arm's callee, 2 the right
+  // arm's, and 3 the member call on the joined value. Cleanup destroys only
+  // what was constructed before the failure.
+  int scenario = argc - 1;
+  Tracked first{201};
+  int left = read_raising(scenario == 1, 202, 203, scenario == 1 ? 0 : 1);
+  std::println("left");
+  Tracked second{204};
+  int right = read_raising(scenario != 2, 205, 206, scenario == 2 ? 0 : 1);
+  std::println("right");
+  Tracked third{207};
+  int ratio = ratio_calls(scenario != 3, 208, 209, scenario == 3 ? 0 : 1);
+  std::println("ratio");
+  return left + right + ratio - 1616;
+}
