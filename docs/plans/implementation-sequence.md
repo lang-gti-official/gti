@@ -8327,14 +8327,16 @@ declaration-owned result summaries remain incomplete; guards on unsupported
 loan/call records fail closed and reference-bearing payload admission stays
 closed.
 
-Example 164's original shared and mutable class-wrapper paths now compile and
+Example 165's original shared and mutable class-wrapper paths now compile and
 run at O2 with the expected output. General constructor-staging fixes admit
 text views across conditional arguments and exact transferred mutable-reference
 prefixes before owned fields; malformed identity/access/lifecycle evidence
 remains rejected. The focused native matrix passes all nine modes:
-C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 164
-and the existing cleanup traces. A named passive enum operand exposed a branch-dominance
-lowering failure in an earlier probe and still needs a dedicated follow-up.
+C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 165
+and the existing cleanup traces. The earlier named passive operand probe is
+now covered by the upstream enum-propagation fixture's named, moved and fresh
+operands. Its original failure is historical, not evidence of a distinct
+remaining bug; the combined full runtime matrix remains an integration gate.
 The earlier expedited prerequisite request did not mark the complete
 borrowed-enum goal finished or authorize unverified reference-bearing payloads.
 On 2026-10-16 the owner restored the normal validation and integration workflow
@@ -8357,6 +8359,17 @@ The follow-up separates two cooperating implementation regions:
   summaries; unresolved recursive summaries remain unknown. The same local
   complete-set dataflow supplies producer/return evidence to both checks, so
   this does not introduce another ownership or liveness engine.
+
+The first follow-up checkpoint preserves alternative guards on primary as well
+as additional loans and introduces a strict optional MIR reference inventory.
+Legacy unconditional inventory queries do not flatten conditional paths. The
+semantic constructor-set producer reuses ordinary reference binding's stable
+storage proof, preserves exact field/alternative identities, and remains behind
+the closed source-admission gate. Local C++ syntax checks pass for the changed
+ownership and MIR-verifier translation units; this is not language-test or
+runtime evidence. The initial focused remote run was canceled while queued to
+preserve another task's performance window and has been fetched and cleaned up.
+Optimized focused and full validation remain required before integration.
 
 The usable end-to-end client is an ordinary source-defined result with borrowed
 success and owning failure, including shared and exclusive results, direct

@@ -2111,6 +2111,11 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   for (const auto &[_, unit] : semanticDatabase.occurrencesByUnit)
     occurrences += unit.size();
   std::size_t borrowedDependencies = 0;
+  for (const auto &loan : retainedLoans) {
+    borrowedDependencies += loan.conditions.size();
+    for (const auto &dependency : loan.additionalDependencies)
+      borrowedDependencies += dependency.conditions.size();
+  }
   for (const auto &[_, complete] : expressionBorrowDependencies) {
     borrowedDependencies += complete.dependencies.size();
     for (const auto &dependency : complete.dependencies)

@@ -1648,6 +1648,103 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::payloadBorrowDependencySet(
+    const Call &call, const EnumeratorRecord &enumerator)
+    -> std::optional<SemanticBorrowDependencySet> {
+  if (!enumerator.declaration ||
+      call.arguments().size() != enumerator.payloadTypes.size() ||
+      enumerator.declaration->payload.size() != enumerator.payloadTypes.size())
+    return std::nullopt;
+  const BorrowDependencyCondition selected{.enumeration =
+                                               enumerator.symbol.type,
+                                           .variant = enumerator.variantIndex};
+  SemanticBorrowDependencySet result{
+      .possibleAlternatives = {{.conditions = {selected}}}};
+  for (std::size_t index = 0; index < enumerator.payloadTypes.size(); ++index) {
+    const auto &field = enumerator.payloadTypes[index];
+    const auto &argument = call.arguments()[index];
+    const StoredField storedField = &enumerator.declaration->payload[index];
+    const auto symbols = storedFieldSymbols(
+        enumerator.symbol.type, std::span<const StoredField>(&storedField, 1));
+    if (symbols.size() != 1)
+      return std::nullopt;
+    SemanticBorrowDependencySet input;
+    if (field.kind == SemanticType::Reference) {
+      const auto *info = semanticModel.findExpression(*argument);
+      // Use the same temporary-storage proof as validateReferenceBinding:
+      // Place alone is insufficient because a projection may still derive
+      // from an owner destroyed at the end of this full expression.
+      if (field.arguments.size() != 1 || !info ||
+          info->category != ValueCategory::Place ||
+          !hasStableBorrowStorage(argument) ||
+          (field.referenceAccess == AccessMode::Mutable &&
+           info->access != AccessMode::Mutable))
+        return std::nullopt;
+      const auto place = retainedLoanPlace(argument);
+      const auto source = retainedLoanSource(argument);
+      if ((place.root == 0 && !place.receiver) ||
+          semanticModel.findForeignStorage(place.root) != nullptr)
+        return std::nullopt;
+      input.dependencies.push_back(
+          {.place = place,
+           .access = field.referenceAccess,
+           .protectsStorage = hasStableBorrowStorage(argument),
+           .parent = source ? source->loan : SemanticLoanId{0}});
+    } else {
+      const auto inventory = storedReferenceInventory(field);
+      if (!inventory)
+        return std::nullopt;
+      if (inventory->empty()) {
+        // A dependency-free field needs no nested active-tag evidence.
+        // This is established by its complete concrete layout, never by an
+        // absent expression-origin record.
+      } else if (auto complete = completeBorrowDependencySet(argument)) {
+        input = std::move(*complete);
+      } else {
+        input.dependencies = storedBorrowDependencies(argument);
+        // Existing unconditional class carriers supply exact field-origin
+        // maps. Conditional inputs require their producer's complete set;
+        // a missing map never proves the selected alternative empty.
+        if (input.dependencies.size() != inventory->size())
+          return std::nullopt;
+        for (std::size_t path = 0; path < inventory->size(); ++path) {
+          const auto &required = (*inventory)[path];
+          auto &dependency = input.dependencies[path];
+          const auto fields = storedFieldSymbols(field, required.fields);
+          if (!required.conditions.empty() || !dependency.conditions.empty() ||
+              fields.size() != required.fields.size() ||
+              (dependency.designatedFields != fields &&
+               !(inventory->size() == 1 &&
+                 dependency.designatedFields.empty())) ||
+              dependency.access != required.reference.referenceAccess)
+            return std::nullopt;
+          dependency.designatedFields = fields;
+        }
+      }
+    }
+    for (auto &dependency : input.dependencies) {
+      dependency.designatedFields.insert(dependency.designatedFields.begin(),
+                                         symbols.front());
+      for (auto &condition : dependency.conditions)
+        condition.subobject.insert(condition.subobject.begin(),
+                                   symbols.front());
+      dependency.conditions.insert(dependency.conditions.begin(), selected);
+      result.dependencies.push_back(std::move(dependency));
+    }
+    for (auto &alternative : input.possibleAlternatives) {
+      for (auto &condition : alternative.conditions)
+        condition.subobject.insert(condition.subobject.begin(),
+                                   symbols.front());
+      alternative.conditions.insert(alternative.conditions.begin(), selected);
+      if (std::find(result.possibleAlternatives.begin(),
+                    result.possibleAlternatives.end(),
+                    alternative) == result.possibleAlternatives.end())
+        result.possibleAlternatives.push_back(std::move(alternative));
+    }
+  }
+  return result;
+}
+
 auto SemanticVisitor::Impl::joinedBorrowDependencySets(
     const std::optional<SemanticBorrowDependencySet> &left,
     const std::optional<SemanticBorrowDependencySet> &right) const
@@ -3168,7 +3265,8 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(
          .designatedFields = loan.designatedFields,
          .access = loan.access,
          .protectsStorage = loan.protectsStorage,
-         .parent = loan.id}};
+         .parent = loan.id,
+         .conditions = loan.conditions}};
     result.insert(result.end(), loan.additionalDependencies.begin(),
                   loan.additionalDependencies.end());
     for (auto &dependency : result) {
@@ -3396,7 +3494,8 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
            .designatedFields = loan->designatedFields,
            .access = loan->access,
            .protectsStorage = loan->protectsStorage,
-           .parent = transferred ? loan->parent : loan->id}};
+           .parent = transferred ? loan->parent : loan->id,
+           .conditions = loan->conditions}};
       dependencies.insert(dependencies.end(),
                           loan->additionalDependencies.begin(),
                           loan->additionalDependencies.end());
@@ -3649,7 +3748,8 @@ auto SemanticVisitor::Impl::projectedStoredDependency(
   if (auto primary = select({.place = loan.place,
                              .designatedFields = loan.designatedFields,
                              .access = loan.access,
-                             .protectsStorage = loan.protectsStorage}))
+                             .protectsStorage = loan.protectsStorage,
+                             .conditions = loan.conditions}))
     return primary;
   for (const auto &dependency : loan.additionalDependencies)
     if (auto selected = select(dependency))
@@ -5380,8 +5480,8 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
     const Expr *origin, SemanticLoanPlace place, SymbolId owner,
     bool receiverOrigin, AccessMode access, bool protectsStorage,
-    SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields)
-    -> SemanticLoanId {
+    SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields,
+    std::vector<BorrowDependencyCondition> conditions) -> SemanticLoanId {
   if (semanticModel.findForeignStorage(place.root) != nullptr &&
       origin != nullptr) {
     report(expressionToken(*origin),
@@ -5405,6 +5505,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
                             .protectsStorage = protectsStorage,
                             .lifecycleBound = lifecycleBound,
                             .designatedFields = std::move(designatedFields),
+                            .conditions = std::move(conditions),
                             .carriers = {carrierSymbol}});
   loanFlow.records.emplace(
       id, LoanFlowRecord{.id = id,
@@ -5723,7 +5824,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
           expression.get(), primary.place, primary.place.root,
           primary.place.receiver, primary.access, primary.protectsStorage,
-          primary.parent, false, primary.designatedFields);
+          primary.parent, false, primary.designatedFields, primary.conditions);
       auto loan = *semanticModel.findLoan(id);
       loan.additionalDependencies.assign(dependencies.begin() + 1,
                                          dependencies.end());
@@ -5990,7 +6091,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
         expression.get(), primary.place, primary.place.root,
         primary.place.receiver, primary.access, primary.protectsStorage, parent,
-        false, primary.designatedFields);
+        false, primary.designatedFields, primary.conditions);
     SemanticLoanInfo loan = *semanticModel.findLoan(id);
     loan.additionalDependencies.assign(dependencies.begin() + 1,
                                        dependencies.end());

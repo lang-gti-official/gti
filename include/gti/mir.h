@@ -375,6 +375,9 @@ struct MirLoan {
   // metadata for a by-value carrier dependency and has no backend
   // representation.
   std::vector<SymbolId> designatedFields;
+  // Exact active-alternative requirements for the primary dependency. These
+  // are structural provenance, not runtime reads of inactive payloads.
+  std::vector<BorrowDependencyCondition> conditions;
   // An owned carrier needs this dependency until cleanup, including read-only
   // dependencies used by source destructors. EndBorrow follows the exact Drop
   // or verified ownership transfer on every normal and failure edge. This
