@@ -123,6 +123,14 @@ public:
   int read() { return this.kept.read(); }
 };
 
+class FreshChecking {
+  mut Tracked kept;
+public:
+  FreshChecking(int value, int divisor)
+      : kept(Single(value).release_checked(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
 // The second initializer can fail after the first member-call result was
 // published into its field.
 class Pair {
@@ -177,10 +185,14 @@ int main(int argc, std::vector<std::string> argv) {
     CheckedTaking checked{Single(7), has(argv, "call") ? 0 : 1};
     total += checked.read();
   }
+  {
+    FreshChecking fresh{8, has(argv, "fresh") ? 0 : 1};
+    total += fresh.read();
+  }
   Pair pair{Source(16), Single(9), has(argv, "later") ? 0 : 2};
   bool receiver = has(argv, "receiver");
   Checked checked{
       Guarded(10, receiver && has(argv, "double") ? 0 : 1, receiver ? 0 : 1)};
   std::println("kept");
-  return total + pair.read() + checked.read() - 49;
+  return total + pair.read() + checked.read() - 57;
 }
