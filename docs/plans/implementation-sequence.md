@@ -8371,6 +8371,19 @@ runtime evidence. The initial focused remote run was canceled while queued to
 preserve another task's performance window and has been fetched and cleaned up.
 Optimized focused and full validation remain required before integration.
 
+The extraction prerequisite records a resolved structural mode for copying or
+moving an owned field, borrowing its storage, copying a shared stored reference,
+transferring a consumed stored reference, or reborrowing a stored reference.
+HIR/MIR preserve that selection instead of inferring it from the binding's
+reference type. The verifier checks the mode against the concrete alternative,
+operand and value category; missing or substituted modes are rejected. External
+reference extraction is still closed pending exact selected-address/dependency
+proof. Its implementation must preserve every possible external origin at a
+branch join, never pick the first origin or treat the carrier as the referent.
+Explicit reference patterns reborrow an unconsumed carrier; a plain binding on
+a consumed reference alternative transfers the reference without moving its
+external object. These prerequisites do not yet admit reference payloads.
+
 The usable end-to-end client is an ordinary source-defined result with borrowed
 success and owning failure, including shared and exclusive results, direct
 protocol calls and prefix propagation. An unrelated nested sum/view client must

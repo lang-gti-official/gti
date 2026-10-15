@@ -2298,7 +2298,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            !value.lambdaTarget && value.callableArguments.empty() &&
            !value.callableBoundary && !value.callableInvocation &&
            !value.enumOwner && !value.enumValue && !value.enumVariant &&
-           !value.payloadIndex && !value.ownership && !value.dropObligation;
+           !value.payloadIndex && !value.payloadExtractionKind &&
+           !value.ownership && !value.dropObligation;
   };
   // A synthetic nested level of an empty-brace fixed-array expansion: an
   // exact fixed-array value whose elements recurse toward the recorded leaf
@@ -2334,7 +2335,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         value.lambdaTarget || !value.callableArguments.empty() ||
         value.callableBoundary || value.callableInvocation || value.enumOwner ||
         value.enumValue || value.enumVariant || value.payloadIndex ||
-        value.symbol != 0 || value.literal || value.place) {
+        value.payloadExtractionKind || value.symbol != 0 || value.literal ||
+        value.place) {
       return false;
     }
     const HirValue *root = defaultArrayRootInitializer(value);

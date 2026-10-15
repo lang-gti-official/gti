@@ -5996,6 +5996,10 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       return std::nullopt;
     }
     const SemanticType &payloadType = enumerator->payloadTypes[index];
+    const bool storedReference = payloadType.kind == SemanticType::Reference;
+    if (storedReference && payloadType.arguments.size() != 1) {
+      return std::nullopt;
+    }
     const std::string tagOnlyPattern =
         "'case " + typeSpelling(subjectType) +
         "::" + enumerator->declaration->name.lexeme + ":'";
@@ -6003,8 +6007,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
     // (a prvalue or an explicit std::move) the field moves out of the active
     // alternative; when it observes a named place the binding is a copy.
     const SemanticTypeTraits payloadTraits = typeTraits(payloadType);
-    if (!binding->isReferencePattern() && consumingSubject &&
-        !payloadTraits.movable && !payloadTraits.copyable) {
+    if (!storedReference && !binding->isReferencePattern() &&
+        consumingSubject && !payloadTraits.movable && !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -6018,8 +6022,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
-    if (!binding->isReferencePattern() && !consumingSubject &&
-        !payloadTraits.copyable) {
+    if (!storedReference && !binding->isReferencePattern() &&
+        !consumingSubject && !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -6037,11 +6041,49 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
+    if (storedReference && !consumingSubject &&
+        !binding->isReferencePattern() &&
+        payloadType.referenceAccess == AccessMode::Mutable) {
+      report(binding->name(),
+             "An exclusive reference payload cannot be copied from an "
+             "unconsumed enum; reborrow it with 'auto&' or 'mut auto&', or "
+             "consume the enum to transfer the reference.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (storedReference && binding->isReferencePattern() && consumingSubject) {
+      report(binding->name(),
+             "A consumed reference payload uses a plain binding to transfer "
+             "its reference; explicit reference patterns reborrow an "
+             "unconsumed enum.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (storedReference && binding->isReferencePattern() &&
+        binding->isMutablePattern() &&
+        payloadType.referenceAccess != AccessMode::Mutable) {
+      report(binding->name(),
+             "A read-only reference payload cannot produce an exclusive "
+             "mutable reborrow.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    const PayloadExtractionKind extractionKind =
+        storedReference
+            ? (binding->isReferencePattern()
+                   ? PayloadExtractionKind::ReborrowReference
+               : consumingSubject ? PayloadExtractionKind::TransferReference
+                                  : PayloadExtractionKind::CopyReference)
+            : (binding->isReferencePattern()
+                   ? PayloadExtractionKind::BorrowValue
+               : consumingSubject ? PayloadExtractionKind::MoveValue
+                                  : PayloadExtractionKind::CopyValue);
     const SemanticType bindingType =
         binding->isReferencePattern()
-            ? SemanticType::referenceTo(payloadType, binding->isMutablePattern()
-                                                         ? AccessMode::Mutable
-                                                         : AccessMode::ReadOnly)
+            ? SemanticType::referenceTo(
+                  storedReference ? payloadType.arguments.front() : payloadType,
+                  binding->isMutablePattern() ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly)
             : payloadType;
     result.bindings.push_back(
         {.name = &binding->name(),
@@ -6049,7 +6091,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
          .binding = bindingInfo(bindingType, binding->isMutablePattern()
                                                  ? AccessMode::Mutable
                                                  : AccessMode::ReadOnly),
-         .payloadIndex = index});
+         .payloadIndex = index,
+         .extractionKind = extractionKind});
   }
   return result;
 }
