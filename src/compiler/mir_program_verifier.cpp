@@ -10762,6 +10762,10 @@ struct CompleteBorrowReturnFact {
 struct CompleteBorrowFlow {
   MirVerificationResult verification;
   std::vector<CompleteBorrowFact> values;
+  // Exact executable carrier state immediately before each reachable
+  // PayloadExtract. This is not the final state of the consumed shell and
+  // does not trust the extraction's attached dependency annotations.
+  std::vector<CompleteBorrowFact> payloadSelectionSources;
   std::vector<CompleteBorrowReturnFact> normalReturns;
 };
 
@@ -10958,9 +10962,47 @@ struct CompleteBorrowFlow {
     }
     // These are fact invalidations only: existing availability, lifecycle and
     // loan analyses remain the authority for movement and borrow endpoints.
-    for (const auto &operand : instruction.operands)
-      if (operand.kind == MirOperandKind::Move)
+    for (const auto &operand : instruction.operands) {
+      if (operand.kind != MirOperandKind::Move)
+        continue;
+      const auto *enumeration = program.findPayloadEnum(operand.type);
+      const bool fieldTransfer =
+          instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::PayloadExtract &&
+          instruction.operands.size() == 1 &&
+          instruction.payloadExtractionKind &&
+          isConsumingPayloadExtraction(*instruction.payloadExtractionKind) &&
+          enumeration && instruction.enumOwner == enumeration->declaration &&
+          instruction.enumVariant &&
+          *instruction.enumVariant < enumeration->variants.size() &&
+          instruction.payloadIndex &&
+          *instruction.payloadIndex <
+              enumeration->variants[*instruction.enumVariant]
+                  .payloadTypes.size();
+      const auto obligation =
+          fieldTransfer
+              ? std::find_if(body.dropObligations.begin(),
+                             body.dropObligations.end(),
+                             [&](const auto &drop) {
+                               return drop.place == operand.place &&
+                                      drop.dropType.type == operand.type;
+                             })
+              : body.dropObligations.end();
+      const bool retiresShell =
+          obligation != body.dropObligations.end() &&
+          std::any_of(instruction.lifecycle.begin(),
+                      instruction.lifecycle.end(), [&](const auto &event) {
+                        return event.kind ==
+                                   MirLifecycleEventKind::TransferOut &&
+                               event.source == obligation->id;
+                      });
+      // A consuming pattern transfers one field at a time. The exact owning
+      // shell is retired only by its final TransferOut; lifecycle verification
+      // independently proves tag dominance, one extraction per field and that
+      // final retirement. Ordinary whole-value moves still invalidate here.
+      if (obligation == body.dropObligations.end() || retiresShell)
         invalidate(state, operand.place);
+    }
     if (instruction.kind == MirInstructionKind::Call ||
         instruction.kind == MirInstructionKind::Construct) {
       const auto invalidateUnknown = [&] {
@@ -11142,8 +11184,9 @@ struct CompleteBorrowFlow {
   if (!flow.converged())
     return {.verification = verificationFailure(
                 body, owner, "complete dependency-set flow did not converge")};
-  CompleteBorrowFlow observations{.values =
-                                      std::vector<Fact>(body.values.size())};
+  CompleteBorrowFlow observations{
+      .values = std::vector<Fact>(body.values.size()),
+      .payloadSelectionSources = std::vector<Fact>(body.values.size())};
   for (const auto &block : body.blocks) {
     State state = flow.incoming[block.id - 1].value_or(
         State{.values = std::vector<Fact>(body.values.size()),
@@ -11152,6 +11195,23 @@ struct CompleteBorrowFlow {
       observations.values[parameter.value - 1] =
           state.values[parameter.value - 1];
     for (const auto &instruction : block.instructions) {
+      if (flow.incoming[block.id - 1] && instruction.result &&
+          *instruction.result <= observations.payloadSelectionSources.size() &&
+          instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::PayloadExtract &&
+          instruction.operands.size() == 1) {
+        const auto &operand = instruction.operands.front();
+        Fact carrier = fromOperand(state, operand);
+        if (operand.kind == MirOperandKind::BorrowRead ||
+            operand.kind == MirOperandKind::BorrowWrite)
+          carrier = fromPlace(state, operand.place);
+        else if (operand.kind == MirOperandKind::Loan) {
+          const auto *loan = body.findLoan(operand.loan);
+          carrier = loan ? fromPlace(state, loan->source) : Fact{};
+        }
+        observations.payloadSelectionSources[*instruction.result - 1] =
+            std::move(carrier);
+      }
       execute(state, instruction);
       const auto *value =
           instruction.result ? body.findValue(*instruction.result) : nullptr;
