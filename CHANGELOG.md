@@ -22,6 +22,9 @@ for what minor and patch releases mean.
   `Account left = ?find(1);`.
 - An empty access panics rather than raising `empty_owner_access`, which is
   one of the differences to settle before it replaces `std::optional`.
+- It is not yet as fast as `std::optional`: at `-O2` it is about 1.6 times
+  slower in a tight loop over `int` and 1.1 times over an allocating
+  `string`, because of how payload enums are built today.
 - Example 162 demonstrates it.
 - A conformance block's own type parameters are now named in diagnostics,
   instead of "type parameter".

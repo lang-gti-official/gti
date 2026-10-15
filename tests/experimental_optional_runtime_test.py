@@ -17,7 +17,7 @@ from unique_class_allocation_runtime_test import run
 # (phase, exit code, stdout integers)
 CASES = [
     (0, 0, [1, 2, -2, -1, 3, 3, -3, 0, 4, 4, -4, 5, 5, 5, -5]),
-    (1, PANIC_EXIT, [6, -6]),
+    (1, 70, [6, -6]),
 ]
 
 
