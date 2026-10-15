@@ -1,6 +1,6 @@
 # Source-defined optional: scalar payload
 
-The source and builtin variants execute the same 200-million-iteration signed
+The source and builtin variants execute the same 400-million-iteration signed
 integer lookup loop, with an empty result every fourth iteration. Both validate
 the complete accumulated sum before publishing the benchmark record. The only
 source difference is the optional implementation. No allocation is required by
@@ -12,4 +12,6 @@ Use `scripts/benchmark_compare.py --gti <compiler> --cxx <native-compiler>
 --workload payload-optional-int`. Preserve the report's tool/source hashes and
 interleaved samples. Run on an otherwise quiet host; sub-threshold or noisy
 samples are not evidence of parity. The original unsigned pilot is not the
-signed workload retained here.
+signed workload retained here. The earlier 200-million-iteration signed run
+fell below 100 ms on GCC 14/x86-64, so both variants were lengthened equally;
+retain its result as supporting evidence, not the final timing gate.

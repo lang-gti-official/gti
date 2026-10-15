@@ -268,6 +268,42 @@ int main() {
          "fixture exercises one direct passive field construction");
 }
 
+void testPayloadObserverRequiresCompleteReceiver() {
+  // The backend's entry-domain proof relies on this source/MIR call boundary:
+  // a read-only method cannot receive an object with a moved enum field.
+  const auto invalid =
+      analyzeWithStandardLibrary("partial-payload-observer.gti", R"gti(
+#include <std/string>
+enum State { empty, value(std::string text) };
+class Holder {
+  mut State state;
+public:
+  Holder() : state(State::value(std::string("owned"))) {}
+  bool present() {
+    switch (this.state) {
+    case State::empty: return false;
+    case State::value: return true;
+    }
+  }
+  bool consume_then_observe() mut {
+    auto moved = std::move(this.state);
+    return this.present();
+  }
+};
+int main() { mut Holder holder{}; return holder.consume_then_observe() ? 1 : 0; }
+)gti");
+  expect(!invalid.canGenerateCode() &&
+             std::any_of(
+                 invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                 [](const auto &diagnostic) {
+                   return diagnostic.code == "GTI-S2018" &&
+                          diagnostic.message.find(
+                              "Place 'this.state' has already been moved") !=
+                              std::string::npos;
+                 }),
+         "read-only entry observers reject a caller with a moved enum field");
+}
+
 void testBoundedSecondaryFailureRecordStorage() {
   std::string source = R"gti(
 class Guard {
@@ -6526,6 +6562,8 @@ constexpr NamedTest kTests[] = {
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
     {"testPassivePayloadTagObservation", testPassivePayloadTagObservation},
+    {"testPayloadObserverRequiresCompleteReceiver",
+     testPayloadObserverRequiresCompleteReceiver},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},
