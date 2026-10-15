@@ -912,8 +912,8 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
       parameter.arguments.front() != argument ||
-      argument.kind != SemanticType::Class || !expression ||
-      !ephemeralBorrowTargetSupported(function)) {
+      (argument.kind != SemanticType::Class && !payloadEnumType(argument)) ||
+      !expression || !ephemeralBorrowTargetSupported(function)) {
     return false;
   }
   const FreshTemporaryValueAssessment assessment =
@@ -966,7 +966,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       if (parameter.referenceAccess == AccessMode::Mutable) {
         reason = argumentLabel + std::to_string(index + 1) +
                  " cannot bind a mutable reference to a temporary.";
-      } else if (argument.kind == SemanticType::Class) {
+      } else if (argument.kind == SemanticType::Class ||
+                 payloadEnumType(argument)) {
         const FreshTemporaryValueAssessment assessment =
             freshTemporaryValue(expression);
         if (assessment.eligible && function != nullptr &&

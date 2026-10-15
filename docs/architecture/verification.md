@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Move-only payload enums without cleanup (0.440.5)
+## Move-only payload enums without cleanup (0.441.1)
 
 `sum_type_pipeline` adds `testCleanupFreeMoveOnlyPayloads`. A payload enum
 whose alternative holds a move-only class without a destructor is cleanup-free
@@ -47,7 +47,7 @@ One shape remains outside this slice: success extraction from
 `GTI-B0001` for `std::move(r).value()`. Observing switches over fixed-array
 elements of such an enum are covered by the next section.
 
-## Switches over fixed-array elements (0.440.5)
+## Switches over fixed-array elements (0.441.1)
 
 `sum_type_pipeline` adds `testFixedArrayElementSubjects`. Observing switches
 read-borrow fixed-array elements of a passive payload enum: a runtime and a
@@ -77,7 +77,7 @@ releases the live guard once. Main `911fd4ca` stops the reported program with
 array-field and element-field switches stop the same way, and the `this.items`
 switch fails in the native compiler with an undeclared place alias.
 
-## Constructor text-view lifetimes (0.440.5)
+## Constructor text-view lifetimes (0.441.1)
 
 `compiler_pipeline` covers direct, generic, defaulted and constexpr ownerless
 constructor inputs, rejected dynamic field storage and computed initializers,
