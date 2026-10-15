@@ -1,0 +1,117 @@
+// A borrowed argument stays valid while a later conditional argument's test,
+// or one arm, calls a function that takes a class argument by value: a fresh
+// construction, a standard string, a moved or copied local, the argument of a
+// method on another local, or one followed by an argument that can fail. The
+// nested call, the argument's construction or that later argument may fail;
+// each live local and each prepared argument is destroyed exactly once. An
+// owning argument of the outer call itself may be built from a text view.
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int32_t identity;
+public:
+  Tracked(int32_t identity) : identity(identity) {}
+  ~Tracked() { std::println(this.identity); }
+  int32_t read() { return this.identity; }
+};
+
+// How many times `flag` was passed.
+int32_t seen(std::vector<std::string>& argv, std::string_view flag) {
+  mut int32_t found = 0;
+  for (std::string& item : argv) {
+    if (item == flag) {
+      found = found + 1;
+    }
+  }
+  return found;
+}
+
+// One, or a failure once `flag` was passed twice.
+int32_t check(std::vector<std::string>& argv, std::string_view flag) {
+  return 2 / (2 - seen(argv, flag));
+}
+
+// Reports its value when destroyed. Construction fails once `built` is two.
+class Ticket {
+  int32_t value;
+  int32_t share;
+public:
+  Ticket(int32_t value, int32_t built)
+      : value(value), share(2 / (2 - built)) {}
+  ~Ticket() { std::println(this.value); }
+  int32_t get() { return this.value; }
+};
+
+// Reports its text's length when destroyed.
+class Label {
+  std::string text;
+public:
+  Label(std::string_view text) : text(text) {}
+  ~Label() { std::println(this.text.size()); }
+};
+
+// Copied by value; nothing to destroy.
+class Point {
+  int32_t x;
+public:
+  Point(int32_t x) : x(x) {}
+  int32_t get() { return this.x; }
+};
+
+class Gate {
+  int32_t base;
+public:
+  Gate(int32_t base) : base(base) {}
+  ~Gate() { std::println(this.base); }
+  int32_t admit(Ticket ticket, std::vector<std::string>& argv) {
+    return this.base + ticket.get() + check(argv, "admit");
+  }
+};
+
+// Each nested call destroys the ticket it takes, on return or on failure.
+bool holds(Ticket ticket, std::vector<std::string>& argv,
+           std::string_view flag) {
+  return check(argv, flag) + ticket.get() > 0;
+}
+
+bool named(std::vector<std::string>& argv, std::string text) {
+  return check(argv, text.view()) > 0;
+}
+
+bool near(Point point, std::vector<std::string>& argv) {
+  return check(argv, "near") + point.get() > 0;
+}
+
+int32_t weigh(Ticket ticket, int32_t extra) {
+  return ticket.get() + extra;
+}
+
+int32_t combine(Tracked& tracked, int32_t offset) {
+  return tracked.read() + offset;
+}
+
+int32_t tagged(Tracked& tracked, Label label, int32_t offset) {
+  return tracked.read() + offset;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Tracked first{1};
+  Tracked second{2};
+  Gate gate{3};
+  Ticket kept{42, 0};
+  Point here{8};
+  std::println(combine(
+      first, holds(Ticket(41, seen(argv, "build")), argv, "hold") ? 10 : 20));
+  std::println(combine(second, named(argv, std::string("name")) ? 30 : 40));
+  std::println(combine(first, holds(std::move(kept), argv, "moved") ? 50 : 60));
+  std::println(
+      combine(second, gate.admit(Ticket(43, seen(argv, "gate")), argv) > 0
+                          ? 70
+                          : 80));
+  std::println(
+      combine(first, argc > 0 ? weigh(Ticket(44, 0), check(argv, "later")) : 0));
+  std::println(tagged(second, Label("label"), check(argv, "tag") > 0 ? 90 : 100));
+  std::println(combine(second, near(here, argv) ? 110 : 120));
+  return 0;
+}
