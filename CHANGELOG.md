@@ -42,6 +42,9 @@ for what minor and patch releases mean.
 - Preserve named shared references through stored adapters and nested accessor
   calls. Emit `c_string&` with pointer-object constness consistently through
   reference fields, retained loans and return channels.
+- Support conditional temporary receivers whose constructors accept records
+  by value, including native unions. Preserve prepared-input transfer and
+  exactly-once cleanup on successful and failing construction.
 
 ## 0.441.0 — `?` on payload enums
 

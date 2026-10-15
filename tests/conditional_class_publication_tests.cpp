@@ -2,6 +2,72 @@
 #include "gti/mir_editor.h"
 
 int main() {
+  {
+    const auto frontend = analyze("conditional-native-input.gti", R"gti(
+[[c_abi]] union Data { uint64_t number; uint8_t bytes[16]; };
+extern "C" { Data obtain(); }
+struct Wrapper {
+  Data data;
+  unsafe Wrapper(Data input) : data(input) {}
+  uint64_t number() { unsafe { return this.data.number; } }
+};
+int main() {
+  Data data = obtain();
+  unsafe {
+    return (true ? Wrapper(data) : Wrapper(data)).number() == uint64_t(42) ? 0 : 1;
+  }
+}
+)gti");
+    expect(frontend.canGenerateCode(),
+           "conditional native inputs have valid MIR");
+    if (frontend.canGenerateCode()) {
+      try {
+        expect(!gti_test::emitCppText(frontend).empty(),
+               "prepared constructor inputs preserve conditional publication");
+      } catch (const std::exception &error) {
+        expect(false, error.what());
+      }
+      std::size_t checked = 0;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        for (const auto &block : function.body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            if (instruction.kind != lang::MirInstructionKind::Construct ||
+                instruction.lifecycle.size() != 1 ||
+                instruction.lifecycle.front().kind !=
+                    lang::MirLifecycleEventKind::TransferOut)
+              continue;
+            ++checked;
+            for (int mutation = 0; mutation < 4; ++mutation) {
+              auto malformed = frontend.mir;
+              auto *changed = const_cast<lang::MirFunctionInstance *>(
+                  malformed.findFunctionInstance(function.id));
+              for (auto &changedBlock : changed->body.blocks) {
+                for (auto &item : changedBlock.instructions) {
+                  if (item.id == instruction.id) {
+                    if (mutation == 0)
+                      item.lifecycle.clear();
+                    if (mutation == 1)
+                      item.lifecycle.front().source = 999999;
+                    if (mutation == 2)
+                      item.lifecycle.push_back(item.lifecycle.front());
+                  }
+                  if (mutation == 3 &&
+                      item.kind == lang::MirInstructionKind::CallInput &&
+                      item.callSite == instruction.callSite)
+                    item.callSite = 999999;
+                }
+              }
+              expect(
+                  !lang::verifyMirProgram(malformed).valid(),
+                  "constructor publication rejects missing, wrong, duplicate "
+                  "and unrelated prepared-input transfers");
+            }
+          }
+        }
+      }
+      expect(checked == 2, "both constructor arms carry prepared transfers");
+    }
+  }
   std::size_t joins = 0;
   for (const std::string fixture :
        {"conditional_class_passive", "conditional_class_cleanup",
