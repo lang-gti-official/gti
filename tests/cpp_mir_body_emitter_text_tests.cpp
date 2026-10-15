@@ -5929,6 +5929,147 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+// Each arm of a cleanup-free conditional may evaluate its inputs before the
+// call producing its result: an overflow-checked argument, a call that can
+// fail, or a `?` operand. The branch then targets the start of that region,
+// not the block publishing the arm, and the join proves the region exactly.
+// A failure edge or an outside edge forged into an arm is refused.
+void testCheckedConditionalArmInputs() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-checked-conditional-arm-inputs.gti", R"(
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+enum class input_error { negative };
+Pod fresh(int id) { return Pod(id); }
+int quotient(int value, int divisor) { return value / divisor; }
+expected<int, input_error> checked(int value) {
+  if (value < 0) {
+    return unexpected(input_error::negative);
+  }
+  return value;
+}
+int bound(bool left, int base) {
+  Pod kept = left ? fresh(base + 29) : fresh(base + 30);
+  return kept.read();
+}
+Pod returned(bool left, int base, int divisor) {
+  return left ? fresh(quotient(base, divisor)) : fresh(base + 1);
+}
+expected<int, input_error> propagated(bool left, int base) {
+  Pod kept = left ? fresh(?checked(base + 31)) : fresh(?checked(base - 32));
+  return kept.read();
+}
+int main() {
+  return bound(true, 0) + returned(false, 1, 1).read() +
+         propagated(true, 1).value() - 63;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "conditional arms evaluating checked inputs verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t bodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arm publications: each Initializes one temporary from a class
+    // call result made in the same block.
+    std::vector<std::pair<lang::MirPlaceId, lang::MirBlockId>> publications;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *place =
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.destination && instruction.operands.size() == 1
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (place == nullptr ||
+            place->root != lang::MirPlaceRootKind::Temporary)
+          continue;
+        for (const auto &producer : block.instructions)
+          if (producer.kind == lang::MirInstructionKind::Call &&
+              producer.result &&
+              *producer.result == instruction.operands.front().value &&
+              producer.info.type.kind == lang::SemanticType::Class)
+            publications.emplace_back(place->id, block.id);
+      }
+    std::vector<lang::MirBlockId> entries;
+    for (const auto &[place, block] : publications)
+      if (std::count_if(publications.begin(), publications.end(),
+                        [&](const auto &publication) {
+                          return publication.first == place;
+                        }) == 2)
+        entries.push_back(block);
+    // No branch selects the two arm publications directly: each arm first
+    // evaluates its inputs.
+    const bool regions =
+        entries.size() == 2 &&
+        std::none_of(
+            function.body.blocks.begin(), function.body.blocks.end(),
+            [&](const lang::MirBlock &block) {
+              return block.terminator.kind == lang::MirTerminatorKind::Branch &&
+                     std::is_permutation(entries.begin(), entries.end(),
+                                         std::array{block.terminator.target,
+                                                    block.terminator.elseTarget}
+                                             .begin());
+            });
+    if (!regions)
+      continue;
+    ++bodies;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional admits arms that evaluate checked "
+           "inputs first");
+    // The first arm's region ends in its predecessor block.
+    lang::MirBlockId predecessor = 0;
+    lang::MirBlockId other = 0;
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.target == entries[0])
+        predecessor = block.id;
+      if (block.terminator.target == entries[1])
+        other = block.id;
+    }
+    const auto refused = [&](auto &&mutate, const std::string &what) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      for (auto &block : body->blocks)
+        mutate(block);
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a forged conditional arm region fails MIR verification: " + what);
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(!rejected.analyze(address).ready() ||
+                 !supportsSelectedBodyText(malformed, map, function.id),
+             "a forged conditional arm region cannot enter backend "
+             "emission: " +
+                 what);
+    };
+    const auto *invoke = function.body.findBlock(predecessor);
+    if (invoke != nullptr &&
+        invoke->terminator.kind == lang::MirTerminatorKind::Invoke)
+      refused(
+          [&](lang::MirBlock &block) {
+            if (block.id == predecessor)
+              block.terminator.elseTarget = entries[0];
+          },
+          "failure edge into the arm");
+    refused(
+        [&](lang::MirBlock &block) {
+          if (block.id == other)
+            block.terminator.target = entries[0];
+        },
+        "the other arm entering this one");
+  }
+  expect(bodies == 3, "the bound, returned and propagated conditionals were "
+                      "exercised: " +
+                          std::to_string(bodies));
+}
+
 void testShortCircuitOwnedFieldView() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-short-circuit-field-view.gti", R"(
@@ -6580,6 +6721,7 @@ constexpr NamedTest kTests[] = {
      testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
