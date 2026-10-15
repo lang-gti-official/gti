@@ -165,8 +165,11 @@ std::uint64_t SemanticVisitor::Impl::trustedRegistrationFingerprint() const {
   fingerprint.add(0xc0f0aULL);
   for (const RegisteredConformance &conformance : catalog.conformances) {
     fingerprint.add(conformance.conceptId);
-    fingerprint.add(conformance.patternTemplate);
-    fingerprint.add(conformance.pattern);
+    fingerprint.add(conformance.patterns.size());
+    for (std::size_t index = 0; index < conformance.patterns.size(); ++index) {
+      fingerprint.add(conformance.patternTemplates[index]);
+      fingerprint.add(conformance.patterns[index]);
+    }
     fingerprint.add(conformance.associatedTypes.size());
     for (const SemanticType &type : conformance.associatedTypes)
       fingerprint.add(type);
