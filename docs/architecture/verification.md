@@ -7718,7 +7718,20 @@ ending. Negative cases retain rejection of mutable references, local bindings,
 explicit moves, compound and borrowed-state producers, escaping results, and
 fallback-tier ambiguity. `temporary_argument_borrow_runtime` runs successful
 and defined-failure cases at O0/O3 under C++20/C++23, including failure before
-production, in a later argument, and in the selected body. The LSP smoke gate
+production, in a later argument, and in the selected body.
+`testConditionalTemporaryArgumentBorrows` covers calls in `&&`/`||` operands
+and `?:` arms. Each branch-only argument must borrow its exact CFG-promoted
+hidden slot, end its loan in the arm, and drop conditionally after the merge.
+Mutations aim a borrow at a sibling's slot, detach the slot from its producer,
+unnumber it, and make the post-merge drop unconditional.
+`short_circuit_temporary_argument_runtime` traces taken and skipped operands
+with and without destructors, nested operators and a loop condition, and
+defined failure in the borrowing callee, a later argument, the producer, and
+after the merge with the temporary engaged or skipped, under C++20/C++23
+O0/O1/O3, no-elide and ASan/UBSan. `testConstexprConditionalTemporaries`
+runs argument and receiver borrows of such slots, one destructor-bearing,
+through exactly four staged MIR executions with exact results; a wrong
+assertion fails as `GTI-S2079`, not as an unsupported read. The LSP smoke gate
 proves `GTI-S2017` publication/clearing and exact borrowed versus by-value
 signature selection.
 

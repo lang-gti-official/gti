@@ -59,6 +59,23 @@ for what minor and patch releases mean.
   now reads it in place instead of copying it, so tag-only matches compile.
 - `std::experimental::optional<T>` now compiles for such a `T`.
 
+## 0.440.5 — Temporary arguments in short-circuit operands
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR. call-argument loan ... must be one exact non-escaping temporary input
+  loan") when a call that borrows a new object through a read-only reference
+  parameter runs only in some cases: in the right operand of `&&` or `||`,
+  or in one arm of `?:`. Examples are `ok && observe(make(-1))`,
+  `skip || observe(box(3))` and `left ? observe(make(1)) : observe(box(2))`,
+  and the same calls in `if` and `while` conditions. The object is destroyed
+  once at the end of the full expression when its operand ran, and never
+  when the operand was skipped, also when the call, a later argument or the
+  rest of the expression fails.
+- Compile-time evaluation (`constexpr`, `static_assert`) now runs a method
+  called on such a temporary, as in `ok && make(1).positive()`, which
+  failed with `GTI-S2057` ("reads a binding that is not constexpr"). The
+  temporary's class may also have a destructor there.
+
 ## 0.440.4 — Member calls on conditional values without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

@@ -21397,6 +21397,262 @@ int main() { return inspect(Report()); }
          "ephemeral-borrow fallback tier");
 }
 
+// A temporary argument evaluated only inside a conditional arm or a `&&`/`||`
+// operand lives to its full-expression end, after the CFG merge. Lowering
+// promotes it into the one hidden Temporary slot that carries its conditional
+// drop, and the argument's BorrowRead and CallArgument loan name that slot.
+// Verification admits exactly that materialization, no other Temporary place.
+void testConditionalTemporaryArgumentBorrows() {
+  const std::string source = R"(
+class Report {
+  int value;
+
+public:
+  Report(int value) : value(value) {}
+  int code() { return this.value; }
+};
+
+class Tracked {
+  int value;
+
+public:
+  Tracked(int value) : value(value) {}
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() {}
+  int code() { return this.value; }
+};
+
+Report make_report(int value) { return Report(value); }
+Tracked make_tracked(int value) { return Tracked(value); }
+bool positive(Report& report) { return report.code() > 0; }
+bool tracked(Tracked& value) { return value.code() > 0; }
+
+int main() {
+  bool direct = positive(Report(1));
+  bool joined =
+      positive(make_report(2)) && direct && !positive(make_report(-3));
+  bool either = !direct || tracked(make_tracked(4));
+  int chosen =
+      direct ? (positive(Report(5)) ? 1 : 2) : (tracked(Tracked(6)) ? 3 : 4);
+  return joined && either && chosen == 1 ? 0 : 1;
+}
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "conditional-temporary-argument-borrows.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected conditional temporary-argument diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "temporary arguments inside conditional arms and short-circuit "
+         "operands should lower to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto found =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &instance) {
+                     return instance.source != nullptr &&
+                            instance.source->name().lexeme == "main";
+                   });
+  const lang::MirFunctionInstance *mirMain =
+      found == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(found->id);
+  expect(mirMain != nullptr,
+         "the conditional temporary-argument fixture should retain its MIR "
+         "main body");
+  if (mirMain == nullptr) {
+    return;
+  }
+  const lang::MirBody &body = mirMain->body;
+
+  std::size_t linear = 0;
+  std::vector<const lang::MirInstruction *> hidden;
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &stage : block.instructions) {
+      if (stage.kind != lang::MirInstructionKind::CallInput ||
+          stage.callInputKind != lang::HirCallInputKind::ReadTemporaryBorrow ||
+          stage.callInputRole != lang::MirCallInputRole::Argument ||
+          stage.operands.size() != 1) {
+        continue;
+      }
+      const lang::MirPlace *place =
+          body.findPlace(stage.operands.front().place);
+      if (place != nullptr && place->root == lang::MirPlaceRootKind::Value) {
+        ++linear;
+        continue;
+      }
+      hidden.push_back(&stage);
+      const lang::MirTemporaryMaterialization materialization =
+          place == nullptr ? lang::MirTemporaryMaterialization{}
+                           : lang::findMirTemporaryMaterialization(
+                                 body, *place, stage.hirValue);
+      const lang::MirLoan *loan =
+          stage.loan ? body.findLoan(*stage.loan) : nullptr;
+      std::vector<const lang::MirDropObligation *> drops;
+      for (const lang::MirDropObligation &drop : body.dropObligations) {
+        if (drop.kind == lang::MirDropObligationKind::Value &&
+            drop.value == stage.hirValue) {
+          drops.push_back(&drop);
+        }
+      }
+      bool conditionalDrop = false;
+      bool loanEnds = false;
+      for (const lang::MirBlock &candidate : body.blocks) {
+        for (const lang::MirInstruction &instruction : candidate.instructions) {
+          loanEnds = loanEnds ||
+                     (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                      loan != nullptr && instruction.loan == loan->id);
+          conditionalDrop =
+              conditionalDrop ||
+              (instruction.kind == lang::MirInstructionKind::Drop &&
+               place != nullptr && instruction.destination == place->id &&
+               drops.size() == 1 &&
+               std::any_of(
+                   instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                   [&](const lang::MirLifecycleEvent &event) {
+                     return event.kind == lang::MirLifecycleEventKind::Drop &&
+                            event.source == drops.front()->id &&
+                            event.conditional;
+                   }));
+        }
+      }
+      const lang::MirInstruction *producer = materialization.producer;
+      expect(place != nullptr &&
+                 place->root == lang::MirPlaceRootKind::Temporary &&
+                 place->temporary != 0 && place->projections.empty() &&
+                 place->access == lang::AccessMode::Mutable &&
+                 place->sourceValue == stage.hirValue && producer != nullptr &&
+                 (producer->kind == lang::MirInstructionKind::Call ||
+                  producer->kind == lang::MirInstructionKind::Construct) &&
+                 producer->hirValue == stage.hirValue && loan != nullptr &&
+                 loan->kind == lang::MirLoanKind::CallArgument &&
+                 loan->source == place->id &&
+                 loan->access == lang::AccessMode::ReadOnly &&
+                 loan->producedBy == stage.callSite && !loan->escapes &&
+                 drops.size() == 1 && drops.front()->place == place->id &&
+                 drops.front()->fullExpression != 0 && loanEnds &&
+                 conditionalDrop,
+             "a branch-only temporary argument should borrow its exact "
+             "CFG-promoted slot, end its loan in the arm, and drop "
+             "conditionally after the merge");
+    }
+  }
+  const std::size_t cleanupSlots = static_cast<std::size_t>(std::count_if(
+      hidden.begin(), hidden.end(), [&](const lang::MirInstruction *stage) {
+        return std::any_of(
+            body.dropObligations.begin(), body.dropObligations.end(),
+            [&](const lang::MirDropObligation &drop) {
+              return drop.kind == lang::MirDropObligationKind::Value &&
+                     drop.value == stage->hirValue &&
+                     drop.dropType.requiresActiveCleanup;
+            });
+      }));
+  expect(linear == 2 && hidden.size() == 4 && cleanupSlots == 2,
+         "the fixture should borrow two linear value-rooted temporaries and "
+         "four branch-only hidden slots, two of them destructor-bearing");
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "the C++ backend should emit borrows of CFG-promoted temporary "
+         "argument slots");
+
+  // Each forgery starts from a fresh copy of the verified program and edits
+  // the hidden-slot stage at `index` in the order collected above.
+  const auto forged = [&](const auto &edit) {
+    lang::MirProgram program = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    lang::MirFunctionInstance &function = functions[mirMain->id - 1];
+    edit(function.body);
+    return lang::verifyMirProgram(program).valid();
+  };
+  const auto mutableStage = [&](lang::MirBody &forgedBody,
+                                std::size_t index) -> lang::MirInstruction * {
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(forgedBody.blocks)) {
+      for (lang::MirInstruction &instruction :
+           const_cast<std::vector<lang::MirInstruction> &>(
+               block.instructions)) {
+        if (instruction.id == hidden[index]->id) {
+          return &instruction;
+        }
+      }
+    }
+    return nullptr;
+  };
+  if (hidden.size() != 4) {
+    return;
+  }
+  // Two hidden Report slots: a borrow may not name its sibling's slot.
+  std::vector<std::size_t> reports;
+  for (std::size_t index = 0; index < hidden.size(); ++index) {
+    const lang::MirPlace *place =
+        body.findPlace(hidden[index]->operands.front().place);
+    if (place != nullptr && place->type.kind == lang::SemanticType::Class &&
+        !std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const lang::MirDropObligation &drop) {
+                       return drop.place == place->id &&
+                              drop.dropType.requiresActiveCleanup;
+                     })) {
+      reports.push_back(index);
+    }
+  }
+  expect(reports.size() == 2,
+         "the fixture should keep two cleanup-free hidden argument slots");
+  if (reports.size() == 2) {
+    expect(!forged([&](lang::MirBody &forgedBody) {
+      lang::MirInstruction *stage = mutableStage(forgedBody, reports.front());
+      const lang::MirPlaceId sibling =
+          hidden[reports.back()]->operands.front().place;
+      if (stage != nullptr && stage->loan) {
+        stage->operands.front().place = sibling;
+        const_cast<std::vector<lang::MirLoan> &>(
+            forgedBody.loans)[*stage->loan - 1]
+            .source = sibling;
+      }
+    }),
+           "the verifier should reject a temporary argument borrowing another "
+           "temporary's hidden slot");
+  }
+  const auto forgedSlot = [&](const auto &edit) {
+    return forged([&](lang::MirBody &forgedBody) {
+      lang::MirInstruction *stage = mutableStage(forgedBody, 0);
+      if (stage != nullptr) {
+        edit(const_cast<std::vector<lang::MirPlace> &>(
+            forgedBody.places)[stage->operands.front().place - 1]);
+      }
+    });
+  };
+  expect(!forgedSlot([](lang::MirPlace &slot) { slot.sourceValue = 0; }),
+         "the verifier should reject a hidden argument slot detached from its "
+         "producer identity");
+  expect(!forgedSlot([](lang::MirPlace &slot) { slot.temporary = 0; }),
+         "the verifier should reject an unnumbered hidden argument slot");
+  expect(!forged([&](lang::MirBody &forgedBody) {
+    const lang::MirPlaceId slot = hidden.front()->operands.front().place;
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(forgedBody.blocks)) {
+      for (lang::MirInstruction &instruction :
+           const_cast<std::vector<lang::MirInstruction> &>(
+               block.instructions)) {
+        if (instruction.kind == lang::MirInstructionKind::Drop &&
+            instruction.destination == slot) {
+          for (lang::MirLifecycleEvent &event : instruction.lifecycle) {
+            event.conditional = false;
+          }
+        }
+      }
+    }
+  }),
+         "the verifier should reject an unconditional drop of a branch-only "
+         "argument slot after the merge");
+}
+
 void testRetainedBorrowedCallResults() {
   // A reference binding that retains a borrowed call result keeps the call
   // result's own loan identity. Recreating a Local loan from the receiver
@@ -22244,6 +22500,8 @@ constexpr NamedTest kTests[] = {
     {"testMutableTemporaryReceivers", testMutableTemporaryReceivers},
     {"testVirtualTemporaryReceivers", testVirtualTemporaryReceivers},
     {"testTemporaryArgumentBorrows", testTemporaryArgumentBorrows},
+    {"testConditionalTemporaryArgumentBorrows",
+     testConditionalTemporaryArgumentBorrows},
     {"testRetainedBorrowedCallResults", testRetainedBorrowedCallResults},
     {"testNestedBorrowChainLoanOrdering", testNestedBorrowChainLoanOrdering},
     {"testCleanupOwningTemporaryArguments",
