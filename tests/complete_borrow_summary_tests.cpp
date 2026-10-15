@@ -226,5 +226,51 @@ int main() { auto first = integer(); auto second = boolean(); return 0; }
           "one concrete instance cannot substitute another's typed contract");
     }
   }
+  // Retention is an optimization, not another language acceptance limit.
+  // More distinct queries than the cache retains must still permit a later
+  // query for the first concrete instance to rebuild the same exact summary.
+  std::string evicted = token + R"gti(
+Token factory<uint64_t N>() { return Token::item(int(N)); }
+Token before() { return factory<0>(); }
+)gti";
+  for (unsigned index = 1; index != 72; ++index)
+    evicted += "Token item" + std::to_string(index) +
+               "() { return factory<" + std::to_string(index) + ">(); }\n";
+  evicted += "Token after() { return factory<0>(); }\n"
+             "int main() { auto first = before(); auto last = after(); return 0; }";
+  const auto cache = analyze(evicted);
+  if (cache.canGenerateCode()) {
+    const auto *before = cache.mir.findFunctionInstance(functionId(cache, "before"));
+    const auto *after = cache.mir.findFunctionInstance(functionId(cache, "after"));
+    expect(before && after && before->completeReturnBorrow &&
+               before->completeReturnBorrow == after->completeReturnBorrow,
+           "eviction and requery preserve exact result contracts");
+  }
+  const auto chain = [&](unsigned depth) {
+    return token + R"gti(
+Token bounded<uint64_t N>() {
+  if constexpr (N == 0) { return Token::empty; }
+  else { return bounded<N - 1>(); }
+}
+int main() { auto value = bounded<)gti" + std::to_string(depth) +
+           ">(); return 0; }";
+  };
+  const auto finite = analyze(chain(40));
+  expect(finite.canGenerateCode(),
+         "finite result-summary chain beyond the old private depth32 succeeds");
+  const auto exhausted = lang::Frontend().analyze(
+      root / "tests" / "complete-borrow-resource.gti", chain(66),
+      {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  expect(!exhausted.canGenerateCode() &&
+             std::any_of(exhausted.diagnostics.begin(),
+                         exhausted.diagnostics.end(), [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2105" &&
+                                  diagnostic.primary.end > diagnostic.primary.start &&
+                                  !diagnostic.primary.source.empty() &&
+                                  !diagnostic.related.empty() &&
+                                  !diagnostic.hints.empty() &&
+                                  diagnostic.fixes.empty();
+                         }),
+         "resource exhaustion reports the established located diagnostic");
   return failures ? 1 : 0;
 }
