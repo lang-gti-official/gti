@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.5 — Consuming method calls with a later argument that can fail
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a consuming (`&&`) method is called on a
+  value moved out of a variable whose class needs no cleanup and a later
+  argument can fail, such as `Quiet q = std::move(maker).make(1 / d);`. This
+  covers `mut` and immutable parameters and locals, returned, discarded,
+  replacing and field-read results, `expected` results, generic classes,
+  lambdas, consuming `operator()`, loops, the arms of `?:` and constructor
+  member initializers such as
+  `Holder(Maker m, int d) : item(std::move(m).make(1 / d)) {}`. If the
+  argument fails, the method never runs, and arguments already evaluated are
+  destroyed once.
+- The same error no longer stops a constructor member initializer that passes
+  a moved or copied class argument before an argument that can fail, such as
+  `item(build(std::move(m), 1 / d))`.
+
 ## 0.439.4 — Consuming calls on moved generic classes
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

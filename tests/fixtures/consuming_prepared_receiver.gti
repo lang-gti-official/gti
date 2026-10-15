@@ -4,7 +4,9 @@
 // A cleanup-free class moved into a consuming (`&&`) receiver is staged as a
 // prepared parameter that the call hands to the callee, like an owning
 // argument. Every owning result below is traced: each is constructed once and
-// destroyed once, at the point its consumer requires.
+// destroyed once, at the point its consumer requires. When a later argument can
+// fail, the receiver occupies that prepared slot from its stage: the call
+// consumes it, and the failure edge destroys it instead of running the member.
 class Tracked {
   int id;
 public:
@@ -60,6 +62,11 @@ public:
     return Tracked(this.base);
   }
   Fragile fragile(int divisor) && { return Fragile(this.base, divisor); }
+  Tracked add(int value) && { return Tracked(this.base + value); }
+  Tracked absorb(Tracked first, int value) && {
+    return Tracked(this.base + first.read() + value);
+  }
+  Shown show_add(int value) && { return Shown(this.base + value); }
 };
 
 class Tagged<T> {
@@ -67,6 +74,7 @@ class Tagged<T> {
 public:
   Tagged(int base) : base(base) {}
   Tracked make() && { return Tracked(this.base); }
+  Tracked add(int value) && { return Tracked(this.base + value); }
 };
 
 class Factory {
@@ -74,6 +82,7 @@ class Factory {
 public:
   Factory(int base) : base(base) {}
   Tracked operator()() && { return Tracked(this.base); }
+  Tracked operator()(int value) && { return Tracked(this.base + value); }
 };
 
 // Results returned directly. The moved-from source's drop still runs between
@@ -156,6 +165,89 @@ int choose_expected(bool left, Maker a, Maker b) {
   return result.value().read();
 }
 
+// A later argument can fail after the receiver was prepared.
+int bind_later(Maker maker, int divisor) {
+  Tracked made = std::move(maker).add(1 / divisor);
+  return made.read();
+}
+
+Tracked return_later(mut Maker maker, int divisor) {
+  return std::move(maker).add(1 / divisor);
+}
+
+// The owning first argument is prepared too: the failing second argument
+// destroys it, and otherwise the callee destroys it after its result exists.
+int absorb_later(Maker maker, int divisor) {
+  Tracked made = std::move(maker).absorb(Tracked(70), 1 / divisor);
+  return made.read();
+}
+
+int view_later(Maker maker, int divisor) {
+  return std::move(maker).show_add(1 / divisor).id;
+}
+
+int expected_later(Maker maker, int divisor) {
+  expected<Tracked, int> result = std::move(maker).attempt(1 / divisor == 0);
+  if (!result) {
+    return result.error();
+  }
+  return result.value().read();
+}
+
+int loop_later(int divisor) {
+  mut int total = 0;
+  for (mut int index = 0; index < 2; index += 1) {
+    Maker maker{80 + index};
+    total += std::move(maker).add(1 / divisor).read();
+  }
+  return total;
+}
+
+Tracked tagged_later<T>(Tagged<T> tagged, int divisor) {
+  return std::move(tagged).add(1 / divisor);
+}
+
+void discard_later(Maker maker, int divisor) {
+  [[discard]] std::move(maker).add(1 / divisor);
+}
+
+int replace_later(Maker maker, int divisor) {
+  mut Tracked kept = Tracked(90);
+  kept = std::move(maker).add(1 / divisor);
+  return kept.read();
+}
+
+Tracked call_later(Factory factory, int divisor) {
+  return std::move(factory)(1 / divisor);
+}
+
+// Only the arm that runs prepares and consumes its receiver.
+int choose_later(bool left, Maker a, Maker b, int divisor) {
+  Tracked chosen =
+      left ? std::move(a).add(1 / divisor) : std::move(b).add(2 / divisor);
+  return chosen.read();
+}
+
+Tracked build(Maker maker, int value) { return std::move(maker).add(value); }
+
+// Constructor field initializers prepare the same receiver, or a moved
+// argument, before a later argument fails.
+class Assembled {
+  Tracked item;
+public:
+  Assembled(Maker maker, int divisor)
+      : item(std::move(maker).add(1 / divisor)) {}
+  int read() { return this.item.read(); }
+};
+
+class Forwarded {
+  Tracked item;
+public:
+  Forwarded(Maker maker, int divisor)
+      : item(build(std::move(maker), 1 / divisor)) {}
+  int read() { return this.item.read(); }
+};
+
 int main(int argc, std::vector<std::string> argv) {
   mut int total = 0;
   {
@@ -214,5 +306,33 @@ int main(int argc, std::vector<std::string> argv) {
   std::println("kept");
   int divided = view_divided(Maker(50), argc == 4 ? 0 : 1);
   int replaced = replace_divided(Maker(51), argc == 5 ? 0 : 1);
-  return total + kept.read() + divided + replaced - 335;
+  // A later argument fails after the receiver was prepared: six for a bound
+  // result, seven a returned one, eight after an owning argument, nine a field
+  // read, ten an expected binding, eleven and twelve a constructor field's
+  // receiver and moved argument, thirteen a loop, fourteen a generic body,
+  // fifteen a discarded result, sixteen a replacement (keeping the old value),
+  // seventeen a consuming operator(), eighteen a lambda, and nineteen and
+  // twenty either arm of a conditional.
+  int bound = bind_later(Maker(60), argc == 6 ? 0 : 1);
+  Tracked returned = return_later(Maker(62), argc == 7 ? 0 : 1);
+  int absorbed = absorb_later(Maker(64), argc == 8 ? 0 : 1);
+  int viewed = view_later(Maker(66), argc == 9 ? 0 : 1);
+  int expected_value = expected_later(Maker(68), argc == 10 ? 0 : 1);
+  Assembled assembled = Assembled(Maker(72), argc == 11 ? 0 : 1);
+  Forwarded forwarded = Forwarded(Maker(74), argc == 12 ? 0 : 1);
+  int looped = loop_later(argc == 13 ? 0 : 1);
+  Tracked generic = tagged_later<int>(Tagged<int>(84), argc == 14 ? 0 : 1);
+  discard_later(Maker(86), argc == 15 ? 0 : 1);
+  int replacing = replace_later(Maker(88), argc == 16 ? 0 : 1);
+  Tracked called = call_later(Factory(91), argc == 17 ? 0 : 1);
+  auto take_later = [](Maker source, int divisor) -> Tracked {
+    return std::move(source).add(1 / divisor);
+  };
+  Tracked lambda_made = take_later(Maker(93), argc == 18 ? 0 : 1);
+  int left = choose_later(true, Maker(95), Maker(99), argc == 19 ? 0 : 1);
+  int right = choose_later(false, Maker(99), Maker(98), argc == 20 ? 0 : 1);
+  int later = bound + returned.read() + absorbed + viewed + expected_value +
+              assembled.read() + forwarded.read() + looped + generic.read() +
+              replacing + called.read() + lambda_made.read() + left + right;
+  return total + kept.read() + divided + replaced + later - 1596;
 }
