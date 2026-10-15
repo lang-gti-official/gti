@@ -5829,21 +5829,6 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
           "references or other borrowed-state carriers.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
-    if (requiresActiveCleanupFor(actual) &&
-        actual.kind != SemanticType::Class) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2067", DiagnosticPhase::Semantics,
-          expressionToken(call.arguments()[index]),
-          "Payload type '" + typeSpelling(actual) +
-              "' requires active cleanup but is not a concrete class value; "
-              "this payload-enum slice supports owning class alternatives "
-              "only.");
-      diagnostic.hints.emplace_back(
-          "Nested owning payload enums, owning arrays, and other recursive "
-          "cleanup carriers remain unsupported until their partial-state "
-          "lifecycle is represented explicitly.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
   }
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);

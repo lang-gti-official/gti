@@ -7425,6 +7425,49 @@ transferredConstructorArgumentForResult(const MirBody &body,
   return consumer == nullptr ? nullptr : body.findPlace(sourceDrop->place);
 }
 
+// A moved owning aggregate entering a variant is not a default-constructed
+// SSA temporary. MIR explicitly transfers its drop from the source to this
+// value-rooted slot, and PayloadConstruct later transfers that same drop into
+// the alternative. Keep this proof structural across records, arrays and sum
+// types: native representation kind is not an ownership rule.
+[[nodiscard]] const MirPlace *payloadMovedOperandSlot(
+    const MirProgram &program, const MirBody &body, MirValueId valueId) {
+  const auto *value = body.findValue(valueId);
+  const auto *move = value ? findInstruction(body, value->definition) : nullptr;
+  const auto *slot = payloadTransferredValueSlot(body, valueId);
+  if (!value || !move || !slot ||
+      value->info.category != ValueCategory::Value ||
+      !value->info.traits.movable || value->info.traits.containsBorrowedState ||
+      slot->type != value->info.type || slot->traits != value->info.traits ||
+      move->kind != MirInstructionKind::Move || move->result != valueId ||
+      move->info != value->info || move->destination || move->receiver ||
+      move->operands.size() != 1 ||
+      move->operands.front().kind != MirOperandKind::Move ||
+      move->operands.front().type != value->info.type ||
+      !move->definedFailure.empty() || !move->localFailureSites.empty() ||
+      move->lifecycle.size() != 1 ||
+      !mirTypeMoveIsDefinedFailureFree(program, value->info.type))
+    return nullptr;
+  const auto &transfer = move->lifecycle.front();
+  const auto *source = body.findPlace(move->operands.front().place);
+  const auto *sourceDrop = body.findDropObligation(transfer.source);
+  const auto *valueDrop = body.findDropObligation(transfer.target);
+  const auto cleanup = mirUniqueCleanupType(program, value->info.type);
+  if (!cleanup || !cleanup.requiresActiveCleanup || !source || !sourceDrop ||
+      !valueDrop || !source->projections.empty() ||
+      source->type != value->info.type || source->traits != value->info.traits ||
+      sourceDrop->place != source->id || sourceDrop->dropType != cleanup ||
+      (sourceDrop->kind != MirDropObligationKind::Binding &&
+       sourceDrop->kind != MirDropObligationKind::Value) ||
+      valueDrop->place != slot->id || valueDrop->generatedValue != valueId ||
+      valueDrop->kind != MirDropObligationKind::Value ||
+      valueDrop->dropType != cleanup || valueDrop->initiallyActive ||
+      transfer.kind != MirLifecycleEventKind::Move || transfer.conditional ||
+      transfer.failureCleanup)
+    return nullptr;
+  return slot;
+}
+
 [[nodiscard]] const MirPlace *payloadEnumValueSlot(const MirProgram &program,
                                                    const MirBody &body,
                                                    MirValueId valueId) {
@@ -24693,6 +24736,9 @@ lifetimeSlotPlace(const MirProgram &program,
       owningPayloadEnumValueSlot(program, body, place.value) == &place) {
     return true;
   }
+  if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
+      payloadMovedOperandSlot(program, body, place.value) == &place)
+    return true;
   // A nested owning aggregate's result is an array-typed element of the
   // enclosing aggregate; its value-rooted place is that element's slot.
   if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
@@ -29102,12 +29148,12 @@ inlinePayloadClassConstruction(const MirBody &body, MirValueId valueId) {
 }
 
 [[nodiscard]] const MirInstruction *
-inlinePayloadClassExtract(const MirBody &body, MirValueId valueId) {
+inlinePayloadValueExtract(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
   const MirInstruction *producer =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
   const std::vector<MirValueUse> valueUses = body.usesOf(valueId);
-  if (value == nullptr || value->info.type.kind != SemanticType::Class ||
+  if (value == nullptr || value->info.category != ValueCategory::Value ||
       producer == nullptr || producer->kind != MirInstructionKind::Compute ||
       producer->operation != MirOperation::PayloadExtract ||
       !producer->result || *producer->result != valueId ||
@@ -34575,10 +34621,16 @@ public:
         // The Aggregate constructs its unique consuming binding slot in place.
         continue;
       }
+      if (inlinePayloadValueExtract(facts.body, value.id)) {
+        // The verified extraction initializes the one arm-local binding.
+        // Do not manufacture a second default-constructed aggregate value.
+        continue;
+      }
+      if (payloadMovedOperandSlot(program, facts.body, value.id))
+        continue;
       if (value.info.type.kind == SemanticType::Class) {
         if (inlinePayloadClassConstruction(facts.body, value.id) ||
-            inlinePayloadClassCopy(facts.body, value.id) ||
-            inlinePayloadClassExtract(facts.body, value.id)) {
+            inlinePayloadClassCopy(facts.body, value.id)) {
           // These existing exact producer/consumer proofs construct the
           // class at its variant or copied-pattern binding publication.
           // Their instruction emitters fuse those operations there, so an
@@ -39598,7 +39650,7 @@ private:
       }
       if (slot != nullptr && instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Value) {
-        if (const MirInstruction *extract = inlinePayloadClassExtract(
+        if (const MirInstruction *extract = inlinePayloadValueExtract(
                 facts.body, instruction.operands.front().value)) {
           if (slotPlace(facts.body, *slot)) {
             output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
@@ -40963,7 +41015,7 @@ private:
     if (instruction.kind == MirInstructionKind::Compute &&
         instruction.operation == MirOperation::PayloadExtract &&
         instruction.result &&
-        inlinePayloadClassExtract(facts.body, *instruction.result) ==
+        inlinePayloadValueExtract(facts.body, *instruction.result) ==
             &instruction) {
       writeIndent();
       output << "// payload extract " << *instruction.result
@@ -41236,6 +41288,17 @@ private:
       }
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result) {
+      if (const auto *slot = payloadMovedOperandSlot(
+              program, facts.body, *instruction.result)) {
+        const auto *source =
+            facts.body.findPlace(instruction.operands.front().place);
+        writeIndent();
+        output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+               << ".construct(std::move(";
+        emitStoragePlaceValue(facts, *source);
+        output << "));\n";
+        return;
+      }
       const PayloadEnumArgumentMoveStage enumArgument =
           payloadEnumArgumentMoveStage(program, facts.body,
                                        *instruction.result);
@@ -56073,6 +56136,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           isBorrowStagedResult(body, value) ||
           returnedCallResultSlot(program_, body, value.id) != nullptr ||
           isStorageStagedResult(program_, body, value) ||
+          payloadMovedOperandSlot(program_, body, value.id) != nullptr ||
           discardedAssignmentResult(body, value.id) ||
           directTemporaryBorrowForValue(body, value.id) ||
           unexpectedDefinition(body, value.id) != nullptr ||
@@ -56186,9 +56250,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // argument: either a fused prvalue construction or a moved chain
           // from a named place. Neither declares a local.
           inlinePayloadClassConstruction(body, value.id) != nullptr ||
-          // A class payload copied out of a matched alternative spells
-          // inline at its consuming binding Initialize.
-          inlinePayloadClassExtract(body, value.id) != nullptr ||
+          // A payload copied or moved out of a matched alternative spells
+          // inline at its exact binding Initialize, including aggregates.
+          inlinePayloadValueExtract(body, value.id) != nullptr ||
           // A named class value copied into a variant alternative spells
           // its source place inline inside the PayloadConstruct braces.
           inlinePayloadClassCopy(body, value.id) != nullptr ||
@@ -58852,6 +58916,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.info.traits.drop == DropKind::Lexical &&
             !fixedArrayValueDestinationSlot(program_, body, instruction) &&
             instruction.result &&
+            !payloadMovedOperandSlot(program_, body, *instruction.result) &&
             !classSsaLifetimeSlot(program_, representations_, body,
                                   *instruction.result) &&
             sequencedMovedArgument(body, *instruction.result) != &instruction &&
