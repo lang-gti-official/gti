@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v104`, `mir-body-v85`).
+instruction, body, and caller-assignment facts (`mir-v105`, `mir-body-v86`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,8 +318,10 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v104`/`mir-body-v85`,
-with `lowered-program-v17` declaration metadata. Version 104/body 85 records
+The combined deterministic serialization is currently `mir-v105`/`mir-body-v86`,
+with `lowered-program-v20` declaration metadata. Version 105/body 86 adds
+foreign-storage inventories and place identity; the declaration format also
+retains exact external storage names. Earlier versions record
 checked borrowing capture modes, each concrete environment's invocation
 capability, per-dependency loan parents, and exact stateless GTI function-pointer
 targets. Reference captures retain ordinary checked-reference storage and
@@ -422,7 +424,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v104`/`lowered-program-v17`, preserving
+The combined serialization is `mir-v105`/`lowered-program-v20`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

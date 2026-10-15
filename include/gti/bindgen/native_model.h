@@ -73,6 +73,10 @@ enum class NativeTypeKind {
 
 struct NativeType {
   NativeTypeKind kind = NativeTypeKind::Void;
+  // Qualifiers on this exact type use, including typedef qualification.
+  bool isConstQualified = false;
+  bool isVolatileQualified = false;
+  std::uint32_t addressSpace = 0;
   NativeCScalarKind scalarIdentity = NativeCScalarKind::None;
   // Integer / Floating.
   std::uint32_t bitWidth = 0;
@@ -116,6 +120,7 @@ enum class NativeDeclarationKind {
   Enum,
   Typedef,
   Function,
+  Variable,
   // An object-like macro whose body is a bounded constant expression,
   // imported with its evaluated value (C-06).
   Constant,
@@ -140,6 +145,9 @@ struct NativeRecordLayout {
   [[nodiscard]] bool constrained() const { return packed || alignment != 0; }
 };
 
+enum class NativeLinkage { Invalid, None, Internal, UniqueExternal, External };
+enum class NativeTlsKind { None, Dynamic, Static };
+
 struct NativeDeclaration {
   NativeDeclarationKind kind = NativeDeclarationKind::Record;
   std::string name;
@@ -163,7 +171,17 @@ struct NativeDeclaration {
   std::vector<NativeEnumerator> enumerators;
   // Typedef: the aliased type.
   NativeTypeId aliased = 0;
-  // Function: a NativeTypeKind::Function node carrying the signature.
+  // Variable: exact storage facts, independent of import policy. Redeclarations
+  // share one identity; isDefinition records whether any declaration defines
+  // it.
+  NativeLinkage linkage = NativeLinkage::Invalid;
+  NativeTlsKind tlsKind = NativeTlsKind::None;
+  bool isDefinition = false;
+  bool isTentativeDefinition = false;
+  bool isConst = false;
+  bool isVolatile = false;
+  std::string externalSymbol;
+  // Function: signature node. Variable: exact declared object type.
   NativeTypeId type = 0;
   std::vector<NativeParameter> parameterNames;
   // Function ABI facts (C-06): an assembler label renaming the link symbol

@@ -1694,6 +1694,10 @@ cppConcreteMemberFunctionSpelling(const LoweredProgram &program,
 // Ported verbatim from the compatibility emitter's
 // emittedStaticVariableBaseName / emittedStaticVariableName, which now
 // delegate here.
+std::string cppForeignStorageSpelling(SymbolId symbol) {
+  return "__gti_foreign_storage_" + std::to_string(symbol);
+}
+
 std::string cppStaticStorageBaseSpelling(SymbolId symbol,
                                          std::string_view name) {
   return "__gti_static_" + std::to_string(symbol) + "_" + std::string(name);

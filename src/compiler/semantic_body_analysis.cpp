@@ -13,6 +13,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   defaultArgumentDependencies.clear();
   reportedDefaultArgumentCycles.clear();
   externCSymbols.clear();
+  requestSession.externCVariables.clear();
+  requestSession.foreignAddressPlaces.clear();
   constexprDefinitionsAnalyzed.clear();
   constexprConstructorsAnalyzed.clear();
   requestSession.constexprWork.reset();
@@ -5211,9 +5213,17 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       bindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
                                                  : AccessMode::ReadOnly);
   info.symbol = symbol;
+  info.foreignStorage = stmt.linkage() == LanguageLinkage::C;
   info.staticStorage = stmt.isStatic();
   info.internalLinkage = internalLinkage;
   semanticModel.record(stmt, std::move(info));
+  if (stmt.linkage() == LanguageLinkage::C) {
+    validateExternCVariable(stmt, declaredType, symbol);
+    declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
+                           stmt.isMutable(), false, symbol, &stmt,
+                           std::nullopt);
+    return;
+  }
   if (std::find(requestSession.invalidOrdinaryLayouts.begin(),
                 requestSession.invalidOrdinaryLayouts.end(),
                 declaredType) != requestSession.invalidOrdinaryLayouts.end()) {
@@ -10143,7 +10153,24 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
   }
   const bool mutating = expr.oper().kind == TokenKind::PLUS_PLUS ||
                         expr.oper().kind == TokenKind::MINUS_MINUS;
+  const std::size_t foreignAddressCount =
+      requestSession.foreignAddressPlaces.size();
   if (expr.oper().kind == TokenKind::AMPERSAND) {
+    requestSession.foreignAddressPlaces.push_back(nullptr);
+    const Expr *place = expr.right().get();
+    while (place != nullptr) {
+      requestSession.foreignAddressPlaces.push_back(place);
+      if (const auto *group = exprAs<Grouping>(place))
+        place = group->expression().get();
+      else if (const auto *field = exprAs<Get>(place)) {
+        if (field->access().kind == TokenKind::ARROW)
+          break;
+        place = field->object().get();
+      } else if (const auto *index = exprAs<Index>(place))
+        place = index->object().get();
+      else
+        break;
+    }
     ++programStoragePlaceUseDepth;
   }
   const SemanticType rightType =
@@ -10157,6 +10184,7 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
                                                       SemanticType::Bool)
                       : analyze(expr.right()));
   if (expr.oper().kind == TokenKind::AMPERSAND) {
+    requestSession.foreignAddressPlaces.resize(foreignAddressCount);
     --programStoragePlaceUseDepth;
   }
 

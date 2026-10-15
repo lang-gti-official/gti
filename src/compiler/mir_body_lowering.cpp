@@ -2951,13 +2951,14 @@ private:
     const auto rawPlace = [&](MirPlaceId id) {
       const MirPlace *place = output.findPlace(id);
       return place != nullptr &&
-             std::any_of(place->projections.begin(), place->projections.end(),
-                         [](const MirPlaceProjection &projection) {
-                           return projection.kind ==
-                                      MirProjectionKind::RawDereference ||
-                                  projection.kind ==
-                                      MirProjectionKind::RawIndex;
-                         });
+             (place->foreignStorage ||
+              std::any_of(place->projections.begin(), place->projections.end(),
+                          [](const MirPlaceProjection &projection) {
+                            return projection.kind ==
+                                       MirProjectionKind::RawDereference ||
+                                   projection.kind ==
+                                       MirProjectionKind::RawIndex;
+                          }));
     };
     const auto rawReceiver = [&]() {
       if (!instruction.receiver)
@@ -3004,7 +3005,9 @@ private:
                    projection.kind == MirProjectionKind::RawIndex;
           });
       instruction.unsafeOperation =
-          raw->kind == MirProjectionKind::RawIndex
+          raw == destination->projections.end()
+              ? UnsafeOperationKind::ForeignStorage
+          : raw->kind == MirProjectionKind::RawIndex
               ? UnsafeOperationKind::RawIndex
               : (std::next(raw) == destination->projections.end()
                      ? UnsafeOperationKind::RawDereference
@@ -3313,6 +3316,11 @@ private:
   }
 
   MirPlaceId appendPlace(MirPlace place) {
+    if (place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
+        program.findForeignStorage(place.symbol) != nullptr) {
+      place.foreignStorage = true;
+      place.initiallyAvailable = true;
+    }
     place.id = output.places.size() + 1;
     const MirPlaceId id = place.id;
     output.places.push_back(std::move(place));

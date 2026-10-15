@@ -196,6 +196,8 @@ int stdint_names(int8_t a, uint16_t b, int32_t c, uint64_t d, size_t e,
   expect(
       lang::bindgen::printNativeModel(skips.model) ==
           "function variadic_call(format: ptr(const char), ...) -> c_int[i32]\n"
+          "variable global_variable: c_int[i32] [linkage external] [symbol "
+          "\"global_variable\"] [tentative-definition]\n"
           "record Fixed\n"
           "  field values: array[c_int[i32] x 4]\n"
           "function with_array_param(values: ptr(c_int[i32]), count: "
@@ -207,18 +209,15 @@ int stdint_names(int8_t a, uint16_t b, int32_t c, uint64_t d, size_t e,
       "the skip-class corpus golden should hold");
   bool sawStatic = false;
   bool sawInline = false;
-  bool sawVariable = false;
   bool sawDefinition = false;
   for (const lang::bindgen::ReaderDiagnostic &diagnostic : skips.diagnostics) {
     sawStatic = sawStatic || contains(diagnostic.message, "'static'");
     sawInline = sawInline || contains(diagnostic.message, "'inline'");
-    sawVariable = sawVariable || contains(diagnostic.message,
-                                          "native variable 'global_variable'");
     sawDefinition =
         sawDefinition ||
         contains(diagnostic.message, "function definition 'definition'");
   }
-  expect(sawStatic && sawInline && sawVariable && sawDefinition,
+  expect(sawStatic && sawInline && sawDefinition,
          "every skip class should report its note");
 }
 
@@ -1335,6 +1334,222 @@ int lib_public(int value);
          "the frontend should accept the configured bindings");
 }
 
+// C-08B: external storage is declaration-only, with qualification distinct
+// from the pointee, and unsupported native storage survives as a precise skip.
+void testForeignVariableBindings() {
+  constexpr std::string_view header = R"(
+typedef int (*Dispatch)(int);
+typedef const int ReadOnly;
+struct State { int value; Dispatch dispatch; };
+extern int counter;
+int counter = 7;
+extern int counter;
+extern const int limit;
+extern ReadOnly aliased_limit;
+extern const char *text;
+extern int *const fixed_slot;
+extern const int *const fixed_readonly_slot;
+extern int *const *nested_slot;
+extern Dispatch dispatch;
+extern Dispatch const fixed_dispatch;
+extern struct State state;
+extern int renamed __asm__("native_counter");
+extern int (*inline_dispatch)(int);
+static int hidden;
+extern _Thread_local int local_counter;
+extern volatile int device_status;
+extern volatile int *device_pointer;
+extern int array[4];
+extern int (*whole_array)[4];
+extern int special_address __attribute__((address_space(1)));
+struct Device { volatile int status; };
+extern struct Device *device_handle;
+)";
+  const auto read = readC(header);
+  expect(read.usable(), "foreign storage header should read");
+  std::size_t counters = 0;
+  for (const auto &declaration : read.model.declarations) {
+    if (declaration.name == "counter") {
+      ++counters;
+      expect(
+          declaration.kind == lang::bindgen::NativeDeclarationKind::Variable &&
+              declaration.linkage == lang::bindgen::NativeLinkage::External &&
+              declaration.isDefinition && !declaration.isConst &&
+              declaration.externalSymbol == "counter" &&
+              declaration.origin.line == 5,
+          "redeclarations retain one external identity and the definition "
+          "fact");
+    }
+  }
+  expect(counters == 1, "external redeclarations must not duplicate bindings");
+  const auto model = lang::bindgen::printNativeModel(read.model);
+  expect(contains(model, "[linkage internal]") &&
+             contains(model, "[tls static]") &&
+             contains(model, "volatile c_int[i32]") &&
+             contains(model, "[symbol \"native_counter\"]"),
+         "native storage facts must survive before policy rejects unsupported "
+         "objects");
+  lang::bindgen::BindingOptions options;
+  options.namespaceName = "native_data";
+  options.renames.emplace("counter", "count");
+  const auto plan = lang::bindgen::planBindings(read.model, options);
+  const auto source = lang::bindgen::writeGtiBindings(plan, "storage.h");
+  expect(contains(source, "[[link_name(\"counter\")]] mut c_int count;") &&
+             contains(source,
+                      "[[link_name(\"native_counter\")]] mut c_int renamed;"),
+         "source renames and native assembler labels preserve exact storage "
+         "symbols");
+  expect(contains(source, "c_int limit;") &&
+             !contains(source, "mut c_int limit;") &&
+             contains(source, "ReadOnly aliased_limit;") &&
+             !contains(source, "mut ReadOnly aliased_limit;"),
+         "native const objects must be immutable bindings, including typedef "
+         "const");
+  expect(contains(source, "mut const c_char* text;") &&
+             contains(source, "c_int* fixed_slot;") &&
+             !contains(source, "mut c_int* fixed_slot;") &&
+             contains(source, "const c_int* fixed_readonly_slot;") &&
+             contains(source, "mut c_int* const* nested_slot;"),
+         "object const and every pointer-level const must remain separate");
+  expect(
+      contains(source, "mut Dispatch dispatch;") &&
+          contains(source, "Dispatch fixed_dispatch;") &&
+          !contains(source, "mut Dispatch fixed_dispatch;") &&
+          contains(source, "mut State state;") &&
+          contains(source, "using inline_dispatch_fn"),
+      "callback and passive record objects use exact admitted ABI identities");
+  for (const auto name :
+       {"hidden", "local_counter", "device_status", "device_pointer", "array",
+        "whole_array", "special_address"}) {
+    const auto *item = findItem(plan, name);
+    expect(item && item->kind == lang::bindgen::BindingItemKind::Skipped &&
+               !item->reason.empty(),
+           "unsupported storage must have an explicit skip: " +
+               std::string(name));
+  }
+  const auto *deviceHandle = findItem(plan, "device_handle");
+  expect(deviceHandle &&
+             deviceHandle->kind == lang::bindgen::BindingItemKind::Variable,
+         "opaque pointers remain importable even when the hidden record "
+         "contains volatile fields");
+  expect(!contains(source, " = 7") &&
+             !contains(source, "constexpr c_int limit"),
+         "native definitions and read-only data never become GTI initializers "
+         "or constants");
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      "foreign-variable-bindgen.gti", source + "\nint main() { return 0; }\n",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  for (const auto &diagnostic : frontend.diagnostics) {
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode(),
+         "generated foreign variable bindings must pass the real frontend");
+  options.allow = {{"counter"}};
+  const auto allowed = lang::bindgen::planBindings(read.model, options);
+  expect(allowed.importedCount() == 1 && findItem(allowed, "count"),
+         "variable import uses the same allow and rename policy as functions");
+  const auto provenance = lang::bindgen::runCBindgen(
+      "# 1 \"/work/storage.h\"\n"
+      "# 1 \"/usr/include/native-storage.h\" 1 3\n"
+      "extern int exported_storage;\nextern int hidden_storage;\n"
+      "# 2 \"/work/storage.h\" 2\n"
+      "extern int exported_storage;\n",
+      "storage.h");
+  expect(provenance.plan.importedCount() == 1 &&
+             findItem(provenance.plan, "exported_storage") &&
+             !findItem(provenance.plan, "hidden_storage"),
+         "a root-header redeclaration imports one canonical variable while "
+         "system-only storage stays excluded");
+
+  lang::bindgen::BindingOptions synthesisOptions;
+  synthesisOptions.renames.emplace("object", "callback_fn");
+  const auto synthesis = lang::bindgen::runCBindgen(
+      "extern int object; extern int (*callback)(int);", "synthesis.h",
+      synthesisOptions);
+  expect(contains(synthesis.gtiSource,
+                  "using callback_fn_2 = (c_int) -> c_int;") &&
+             contains(synthesis.gtiSource, "mut c_int callback_fn;"),
+         "synthesized callback names must reserve configured variable renames");
+
+  lang::bindgen::BindingOptions collisionOptions;
+  collisionOptions.renames.emplace("object", "function");
+  const auto collision =
+      lang::bindgen::runCBindgen("extern int object; int function(void);",
+                                 "collision.h", collisionOptions);
+  const auto collisionFrontend = lang::Frontend().analyze(
+      "foreign-variable-collision.gti",
+      collision.gtiSource + "\nint main() { return 0; }\n",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(!collisionFrontend.canGenerateCode(),
+         "a renamed variable must not hide a function with the same GTI name");
+}
+
+void testNativeQualifierPreservation() {
+  const auto result = lang::bindgen::runCBindgen(R"(
+typedef const int ReadOnly;
+struct Qualified { const int value; ReadOnly alias; int *const slot; const int *view; const int values[2]; };
+struct Device { volatile int status; };
+void read_device(volatile int *device);
+void read_device_pointer(int *volatile *device);
+void use_device(struct Device *device);
+typedef int (*VolatileCallback)(volatile int *);
+typedef int (*volatile VolatileSlot)(int);
+void address_space_pointer(int __attribute__((address_space(1))) *);
+)",
+                                                 "qualifiers.h");
+  expect(result.usable(), "qualified native objects should read");
+  expect(
+      contains(result.gtiSource, "  c_int value;") &&
+          contains(result.gtiSource, "  ReadOnly alias;") &&
+          contains(result.gtiSource, "  c_int* slot;") &&
+          contains(result.gtiSource, "  mut const c_int* view;") &&
+          contains(result.gtiSource, "  c_int values[2];"),
+      "const record fields must not gain write access in generated bindings");
+  const auto *addressSpace = findItem(result.plan, "address_space_pointer");
+  expect(addressSpace &&
+             addressSpace->kind == lang::bindgen::BindingItemKind::Skipped &&
+             contains(addressSpace->reason, "address spaces"),
+         "non-default native pointer address spaces must not be erased");
+  const auto *device = findItem(result.plan, "Device");
+  expect(device && device->kind == lang::bindgen::BindingItemKind::Opaque &&
+             contains(device->reason, "volatile"),
+         "volatile record fields must remain opaque until volatile semantics "
+         "exist");
+  for (const auto name : {"read_device", "read_device_pointer",
+                          "VolatileCallback", "VolatileSlot"}) {
+    const auto *item = findItem(result.plan, name);
+    expect(
+        item && item->kind == lang::bindgen::BindingItemKind::Skipped &&
+            contains(item->reason, "volatile"),
+        "volatile qualification must not disappear from imported ABI shape: " +
+            std::string(name));
+  }
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      "native-qualifier-bindgen.gti",
+      result.gtiSource + "\nint main() { return 0; }\n",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(frontend.canGenerateCode(),
+         "qualified record imports must pass the real frontend");
+  const auto mutation = lang::Frontend().analyze(
+      "native-const-field.gti", result.gtiSource + R"(
+extern "C" { Qualified make_qualified(); }
+int main() {
+  unsafe {
+    mut Qualified value = make_qualified();
+    value.value = c_int(2);
+  }
+  return 0;
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(!mutation.canGenerateCode(),
+         "imported const record fields must reject source writes");
+}
+
 // -- Frontend acceptance ----------------------------------------------------
 
 // The closing gate: generated bindings must be accepted by the real
@@ -1420,6 +1635,8 @@ int main() {
   testComposableNativeTypedefs();
   testStringArrayParameters();
   testRealHeaderShapes();
+  testForeignVariableBindings();
+  testNativeQualifierPreservation();
   testGeneratedBindingsCompile();
   if (failures != 0) {
     std::cerr << failures << " bindgen test failure(s)\n";

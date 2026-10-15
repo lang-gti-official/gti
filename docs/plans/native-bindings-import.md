@@ -202,7 +202,8 @@ methods, overloads) lands without touching the reader. Two passes:
    instead of leaving a dangling alias. This expands import policy using
    existing GTI facilities, with no new frontend or backend exception.
    Remaining inexpressible shapes — variadics, pointers to whole arrays,
-   zero-length array extensions, native variables, reserved or GTI-invalid identifiers — become a
+   zero-length array extensions, unsupported variable storage (TLS, volatile,
+   internal linkage or top-level arrays), reserved or GTI-invalid identifiers — become a
    `SkippedItem{origin, name, reason}`.
 
 The plan is an ordered, inspectable and testable value type. Implemented
@@ -426,8 +427,9 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
 
 Status: C-08A native indirect invocation and the native-scalar/nested-pointer
 family are implemented. Bindgen now preserves callback slots and composable
-typedefs through those facilities. C-08B foreign-variable declarations remain
-planned.
+typedefs through those facilities. C-08B provides ordinary foreign-object
+declarations and access; TLS, volatile and top-level array objects remain
+separate extensions.
 This is a follow-on language campaign, not permission for the importer to emit
 declarations the frontend rejects. Target-correct native scalar identity and
 general nested raw pointers have their own implemented contract; reuse its
@@ -516,6 +518,11 @@ compiler-owned hover/call tooling with the new resolved call family.
 
 ### C-08B: Declare and access actual foreign variables
 
+Implemented in the ordinary non-TLS, non-volatile object slice. See the
+[current contract](../language/native-c-interop.md#foreign-variables) and
+[runnable example](../../examples/native-variable-bindings/README.md).
+The requirements below remain the acceptance contract.
+
 Introduce a real external-storage declaration identity, never an ordinary GTI
 global initialized with a placeholder. Retain exact link symbol, resolved ABI
 type, mutability/constness, source origin and target storage facts. A declaration
@@ -557,8 +564,8 @@ renaming/collision behavior, unsupported TLS/volatile diagnostics, no emitted
 definition or destructor, generated C17/C++20/C++23 header compatibility,
 optimizer effects, MIR mutations, tooling and a runnable registered example.
 
-C-08A is delivered; C-08B remains an independent vertical slice with the
-prerequisites and acceptance above. Groundwork for foreign storage alone does
-not claim that capability is usable, require a version bump, or satisfy its
-future executable-example gate. Revise the canonical native interop
-contract only as implementation lands.
+C-08A and the ordinary-object C-08B slice are delivered. Remaining storage
+families require general volatile/TLS operations and target lowering, or an
+array-object address/transport contract; they are not approximated as ordinary
+objects. Acceptance for each extension includes exact import facts, native
+execution and header evidence, and the same ownership/effect verification.

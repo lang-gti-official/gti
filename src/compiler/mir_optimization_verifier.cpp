@@ -84,6 +84,8 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
 
   if (source.executionProfile() != optimized.executionProfile() ||
       source.programKind() != optimized.programKind() ||
+      source.foreignStorageDeclarations() !=
+          optimized.foreignStorageDeclarations() ||
       source.embeddingPlan() != optimized.embeddingPlan() ||
       source.classInstances().size() != optimized.classInstances().size() ||
       source.functionInstances().size() !=

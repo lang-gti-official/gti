@@ -1830,6 +1830,7 @@ SemanticModel::findDestructor(const DestructorDecl &declaration) const {
 }
 
 void SemanticModel::clear() {
+  foreignStorage_.clear();
   analyzedFunctionBodies.clear();
   expressions.clear();
   statementFullExpressions.clear();

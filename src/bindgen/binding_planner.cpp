@@ -176,6 +176,10 @@ public:
       }
       if (!declaration->name.empty()) {
         usedNames_.insert(declaration->name);
+        if (const auto rename = options_.renames.find(declaration->name);
+            rename != options_.renames.end()) {
+          usedNames_.insert(rename->second);
+        }
       }
       for (const NativeEnumerator &enumerator : declaration->enumerators) {
         usedNames_.insert(enumerator.name);
@@ -221,6 +225,9 @@ public:
         break;
       case NativeDeclarationKind::Function:
         planned = planFunction(*declaration);
+        break;
+      case NativeDeclarationKind::Variable:
+        planned = planVariable(*declaration);
         break;
       case NativeDeclarationKind::Constant:
         planned = planConstant(*declaration);
@@ -538,6 +545,14 @@ private:
     if (direct == nullptr) {
       return unsupportedType("the type reference is invalid");
     }
+    if (direct->addressSpace != 0) {
+      return unsupportedType(
+          "non-default native address spaces have no GTI representation");
+    }
+    if (direct->isVolatileQualified) {
+      return unsupportedType(
+          "volatile-qualified types require volatile access semantics");
+    }
     // A named typedef spells through its GTI alias, which is transparent to
     // the ABI; admissibility still follows the canonical type below.
     if (direct->kind == NativeTypeKind::Alias) {
@@ -658,6 +673,14 @@ private:
     const NativeType *pointee = canonical(pointer.pointee);
     if (pointee == nullptr) {
       return unsupportedType("the pointee type is invalid");
+    }
+    if (pointee->addressSpace != 0) {
+      return unsupportedType(
+          "non-default native address spaces have no GTI representation");
+    }
+    if (pointee->isVolatileQualified) {
+      return unsupportedType(
+          "volatile-qualified pointees require volatile access semantics");
     }
     if (pointee->kind == NativeTypeKind::Function) {
       const NativeType *written = model_.findType(pointer.pointee);
@@ -940,6 +963,9 @@ private:
     for (const NativeRecordField &field : declaration.fields) {
       synthesisHint_ = declaration.name + "_" + field.name;
       const NativeType *type = canonical(field.type);
+      const NativeType *written = model_.findType(field.type);
+      const bool mutableField =
+          !written->isConstQualified && !type->isConstQualified;
       if (type->kind == NativeTypeKind::Array) {
         const ArrayShape shape = arrayShape(*type);
         const MappedType element =
@@ -948,12 +974,13 @@ private:
         for (const std::uint64_t extent : shape.extents) {
           spelling += "[" + std::to_string(extent) + "]";
         }
-        item.fields.push_back({field.name, std::move(spelling)});
+        item.fields.push_back({field.name, std::move(spelling), mutableField});
         continue;
       }
       const MappedType mapped =
           mapType(field.type, false, TypeUse::RecordField);
-      item.fields.push_back({field.name, mapped.spelling + " " + field.name});
+      item.fields.push_back(
+          {field.name, mapped.spelling + " " + field.name, mutableField});
     }
     return item;
   }
@@ -990,6 +1017,13 @@ private:
     if (target == nullptr) {
       return skipped(declaration, "the typedef target is invalid");
     }
+    if (target->isVolatileQualified || target->addressSpace != 0) {
+      return skipped(
+          declaration,
+          target->isVolatileQualified
+              ? "volatile-qualified types require volatile access semantics"
+              : "non-default native address spaces have no GTI representation");
+    }
     if (const NativeType *function = callbackShape(*target)) {
       const MappedType shape = mapCallbackShape(*function);
       if (!shape.supported) {
@@ -1013,6 +1047,53 @@ private:
     }
     item.kind = BindingItemKind::Alias;
     item.aliasSpelling = mapped.spelling;
+    return item;
+  }
+
+  [[nodiscard]] BindingItem planVariable(const NativeDeclaration &declaration) {
+    if (declaration.linkage != NativeLinkage::External) {
+      return skipped(
+          declaration,
+          "native storage without external linkage is not importable");
+    }
+    if (declaration.tlsKind != NativeTlsKind::None) {
+      return skipped(
+          declaration,
+          "thread-local native storage requires TLS access semantics");
+    }
+    if (declaration.isVolatile) {
+      return skipped(
+          declaration,
+          "volatile native storage requires volatile access semantics");
+    }
+    BindingItem item;
+    item.name = spelled(declaration);
+    item.origin = declaration.origin;
+    if (const auto problem = identifierProblem(item.name, false)) {
+      return skipped(declaration, *problem);
+    }
+    const std::string &symbol = declaration.externalSymbol;
+    if (const auto problem = identifierProblem(symbol, true)) {
+      return skipped(declaration, "link symbol: " + *problem);
+    }
+    const NativeType *type = canonical(declaration.type);
+    if (type && type->kind == NativeTypeKind::Array) {
+      return skipped(
+          declaration,
+          "foreign array objects require an external-array storage contract");
+    }
+    synthesisHint_ = declaration.name;
+    const MappedType mapped =
+        mapType(declaration.type, false, TypeUse::RecordField);
+    if (!mapped.supported) {
+      return skipped(declaration, "object: " + mapped.reason);
+    }
+    item.kind = BindingItemKind::Variable;
+    item.aliasSpelling = mapped.spelling;
+    item.mutableVariable = !declaration.isConst;
+    if (item.name != symbol) {
+      item.linkName = symbol;
+    }
     return item;
   }
 

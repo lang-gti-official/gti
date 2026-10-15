@@ -158,6 +158,10 @@ cppConcreteMemberFunctionSpelling(const LoweredProgram &program,
 // internal-linkage static storage: the `__gti_static_<symbol>_<name>` holder
 // and its `::value` member for namespace-scope statics wrapped in an
 // initialization guard.
+// Private C++ declaration name; the object-file symbol remains the checked
+// native name supplied by the foreign-storage descriptor.
+[[nodiscard]] std::string cppForeignStorageSpelling(SymbolId symbol);
+
 [[nodiscard]] std::string cppStaticStorageBaseSpelling(SymbolId symbol,
                                                        std::string_view name);
 [[nodiscard]] std::string cppStaticStorageValueSpelling(SymbolId symbol,

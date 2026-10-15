@@ -747,9 +747,23 @@ private:
 
   // Maps one Clang type use into the model. Named typedef sugar becomes an
   // Alias reference; builtin-prelude typedefs resolve canonically; `restrict`
-  // and top-level qualifiers are invisible, and const survives only as a
-  // pointee qualifier — the shapes the planner's policy is written against.
+  // is not an ownership promise in GTI. Exact const/volatile qualification is
+  // retained on every type use so planner policy cannot silently erase it.
   [[nodiscard]] NativeTypeId mapType(CXType type) { // NOLINT(misc-no-recursion)
+    const NativeTypeId id = mapUnqualifiedType(type);
+    if (id != 0) {
+      NativeType &mapped = result_.model.types[id - 1];
+      const CXType canonical = clang_getCanonicalType(type);
+      mapped.addressSpace = clang_getAddressSpace(canonical);
+      mapped.isConstQualified = clang_isConstQualifiedType(canonical) != 0;
+      mapped.isVolatileQualified =
+          clang_isVolatileQualifiedType(canonical) != 0;
+    }
+    return id;
+  }
+
+  [[nodiscard]] NativeTypeId
+  mapUnqualifiedType(CXType type) { // NOLINT(misc-no-recursion)
     switch (type.kind) {
     case CXType_Elaborated:
       return mapType(clang_Type_getNamedType(type));
@@ -1019,10 +1033,7 @@ private:
       handleFunction(cursor);
       return;
     case CXCursor_VarDecl:
-      if (const SourceOrigin at = origin(cursor); inPolicy(at)) {
-        warn(at, "native variable '" + owned(clang_getCursorSpelling(cursor)) +
-                     "' is not part of the GTI C ABI and was skipped");
-      }
+      handleVariable(cursor);
       return;
     default:
       if (const SourceOrigin at = origin(cursor); inPolicy(at)) {
@@ -1345,6 +1356,93 @@ private:
     }
     spellings.erase(spellings.begin());
     return spellings;
+  }
+
+  void handleVariable(CXCursor cursor) {
+    const SourceOrigin at = origin(cursor);
+    const std::string name = owned(clang_getCursorSpelling(cursor));
+    if (clang_isInvalidDeclaration(cursor) != 0 ||
+        hasNativeErrorWithin(cursor)) {
+      if (inPolicy(at)) {
+        warn(at,
+             "declaration '" + name + "' has native C errors and was skipped");
+      }
+      return;
+    }
+    const bool definition = clang_isCursorDefinition(cursor) != 0;
+    const bool tentativeDefinition =
+        !definition && clang_Cursor_getStorageClass(cursor) != CX_SC_Extern;
+    const std::string usr = usrOf(clang_getCanonicalCursor(cursor));
+    std::string symbol = name;
+    std::string asmLabel;
+    for (const CXCursor child : childrenOf(cursor)) {
+      if (clang_getCursorKind(child) == CXCursor_AsmLabelAttr) {
+        asmLabel = owned(clang_getCursorSpelling(child));
+        symbol = asmLabel;
+      }
+    }
+    if (const auto found = declarationsByUsr_.find(usr);
+        found != declarationsByUsr_.end()) {
+      NativeDeclaration *existing =
+          result_.model.findDeclaration(found->second);
+      existing->isDefinition |= definition;
+      existing->isTentativeDefinition |= tentativeDefinition;
+      if (!existing->inPolicy && inPolicy(at)) {
+        existing->inPolicy = true;
+        existing->origin = at;
+      }
+      if (!asmLabel.empty()) {
+        existing->asmLabel = asmLabel;
+        existing->externalSymbol = symbol;
+      }
+      return;
+    }
+    NativeDeclaration declaration;
+    declaration.kind = NativeDeclarationKind::Variable;
+    declaration.name = name;
+    declaration.scope = rootScope_;
+    declaration.origin = at;
+    declaration.inPolicy = inPolicy(at);
+    declaration.type = mapType(clang_getCursorType(cursor));
+    declaration.isDefinition = definition;
+    declaration.isTentativeDefinition = tentativeDefinition;
+    const CXType type = clang_getCanonicalType(clang_getCursorType(cursor));
+    declaration.isConst = clang_isConstQualifiedType(type) != 0;
+    declaration.isVolatile = clang_isVolatileQualifiedType(type) != 0;
+    declaration.externalSymbol = std::move(symbol);
+    declaration.asmLabel = std::move(asmLabel);
+    switch (clang_getCursorLinkage(cursor)) {
+    case CXLinkage_Invalid:
+      declaration.linkage = NativeLinkage::Invalid;
+      break;
+    case CXLinkage_NoLinkage:
+      declaration.linkage = NativeLinkage::None;
+      break;
+    case CXLinkage_Internal:
+      declaration.linkage = NativeLinkage::Internal;
+      break;
+    case CXLinkage_UniqueExternal:
+      declaration.linkage = NativeLinkage::UniqueExternal;
+      break;
+    case CXLinkage_External:
+      declaration.linkage = NativeLinkage::External;
+      break;
+    }
+    switch (clang_getCursorTLSKind(cursor)) {
+    case CXTLS_None:
+      declaration.tlsKind = NativeTlsKind::None;
+      break;
+    case CXTLS_Dynamic:
+      declaration.tlsKind = NativeTlsKind::Dynamic;
+      break;
+    case CXTLS_Static:
+      declaration.tlsKind = NativeTlsKind::Static;
+      break;
+    }
+    const NativeDeclarationId id =
+        result_.model.addDeclaration(std::move(declaration));
+    result_.model.order.push_back(id);
+    declarationsByUsr_.emplace(usr, id);
   }
 
   void handleFunction(CXCursor cursor) {

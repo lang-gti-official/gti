@@ -2759,20 +2759,23 @@ private:
 
 class VariableDecl final : public StmtOfKind<StmtKind::VariableDecl> {
 public:
-  VariableDecl(Mutability mutability, TypeRef type, Token name,
-               ExprPtr initializer,
-               std::optional<Token> staticKeyword = std::nullopt,
-               bool rangeBinding = false,
-               std::optional<Token> constexprKeyword = std::nullopt,
-               bool rangeOwner = false, bool rangeIterator = false,
-               std::optional<Token> mutKeyword = std::nullopt,
-               bool rangeElementOwner = false)
+  VariableDecl(
+      Mutability mutability, TypeRef type, Token name, ExprPtr initializer,
+      std::optional<Token> staticKeyword = std::nullopt,
+      bool rangeBinding = false,
+      std::optional<Token> constexprKeyword = std::nullopt,
+      bool rangeOwner = false, bool rangeIterator = false,
+      std::optional<Token> mutKeyword = std::nullopt,
+      bool rangeElementOwner = false,
+      LanguageLinkage linkage = LanguageLinkage::Gti,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
         staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
         constexprKeyword_(std::move(constexprKeyword)), rangeOwner_(rangeOwner),
         rangeIterator_(rangeIterator), mutKeyword_(std::move(mutKeyword)),
-        rangeElementOwner_(rangeElementOwner) {}
+        rangeElementOwner_(rangeElementOwner), linkage_(linkage),
+        nativeLinkName_(std::move(nativeLinkName)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -2788,6 +2791,11 @@ public:
   [[nodiscard]] bool isStatic() const { return staticKeyword_.has_value(); }
   [[nodiscard]] const std::optional<Token> &staticKeyword() const {
     return staticKeyword_;
+  }
+  [[nodiscard]] LanguageLinkage linkage() const { return linkage_; }
+  [[nodiscard]] const std::optional<NativeLinkNameAttribute> &
+  nativeLinkName() const {
+    return nativeLinkName_;
   }
   [[nodiscard]] bool isRangeBinding() const { return rangeBinding_; }
   [[nodiscard]] bool isRangeOwner() const { return rangeOwner_; }
@@ -2822,6 +2830,8 @@ private:
   bool rangeIterator_ = false;
   std::optional<Token> mutKeyword_;
   bool rangeElementOwner_ = false;
+  LanguageLinkage linkage_ = LanguageLinkage::Gti;
+  std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::vector<DeclarationAttribute> declarationAttributes_;
 };
 

@@ -969,7 +969,8 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
     return;
   }
   const auto *variable = stmtAs<VariableDecl>(&statement);
-  if (variable == nullptr || (enclosingClass && !variable->isStatic())) {
+  if (variable == nullptr || variable->linkage() == LanguageLinkage::C ||
+      (enclosingClass && !variable->isStatic())) {
     return;
   }
   const BindingInfo *binding = semanticModel.findBinding(*variable);
@@ -2751,7 +2752,45 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     symbolId = symbolForDeclaration(functionItemDeclaration->name());
   }
   semanticModel.recordResolvedSymbol(expr, symbolId);
-  recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  const bool crossesIndirection = std::any_of(
+      expressionPlace.projections.begin(), expressionPlace.projections.end(),
+      [](const PlaceProjection &projection) {
+        return projection.kind == PlaceProjectionKind::Dereference;
+      });
+  const ForeignStorageInfo *foreign =
+      crossesIndirection ? nullptr : semanticModel.findForeignStorage(symbolId);
+  if (foreign == nullptr && !crossesIndirection &&
+      expressionPlace.root != nullptr)
+    foreign = semanticModel.findForeignStorage(
+        toolingSymbolFor(*expressionPlace.root));
+  if (foreign != nullptr) {
+    const auto address =
+        std::find(requestSession.foreignAddressPlaces.begin(),
+                  requestSession.foreignAddressPlaces.end(), &expr);
+    bool addressOnly = address != requestSession.foreignAddressPlaces.end();
+    if (addressOnly && info.type.kind == SemanticType::RawPointer) {
+      // Taking a pointer slot's address is inert. Computing the address of
+      // one of its pointees first loads that slot, including through grouping
+      // and inline record/array projections.
+      auto addressBegin = address;
+      while (addressBegin != requestSession.foreignAddressPlaces.begin() &&
+             *(addressBegin - 1) != nullptr) {
+        --addressBegin;
+      }
+      addressOnly = std::none_of(addressBegin, address, [](const Expr *parent) {
+        return exprAs<Index>(parent) != nullptr;
+      });
+    }
+    if (!addressOnly &&
+        (semanticModel.unsafeOperation(expr) == UnsafeOperationKind::None ||
+         semanticModel.unsafeOperation(expr) ==
+             UnsafeOperationKind::ForeignStorage)) {
+      requireUnsafe(expr, UnsafeOperationKind::ForeignStorage,
+                    expressionToken(expr), "Access to foreign storage");
+    }
+  } else {
+    recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  }
   if (hasRole(roles, OccurrenceRole::Write)) {
     if (expressionPlace.root != nullptr) {
       recordMutableBindingUse(toolingSymbolFor(*expressionPlace.root));

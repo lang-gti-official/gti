@@ -27,7 +27,8 @@ namespace {
 
 template <typename Symbol>
 [[nodiscard]] std::string cppProgramStorageSpelling(const Symbol &record,
-                                                    SymbolId symbol) {
+                                                    SymbolId symbol,
+                                                    bool foreign = false) {
   if (record.kind != SymbolKind::GlobalVariable || record.name.empty()) {
     return {};
   }
@@ -71,7 +72,8 @@ template <typename Symbol>
   }
 
   spelling += "::";
-  spelling += record.internalLinkage
+  spelling += foreign ? cppForeignStorageSpelling(symbol)
+              : record.internalLinkage
                   ? cppStaticStorageValueSpelling(symbol, record.name)
                   : record.name;
   return spelling;
@@ -2080,7 +2082,9 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       if (record->kind != SymbolKind::GlobalVariable) {
         continue;
       }
-      std::string spelling = cppProgramStorageSpelling(*record, place.symbol);
+      std::string spelling = cppProgramStorageSpelling(
+          *record, place.symbol,
+          mir.findForeignStorage(place.symbol) != nullptr);
       if (spelling.empty()) {
         continue;
       }

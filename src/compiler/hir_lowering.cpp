@@ -122,6 +122,7 @@ public:
     } else {
       seedDeclarations(source.declarations(), std::nullopt);
     }
+    output.program.foreignStorage_ = baseModel->foreignStorageDeclarations();
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();

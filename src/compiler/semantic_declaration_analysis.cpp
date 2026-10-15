@@ -92,6 +92,17 @@ auto SemanticVisitor::Impl::registerGlobalBorrowStorage(
                                    AccessModifier::Public, false,
                                    variable->isStatic());
     }
+    if (variable->linkage() == LanguageLinkage::C) {
+      semanticModel.recordForeignStorage(
+          {.symbol = symbol,
+           .type = type,
+           .access = variable->isMutable() ? AccessMode::Mutable
+                                           : AccessMode::ReadOnly,
+           .externalSymbol =
+               variable->nativeLinkName()
+                   ? std::string(variable->nativeLinkName()->name())
+                   : variable->name().lexeme});
+    }
     globalBorrowStorage[name].push_back(
         {.declaration = variable,
          .sourceUnit = sourceUnit,
