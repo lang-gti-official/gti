@@ -35591,8 +35591,18 @@ public:
                                                  value.id)) {
         continue;
       }
-      if (borrowedPayloadExtract(facts.body, value.id))
+      if (const auto *extract = borrowedPayloadExtract(facts.body, value.id)) {
+        if (extract->payloadExtractionKind &&
+            isStoredReferenceExtraction(*extract->payloadExtractionKind)) {
+          // Capture the selected external address at the extraction, before
+          // a consuming extraction retires the enum shell. Re-evaluating the
+          // field at a later Borrow would read a dead carrier.
+          writeIndent();
+          output << accessTypeSpelling(value.info.type, value.info.access)
+                 << " *__gti_payload_reference_v_" << value.id << "{};\n";
+        }
         continue;
+      }
       if (payloadEnumArgumentMoveStage(program, facts.body, value.id) ||
           payloadEnumArgumentMoveStageForStagedValue(program, facts.body,
                                                      value.id) ||
@@ -38169,6 +38179,18 @@ private:
     }
   }
 
+  void
+  emitBorrowedPayloadPlace(const MirInstruction &extract,
+                           const std::vector<MirPlaceProjection> &projections) {
+    if (extract.payloadExtractionKind &&
+        isStoredReferenceExtraction(*extract.payloadExtractionKind)) {
+      output << "(*__gti_payload_reference_v_" << *extract.result << ')';
+    } else {
+      emitPayloadExtractExpression(extract);
+    }
+    emitFieldProjectionChain(extract.info.type, projections, 0);
+  }
+
   // The final consuming extraction of an arm carries the subject binding's
   // TransferOut: every field of the active alternative has moved into the
   // arm's bindings, so end the drained enum shell's C++ lifetime without its
@@ -38555,10 +38577,21 @@ private:
           << "// transparent class identity; MIR retains lifecycle transfer\n";
       return;
     }
-    if (instruction.result &&
-        borrowedPayloadExtract(facts.body, *instruction.result)) {
-      output << "// MIR active payload place publishes at its Borrow\n";
-      return;
+    if (instruction.result) {
+      if (const auto *extract =
+              borrowedPayloadExtract(facts.body, *instruction.result)) {
+        if (extract->payloadExtractionKind &&
+            isStoredReferenceExtraction(*extract->payloadExtractionKind)) {
+          output << "__gti_payload_reference_v_" << *instruction.result
+                 << " = std::addressof(";
+          emitPayloadExtractExpression(instruction);
+          output << ");\n";
+          retireConsumedPayloadSubject(facts, instruction);
+        } else {
+          output << "// MIR active payload place publishes at its Borrow\n";
+        }
+        return;
+      }
     }
     if (instruction.operation == MirOperation::PayloadConstruct &&
         instruction.result) {
@@ -39764,8 +39797,7 @@ private:
         if (const auto *extract =
                 borrowedPayloadExtract(facts.body, source->value)) {
           output << "__gti_mir_loan_" << loan->id << " = std::addressof(";
-          emitPayloadExtractExpression(*extract);
-          emitFieldProjectionChain(extract->info.type, source->projections, 0);
+          emitBorrowedPayloadPlace(*extract, source->projections);
           output << ");\n";
           return;
         }
@@ -48458,8 +48490,7 @@ private:
     if (place.root == MirPlaceRootKind::Value) {
       if (const auto *extract =
               borrowedPayloadExtract(facts.body, place.value)) {
-        emitPayloadExtractExpression(*extract);
-        emitFieldProjectionChain(extract->info.type, place.projections, 0);
+        emitBorrowedPayloadPlace(*extract, place.projections);
         return;
       }
     }
