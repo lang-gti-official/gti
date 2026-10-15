@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.4 — Member calls on conditional values without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called directly on a `?:`
+  whose arms produce a class without a destructor, such as
+  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
+  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
+  methods (including ones that can fail or that consume a moved value), arms
+  that copy a variable or construct the class, and mixtures of these.
+
 ## 0.440.3 — Conditional results with checked arm arguments
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
