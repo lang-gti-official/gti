@@ -66,6 +66,11 @@ int main() {
     copy = native::relay_native(native::record);
     copy = relay(native::record);
     native::record = copy;
+    native::record = native::relay_native(native::other);
+    native::wrapper.record = native::relay_native(native::record);
+    native::record = std::move(copy);
+    mut Record moved_to_field = native::other;
+    native::wrapper.record = std::move(moved_to_field);
     native::epoch = native::callback(previous);
     return int(native::counter + native::record.value + native::epoch);
   }
