@@ -22913,15 +22913,36 @@ ownedResultFieldViewSlot(const MirProgram &program,
 // A moved callable receiver is materialized at its Move instruction, not at
 // invocation. Its existing Value obligation owns cleanup after the complete
 // expression (or on a defined-failure edge); the receiver stage only aliases
-// it.
+// it. A move whose full expression has no internal merge materializes in the
+// moved value's own Value-rooted place. A move inside one arm of a
+// conditional expression or a short-circuit operand instead names, as its
+// destination, the hidden temporary that carries the obligation through the
+// merge; the full-expression Drops after the merge are then conditional on
+// the arm that ran.
 [[nodiscard]] const MirPlace *consumedReceiverValueSlot(const MirBody &body,
                                                         MirValueId valueId) {
   const auto *value = body.findValue(valueId);
   const auto *move =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
-  const auto *drop = value == nullptr
-                         ? nullptr
-                         : uniqueValueDrop(body, valueId, value->info.type);
+  const bool branchOnly = move != nullptr && move->destination.has_value();
+  const MirDropObligation *drop = nullptr;
+  if (value != nullptr && !branchOnly) {
+    drop = uniqueValueDrop(body, valueId, value->info.type);
+  } else if (value != nullptr && move->lifecycle.size() == 1) {
+    for (const MirDropObligation &candidate : body.dropObligations) {
+      if (candidate.place != *move->destination)
+        continue;
+      if (drop != nullptr)
+        return nullptr;
+      drop = &candidate;
+    }
+    if (drop != nullptr && (drop->id != move->lifecycle.front().target ||
+                            drop->kind != MirDropObligationKind::Value ||
+                            drop->value != move->hirValue ||
+                            drop->dropType.type != value->info.type ||
+                            !drop->dropType.requiresActiveCleanup))
+      return nullptr;
+  }
   const auto *slot = drop == nullptr ? nullptr : body.findPlace(drop->place);
   if (value == nullptr ||
       (value->info.type.kind != SemanticType::Class &&
@@ -22936,7 +22957,11 @@ ownedResultFieldViewSlot(const MirProgram &program,
       move->ownership->before != OwnershipStateSet::Available ||
       move->ownership->after != OwnershipStateSet::Moved || drop == nullptr ||
       drop->fullExpression == 0 || drop->initiallyActive || slot == nullptr ||
-      slot->root != MirPlaceRootKind::Value || slot->value != valueId ||
+      (branchOnly
+           ? slot->root != MirPlaceRootKind::Temporary ||
+                 slot->temporary == 0 || slot->value != 0 ||
+                 slot->sourceValue != move->hirValue || slot->initiallyAvailable
+           : slot->root != MirPlaceRootKind::Value || slot->value != valueId) ||
       !slot->projections.empty() || slot->type != value->info.type ||
       move->lifecycle.size() != 1 ||
       move->lifecycle.front().target != drop->id ||
@@ -22951,7 +22976,7 @@ ownedResultFieldViewSlot(const MirProgram &program,
     else
       uses.push_back(use);
   }
-  if (lifetimeRoots != 1)
+  if (lifetimeRoots != (branchOnly ? 0 : 1))
     return nullptr;
   const MirInstruction *call = nullptr;
   MirValueId receiverValue = valueId;
@@ -22990,16 +23015,43 @@ ownedResultFieldViewSlot(const MirProgram &program,
       call->receiver->value != receiverValue ||
       call->receiver->type != value->info.type)
     return nullptr;
+  // A Value-rooted slot belongs to its value by construction. The hidden
+  // temporary is only an identity, so prove it is this move's alone: written
+  // by the Move, read by nothing, and ended only by Drops of its obligation,
+  // at least one of them on the ordinary path out of the full expression.
+  std::size_t scheduledDrops = 0;
   for (const auto &block : body.blocks) {
-    for (const auto &instruction : block.instructions)
+    for (const auto &instruction : block.instructions) {
+      const bool dropsSlot = instruction.kind == MirInstructionKind::Drop &&
+                             instruction.lifecycle.size() == 1 &&
+                             instruction.lifecycle.front().source == drop->id;
+      if (branchOnly &&
+          ((instruction.destination == slot->id && &instruction != move &&
+            !dropsSlot) ||
+           instruction.successResultDestination == slot->id ||
+           (instruction.receiver && instruction.receiver->place == slot->id) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       [&](const MirOperand &operand) {
+                         return operand.place == slot->id;
+                       })))
+        return nullptr;
+      if (dropsSlot && instruction.destination == slot->id &&
+          !instruction.lifecycle.front().failureCleanup)
+        ++scheduledDrops;
       for (const auto &event : instruction.lifecycle)
         if (event.source == drop->id &&
             event.kind != MirLifecycleEventKind::Drop)
           return nullptr;
+    }
+    if (branchOnly && block.terminator.value &&
+        block.terminator.value->place == slot->id)
+      return nullptr;
     for (const auto &event : block.terminator.successLifecycle)
       if (event.source == drop->id || event.target == drop->id)
         return nullptr;
   }
+  if (branchOnly && scheduledDrops == 0)
+    return nullptr;
   return slot;
 }
 
@@ -24527,6 +24579,12 @@ lifetimeSlotPlace(const MirProgram &program,
     if (directTemporaryBorrowForSlot(body, place)) {
       return true;
     }
+    // A receiver moved inside one conditional arm or short-circuit operand
+    // materializes in the hidden temporary that carries its obligation
+    // through the merge.
+    for (const MirValueId value : valuesWithSource(body, place.sourceValue))
+      if (consumedReceiverValueSlot(body, value) == &place)
+        return true;
     if (conditionalClassReturnJoin(body, place)) {
       return true;
     }
@@ -34050,7 +34108,8 @@ public:
         continue;
       }
       if (consumedReceiverValueSlot(facts.body, value.id)) {
-        // The moved receiver already has its exact Value-rooted lifetime slot.
+        // The moved receiver already has its exact lifetime slot: its
+        // Value-rooted place, or the conditional temporary it moves into.
         continue;
       }
       if (valueRootedMoveAssignmentSlot(program, representations, facts.body,
