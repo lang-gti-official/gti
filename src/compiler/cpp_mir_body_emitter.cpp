@@ -29099,8 +29099,9 @@ struct PassiveCAbiCallValueResult {
 
 // A passive native result has no result cleanup identity. Its exact consumer
 // may be a bare assignment, one payload field, an unchanged return following
-// only passive cleanup, or discard. Keep production at the Call rather than inventing construction
-// policy or moving foreign effects to a later source boundary.
+// only passive cleanup, or discard. Keep production at the Call rather than
+// inventing construction policy or moving foreign effects to a later source
+// boundary.
 [[nodiscard]] PassiveCAbiCallValueResult
 passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
                            MirValueId valueId) {
@@ -29162,9 +29163,8 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
     const auto *payload = findInstruction(body, use.instruction);
     const auto *enumeration =
         payload ? program.findPayloadEnum(payload->info.type) : nullptr;
-    const auto *result = payload && payload->result
-                             ? body.findValue(*payload->result)
-                             : nullptr;
+    const auto *result =
+        payload && payload->result ? body.findValue(*payload->result) : nullptr;
     const auto *produced = body.findBlock(value->definitionBlock);
     const BodyDominance dominance(body);
     const bool noStorage =
@@ -29178,7 +29178,8 @@ passiveCAbiCallValueResult(const MirProgram &program, const MirBody &body,
     if (payload && enumeration && result && produced && dominance &&
         noStorage && payload->kind == MirInstructionKind::Compute &&
         payload->operation == MirOperation::PayloadConstruct &&
-        payload->enumOwner == enumeration->declaration && payload->enumVariant &&
+        payload->enumOwner == enumeration->declaration &&
+        payload->enumVariant &&
         *payload->enumVariant < enumeration->variants.size() &&
         payload->operands.size() ==
             enumeration->variants[*payload->enumVariant].payloadTypes.size() &&
