@@ -94,6 +94,17 @@ int main() {
   lang::MirProgramTestAccess::enums(badMir)[1].type = left.type;
   expect(!lang::verifyMirProgram(badMir).valid(),
          "MIR rejects duplicated or cross-instance enum metadata");
+  auto cyclicMir = frontend.mir;
+  auto &cyclicEnum = lang::MirProgramTestAccess::enums(cyclicMir).front();
+  cyclicEnum.variants[1].payloadTypes[0] = cyclicEnum.type;
+  const auto cyclicVerification = lang::verifyMirProgram(cyclicMir);
+  expect(!cyclicVerification.valid() &&
+             std::any_of(cyclicVerification.errors.begin(),
+                         cyclicVerification.errors.end(), [](const auto &error) {
+                           return error.message.find("inline layout") !=
+                                  std::string::npos;
+                         }),
+         "MIR rejects forged recursive enum layout before deriving cleanup");
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto leftName = lang::cppConcreteEnumName(lowered, left.type);

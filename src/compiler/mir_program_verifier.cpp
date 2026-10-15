@@ -6176,11 +6176,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
             exact && field != SemanticType::Unknown &&
             field != SemanticType::Void && fieldActive &&
             *fieldActive == variant.payloadRequiresActiveCleanup[fieldIndex];
-        // Active alternatives enter through concrete class instances, which
-        // carry their own partial construction and recursive cleanup recipe.
-        // Direct non-class owning carriers remain outside this contract.
-        exact = exact && (!variant.payloadRequiresActiveCleanup[fieldIndex] ||
-                          field.kind == SemanticType::Class);
+        // All active fields use the same independently derived recursive
+        // cleanup recipes. Construction below must transfer each exact
+        // field obligation into the result, irrespective of its nominal kind.
         active = active || variant.payloadRequiresActiveCleanup[fieldIndex];
       }
     }
@@ -14745,6 +14743,67 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
         {.bodyKind = MirBodyKind::Module,
          .message = "MIR verification component set is incomplete or invalid"});
     return result;
+  }
+
+  // Prove inline sum containment finite before any recursive lifecycle query.
+  // Type arguments alone are not storage edges: follow exact variant fields,
+  // ordinary class fields/bases and inline builtin aggregates, but never an
+  // owning pointer's pointee. This also makes forged enum cycles fail closed
+  // instead of recursing while deriving a cleanup recipe.
+  std::vector<SemanticType> activeLayouts;
+  std::vector<SemanticType> completeLayouts;
+  const auto finiteLayout = [&](const auto &self,
+                                const SemanticType &type) -> bool {
+    if (std::find(completeLayouts.begin(), completeLayouts.end(), type) !=
+        completeLayouts.end())
+      return true;
+    if (std::find(activeLayouts.begin(), activeLayouts.end(), type) !=
+        activeLayouts.end())
+      return false;
+    activeLayouts.push_back(type);
+    bool finite = true;
+    if (const auto *enumeration = program.findPayloadEnum(type)) {
+      for (const auto &variant : enumeration->variants)
+        for (const auto &field : variant.payloadTypes)
+          finite = finite && self(self, field);
+    } else if (type.kind == SemanticType::Array ||
+               type.kind == SemanticType::Expected ||
+               type.kind == SemanticType::Unexpected) {
+      for (const auto &part : type.arguments)
+        finite = finite && self(self, part);
+    } else if (type.kind == SemanticType::Class) {
+      const auto owner = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == type; });
+      if (owner == program.classInstances().end()) {
+        finite = false;
+      } else {
+        for (const auto &base : owner->structuralBases)
+          if (!base.interface)
+            finite = finite && self(self, base.type);
+        for (const auto &field : owner->declaredFields)
+          finite = finite && self(self, field.type);
+        if (owner->compilerCapability ==
+            CompilerCapabilityTypeKind::OptionalStorage)
+          for (const auto &part : type.arguments)
+            finite = finite && self(self, part);
+      }
+    } else if (type.kind == SemanticType::Lambda && type.hasLambdaShape()) {
+      for (const auto &capture : type.lambdaCaptureTypes())
+        finite = finite && self(self, capture);
+    }
+    activeLayouts.pop_back();
+    if (finite)
+      completeLayouts.push_back(type);
+    return finite;
+  };
+  for (const auto &enumeration : program.payloadEnums()) {
+    if (!finiteLayout(finiteLayout, enumeration.type)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Module,
+           .message = "payload-enum inline layout is recursive or unresolved"});
+      return result;
+    }
   }
 
   const auto validScalarIdentity = [&](const auto &self,

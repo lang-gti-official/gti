@@ -74,9 +74,14 @@ auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
   if (std::find(active.begin(), active.end(), type) != active.end())
     return true;
   for (auto cursor = active.rbegin(); cursor != active.rend(); ++cursor) {
-    if (cursor->kind != SemanticType::Class)
+    if (cursor->kind != SemanticType::Class &&
+        cursor->kind != SemanticType::Enum)
       continue;
-    if (cursor->classId == type.classId) {
+    const bool samePrimary = cursor->kind == type.kind &&
+                            (type.kind == SemanticType::Class
+                                 ? cursor->classId == type.classId
+                                 : cursor->enumId == type.enumId);
+    if (samePrimary) {
       const bool concreteValues =
           !type.valueArguments.empty() &&
           std::all_of(type.valueArguments.begin(), type.valueArguments.end(),
@@ -94,6 +99,10 @@ auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
     }
     if (const ClassInfo *owner = classInfo(*cursor);
         owner != nullptr && owner->genericParameters.empty())
+      return false;
+    if (cursor->kind == SemanticType::Enum && cursor->enumId != 0 &&
+        cursor->enumId <= enums.size() &&
+        enums[cursor->enumId - 1].genericParameters.empty())
       return false;
   }
   return false;
@@ -186,8 +195,11 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
     return cached->state == ActiveCleanupState::Present;
   }
 
-  if (type.kind == SemanticType::Class) {
-    if (type.classId == 0 || type.classId > classes.size()) {
+  if (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) {
+    if ((type.kind == SemanticType::Class &&
+         (type.classId == 0 || type.classId > classes.size())) ||
+        (type.kind == SemanticType::Enum &&
+         (type.enumId == 0 || type.enumId > enums.size()))) {
       return false;
     }
     if (nonDecreasingNominalRecurrence(type, query.activeTypes)) {
@@ -362,9 +374,12 @@ auto SemanticVisitor::Impl::typeCapabilities(
     }
     ConcurrencyCapabilities result{.transferCapable = true,
                                    .shareCapable = true};
+    if (nonDecreasingNominalRecurrence(type, visiting))
+      return {};
     const auto concrete = enumTypeFor(type);
     if (!concrete)
       return {};
+    visiting.push_back(type);
     for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const ConcurrencyCapabilities component =
@@ -374,6 +389,7 @@ auto SemanticVisitor::Impl::typeCapabilities(
         result.shareCapable = result.shareCapable && component.shareCapable;
       }
     }
+    visiting.pop_back();
     return result;
   }
   case SemanticType::Array:
@@ -673,10 +689,17 @@ auto SemanticVisitor::Impl::typeTraits(
       type.enumId <= enums.size() && enums[type.enumId - 1].payload) {
     SemanticTypeTraits traits = semanticTraits(type);
     traits.relocation = RelocationKind::Structural;
+    if (nonDecreasingNominalRecurrence(type, visiting)) {
+      traits.copyable = traits.movable = false;
+      traits.copyAssignable = traits.moveAssignable = false;
+      traits.relocation = RelocationKind::Unavailable;
+      return traits;
+    }
     ActiveCleanupQuery cleanupQuery;
     const auto concrete = enumTypeFor(type);
     if (!concrete)
       return traits;
+    visiting.push_back(type);
     for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const SemanticTypeTraits component = typeTraits(payload, visiting);
@@ -700,6 +723,7 @@ auto SemanticVisitor::Impl::typeTraits(
           traits.relocation = RelocationKind::Unavailable;
       }
     }
+    visiting.pop_back();
     return traits;
   }
 
