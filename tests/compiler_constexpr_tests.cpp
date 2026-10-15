@@ -3263,6 +3263,34 @@ void testConstexprReadOnlyReferences() {
   expect(forwarded && forwarded.value == arguments.front(),
          "a returned reference exposes the exact referent value, not a host "
          "address or a persistable constant reference");
+  const std::array<lang::ConstantValue, 1> textArguments{
+      std::string("a\0\xc3\xa9", 4)};
+  const auto textChecksum = lang::evaluateMirConstantFunction(
+      result.mir, functionId("text_checksum"), textArguments);
+  expect(textChecksum &&
+             std::get<lang::ConstantInteger>(*textChecksum.value).magnitude ==
+                 461,
+         "constant text references retain the verified owner witness while "
+         "observing interpreter-owned literal bytes");
+  auto missingTextOwner = result.mir;
+  auto *textFunction = const_cast<lang::MirFunctionInstance *>(
+      missingTextOwner.findFunctionInstance(functionId("text_checksum")));
+  bool removedOwner = false;
+  if (textFunction) {
+    for (auto &loan : textFunction->body.loans) {
+      if (loan.kind == lang::MirLoanKind::Parameter && loan.storedDependency) {
+        loan.storedDependency = 0;
+        removedOwner = true;
+        break;
+      }
+    }
+  }
+  const auto rejectedText = lang::evaluateMirConstantFunction(
+      missingTextOwner, functionId("text_checksum"), textArguments);
+  expect(
+      removedOwner && !rejectedText &&
+          rejectedText.detail.find("verified MIR") != std::string::npos,
+      "constexpr must verify the text-owner link even for literal arguments");
   for (std::size_t budget = 0; evaluated && budget < evaluated.steps;
        ++budget) {
     const auto limited = lang::evaluateMirConstantFunction(result.mir, work, {},

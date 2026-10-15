@@ -1864,6 +1864,12 @@ private:
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
 
+  [[nodiscard]] std::vector<
+      std::pair<std::size_t, const ConstructorInitializer *>>
+  ownerlessTextConstructorInputs(
+      const SemanticType &type, const ConstructorDecl *constructor,
+      std::span<const SemanticType> parameterTypes) const;
+
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,
               AccessMode access = AccessMode::ReadOnly) const;
