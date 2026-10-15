@@ -6554,9 +6554,13 @@ auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
 auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
     const CallableCandidate &function) const -> bool {
   if (function.ownerClass == 0 || function.staticMember ||
-      function.virtualMethod || function.declaration == nullptr) {
+      function.declaration == nullptr) {
     return false;
   }
+  // Dispatch selects which body runs, not where the receiver lives: every
+  // override shares the selected member's receiver qualifier and result
+  // contract, so a virtual member borrows the materialized temporary exactly
+  // as a non-virtual one does.
   // A nonescaping read observation keeps the fresh owner alive through the
   // full expression. The ordinary borrow-origin checks still reject storing
   // or returning a view/reference whose temporary owner would expire.
@@ -6668,14 +6672,11 @@ auto SemanticVisitor::Impl::reportMutableReceiverFailure(
   }
 
   std::string reason;
-  if (function.virtualMethod) {
-    reason = "Virtual dispatch on a temporary receiver is not "
-             "supported by the bounded temporary materialization model.";
-  } else if (function.returnType.kind == SemanticType::Reference ||
-             function.returnBorrowOrigin != BorrowOriginKind::None ||
-             typeTraits(function.returnType).containsBorrowedState ||
-             (typeTraits(assessment.type).containsBorrowedState &&
-              !ephemeralBorrowResultSupported(function))) {
+  if (function.returnType.kind == SemanticType::Reference ||
+      function.returnBorrowOrigin != BorrowOriginKind::None ||
+      typeTraits(function.returnType).containsBorrowedState ||
+      (typeTraits(assessment.type).containsBorrowedState &&
+       !ephemeralBorrowResultSupported(function))) {
     reason = "A temporary receiver cannot produce a reference, pointer-like "
              "value, or value containing tracked borrowed state.";
   } else {

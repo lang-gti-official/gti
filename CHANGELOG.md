@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.7 — Reproducible generated names and conformance diagnostics
+## 0.440.1 — Reproducible generated names and conformance diagnostics
 
 - Generated C++ identifiers remain the same when a project or its standard
   library moves to another directory. Distinct source units retain distinct
@@ -17,6 +17,21 @@ for what minor and patch releases mean.
 - Conformance block header errors are reported once, independently of the
   number of operations. An indirectly included concept retains its declaration
   location and direct-include suggestion even when the block has no operations.
+
+## 0.440.0 — Virtual method calls on temporaries
+
+- A temporary can now call any `virtual` method, override or interface
+  implementation, the same way it already called ordinary methods:
+  `Tracked t = Maker().make();`, `kept(Maker().make())`, the field default
+  `Tracked kept = Maker().make();` and `Counting(4).build(1)` through a `mut`
+  interface method. The selected override still runs, and the temporary is
+  destroyed at the end of the full expression, also when the override fails.
+  Read-only calls previously stopped with an internal compiler error
+  (`GTI-B0001`); `mut` calls were rejected with `GTI-S2081` ("Virtual dispatch
+  on a temporary receiver is not supported").
+- Fix the internal compiler error ("failed to construct valid MIR") when a
+  temporary of a derived class calls a method it inherits without overriding,
+  such as `Derived().base_method()`.
 
 ## 0.439.6 — Borrowed arguments before a conditional whose test can fail
 

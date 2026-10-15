@@ -6500,7 +6500,16 @@ that fails again during that cleanup reports the secondary failure.
 receiver stage as an alias of its full-expression slot. It refuses forged
 handoffs that MIR verification also rejects: a slot outside any full
 expression, a Move that activates nothing, a transfer at invocation and a
-prepared parameter. Ownership
+prepared parameter. `testGenericInstanceSpecialMemberRows` in the same suite
+builds `maybe<T>` and `box<T>` over a move-only payload without a default
+constructor and over `int`. Each class row's boundary, copy-construction and
+copy-assignment proofs follow its own sealed instance rather than the generic
+declaration, and they agree with the copy and default constructors its emitted
+concrete class spells. `testConcreteApplicationSpecialMembers` in the
+declarations suite checks the same applications' HIR and MIR statuses. A
+default constructor whose `std::default_initializable<T>` requirement fails is
+`Deleted` on `box<Tracked>`, while `box<int>` and the open primary keep it, and
+default construction of `box<Tracked>` is rejected. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
@@ -6892,6 +6901,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, owning-field replacement, local cleanup failure, and secondary destructor failure, with exact cleanup order and source sites in 70 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
 | `constructor_member_call_field_runtime` | member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: failure-free borrowed receivers (by-value, read-only reference and `mut` reference parameters), consuming receivers moved from a parameter (including a cleanup-free one, which the call transfers) or a fresh temporary, a generic owner, field declaration defaults, and two member-call fields; a failing consuming call publishes nothing and cleans up its named or fresh receiver, a failing call on a transferred cleanup-free receiver rolls back the earlier published field, a later initializer failure rolls the published field back, and a consumed receiver whose destructor fails after publication rolls the field back, with the secondary failure reported when that rollback fails too |
 | `constructor_virtual_call_field_runtime` | virtual member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan through the transformed status ABI: a family no member of which fails, a base and a derived override through a base reference, an override selected through a derived reference, an interface contract root through a `mut` reference, a raising override, consuming members on a moved parameter, a moved cleanup-free parameter (a prepared input) and a fresh temporary, a generic owner, a field declaration default on a namespace-scope object, and two virtual-call fields; a failing override publishes nothing and a later initializer failure rolls the published field back |
+| `virtual_temporary_receiver_runtime` | non-consuming virtual member calls on fresh temporary receivers across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a generated-default producer in a function body, a member initializer, a field declaration default and a constructor-body assignment, an override, an inherited virtual and an inherited non-virtual member on a derived temporary, a virtual `operator()`, receivers in conditional arms and a conditional-joined receiver, a mutable interface override and a raising override in a function body and in a member initializer; every receiver is destroyed once at the end of its full expression in reverse construction order, and a failing override destroys its receiver and publishes nothing |
 | `borrowed_argument_fallible_condition_runtime` | a borrowed argument or receiver kept across a later conditional argument whose test or arm is a call that can fail, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a free function, a constructor, a method on the borrowed receiver and a local lambda consume the arguments; the test borrows another local, reads the borrowed local itself, runs a read or `mut` method on another receiver, or compares a returned text view; arms that select a text view; a `mut` borrowed argument and two borrowed arguments; a failing test or arm destroys each live local once, in reverse order, and nothing that was not yet constructed |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
@@ -7464,7 +7474,12 @@ mutable-only, paired-overload, and reusable `operator()` cases. It asserts the
 semantic receiver mode, HIR temporary-borrow role, exact MIR producer/place,
 `BorrowRead`/`BorrowWrite` stage, target qualifier, and single full-expression
 drop, then forges read-only storage, a mismatched qualifier, and a missing drop
-marker. `mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
+marker. `testVirtualTemporaryReceivers` covers virtual, override,
+interface-override, inherited and virtual `operator()` members with the same
+semantic/HIR/MIR assertions, then forges a statically dispatched virtual
+member, a table-dispatched non-virtual member, and a member whose owner lies
+outside the temporary's class hierarchy.
+`mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
 receiver cleanup and that producer failure does not activate a receiver drop.
