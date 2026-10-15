@@ -2162,7 +2162,13 @@ public:
       storage_error("verified MIR lifetime slot was dropped while empty");
     }
     engaged_ = false;
-    std::destroy_at(std::launder(slot()));
+    // Retiring a trivial representation needs no destructor call. Its C++
+    // lifetime may end when construction reuses the storage or storage is
+    // released; get() still rejects the retired MIR slot immediately. Avoid
+    // imposing an unnecessary lifetime-end barrier on native optimization.
+    if constexpr (!std::is_trivially_destructible_v<T>) {
+      std::destroy_at(std::launder(slot()));
+    }
   }
 
   [[nodiscard]] bool

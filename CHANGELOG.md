@@ -24,6 +24,9 @@ for what minor and patch releases mean.
 - General reference-bearing enum payloads remain unsupported: conditional
   loans and complete interprocedural dependency transport are still in progress.
 - Examples 164 and 165 demonstrate composition and borrowed results.
+- Avoid a native optimization barrier when retiring trivial lifetime slots,
+  preserving conditional-result loop performance without relaxing slot guards
+  or changing nontrivial cleanup.
 
 ## 0.442.1 — Conditional and lambda class results
 
