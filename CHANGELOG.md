@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.4 — String view storage and stored view returns
+## 0.440.5 — String view storage and stored view returns
 
 - Reject constructor initializers that store a dynamic `std::string_view` or
   `c_string` by value without retaining its owner, including generic holders
@@ -38,6 +38,16 @@ for what minor and patch releases mean.
   destroy that object while the view is still in use.
 - A stored view may also be one branch of a function whose other branch
   returns a view tied to its receiver, in the same way a string literal can.
+
+## 0.440.4 — Member calls on conditional values without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called directly on a `?:`
+  whose arms produce a class without a destructor, such as
+  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
+  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
+  methods (including ones that can fail or that consume a moved value), arms
+  that copy a variable or construct the class, and mixtures of these.
 
 ## 0.440.3 — Conditional results with checked arm arguments
 
