@@ -1298,6 +1298,26 @@ struct ExpectedCombinatorInfo {
   LambdaId lambda = 0;
 };
 
+// Prefix `?` through the standard `std::tryable` protocol concept, for an
+// operand other than built-in `expected`. The operand is evaluated once and
+// transported like a by-value argument; `test`, `output` and `residual` are
+// ordinary calls of the selected conformance block's has_value, take_value
+// and take_residual functions. The residual initializes the enclosing
+// callable's return type through `returnConstruction`, or is that type itself.
+struct ResolvedTryablePropagationInfo {
+  SemanticType operandType = SemanticType::Unknown;
+  SemanticType resultType = SemanticType::Unknown;
+  SemanticType residualType = SemanticType::Unknown;
+  SemanticType returnType = SemanticType::Unknown;
+  // A temporary or `std::move(place)` operand is consumed; a named place is
+  // borrowed by the test and copied into the consuming call.
+  bool consumesOperand = false;
+  ResolvedCallInfo test;
+  ResolvedCallInfo output;
+  ResolvedCallInfo residual;
+  std::optional<ResolvedConstructionInfo> returnConstruction;
+};
+
 // A concept with a body, as an associated type projection of it prints:
 // `Concept<Arguments>::name`.
 struct ProtocolConceptSpelling {
@@ -2166,6 +2186,8 @@ public:
   findCollection(const ArrayInitializer &initializer) const;
   [[nodiscard]] const ProtocolConceptSpelling *
   findProtocolConcept(ConceptId id) const;
+  [[nodiscard]] const ResolvedTryablePropagationInfo *
+  findTryablePropagation(const Unary &propagation) const;
 
   [[nodiscard]] const NativeFunctionConversionInfo *
   findNativeFunctionConversion(const Expr &expression) const;
@@ -2496,6 +2518,8 @@ private:
   void recordCollection(const ArrayInitializer &initializer,
                         ResolvedCollectionInfo info);
   void recordProtocolConcept(ConceptId id, ProtocolConceptSpelling spelling);
+  void recordTryablePropagation(const Unary &propagation,
+                                ResolvedTryablePropagationInfo info);
 
   void recordNativeFunctionConversion(const Expr &expression,
                                       NativeFunctionConversionInfo info);
@@ -2716,6 +2740,8 @@ private:
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
       collections;
   std::unordered_map<ConceptId, ProtocolConceptSpelling> protocolConcepts;
+  std::unordered_map<const Unary *, ResolvedTryablePropagationInfo>
+      tryablePropagations;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
   std::unordered_map<const Expr *, ResolvedConstructionInfo>

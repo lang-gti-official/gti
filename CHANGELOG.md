@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.436.0 — Borrowed results through callbacks
+## 0.437.0 — Borrowed results through callbacks
 
 - A lambda can return a read-only reference that borrows exactly one of its
   read-only reference parameters; every `return` must derive from that
@@ -23,12 +23,37 @@ for what minor and patch releases mean.
   result borrows that argument. Erased objects never compete as origins.
 - `[[borrowed_from(name)]]` on a declaration whose result type is a generic
   parameter binds the instances whose result is a checked reference and may
-  name a final parameter pack. Example 159 and the
+  name a final parameter pack. Example 160 and the
   `checked_callable_result_origin` fixture accompany the feature.
 - Fixed: invoking a `std::function_ptr` or `std::function_ref` whose signature
   takes a scalar reference parameter (`int&`) failed in the backend with
   `GTI-B0001`; the invocation now drains that argument's staged borrow like a
   source call.
+
+## 0.436.0 — `?` for any type through `std::tryable`
+
+- Prefix `?` now works on any type with a `std::tryable` conformance block,
+  not only on `expected`. The prelude declares the protocol:
+  `concept tryable<T> { typename value_type; typename residual_type; bool has_value(T& value); value_type take_value(T value); residual_type take_residual(T value); };`.
+- A type opts in from outside its own declaration, with a block such as
+  `for <std::copyable T> concept std::tryable<Checked<T>> { ... }`.
+- `?operand` evaluates the operand once. On success it produces
+  `take_value`'s result. On failure the enclosing function returns
+  `take_residual`'s residual, as `R result = residual;` would initialize its
+  return type.
+  - The residual can be the return type itself, or the return type can take
+    it through one `implicit` constructor.
+  - Earlier temporaries in the expression, then the enclosing scope, are
+    cleaned up first, as for `expected`.
+- The operand is passed like a by-value argument. A temporary or
+  `?std::move(x)` is consumed. A named operand is copied and stays usable,
+  and a named move-only operand asks for `std::move`.
+- A `void` `value_type` makes `?status()` a statement.
+- Generic code can use `?` on a `T` under `requires std::tryable<T>`, and
+  name `std::tryable<T>::value_type`.
+- `expected` keeps its existing rule. Moving it onto the protocol needs
+  patterns over built-in types and origin contracts for its borrowed form
+  ([ADR 029](docs/decisions/029-tryable-propagation.md)).
 
 ## 0.435.1 — Constructors that move a lambda parameter into a field
 
