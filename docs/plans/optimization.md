@@ -98,10 +98,15 @@ per mode, including partial construction and secondary failure.
 Earlier clean GCC 14 evidence at `c959926b` showed a real 2.6% string residual
 (30 pairs, ratio 1.0262, interval 1.0209–1.0289). That compiler predates the
 guarded-retirement change and must not be relabeled as current evidence.
-Its replacement is the retained Linux run
+The replacement attempt is retained as Linux run
 `run-aafde360b7b646bba1306256730cf08e`, source snapshot
 `23c45bcfb0879712d41bca9ec9a96abfcb58478988cce91f19aae459e96ec19e` at
-`bcb67338`; its result must be recorded before closing platform acceptance.
+`bcb67338`: its optimized GCC 14 build passed in 546.55 s, but the benchmark
+never started behind an unrelated full suite. The owner's expedited flight
+wrap-up canceled only this queued task run; successful build logs and canceled
+status were fetched before removing its remote source/build trees. A new
+exact-candidate paired run remains required to close Linux performance
+acceptance; successful compiler construction is not runtime timing evidence.
 The expedited release's full-suite waiver does not waive this distinction or
 turn an unfinished measurement into proof.
 
