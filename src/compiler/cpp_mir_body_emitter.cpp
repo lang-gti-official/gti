@@ -21442,6 +21442,9 @@ virtualFailureCallee(const MirProgram &program,
 // edge and inert lifetime/loan boundaries before one exact return. Share this
 // proof between direct result forwarding and wrapping a class payload: neither
 // representation may publish early across executable work or invent cleanup.
+// A call whose cleanup-free receiver is a prepared input is not forwarded
+// (PreparedReceiverInput::Refused); direct placement then keeps that result
+// in its staged slot.
 [[nodiscard]] const MirBlock *
 passiveResultReturnBlock(const MirBody &body, const MirValue &value,
                          const MirInstruction &producer) {
