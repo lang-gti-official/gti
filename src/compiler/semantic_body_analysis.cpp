@@ -424,6 +424,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     return scope.finish();
   }
   FunctionInfo concreteFunction = *function;
+  concreteFunction.completeReturnBorrow.reset();
   concreteFunction.restoresReferenceResult = false;
   concreteFunction.restoredBorrowFields.clear();
   const GenericSubstitution substitution{.types = instanceTypeSubstitution,
@@ -3390,6 +3391,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   finalizeLoanFlow();
   if (functionInfo != nullptr && !functionErrors()) {
     recordRestoredReferenceResult(*functionInfo);
+    recordCompleteFunctionReturnBorrow(*functionInfo);
   }
   endScope();
   if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
@@ -13200,14 +13202,16 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
   return false;
 }
 
-auto SemanticVisitor::Impl::summarizeFlow(const StmtList &statements) const
-    -> FlowSummary {
+auto SemanticVisitor::Impl::summarizeFlow(
+    const StmtList &statements, std::vector<const ReturnStmt *> *normalReturns,
+    bool structural) const -> FlowSummary {
   FlowSummary result;
   for (const StmtPtr &statement : statements) {
     if (!result.canFallThrough) {
       break;
     }
-    const FlowSummary next = summarizeFlow(statement.get());
+    const FlowSummary next =
+        summarizeFlow(statement.get(), normalReturns, structural);
     result.canFallThrough = next.canFallThrough;
     result.breaksEnclosingControl =
         result.breaksEnclosingControl || next.breaksEnclosingControl;
@@ -13220,16 +13224,18 @@ auto SemanticVisitor::Impl::summarizeFlow(const StmtList &statements) const
   return result;
 }
 
-auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
-    -> FlowSummary {
+auto SemanticVisitor::Impl::summarizeFlow(
+    const Stmt *statement, std::vector<const ReturnStmt *> *normalReturns,
+    bool structural) const -> FlowSummary {
   if (statement == nullptr) {
     return {};
   }
   if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
+    const bool returns = !expressionNeverReturns(returned->value().get());
+    if (returns && normalReturns)
+      normalReturns->push_back(returned);
     return {.canFallThrough = false,
-            .normalReturn = expressionNeverReturns(returned->value().get())
-                                ? nullptr
-                                : returned};
+            .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
     return {.canFallThrough =
@@ -13247,11 +13253,13 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
                 control->keyword().kind == TokenKind::CONTINUE};
   }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
-    return summarizeFlow(block->statements());
+    return summarizeFlow(block->statements(), normalReturns, structural);
   }
   if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
     const StmtList *branch = conditional->activeBranch(target);
-    return branch == nullptr ? FlowSummary{} : summarizeFlow(*branch);
+    return branch == nullptr
+               ? FlowSummary{}
+               : summarizeFlow(*branch, normalReturns, structural);
   }
   if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
     if (expressionNeverReturns(ifStatement->condition().get())) {
@@ -13260,18 +13268,25 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     if (ifStatement->isConstexpr()) {
       if (const std::optional<bool> selected =
               semanticModel.findConstexprBranch(*ifStatement)) {
-        return *selected ? summarizeFlow(ifStatement->thenBranch().get())
-                         : summarizeFlow(ifStatement->elseBranch().get());
+        return *selected ? summarizeFlow(ifStatement->thenBranch().get(),
+                                         normalReturns, structural)
+                         : summarizeFlow(ifStatement->elseBranch().get(),
+                                         normalReturns, structural);
       }
       return {};
     }
     if (const std::optional<bool> condition =
-            constantBoolean(ifStatement->condition())) {
-      return *condition ? summarizeFlow(ifStatement->thenBranch().get())
-                        : summarizeFlow(ifStatement->elseBranch().get());
+            constantBoolean(ifStatement->condition());
+        condition && !structural) {
+      return *condition ? summarizeFlow(ifStatement->thenBranch().get(),
+                                        normalReturns, structural)
+                        : summarizeFlow(ifStatement->elseBranch().get(),
+                                        normalReturns, structural);
     }
-    const FlowSummary thenFlow = summarizeFlow(ifStatement->thenBranch().get());
-    const FlowSummary elseFlow = summarizeFlow(ifStatement->elseBranch().get());
+    const FlowSummary thenFlow = summarizeFlow(ifStatement->thenBranch().get(),
+                                               normalReturns, structural);
+    const FlowSummary elseFlow = summarizeFlow(ifStatement->elseBranch().get(),
+                                               normalReturns, structural);
     return {.canFallThrough =
                 thenFlow.canFallThrough || elseFlow.canFallThrough,
             .breaksEnclosingControl = thenFlow.breaksEnclosingControl ||
@@ -13296,7 +13311,8 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
       for (const SwitchLabel &label : arm.labels) {
         coversEveryValue = coversEveryValue || label.isDefault();
       }
-      const FlowSummary armFlow = summarizeFlow(arm.statements);
+      const FlowSummary armFlow =
+          summarizeFlow(arm.statements, normalReturns, structural);
       if (normalReturn == nullptr) {
         normalReturn = armFlow.normalReturn;
       }
@@ -13310,25 +13326,27 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
             .normalReturn = normalReturn};
   }
   if (const auto *forStatement = stmtAs<ForStmt>(statement)) {
-    const FlowSummary initializer =
-        summarizeFlow(forStatement->initializer().get());
+    const FlowSummary initializer = summarizeFlow(
+        forStatement->initializer().get(), normalReturns, structural);
     if (!initializer.canFallThrough) {
       return initializer;
     }
     if (expressionNeverReturns(forStatement->condition().get())) {
       return {.canFallThrough = false};
     }
-    const FlowSummary body = summarizeFlow(forStatement->body().get());
+    const bool skipsBody =
+        !structural && constantBoolean(forStatement->condition()) == false;
+    const FlowSummary body =
+        summarizeFlow(forStatement->body().get(),
+                      skipsBody ? nullptr : normalReturns, structural);
     const bool repeatsForever =
         !forStatement->condition() ||
-        constantBoolean(forStatement->condition()) == true;
+        (!structural && constantBoolean(forStatement->condition()) == true);
     return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl,
-            .normalReturn = constantBoolean(forStatement->condition()) == false
-                                ? nullptr
-                                : body.normalReturn};
+            .normalReturn = skipsBody ? nullptr : body.normalReturn};
   }
   if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
-    return summarizeFlow(rangeFor->lowered().get());
+    return summarizeFlow(rangeFor->lowered().get(), normalReturns, structural);
   }
   if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
     const ConstexprForExpansion *expansion =
@@ -13343,31 +13361,34 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     for (const ConstexprForIteration &iteration : expansion->iterations) {
       blocks.push_back(iteration.block);
     }
-    return summarizeFlow(blocks);
+    return summarizeFlow(blocks, normalReturns, structural);
   }
   if (const auto *doWhile = stmtAs<DoWhileStmt>(statement)) {
-    const FlowSummary body = summarizeFlow(doWhile->body().get());
+    const FlowSummary body =
+        summarizeFlow(doWhile->body().get(), normalReturns, structural);
     const bool reachesCondition =
         body.canFallThrough || body.continuesEnclosingLoop;
     return {.canFallThrough =
                 body.breaksEnclosingControl ||
                 (reachesCondition &&
                  !expressionNeverReturns(doWhile->condition().get()) &&
-                 constantBoolean(doWhile->condition()) != true),
+                 (structural || constantBoolean(doWhile->condition()) != true)),
             .normalReturn = body.normalReturn};
   }
   if (const auto *whileStatement = stmtAs<WhileStmt>(statement)) {
     if (expressionNeverReturns(whileStatement->condition().get())) {
       return {.canFallThrough = false};
     }
-    const FlowSummary body = summarizeFlow(whileStatement->body().get());
+    const bool skipsBody =
+        !structural && constantBoolean(whileStatement->condition()) == false;
+    const FlowSummary body =
+        summarizeFlow(whileStatement->body().get(),
+                      skipsBody ? nullptr : normalReturns, structural);
     return {.canFallThrough =
+                structural ||
                 constantBoolean(whileStatement->condition()) != true ||
                 body.breaksEnclosingControl,
-            .normalReturn =
-                constantBoolean(whileStatement->condition()) == false
-                    ? nullptr
-                    : body.normalReturn};
+            .normalReturn = skipsBody ? nullptr : body.normalReturn};
   }
   return {};
 }

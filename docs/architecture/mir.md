@@ -331,6 +331,21 @@ exclusive invocation. Composed carriers retain every dependency and ancestor,
 including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
 
+Function rows retain optional declaration-relative complete result dependency
+contracts. For the initial known-empty enum slice, MIR independently validates
+each declared alternative's exact concrete type, tag and dependency-free
+payload layout, then reconstructs facts at every reachable normal return. The
+actual alternatives must be covered by the declaration contract; additional
+well-typed dependency-free cases are conservative, so optimizer narrowing does
+not change caller lifetime obligations. Unknown return facts and a function
+with no normal return cannot prove this contract. A program-local memoized
+query treats recursive/in-progress callees as unknown; declarations cannot
+justify one another cyclically. Exact direct calls use only independently
+verified target contracts, and failure successors receive no result fact.
+Value-annotation and return-contract checks share the same producer/storage
+dataflow reconstruction. These facts neither establish nor replace ordinary
+loan, access, escape, movement or cleanup proofs.
+
 Version 105/body 86 additionally distinguishes absent borrow-set evidence
 from a complete producer-attached set, including a proven empty set. An empty
 payload construction names its exact concrete enum alternative; MIR checks

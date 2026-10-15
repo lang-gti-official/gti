@@ -717,6 +717,18 @@ struct BorrowedFieldOrigin {
                          const BorrowedFieldOrigin &) = default;
 };
 
+// A complete caller-visible result contract. Origins are declaration-relative
+// parameters/receiver projections, never a callee's local places or loan IDs.
+// Absence means unknown; an empty dependency list still requires the exact
+// typed alternative inventory proved by every reachable normal return.
+struct FunctionBorrowDependencySummary {
+  std::vector<BorrowedFieldOrigin> dependencies;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+
+  friend bool operator==(const FunctionBorrowDependencySummary &,
+                         const FunctionBorrowDependencySummary &) = default;
+};
+
 // A restored referent's abstract checked field dependency. The unsafe exact-T
 // restoration contract certifies these fields belong to the original object;
 // every dependency remains bounded by the input opaque reference witness.
@@ -817,6 +829,7 @@ struct FunctionInfo {
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   // Body-proven restoration of a checked referent from the single opaque
   // return-borrow argument. Never inferred from a signature or public name.
@@ -2557,6 +2570,9 @@ private:
                            std::vector<SemanticLoanDependency> dependencies);
   void recordBorrowDependencySet(const Expr &expression,
                                  SemanticBorrowDependencySet dependencies);
+  // Explicitly unknown in this analysis, including when a base snapshot had
+  // a fact for the same syntax in a different concrete instance.
+  void clearBorrowDependencySet(const Expr &expression);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 
@@ -2788,7 +2804,7 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
-  std::unordered_map<const Expr *, SemanticBorrowDependencySet>
+  std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>

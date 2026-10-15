@@ -1561,8 +1561,15 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
                      : std::optional<std::vector<StoredReferencePath>>{
                            std::move(paths)};
     }
-    if (owner == nullptr || owner->kind == ClassKind::Union ||
-        owner->cAbiRecord || owner->cOpaqueHandle ||
+    // A validated native layout is a complete, passive field inventory. Raw
+    // pointers and native callbacks do not carry checked GTI loans. Traverse
+    // those fields normally; neither an unvalidated record nor an ordinary
+    // union establishes the same completeness guarantee.
+    const bool validatedNativeRecord =
+        owner != nullptr && owner->cAbiRecord && owner->cAbiLayout.has_value();
+    if (owner == nullptr ||
+        (owner->kind == ClassKind::Union && !validatedNativeRecord) ||
+        (owner->cAbiRecord && !validatedNativeRecord) || owner->cOpaqueHandle ||
         // A synchronization guard carries capability-produced exclusive
         // access in addition to its declared shared resource reference.
         // Nested field maps currently preserve the latter, not the former.
@@ -1868,6 +1875,146 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
     }
   }
   return result;
+}
+
+auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
+    const CallableCandidate &function,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments)
+    -> std::optional<FunctionBorrowDependencySummary> {
+  if (function.virtualMethod ||
+      function.returnType.kind != SemanticType::Enum ||
+      containsOpenTypeParameter(function.returnType) || !function.declaration ||
+      function.declaration->hasCLinkage() ||
+      std::any_of(function.parameterTypes.begin(),
+                  function.parameterTypes.end(), containsOpenTypeParameter))
+    return std::nullopt;
+  const auto *declaration = semanticModel.findFunction(function.id);
+  if (!declaration && instanceBaseModel)
+    declaration = instanceBaseModel->findFunction(function.id);
+  if (!declaration || !declaration->bodyDeclaration() ||
+      !declaration->bodyDeclaration()->body())
+    return std::nullopt;
+  const bool concrete = !typeArguments.empty() || !valueArguments.empty() ||
+                        !function.dispatchOwner.arguments.empty() ||
+                        !function.dispatchOwner.valueArguments.empty();
+  if (!concrete && declaration &&
+      declaration->returnType == function.returnType &&
+      declaration->parameterTypes == function.parameterTypes &&
+      (!instanceAnalysisActive || declaration->completeReturnBorrow))
+    return declaration->completeReturnBorrow;
+
+  // Ordinary instance analysis is reused in an isolated worker. Only the
+  // normalized declaration-relative result leaves it: caller scopes/loans and
+  // body-local IDs never enter the cache. An active recursive query is unknown.
+  if (!requestSession.completeReturnQueries)
+    requestSession.completeReturnQueries =
+        std::make_shared<CompleteReturnQueryState>();
+  const auto state = requestSession.completeReturnQueries;
+  const InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Function,
+                                .declaration = function.id,
+                                .classTypes = function.dispatchOwner.arguments,
+                                .classValues =
+                                    function.dispatchOwner.valueArguments,
+                                .types = typeArguments,
+                                .values = valueArguments};
+  for (const auto &entry : state->entries)
+    if (entry->key == key)
+      return entry->complete ? entry->result : std::nullopt;
+  // An unbounded expanding generic recursion has no finite result proof.
+  // Resource exhaustion remains unknown, never a vacuous complete-empty set.
+  if (state->depth >= 32 || state->entries.size() >= 2048)
+    return std::nullopt;
+  auto entry = std::make_shared<CompleteReturnQuery>();
+  entry->key = key;
+  state->entries.push_back(entry);
+  ++state->depth;
+  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
+                                       sources, rawPointerAudit);
+  if (state->idleCatalogs.empty())
+    worker->catalog = catalog.snapshotForInstanceAnalysis();
+  else {
+    worker->catalog = std::move(state->idleCatalogs.back());
+    state->idleCatalogs.pop_back();
+  }
+  worker->semanticModel = semanticModel;
+  worker->valueFlow = valueFlow;
+  for (const auto *definition : constexprDefinitionsAnalyzed)
+    if (declaredBeforeCurrent(definition))
+      worker->constexprDefinitionsAnalyzed.insert(definition);
+  for (const auto *definition : constexprConstructorsAnalyzed)
+    if (declaredBeforeCurrent(definition))
+      worker->constexprConstructorsAnalyzed.insert(definition);
+  worker->genericDefaultConstants = genericDefaultConstants;
+  worker->defaultArgumentSyntax = defaultArgumentSyntax;
+  worker->defaultArgumentDependencies = defaultArgumentDependencies;
+  worker->nextLambdaId = nextLambdaId;
+  worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
+  worker->requestSession.completeReturnQueries = state;
+  const auto analysis = worker->analyzeFunctionInstance(
+      function.id, key.classTypes, key.classValues, key.types, key.values);
+  if (analysis.valid()) {
+    const auto *analyzed = analysis.model.findFunction(function.id);
+    if (analyzed && analyzed->returnType == function.returnType &&
+        analyzed->parameterTypes == function.parameterTypes)
+      entry->result = analyzed->completeReturnBorrow;
+  }
+  state->idleCatalogs.push_back(std::move(worker->catalog));
+  entry->complete = true;
+  --state->depth;
+  return entry->result;
+}
+
+auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
+    const FunctionInfo &function) -> void {
+  // Reanalysis must not retain a primary/earlier body's complete fact when
+  // this body now has unknown, recursive or nonreturning result evidence.
+  const FunctionId id = function.id;
+  FunctionInfo cleared = function;
+  cleared.completeReturnBorrow.reset();
+  if (cleared.declaration)
+    semanticModel.record(*cleared.declaration, cleared);
+  const FunctionDecl *syntax = cleared.bodyDeclaration();
+  if (!syntax || !syntax->body() ||
+      cleared.returnType.kind != SemanticType::Enum ||
+      containsOpenTypeParameter(cleared.returnType) || cleared.neverReturns ||
+      loanFlow.deferredConstexprSelection ||
+      loanFlow.unknownImplicitResultReturn)
+    return;
+
+  // Expression facts were recorded at each return's own evaluation point,
+  // before a later move or replacement could change its binding. Reuse the
+  // existing structural flow walk rather than accumulating mutable state
+  // across nested lambdas, demanded bodies or concrete instance analyses.
+  std::vector<const ReturnStmt *> returns;
+  (void)summarizeFlow(syntax->body()->statements(), &returns, true);
+  if (returns.empty())
+    return;
+  FunctionBorrowDependencySummary summary;
+  for (const auto *returned : returns) {
+    const auto *info = returned->value()
+                           ? semanticModel.findExpression(*returned->value())
+                           : nullptr;
+    const auto complete = completeBorrowDependencySet(returned->value());
+    if (!info || info->type != cleared.returnType || !complete ||
+        !complete->dependencies.empty() ||
+        complete->possibleAlternatives.empty())
+      return;
+    for (const auto &alternative : complete->possibleAlternatives) {
+      if (std::find(summary.possibleAlternatives.begin(),
+                    summary.possibleAlternatives.end(),
+                    alternative) == summary.possibleAlternatives.end())
+        summary.possibleAlternatives.push_back(alternative);
+    }
+  }
+  // Reload after nested body demands and restoration-summary publication.
+  const auto *current = semanticModel.findFunction(id);
+  if (!current || !current->declaration)
+    return;
+  FunctionInfo updated = *current;
+  updated.completeReturnBorrow = std::move(summary);
+  semanticModel.record(*updated.declaration, std::move(updated));
 }
 
 auto SemanticVisitor::Impl::joinedBorrowDependencySets(
@@ -2532,6 +2679,7 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
   instance.returnBorrowParameter = 0;
   instance.returnBorrowParameters.clear();
   instance.returnBorrowFields.clear();
+  instance.completeReturnBorrow.reset();
   instance.returnBorrowPlace.reset();
   const FunctionDecl *syntax = declaration.bodyDeclaration();
   if (syntax == nullptr) {

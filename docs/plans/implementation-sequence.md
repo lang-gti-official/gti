@@ -8323,9 +8323,41 @@ or mutable calls. Incoming loop facts remain unknown until the general
 conditional loop contract is implemented; first-iteration facts are not reused
 for backedges. No loan endpoint or availability check is replaced by this
 value-fact analysis. Nonempty conditional construction/transport and
-declaration-owned result summaries remain incomplete; guards on unsupported
+guarded declaration-owned result summaries remain incomplete; guards on unsupported
 loan/call records fail closed and reference-bearing payload admission stays
 closed.
+
+The next result-summary checkpoint adds declaration-relative, known-empty
+function contracts and exact direct-call transport. Semantic analysis demands
+ordinary bodies independently of declaration order and reanalyzes concrete
+generic queries in isolated workers; unknown, recursive, resource-limited and
+nonreturning results stay unknown. Explicit unknown facts shadow older instance
+snapshots. MIR uses one producer/storage/return reconstruction engine, with
+memoized independent callee proof, rather than trusting a declaration claim.
+Each reachable normal return must refine the declared alternative inventory;
+extra well-typed dependency-free alternatives are conservative and remain valid
+after optimizer branch elimination. Missing actual alternatives, duplicate or
+wrong type/tag/field paths and invented dependencies fail verification. Calls
+publish result facts only on their successful edge. Synthetic early returns
+from propagation currently make the summary unknown until their selected
+residual operation's complete result contract can be instantiated.
+
+This checkpoint is work in progress. Before enabling nonempty contracts, replace
+the provisional per-query depth/entry limits with the existing generic-instance
+resource policy: cycles remain unknown, exhaustion reports the established
+resource diagnostic, and eviction of completed cache entries must only cause
+recomputation, never different acceptance. Recheck the memoized MIR observation
+path and the coordinated schema revision with all affected targets relinked.
+
+Focused optimized macOS evidence covers declaration order, exact generic
+substitution, unknown/mutated inputs, direct/indirect recursion, no-return
+distinction, forged contracts and O0/O3 optimization. This is a prerequisite,
+not completion of reference-bearing result factories: the next increment must
+normalize every guarded external origin/access to a declaration-relative
+parameter/receiver mapping, transport it at calls, and integrate the full
+conditional input inventory and residual-return proof. Normal full-suite,
+platform, native matrix and performance validation apply to final integration;
+the earlier expedited full-suite waiver is no longer active.
 
 Example 165's original shared and mutable class-wrapper paths now compile and
 run at O2 with the expected output. General constructor-staging fixes admit
