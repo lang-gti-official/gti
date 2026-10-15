@@ -4950,6 +4950,37 @@ enum class PreparedReceiverInput { Refused, Admitted };
     const MirBody &body, const MirInstruction &call,
     PreparedReceiverInput receiver = PreparedReceiverInput::Refused);
 
+// A producer that hands prepared inputs (by-value arguments, and a
+// cleanup-free receiver moved out of a place) to its callee transfers each
+// one out at invocation. When it is failure-free, its own result Initialize
+// sits beside those exact TransferOut events; this is that activation. A
+// producer without prepared inputs has its activation as its only event.
+[[nodiscard]] const MirLifecycleEvent *
+preparedInputResultActivation(const MirBody &body,
+                              const MirInstruction &producer) {
+  if (producer.lifecycle.size() == 1)
+    return &producer.lifecycle.front();
+  if (producer.lifecycle.size() < 2 ||
+      !exactPreparedInputTransfers(body, producer,
+                                   PreparedReceiverInput::Admitted))
+    return nullptr;
+  for (const MirLifecycleEvent &event : producer.lifecycle)
+    if (event.kind == MirLifecycleEventKind::Initialize)
+      return &event;
+  return nullptr;
+}
+
+// A producer whose result is activated on its Invoke success edge has no
+// lifecycle event of its own beyond the exact transfers of its prepared
+// inputs.
+[[nodiscard]] bool onlyPreparedInputTransfers(const MirBody &body,
+                                              const MirInstruction &producer) {
+  return producer.lifecycle.empty() ||
+         (producer.successResultDrop &&
+          exactPreparedInputTransfers(body, producer,
+                                      PreparedReceiverInput::Admitted));
+}
+
 [[nodiscard]] bool
 cleanupFreeExpectedClassExtractionProducer(const MirBody &body,
                                            MirValueId valueId);
@@ -6538,12 +6569,17 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // into the temporary's own full-expression obligation. This is the shape
     // produced by owning expected propagation; accepting a bare temporary
     // would otherwise make the writer call `.construct()` on an ordinary C++
-    // local.
+    // local. A producer's exact prepared input transfers do not affect the
+    // result's own activation.
     const bool activatesOnSuccess =
-        definition->successResultDrop && definition->lifecycle.empty() &&
+        definition->successResultDrop &&
+        onlyPreparedInputTransfers(body, *definition) &&
         invokeSuccessActivates(body, *definition,
                                *definition->successResultDrop);
-    if ((!activatesOnSuccess && definition->lifecycle.size() != 1) ||
+    const MirLifecycleEvent *activation =
+        activatesOnSuccess ? nullptr
+                           : preparedInputResultActivation(body, *definition);
+    if ((!activatesOnSuccess && activation == nullptr) ||
         initialize->lifecycle.size() != 1) {
       return nullptr;
     }
@@ -6551,7 +6587,7 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
         activatesOnSuccess
             ? MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
                                 .target = *definition->successResultDrop}
-            : definition->lifecycle.front();
+            : *activation;
     const MirLifecycleEvent &reparented = initialize->lifecycle.front();
     const MirDropObligation *producedDrop =
         body.findDropObligation(produced.target);
@@ -22903,14 +22939,16 @@ conditionalTemporaryViewedResult(const MirProgram &program,
       !producer->result || *producer->result != value->id)
     return nullptr;
   // A failure-free producer constructs at its destination and arms the
-  // temporary with its own Initialize event; a transformed one arms the
-  // temporary's obligation on its Invoke success edge.
+  // temporary with its own Initialize event, beside the exact transfers of
+  // any prepared inputs; a transformed one arms the temporary's obligation on
+  // its Invoke success edge.
   const MirDropObligation *drop = nullptr;
-  if (producer->destination && producer->lifecycle.size() == 1) {
-    const MirLifecycleEvent &activation = producer->lifecycle.front();
-    drop = activation.kind == MirLifecycleEventKind::Initialize &&
-                   activation.source == 0 && !activation.failureCleanup
-               ? body.findDropObligation(activation.target)
+  if (const MirLifecycleEvent *activation =
+          producer->destination ? preparedInputResultActivation(body, *producer)
+                                : nullptr) {
+    drop = activation->kind == MirLifecycleEventKind::Initialize &&
+                   activation->source == 0 && !activation->failureCleanup
+               ? body.findDropObligation(activation->target)
                : nullptr;
     if (drop != nullptr && drop->place != *producer->destination)
       drop = nullptr;
