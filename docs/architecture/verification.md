@@ -17,6 +17,10 @@ source-defined JSON adapters and example 026. A text reference does not turn a
 dynamic view into ownerless storage: its character-owner dependency must remain
 live until the last dependent reference retires. A literal exception requires
 independent MIR proof, not merely a cleared borrowed-state trait.
+The existing constexpr reference-observer suite also retains its text-owner
+witnesses: literal bytes are owned by the constant value, while ordinary MIR
+verification still rejects a missing owner link before execution. Nominal
+stored-reference objects remain outside that constant-execution profile.
 
 ## Consuming payload-enum matches (0.438.0)
 
