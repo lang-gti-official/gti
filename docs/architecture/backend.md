@@ -949,11 +949,14 @@ mutable one), and drops it at the end of the full expression. The join's Move is
 has no use. Each arm's `Initialize` activates the temporary's obligation
 directly, because a cleanup-free arm result has none of its own. A
 construction arm already constructed the temporary at that `Initialize`.
-`classValueDestinationSlot` also names the temporary for a call arm with no
-lifecycle event beyond its prepared input transfers, and for a copied place,
+`classValueDestinationSlot` also names the temporary for a call or ordinary
+constructor arm with no lifecycle event beyond its exact prepared input
+transfers, and for a copied place,
 when the `Initialize` follows the producer directly or opens its Invoke
 success block. Each constructs the temporary directly, a call that can fail
-only on success, and the receiver borrows it as `directTemporaryReceiver`
+only on success. Constructor admission requires its complete input schedule;
+input transfers do not substitute for the temporary's real full-expression
+drop, which stays inactive if construction fails. The receiver borrows it as `directTemporaryReceiver`
 borrows a fresh result's slot. A nested-join arm and a moved named local are
 not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its

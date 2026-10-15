@@ -3242,6 +3242,8 @@ struct ClassMoveAssignmentFusion {
 
 [[nodiscard]] const MirPlace *classValueDestinationSlot(const MirBody &body,
                                                         MirValueId valueId);
+[[nodiscard]] bool hasCompleteCallInputSchedule(const MirBody &body,
+                                                const MirInstruction &call);
 [[nodiscard]] const MirClassInstance *
 passiveGeneratedDestructorClass(const MirProgram &program,
                                 const SemanticType &type);
@@ -6693,9 +6695,9 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // Initialize may instead activate the temporary's own full-expression
     // obligation directly. MIR builds this join when a member call borrows
     // the joined value as its receiver. A call, plain or on its Invoke
-    // success edge, and a copy of a place then construct the temporary right
-    // before that Initialize, as a construction arm does, and the
-    // temporary's Drop ends it.
+    // success edge, an ordinary constructor with prepared inputs, and a copy
+    // of a place construct the temporary right before that Initialize. The
+    // temporary's Drop ends it; input transfers do not activate the result.
     const MirBlock *invoke = invokeProducerBlock(body, *definition);
     const MirBlock *success =
         invoke == nullptr ? nullptr : body.findBlock(invoke->terminator.target);
@@ -6708,8 +6710,16 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
         activatedNext |=
             published->instructions[index - 1].id == definition->id &&
             published->instructions[index].id == initialize->id;
-    if ((directFunctionCall || directCopy) && activatedNext &&
-        initialize->lifecycle.size() == 1 && !definition->successResultDrop &&
+    const bool preparedConstruction =
+        directConstruct && definition->constructorTarget &&
+        definition->constructorKind == ConstructorKind::Ordinary &&
+        !definition->functionTarget && !definition->lambdaTarget &&
+        !definition->bodyTarget && !definition->callableInvocation &&
+        definition->intrinsic == IntrinsicKind::None &&
+        hasCompleteCallInputSchedule(body, *definition);
+    if ((directFunctionCall || directCopy || preparedConstruction) &&
+        activatedNext && initialize->lifecycle.size() == 1 &&
+        !definition->successResultDrop &&
         onlyPreparedInputTransfers(body, *definition) &&
         initialize->definedFailure.empty() &&
         initialize->localFailureSites.empty() &&
@@ -9570,8 +9580,6 @@ conditionalClassReturnJoinSlotForTransfer(const MirBody &body,
 [[nodiscard]] const MirDropObligation *
 uniqueValueDrop(const MirBody &body, MirValueId valueId,
                 const SemanticType &type);
-[[nodiscard]] bool hasCompleteCallInputSchedule(const MirBody &body,
-                                                const MirInstruction &call);
 
 struct ConditionalClassBindingJoinArm {
   const MirValue *value = nullptr;
