@@ -180,7 +180,10 @@ int main() {
            "GTI-S2123", "concrete reference result");
   rejected(conditionalContract + R"gti(
 int evaluate<T>(T marker) requires selecting<T> { return 0; }
-int main() { return evaluate(Marker<int&>{0}); }
+int main() {
+  Marker<int&> marker{0};
+  return evaluate(marker);
+}
 )gti",
            "GTI-S2029", "borrowed_from parameter contract");
   std::string substitutedContract = conditionalContract;
