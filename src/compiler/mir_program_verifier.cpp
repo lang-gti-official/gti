@@ -6666,11 +6666,10 @@ verifyMirPayloadEnums(const MirProgram &program) {
           exact = exact && instruction.payloadIndex && value != nullptr &&
                   *instruction.payloadIndex < variant->payloadTypes.size() &&
                   instruction.operands.size() == 1 &&
-                  instruction.operands.front().type == enumeration->type &&
-                  value->info.type ==
-                      variant->payloadTypes[*instruction.payloadIndex];
+                  instruction.operands.front().type == enumeration->type;
           const bool consuming = exact && instruction.operands.front().kind ==
                                               MirOperandKind::Move;
+          bool storedReference = false;
           // Extraction meaning is resolved before HIR, then checked against
           // the concrete field and operand here. A reference-typed field is
           // not an owning value, even when its carrier is consumed. Admission
@@ -6679,16 +6678,32 @@ verifyMirPayloadEnums(const MirProgram &program) {
             const auto kind = *instruction.payloadExtractionKind;
             const SemanticType &field =
                 variant->payloadTypes[*instruction.payloadIndex];
-            exact = field.kind != SemanticType::Reference &&
-                    !isStoredReferenceExtraction(kind) &&
-                    isConsumingPayloadExtraction(kind) == consuming &&
-                    value->info.category ==
-                        (kind == PayloadExtractionKind::BorrowValue
-                             ? ValueCategory::Place
-                             : ValueCategory::Value) &&
-                    (kind == PayloadExtractionKind::CopyValue ||
-                     kind == PayloadExtractionKind::MoveValue ||
-                     kind == PayloadExtractionKind::BorrowValue);
+            storedReference = field.kind == SemanticType::Reference;
+            if (storedReference) {
+              exact = field.arguments.size() == 1 &&
+                      value->info.type == field.arguments.front() &&
+                      value->info.category == ValueCategory::Place &&
+                      isStoredReferenceExtraction(kind) &&
+                      isConsumingPayloadExtraction(kind) == consuming &&
+                      (value->info.access != AccessMode::Mutable ||
+                       field.referenceAccess == AccessMode::Mutable);
+              if (kind == PayloadExtractionKind::CopyReference)
+                exact = exact && field.referenceAccess == AccessMode::ReadOnly &&
+                        value->info.access == AccessMode::ReadOnly;
+              if (kind == PayloadExtractionKind::TransferReference)
+                exact = exact && value->info.access == field.referenceAccess;
+            } else {
+              exact = value->info.type == field &&
+                      !isStoredReferenceExtraction(kind) &&
+                      isConsumingPayloadExtraction(kind) == consuming &&
+                      value->info.category ==
+                          (kind == PayloadExtractionKind::BorrowValue
+                               ? ValueCategory::Place
+                               : ValueCategory::Value) &&
+                      (kind == PayloadExtractionKind::CopyValue ||
+                       kind == PayloadExtractionKind::MoveValue ||
+                       kind == PayloadExtractionKind::BorrowValue);
+            }
           } else {
             exact = false;
           }
@@ -6704,7 +6719,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
             // enum's obligation out, so the drained shell is never dropped.
             const MirOperand &operand = instruction.operands.front();
             const MirPlace *subject = body->findPlace(operand.place);
-            exact = exact && value->info.category == ValueCategory::Value &&
+            exact = exact &&
+                    (value->info.category == ValueCategory::Value ||
+                     storedReference) &&
                     subject != nullptr &&
                     subject->root == MirPlaceRootKind::Binding &&
                     subject->projections.empty() &&
@@ -6762,6 +6779,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
             bool retired = false;
             bool prefix = true;
             std::unordered_set<MirValueId> extracted;
+            std::unordered_set<MirLoanId> selectedLoans;
             for (const MirInstruction &candidate : block.instructions) {
               if (candidate.id == instruction.id)
                 prefix = false;
@@ -6799,19 +6817,40 @@ verifyMirPayloadEnums(const MirProgram &program) {
                   destination->projections.empty() &&
                   destination->id != operand.place &&
                   candidate.operands.size() == 1 &&
-                  candidate.operands.front().kind == MirOperandKind::Value &&
-                  extracted.contains(candidate.operands.front().value);
+                  ((candidate.operands.front().kind == MirOperandKind::Value &&
+                    extracted.contains(candidate.operands.front().value)) ||
+                   (candidate.operands.front().kind == MirOperandKind::Loan &&
+                    selectedLoans.contains(candidate.operands.front().loan)));
+              const auto *selectedLoan =
+                  candidate.loan ? body->findLoan(*candidate.loan) : nullptr;
+              const auto *selectedPlace = candidate.operands.size() == 1
+                                              ? body->findPlace(
+                                                    candidate.operands[0].place)
+                                              : nullptr;
+              const bool selectedBorrow =
+                  candidate.kind == MirInstructionKind::Borrow &&
+                  selectedLoan && selectedLoan->referenceSelection &&
+                  selectedLoan->referenceSelection->carrier == operand.place &&
+                  extracted.contains(selectedLoan->referenceSelection->value) &&
+                  selectedPlace &&
+                  selectedPlace->root == MirPlaceRootKind::Value &&
+                  selectedPlace->value ==
+                      selectedLoan->referenceSelection->value &&
+                  selectedPlace->projections.empty();
+              if (selectedBorrow)
+                selectedLoans.insert(selectedLoan->id);
               exact =
                   exact && (candidate.tombstone ||
                             candidate.kind == MirInstructionKind::EndBorrow ||
-                            bindingInitialization);
+                            bindingInitialization || selectedBorrow);
             }
             exact = exact &&
                     std::all_of(taken.begin(), taken.end(),
                                 [](bool field) { return field; }) &&
                     transfers == (owner != nullptr ? 1u : 0u);
           }
-          if (exact && value->info.category == ValueCategory::Place) {
+          if (exact && !consuming &&
+              value->info.category == ValueCategory::Place) {
             const MirOperand &operand = instruction.operands.front();
             const MirPlace *subject = body->findPlace(operand.place);
             bool guarded = block.id != body->entry;
@@ -6876,6 +6915,22 @@ verifyMirPayloadEnums(const MirProgram &program) {
                     instruction.lifecycle.empty();
             bool borrowed = false;
             for (const MirLoan &loan : body->loans) {
+              if (storedReference && loan.referenceSelection &&
+                  loan.referenceSelection->value == value->id &&
+                  loan.producedBy == instruction.hirValue) {
+                borrowed = true;
+                // The external owner/access/parent set is checked against
+                // independently reconstructed pre-extraction carrier facts.
+                // Here only the exact selected physical address is established.
+                exact = exact &&
+                        loan.referenceSelection->carrier == operand.place &&
+                        loan.access == value->info.access &&
+                        (loan.kind == MirLoanKind::Local ||
+                         (loan.kind == MirLoanKind::Return && loan.escapes));
+                continue;
+              }
+              if (storedReference)
+                continue;
               const MirPlace *field = body->findPlace(loan.source);
               if (field == nullptr || field->root != MirPlaceRootKind::Value ||
                   field->value != value->id ||

@@ -8425,6 +8425,16 @@ Same-referent aliases retain the original selection plus their checked parent.
 Projected aliases additionally require an exact typed runtime projection applied
 to every possible owner; no projection is admitted by choosing the first owner.
 
+The extraction operation verifier distinguishes a stored field's reference type
+from the place-valued referent exposed by its binding, checks access narrowing,
+and recognizes exact selected-reference borrow/initialize steps in a consuming
+arm's closed setup prefix. This is a structural prerequisite, not admission:
+the complete dependency gate remains closed until independent owner, parent and
+group-transfer proofs pass. In particular a retired abstract parameter group
+cannot become a missing-parent exception; its transferred reference needs exact
+typed entry provenance and a verified handoff. The changed verifier translation
+unit passes optimized syntax checking; runtime admission is not yet claimed.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
