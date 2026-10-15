@@ -1,0 +1,345 @@
+#include <std/string>
+#include <std/vector>
+
+// A class result produced inside one arm of a conditional expression, or in
+// a short-circuit operand, by a call that consumes a value moved into it: a
+// by-value argument, or the receiver of a consuming (`&&`) member. A
+// cleanup-free input is a prepared parameter that the call transfers to its
+// callee at invocation. The result is then bound, returned, assigned, passed
+// on or read through a field. Only the arm that runs consumes its input and
+// constructs a result, and that result is destroyed exactly once.
+//
+// Constructors do not print, which keeps the calls below failure-free; each
+// destructor prints the negated id.
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(-this.id); }
+  int read() { return this.id; }
+};
+
+// The cleanup-free input.
+class Plain {
+  int base;
+public:
+  Plain(int base) : base(base) {}
+  int get() { return this.base; }
+  Tracked make() && { return Tracked(this.base); }
+  Tracked divide(int divisor) && { return Tracked(this.base / divisor); }
+};
+
+// A generic cleanup-free receiver.
+class Token<T> {
+  T value;
+public:
+  Token(T value) : value(value) {}
+  Tracked make(int id) && { return Tracked(id); }
+};
+
+// Constructions that consume a cleanup-free input.
+class Holder {
+public:
+  int id;
+  Holder(Plain source) : id(source.get()) {}
+  ~Holder() { std::println(-this.id); }
+};
+
+class Checked {
+public:
+  int id;
+  Checked(Plain source, int divisor) : id(source.get() / divisor) {}
+  ~Checked() { std::println(-this.id); }
+};
+
+// A result whose destructor can fail, also while failure cleanup runs it.
+class Fragile {
+public:
+  int id;
+  int divisor;
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {}
+  ~Fragile() {
+    std::println(-this.id);
+    int fragile = 1 / this.divisor;
+  }
+};
+
+class Brittle {
+  int base;
+public:
+  Brittle(int base) : base(base) {}
+  Fragile make(int divisor) && { return Fragile(this.base, divisor); }
+};
+
+Tracked build(Plain source) { return Tracked(source.get()); }
+
+Tracked build_divided(Plain source, int divisor) {
+  return Tracked(source.get() / divisor);
+}
+
+Tracked combine(Plain first, Plain second) {
+  return Tracked(first.get() + second.get());
+}
+
+Tracked fresh(int id) { return Tracked(id); }
+
+Tracked forward<T>(T input, int id) { return Tracked(id); }
+
+// A moved input with cleanup of its own is transferred to the callee too.
+Tracked rewrap(Tracked input) { return Tracked(input.read() + 100); }
+
+int consume(Tracked input) { return input.read(); }
+
+Tracked return_receiver(bool left, Plain a, Plain b) {
+  return left ? std::move(a).make() : std::move(b).make();
+}
+
+Tracked return_argument(bool left, Plain a, Plain b) {
+  return left ? build(std::move(a)) : build(std::move(b));
+}
+
+Tracked return_divided(bool left, Plain a, Plain b, int divisor) {
+  return left ? std::move(a).divide(divisor)
+              : build_divided(std::move(b), divisor);
+}
+
+Checked return_checked(bool left, Plain a, Plain b, int divisor) {
+  return left ? Checked(std::move(a), divisor)
+              : Checked(std::move(b), divisor);
+}
+
+Tracked return_nested(bool left, bool inner, Plain a, Plain b, int id) {
+  return left ? (inner ? std::move(a).make() : build(std::move(b)))
+              : fresh(id);
+}
+
+// Destructors that cannot fail keep these bodies in the plain form. A result
+// destroyed early, or twice, would read back as 0.
+class Quiet {
+public:
+  mut int id;
+  Quiet(int value) : id(value) {}
+  ~Quiet() { this.id = 0; }
+  int read() { return this.id; }
+};
+
+class QuietSource {
+  int base;
+public:
+  QuietSource(int base) : base(base) {}
+  int get() { return this.base; }
+  Quiet make() && { return Quiet(this.base); }
+};
+
+Quiet quiet_build(QuietSource source) { return Quiet(source.get()); }
+
+int quiet_bound(bool left, QuietSource a, QuietSource b) {
+  Quiet kept = left ? std::move(a).make() : quiet_build(std::move(b));
+  return kept.read();
+}
+
+Quiet quiet_returned(bool left, QuietSource a, QuietSource b) {
+  return left ? quiet_build(std::move(a)) : std::move(b).make();
+}
+
+int quiet_viewed(bool left, QuietSource a, QuietSource b) {
+  return left ? std::move(a).make().id : quiet_build(std::move(b)).id;
+}
+
+// Runs every shape through one arm; `base` keeps the two runs' traces apart.
+int run(bool left, int base) {
+  mut int total = 0;
+  {
+    // Consuming receivers, bound.
+    Plain a{base + 1};
+    Plain b{base + 2};
+    Tracked kept = left ? std::move(a).make() : std::move(b).make();
+    total += kept.read();
+  }
+  {
+    // Moved by-value arguments, bound.
+    Plain a{base + 3};
+    Plain b{base + 4};
+    Tracked kept = left ? build(std::move(a)) : build(std::move(b));
+    total += kept.read();
+  }
+  {
+    // Callees that can fail.
+    Plain a{base + 5};
+    Plain b{base + 6};
+    Tracked kept =
+        left ? std::move(a).divide(1) : build_divided(std::move(b), 1);
+    total += kept.read();
+  }
+  {
+    // Constructions.
+    Plain a{base + 7};
+    Plain b{base + 8};
+    Holder kept = left ? Holder(std::move(a)) : Holder(std::move(b));
+    total += kept.id;
+  }
+  {
+    // Only one arm consumes; the other calls an ordinary function.
+    Plain a{base + 9};
+    Tracked kept = left ? std::move(a).make() : fresh(base + 10);
+    total += kept.read();
+  }
+  {
+    // Two moved arguments in one arm, a moved receiver in the other.
+    Plain a{base + 11};
+    Plain b{100};
+    Plain c{base + 13};
+    Tracked kept =
+        left ? combine(std::move(a), std::move(b)) : std::move(c).make();
+    total += kept.read();
+  }
+  {
+    // A nested conditional inside one arm.
+    Plain a{base + 14};
+    Plain b{base + 15};
+    Tracked kept = left ? (left ? std::move(a).make() : build(std::move(b)))
+                        : fresh(base + 16);
+    total += kept.read();
+  }
+  {
+    // Assignment destroys the old value first.
+    Plain a{base + 18};
+    Plain b{base + 19};
+    mut Tracked kept{base + 17};
+    kept = left ? std::move(a).make() : build(std::move(b));
+    total += kept.read();
+  }
+  {
+    // Passed on by value; the callee destroys it.
+    Plain a{base + 20};
+    Plain b{base + 21};
+    total += consume(left ? std::move(a).make() : std::move(b).make());
+  }
+  {
+    // A member call on the conditional result.
+    Plain a{base + 22};
+    Plain b{base + 23};
+    total += (left ? std::move(a).make() : build(std::move(b))).read();
+  }
+  {
+    // Field reads in one arm or both; the other arm may make no result.
+    Plain a{base + 24};
+    Plain b{base + 25};
+    Plain c{base + 26};
+    total += left ? std::move(a).make().id : 0;
+    total += left ? build(std::move(b)).id : std::move(c).make().id;
+  }
+  {
+    // Field reads of a construction and of a call that can fail.
+    Plain a{base + 27};
+    Plain b{base + 28};
+    total += left ? Checked(std::move(a), 1).id
+                  : build_divided(std::move(b), 1).id;
+  }
+  {
+    // A short-circuit operand consumes its input only when evaluated.
+    Plain a{base + 29};
+    Plain b{base + 30};
+    bool both = left && std::move(a).make().id > 0;
+    bool either = left || build(std::move(b)).id > 0;
+    total += (both ? 1 : 0) + (either ? 2 : 0);
+  }
+  {
+    // A generic receiver and a generic callee. The ids are computed first:
+    // an argument that can fail after a moved receiver is staged differently.
+    int one = base + 31;
+    int two = base + 32;
+    Token<int> a{base};
+    Plain b{base};
+    Tracked kept =
+        left ? std::move(a).make(one) : forward<Plain>(std::move(b), two);
+    total += kept.read();
+  }
+  {
+    // Moved inputs that have cleanup of their own.
+    Tracked x{base + 33};
+    Tracked y{base + 34};
+    Tracked kept = left ? rewrap(std::move(x)) : rewrap(std::move(y));
+    total += kept.read();
+  }
+  {
+    // Returned from each arm.
+    Plain a{base + 35};
+    Plain b{base + 36};
+    Tracked kept = return_receiver(left, std::move(a), std::move(b));
+    total += kept.read();
+  }
+  {
+    Plain a{base + 37};
+    Plain b{base + 38};
+    Tracked kept = return_argument(left, std::move(a), std::move(b));
+    total += kept.read();
+  }
+  {
+    Plain a{base + 39};
+    Plain b{base + 40};
+    Tracked kept = return_divided(left, std::move(a), std::move(b), 1);
+    total += kept.read();
+  }
+  {
+    Plain a{base + 41};
+    Plain b{base + 42};
+    Checked kept = return_checked(left, std::move(a), std::move(b), 1);
+    total += kept.id;
+  }
+  {
+    Plain a{base + 43};
+    Plain b{base + 44};
+    Tracked kept =
+        return_nested(left, !left, std::move(a), std::move(b), base + 45);
+    total += kept.read();
+  }
+  {
+    // Plain bodies.
+    total += quiet_bound(left, QuietSource(base + 46), QuietSource(base + 47));
+    Quiet kept =
+        quiet_returned(left, QuietSource(base + 48), QuietSource(base + 49));
+    total += kept.read() +
+             quiet_viewed(left, QuietSource(base + 50), QuietSource(base + 51));
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true, 0));
+  std::println(run(false, 100));
+  // Failure cleanup. Scenario 1 fails a consuming callee in a bound arm, 2 a
+  // callee taking a moved argument in a returned arm, 3 a construction read
+  // through a field, 4 the destructor of a field-read result after the merge,
+  // and 5 a later callee while a bound result's destructor fails again during
+  // cleanup.
+  int scenario = argc - 1;
+  Tracked first{201};
+  Plain a{202};
+  Plain b{203};
+  Tracked kept = scenario == 1 ? std::move(a).divide(0)
+                               : std::move(b).divide(1);
+  std::println("kept");
+  Plain c{204};
+  Plain d{205};
+  Tracked returned = return_divided(scenario != 2, std::move(c), std::move(d),
+                                    scenario == 2 ? 0 : 1);
+  std::println("returned");
+  Plain e{206};
+  Plain f{207};
+  int viewed = scenario == 3 ? Checked(std::move(e), 0).id
+                             : build(std::move(f)).id;
+  std::println("viewed");
+  Brittle g{208};
+  int read = scenario == 4 ? std::move(g).make(0).id : 0;
+  std::println("read");
+  Brittle h{209};
+  Brittle i{210};
+  Fragile bound = scenario == 5 ? std::move(h).make(0) : std::move(i).make(1);
+  Plain j{211};
+  Plain k{212};
+  Tracked last = scenario == 5 ? std::move(j).divide(0)
+                               : std::move(k).divide(1);
+  std::println("last");
+  return kept.read() + returned.read() + viewed + read + last.read() - 826;
+}

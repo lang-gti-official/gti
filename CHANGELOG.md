@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.2 — Borrowed arguments before a conditional whose test can fail
+## 0.439.3 — Borrowed arguments before a conditional whose test can fail
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a call passes a local by reference and
@@ -25,6 +25,21 @@ for what minor and patch releases mean.
 - A conditional argument whose arms select a `std::string_view`, such as
   `describe(plain, argc > 1 ? "yes" : "no")`, also no longer stops with this
   error after a local passed by reference.
+
+## 0.439.2 — Conditional class results from moved inputs
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:`, or an operand of `&&`
+  or `||`, produces a class result that needs cleanup from a call that
+  consumes a value moved into it, and the result is then bound, returned,
+  assigned, passed on or read through a field. The moved value may be a
+  by-value argument, such as `Quiet t = c ? make(std::move(a)) :
+  make(std::move(b));`, or the receiver of a consuming (`&&`) method, such as
+  `return c ? std::move(a).make() : std::move(b).make();` or
+  `c ? std::move(p).loud().id : 0`. This covers class arguments with and
+  without cleanup, constructors, methods that can fail, arms that mix such
+  calls with ordinary ones, and nested conditionals. Only the arm that runs
+  consumes its input, and its result is destroyed exactly once.
 
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
