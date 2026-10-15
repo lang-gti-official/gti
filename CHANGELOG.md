@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.2 — Nested conditional results in loops
+## 0.440.4 — Nested conditional results in loops
 
 - Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
   constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
@@ -19,6 +19,32 @@ for what minor and patch releases mean.
   arm worked the first time and stopped the program the next time it ran.
   The nested conditional may sit in either arm or both, nest further, and be
   bound, read through a field, passed on, assigned or returned.
+
+## 0.440.3 — Conditional results with checked arm arguments
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:` evaluates an input that
+  can fail before producing a class result without a destructor, such as
+  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
+  is overflow-checked. Arguments computed by calls that can fail, `?`
+  operands, and nested conditionals or `&&`/`||` inside an argument work the
+  same way, whether the result is bound, returned, assigned, passed on, read
+  through a field or used to initialize a field. A failing input ends its
+  arm before the call, with the usual cleanup.
+
+## 0.440.2 — Borrowed arguments before a nested call taking a class by value
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call passes a local by reference and
+  a later argument is a conditional whose test calls a function that takes a
+  class by value, such as `use(plain, owns(std::string("xy")) ? 0 : 2)`. The
+  by-value argument may be a new object, a local moved with `std::move` or
+  copied, or the argument of a method called on another local, and the call
+  may also be one arm of the conditional. If that call, the argument's
+  construction or a later argument fails, each object is destroyed once.
+- A class argument of the outer call that is built from a string, such as
+  `pick(plain, std::string("xy"), argc > 1 ? 0 : 2)`, no longer stops with
+  this error either.
 
 ## 0.440.1 — Conditional member-call results without cleanup
 
