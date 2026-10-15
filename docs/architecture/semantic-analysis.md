@@ -2028,8 +2028,12 @@ operators qualify for the bounded ephemeral-borrow contract. Receiver-only
 materialization also accepts owned movable class values from conditional
 expressions, lambda calls, copy/move construction, and consuming Expected
 extraction; this does not broaden ephemeral argument borrowing. Reusable
-targets remain non-static and non-virtual with non-borrowing results, apart
-from the existing nonescaping read-observation exception. Transparent grouping
+targets remain non-static with non-borrowing results, apart from the existing
+nonescaping read-observation exception. A virtual target, including an
+override or interface implementation, keeps `CallDispatch::Virtual`: dispatch
+selects the body, while the receiver role, result restrictions and
+full-expression lifetime are the selected member's contract, which every
+override shares. Transparent grouping
 is ignored, while an explicit move from named storage is not fresh. Concrete
 generic reanalysis repeats these checks using substituted
 type and lifecycle traits. Expression value category and access remain

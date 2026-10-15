@@ -3422,8 +3422,10 @@ backend consumption. The producer strictly precedes the input; the input
 strictly precedes all arguments and invocation. Exactly one matching value-drop
 obligation is activated by successful production and remains attached to the
 enclosing full expression. Verification also requires the selected non-static
-GTI target (non-virtual for reusable receivers), concrete owner type, receiver
-qualifier, result
+GTI target, a call dispatch equal to the target's own (`Virtual` exactly when
+the target is virtual, for read, mutable and consuming members alike), an
+owner that is the temporary's concrete class or one of its recorded base
+instances, receiver qualifier, result
 non-escape traits, producer type, place type/access/source identity, and drop
 descriptor to agree. This is an explicit MIR borrow schedule, not a native
 rvalue convention.

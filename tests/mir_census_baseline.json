@@ -69,7 +69,7 @@
     "068-static-assertions.gti": 8,
     "069-mutable-field-groups.gti": 10,
     "070-qualified-specializations.gti": 40,
-    "071-fresh-temporary-borrows.gti": 12,
+    "071-fresh-temporary-borrows.gti": 19,
     "072-filesystem-paths.gti": 141,
     "073-constructor-local-generics.gti": 131,
     "074-read-only-range-loans.gti": 95,
@@ -159,8 +159,7 @@
     "159-tryable-propagation.gti": 135,
     "160-borrowed-callback-results.gti": 145,
     "161-consuming-matches.gti": 237,
-    "162-experimental-optional.gti": 157,
-    "163-implicit-returns.gti": 141
+    "162-experimental-optional.gti": 157
   },
-  "total": 18065
+  "total": 17931
 }

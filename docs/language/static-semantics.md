@@ -849,9 +849,11 @@ arithmetic/bitwise value operators admit read-only and consuming forms.
 
 A concrete self-contained class or struct value produced directly by an
 ordinary constructor or by-value GTI function call is a fresh temporary
-receiver. For one direct ordinary non-static, non-virtual method call, including
-reusable `operator()`, it may be borrowed read-only or mutably; transparent
-parentheses do not change that classification. A fresh receiver prefers an
+receiver. For one direct ordinary non-static method call, including reusable
+`operator()`, it may be borrowed read-only or mutably; transparent parentheses
+do not change that classification. The method may be virtual, an override, an
+interface implementation, or inherited from a base class, and the call keeps
+the member's own dispatch. A fresh receiver prefers an
 otherwise exact consuming overload, then a trailing-`mut` overload when no
 consuming overload matches. Receiver-only materialization additionally admits
 owned movable conditional and operator results, lambda results, copy/move
