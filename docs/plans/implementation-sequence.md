@@ -8332,9 +8332,11 @@ run at O2 with the expected output. General constructor-staging fixes admit
 text views across conditional arguments and exact transferred mutable-reference
 prefixes before owned fields; malformed identity/access/lifecycle evidence
 remains rejected. The focused native matrix passes all nine modes:
-C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 164
-and the existing cleanup traces. A named passive enum operand exposed a branch-dominance
-lowering failure in an earlier probe and still needs a dedicated follow-up.
+C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 165
+and the existing cleanup traces. The earlier named passive operand probe is
+covered by the upstream enum-propagation fixture's named, moved and fresh
+operands. Its original failure is historical, not evidence of a distinct
+remaining bug; the combined full runtime matrix remains an integration gate.
 The earlier expedited prerequisite request did not mark the complete
 borrowed-enum goal finished or authorize unverified reference-bearing payloads.
 On 2026-10-16 the owner restored the normal validation and integration workflow
