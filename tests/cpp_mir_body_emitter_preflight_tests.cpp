@@ -1365,7 +1365,8 @@ int inspect(Token& token) {
     case Token::empty: return 0;
   }
 }
-int main() { return inspect(Token::item(7)) - 7; }
+Token make(int value) { return Token::item(value); }
+int main() { return inspect(Token::item(7)) + inspect(make(5)) - 12; }
 )gti");
   expect(frontend.canGenerateCode(),
          "an ordinary observer may borrow a passive enum temporary");
@@ -1458,11 +1459,13 @@ int main() { return inspect(Token::item(7)) - 7; }
                    !malformedEmitter.supportsBodyText(address) &&
                    !malformedEmitter.supportsFailureBodyText(address),
                "temporary admission rejects missing or forged producer, "
-               "materialization, full-expression and call-loan proof");
+               "materialization, full-expression and call-loan proof " +
+                   std::to_string(mutation));
       }
     }
   }
-  expect(checked == 1, "the ordinary observer must test one temporary loan");
+  expect(checked == 2,
+         "ordinary observers must test constructed and returned temporaries");
 }
 
 void testPassiveEnumTemporaryObservationThenTransfer() {
@@ -1514,26 +1517,31 @@ int main() { return parse().code - 7; }
       continue;
     const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                        .owner = function.id};
-    auto outsideSlice = frontend.mir;
-    auto *body = lang::findMirBody(outsideSlice, address);
+    auto withPassiveRead = frontend.mir;
+    auto *body = lang::findMirBody(withPassiveRead, address);
     lang::MirInstructionId nextInstruction = 1;
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
         nextInstruction = std::max(nextInstruction, instruction.id + 1);
     bool inserted = false;
+    lang::MirValueId readResult = 0;
+    lang::MirValueId readSource = 0;
     for (auto &block : body->blocks) {
       for (auto at = block.instructions.begin(); at != block.instructions.end();
            ++at) {
         if (at->kind != lang::MirInstructionKind::Move ||
             at->info.type.kind != lang::SemanticType::Enum)
           continue;
-        // A valid unused passive read is intentionally outside this exact
-        // representation slice, which admits only reads feeding value stages.
+        // Ordinary enum temporary transport also represents an unused
+        // passive read; it is not limited to reads feeding value stages.
         auto extra = *at;
         extra.id = nextInstruction;
         extra.kind = lang::MirInstructionKind::Load;
         extra.operands.front().kind = lang::MirOperandKind::Copy;
         extra.result = body->values.size() + 1;
+        readResult = *extra.result;
+        const auto *source = body->findPlace(extra.operands.front().place);
+        readSource = source ? source->value : 0;
         body->values.push_back({.id = *extra.result,
                                 .sourceValue = extra.hirValue,
                                 .info = extra.info,
@@ -1550,19 +1558,25 @@ int main() { return parse().code - 7; }
       continue;
     ++checked;
     expect(lang::rebuildMirValueUses(*body),
-           "the out-of-slice read must have an exact SSA use inventory");
-    const auto verification = lang::verifyMirProgram(outsideSlice);
+           "the passive read must have an exact SSA use inventory");
+    const auto verification = lang::verifyMirProgram(withPassiveRead);
     for (const auto &error : verification.errors)
-      std::cerr << "out-of-slice fixture: " << error.message << '\n';
+      std::cerr << "passive read fixture: " << error.message << '\n';
     expect(verification.valid(),
            "an unused passive read is valid MIR, not a missing lifetime proof");
-    const lang::CppMirBodyEmitter outsideEmitter(outsideSlice, map);
-    expect(!outsideEmitter.supportsBodyText(address) &&
-               !outsideEmitter.supportsFailureBodyText(address),
-           "the exact temporary representation must decline unclassified uses");
+    const lang::CppMirBodyEmitter readEmitter(withPassiveRead, map);
+    const auto text =
+        readEmitter.supportsFailureBodyText(address)
+            ? readEmitter.emitFailureBodyText(address, "enum-read", 1)
+            : readEmitter.emitBodyText(address, "enum-read", 1);
+    expect(text.emitted() && readResult != 0 && readSource != 0 &&
+               text.text.find("__gti_mir_v_" + std::to_string(readResult) +
+                              " = __gti_mir_v_" + std::to_string(readSource) +
+                              ";") != std::string::npos,
+           "ordinary temporary transport emits the exact passive SSA copy");
   }
   expect(checked == 1,
-         "one observed temporary must exercise the slice boundary");
+         "one observed temporary must exercise ordinary passive transport");
 }
 
 void testFreshClassPayloadOperandStaging() {
