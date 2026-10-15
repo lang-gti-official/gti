@@ -114,6 +114,14 @@
       "suite": "preflight"
     },
     {
+      "name": "testPassiveEnumTemporaryBorrowAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPassiveEnumTemporaryObservationThenTransfer",
+      "suite": "preflight"
+    },
+    {
       "name": "testDischargedCompoundOperatorVocabulary",
       "suite": "preflight"
     },

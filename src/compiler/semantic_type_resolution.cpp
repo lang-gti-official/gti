@@ -912,8 +912,9 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
       parameter.arguments.front() != argument ||
-      argument.kind != SemanticType::Class || !expression ||
-      !ephemeralBorrowTargetSupported(function)) {
+      (argument.kind != SemanticType::Class &&
+       argument.kind != SemanticType::Enum) ||
+      !expression || !ephemeralBorrowTargetSupported(function)) {
     return false;
   }
   const FreshTemporaryValueAssessment assessment =
@@ -966,7 +967,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       if (parameter.referenceAccess == AccessMode::Mutable) {
         reason = argumentLabel + std::to_string(index + 1) +
                  " cannot bind a mutable reference to a temporary.";
-      } else if (argument.kind == SemanticType::Class) {
+      } else if (argument.kind == SemanticType::Class ||
+                 argument.kind == SemanticType::Enum) {
         const FreshTemporaryValueAssessment assessment =
             freshTemporaryValue(expression);
         if (assessment.eligible && function != nullptr &&
@@ -999,8 +1001,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
             break;
           case FreshTemporaryValueFailure::UnsupportedProducer:
             reason = argumentLabel + std::to_string(index + 1) +
-                     " is not produced directly by an ordinary constructor "
-                     "or source-defined GTI function call.";
+                     " is not a supported fresh record producer or passive "
+                     "payload-enum construction.";
             break;
           case FreshTemporaryValueFailure::None:
           case FreshTemporaryValueFailure::NotClassValue:
@@ -3381,6 +3383,12 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                          bool allowNativeFunctionType) -> void {
   const std::size_t diagnosticStart = diagnostics.size();
+  if (type.referenceMutability && !type.reference) {
+    report(*type.referenceMutability,
+           "Mutable type access requires a checked reference; use 'mut T&'.",
+           "GTI-S2030");
+    return;
+  }
   if (type.qualifiedOwner) {
     if (const std::optional<ConceptId> protocol =
             protocolConceptOwner(*type.qualifiedOwner, currentNamespace)) {
@@ -4205,8 +4213,8 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
 
 auto SemanticVisitor::Impl::validateReferencePlacement(
     const TypeRef &type, bool allowTopLevel, std::string_view context,
-    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter)
-    -> void {
+    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter,
+    bool contractedReferenceResult) -> void {
   const SemanticType resolved = typeOf(type);
   if (resolved.kind == SemanticType::FunctionSignature) {
     report(type.name.last(),
@@ -4216,7 +4224,7 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
     return;
   }
   if (resolved.kind == SemanticType::Reference && !type.reference &&
-      !typeMetadata) {
+      !typeMetadata && !contractedReferenceResult) {
     report(type.name.last(),
            "A reference type substituted into a " + std::string(context) +
                " requires an explicit reference declarator; keep the generic "

@@ -1928,6 +1928,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
       const auto found = info.enumerators.find(enumerator.name.lexeme);
       std::vector<SemanticType> payloadTypes;
       payloadTypes.reserve(enumerator.payload.size());
+      std::vector<SymbolId> payloadSymbols;
+      payloadSymbols.reserve(enumerator.payload.size());
       std::unordered_set<std::string> payloadNames;
       for (const Parameter &parameter : enumerator.payload) {
         validateType(parameter.type);
@@ -1969,16 +1971,23 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
         // Borrowed-state payloads are checked again at construction, where
         // class traits are complete. Owning cleanup is structural.
         payloadTypes.push_back(type);
+        payloadSymbols.push_back(recordToolingSymbol(
+            parameter.name, SymbolKind::Field,
+            qualifiedName(info.namespaceScope, info.name.lexeme) +
+                "::" + enumerator.name.lexeme + "::" + parameter.name.lexeme,
+            type, parameter.mutability == Mutability::Mutable));
       }
       if (found != info.enumerators.end()) {
         found->second.payloadTypes = payloadTypes;
+        found->second.payloadSymbols = payloadSymbols;
       }
       modelEnumerators.push_back(
           {.declaration = &enumerator,
            .value = {.magnitude = variantIndex},
            .explicitValue = enumerator.initializer != nullptr,
            .variantIndex = variantIndex,
-           .payloadTypes = std::move(payloadTypes)});
+           .payloadTypes = std::move(payloadTypes),
+           .payloadSymbols = std::move(payloadSymbols)});
     }
     semanticModel.recordEnumType(
         *info.declaration,
@@ -7886,6 +7895,14 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     if (updated.explicitReturnBorrowOrigin) {
       // A declaration contract is authoritative even when invalid (None).
       // Body-based inference must neither overwrite it nor rescue a typo.
+      // Resolve it again after concrete field metadata exists: a by-value
+      // carrier's external dependency cannot be known at initial inventory.
+      const auto contract = genericReturnBorrowContract(
+          *declaration, updated.returnType, updated.parameterTypes,
+          updated.ownerClass, updated.staticMember);
+      updated.returnBorrowOrigin = contract.origin;
+      updated.returnBorrowParameter = contract.parameter;
+      updated.returnBorrowAccess = contract.access;
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);
