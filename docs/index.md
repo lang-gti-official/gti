@@ -152,6 +152,7 @@ while canonical language documents continue to describe actual support.
   `implicit`, one shared selection with constructors and no ranking, one
   step, and member-call receivers.
 - [028: Protocol concepts and conformance blocks](decisions/028-protocol-concepts.md)
+- [029: Prefix `?` through `std::tryable`](decisions/029-tryable-propagation.md)
   — concepts with associated types and operations, supplied for a type by a
   `for concept` block outside it, with exact selection, ADR 020 coherence and
   no remapping.

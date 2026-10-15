@@ -1640,6 +1640,20 @@ void SemanticModel::recordProtocolConcept(ConceptId id,
   protocolConcepts.insert_or_assign(id, std::move(spelling));
 }
 
+const ResolvedTryablePropagationInfo *
+SemanticModel::findTryablePropagation(const Unary &propagation) const {
+  const auto found = tryablePropagations.find(&propagation);
+  if (found != tryablePropagations.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findTryablePropagation(propagation);
+}
+
+void SemanticModel::recordTryablePropagation(
+    const Unary &propagation, ResolvedTryablePropagationInfo info) {
+  tryablePropagations.insert_or_assign(&propagation, std::move(info));
+}
+
 [[nodiscard]] const ResolvedConstructorInitializerInfo *
 SemanticModel::findConstructorInitializer(
     const ConstructorInitializer &initializer) const {
@@ -1883,6 +1897,7 @@ void SemanticModel::clear() {
   contextualConstructionSites.clear();
   collections.clear();
   protocolConcepts.clear();
+  tryablePropagations.clear();
   constructorInitializers.clear();
   resolvedSymbols.clear();
   semanticDatabase.clear();

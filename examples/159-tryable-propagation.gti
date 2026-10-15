@@ -1,0 +1,59 @@
+// Prefix `?` works on any type with a `std::tryable` conformance block, not
+// only on `expected`. Here a validator's own result type propagates its
+// error to the caller, and the type itself gains no protocol members.
+#include <std/string>
+
+struct InvalidField {
+  int field;
+  InvalidField(int index) : field(index) {}
+};
+
+// The validator's result: a value, or the index of the field that failed.
+class Checked<T> {
+public:
+  T value;
+  int failed;
+  Checked(T result, int field) : value(result), failed(field) {}
+};
+
+for <std::copyable T> concept std::tryable<Checked<T>> {
+  using value_type = T;
+  using residual_type = InvalidField;
+  bool has_value(Checked<T>& checked) { return checked.failed == 0; }
+  T take_value(Checked<T> checked) { return checked.value; }
+  InvalidField take_residual(Checked<T> checked) {
+    return InvalidField(checked.failed);
+  }
+};
+
+Checked<int> positive(int value, int field) {
+  if (value > 0) {
+    return Checked<int>(value, 0);
+  }
+  return Checked<int>(0, field);
+}
+
+// A failed `?` returns its residual, which initializes the return type as
+// `Area result = residual;` would.
+class Area {
+public:
+  int square_meters;
+  int invalid_field;
+  Area(int value) : square_meters(value), invalid_field(0) {}
+  implicit Area(InvalidField invalid)
+      : square_meters(0), invalid_field(invalid.field) {}
+};
+
+Area area(int width, int height) {
+  int checked_width = ?positive(width, 1);
+  int checked_height = ?positive(height, 2);
+  return Area(checked_width * checked_height);
+}
+
+int main() {
+  Area room = area(6, 7);
+  Area broken = area(6, 0);
+  std::println(std::to_string(room.square_meters));
+  std::println(std::to_string(broken.invalid_field));
+  return 0;
+}
