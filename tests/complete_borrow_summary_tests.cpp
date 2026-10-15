@@ -141,9 +141,41 @@ int main() { auto value = choose(true); return 0; }
     }
   }
 
+  {
+    const auto result = analyze(token + R"gti(
+Token identity(Token input) { return input; }
+int main() { auto value = identity(Token::empty); return 0; }
+)gti");
+    const auto id = functionId(result, "identity");
+    const auto *function = result.mir.findFunctionInstance(id);
+    expect(function && function->completeReturnBorrow &&
+               function->completeReturnBorrow->dependencies.empty() &&
+               function->completeReturnBorrow->possibleAlternatives.size() == 2,
+           "a dependency-free enum parameter retains every possible tag");
+    if (function && function->completeReturnBorrow)
+      for (int mutation = 0; mutation < 4; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        if (mutation == 0)
+          changed.parameterTypes.front() = lang::SemanticType::Int32;
+        else if (mutation == 1)
+          changed.parameterBindings.front() = 0;
+        else if (mutation == 2)
+          changed.completeReturnBorrow->possibleAlternatives.pop_back();
+        else
+          for (auto &place : changed.body.places)
+            if (place.root == lang::MirPlaceRootKind::Binding &&
+                place.binding == changed.parameterBindings.front())
+              place.initiallyAvailable = false;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "entry proof rejects substituted type/binding, omitted tag or "
+               "unavailable storage");
+      }
+  }
+
   for (const std::string &source :
-       {"Token unknown(Token input) { return input; }",
-        "Token unknown() { return unknown(); }",
+       {"Token unknown() { return unknown(); }",
         "Token other() { return unknown(); } Token unknown() { return other(); "
         "}",
         "Token unknown() { while (true) {} }",

@@ -5881,6 +5881,13 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   if (carrier == nullptr) {
     return;
   }
+  if (carrier->type.kind == SemanticType::Enum) {
+    const auto inventory = storedReferenceInventory(carrier->type);
+    auto alternatives = storedBorrowAlternativeInventory(carrier->type);
+    if (inventory && inventory->empty() && alternatives)
+      carrier->completeBorrowSet = SemanticBorrowDependencySet{
+          .possibleAlternatives = std::move(*alternatives)};
+  }
   const auto carriesOpaqueWitness = [&](const SemanticType &type) {
     const auto *owner =
         type.kind == SemanticType::Reference && type.arguments.size() == 1
