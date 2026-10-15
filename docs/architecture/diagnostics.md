@@ -863,9 +863,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
   temporary receiver capability. Point at the call/operator token and
   distinguish an explicit move from existing storage, an unsupported producer,
-  unstable stored owner dependencies, borrowed or pointer-like results,
-  non-concrete record, and virtual dispatch. Multiple proven stable dependencies
-  do not themselves reject an immediate ordinary receiver. Relate the selected
+  unstable stored owner dependencies, borrowed or pointer-like results, and a
+  non-concrete record. A virtual selected member is not a failure condition,
+  and multiple proven stable dependencies do not themselves reject an immediate
+  ordinary receiver. Relate the selected
   method/operator declaration and suggest a named carrier, or keeping its owner
   in longer-lived named storage when that is the failed condition. Do not offer
   a fix-it because binding name, scope, and
