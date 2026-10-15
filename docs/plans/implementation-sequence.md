@@ -8450,6 +8450,16 @@ selection identity, the optimized compiler rebuild and `sum_type_pipeline`,
 `cleanup_bound_borrow` pass. These are prerequisite/regression checks, not
 reference-payload runtime acceptance; nonempty publication remains closed.
 
+Conditional parameter-entry preparation now expands every abstract stored
+reference path into its exact parameter-relative external place and keeps all
+typed alternative guards. The declaration entry loan itself remains the
+existing grouped authority; the complete set does not create a second liveness
+model. Conditional return checking uses the shared declaration-relative
+normalizer only after the ordinary local-child escape check. These paths still
+have no source-admission claim: nonempty MIR entry/constructor/call transport,
+all-parent escape proof, selected publication and their negative gates must be
+connected before that admission opens.
+
 The MIR bridge now retains the selected extraction's exact SSA value and
 physical carrier place separately from its possible external owner places.
 Lowering requires the unique current-body producer and the structural stored
