@@ -1021,6 +1021,9 @@ struct ResolvedPayloadPatternInfo {
   const EnumeratorDecl *declaration = nullptr;
   std::size_t variantIndex = 0;
   std::vector<PayloadBindingInfo> bindings;
+  // The switch consumes its subject (a prvalue or an explicit std::move), so
+  // by-value bindings take ownership of their fields by move.
+  bool consuming = false;
 };
 
 struct TypeAliasInfo {
@@ -2173,6 +2176,11 @@ public:
 
   [[nodiscard]] bool isExhaustiveSwitch(const SwitchStmt &statement) const;
 
+  // A payload-enum switch whose subject is a consumed value owns that value
+  // through one hidden subject binding until the selected arm's entry.
+  [[nodiscard]] const BindingInfo *
+  findConsumedSwitchSubject(const SwitchStmt &statement) const;
+
   [[nodiscard]] const ResolvedPayloadConstructionInfo *
   findPayloadConstruction(const Call &call) const;
 
@@ -2507,6 +2515,9 @@ private:
 
   void recordExhaustiveSwitch(const SwitchStmt &statement);
 
+  void recordConsumedSwitchSubject(const SwitchStmt &statement,
+                                   BindingInfo subject);
+
   void recordPayloadConstruction(const Call &call,
                                  ResolvedPayloadConstructionInfo info);
 
@@ -2711,6 +2722,7 @@ private:
   std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo> enumerators;
   std::unordered_map<const Expr *, SwitchCaseValue> switchCases;
   std::unordered_set<const SwitchStmt *> exhaustiveSwitches;
+  std::unordered_map<const SwitchStmt *, BindingInfo> consumedSwitchSubjects;
   std::unordered_map<const Call *, ResolvedPayloadConstructionInfo>
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;

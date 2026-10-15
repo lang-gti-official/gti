@@ -6296,6 +6296,127 @@ verifyMirPayloadEnums(const MirProgram &program) {
                   instruction.operands.front().type == enumeration->type &&
                   value->info.type ==
                       variant->payloadTypes[*instruction.payloadIndex];
+          const bool consuming = exact && instruction.operands.front().kind ==
+                                              MirOperandKind::Move;
+          exact = exact && (consuming || instruction.lifecycle.empty());
+          if (consuming) {
+            // A consuming extraction moves one field out of a switch-owned
+            // subject binding at the selected arm's entry. The arm is entered
+            // only through the matching variant edge of a switch over that
+            // exact binding, and only the arm's other extractions and their
+            // binding initializations precede it. The arm's extractions take
+            // every field of the active alternative exactly once; when the
+            // subject owns cleanup, the last of them alone transfers the
+            // enum's obligation out, so the drained shell is never dropped.
+            const MirOperand &operand = instruction.operands.front();
+            const MirPlace *subject = body->findPlace(operand.place);
+            exact = value->info.category == ValueCategory::Value &&
+                    subject != nullptr &&
+                    subject->root == MirPlaceRootKind::Binding &&
+                    subject->projections.empty() &&
+                    subject->type == enumeration->type;
+            const auto consumingExtract = [&](const MirInstruction &candidate) {
+              return !candidate.tombstone &&
+                     candidate.kind == MirInstructionKind::Compute &&
+                     candidate.operation == MirOperation::PayloadExtract &&
+                     candidate.operands.size() == 1 &&
+                     candidate.operands.front().kind == MirOperandKind::Move &&
+                     candidate.operands.front().place == operand.place;
+            };
+            std::size_t incoming = 0;
+            bool guarded = block.id != body->entry;
+            for (const MirBlock &predecessor : body->blocks) {
+              const auto &terminator = predecessor.terminator;
+              const auto successors = terminatorSuccessors(terminator);
+              if (std::find(successors.begin(), successors.end(), block.id) ==
+                  successors.end())
+                continue;
+              ++incoming;
+              if (terminator.kind != MirTerminatorKind::Switch ||
+                  !terminator.value ||
+                  terminator.value->kind != MirOperandKind::BorrowRead ||
+                  terminator.value->place != operand.place ||
+                  terminator.target == block.id) {
+                guarded = false;
+                continue;
+              }
+              std::size_t matchingEdges = 0;
+              bool rightVariant = false;
+              for (const auto &target : terminator.switchTargets) {
+                if (target.target != block.id)
+                  continue;
+                ++matchingEdges;
+                rightVariant =
+                    target.value &&
+                    target.value->enumOwner == instruction.enumOwner &&
+                    target.value->value.magnitude == *instruction.enumVariant &&
+                    !target.value->value.negative;
+              }
+              guarded = guarded && matchingEdges == 1 && rightVariant;
+            }
+            exact = exact && guarded && incoming == 1;
+            const MirDropObligation *owner = nullptr;
+            for (const MirDropObligation &obligation : body->dropObligations) {
+              if (obligation.kind == MirDropObligationKind::Binding &&
+                  obligation.place == operand.place)
+                owner = &obligation;
+            }
+            exact = exact &&
+                    (owner != nullptr || !enumeration->requiresActiveCleanup);
+            std::vector<bool> taken(variant->payloadTypes.size(), false);
+            std::size_t transfers = 0;
+            bool retired = false;
+            bool prefix = true;
+            std::unordered_set<MirValueId> extracted;
+            for (const MirInstruction &candidate : block.instructions) {
+              if (candidate.id == instruction.id)
+                prefix = false;
+              if (consumingExtract(candidate)) {
+                const bool field =
+                    candidate.enumVariant == instruction.enumVariant &&
+                    candidate.payloadIndex &&
+                    *candidate.payloadIndex < taken.size() &&
+                    !taken[*candidate.payloadIndex];
+                exact = exact && field && !retired && candidate.result;
+                if (field)
+                  taken[*candidate.payloadIndex] = true;
+                if (candidate.result)
+                  extracted.insert(*candidate.result);
+                for (const MirLifecycleEvent &event : candidate.lifecycle) {
+                  exact = exact && owner != nullptr &&
+                          event.kind == MirLifecycleEventKind::TransferOut &&
+                          event.source == owner->id && event.target == 0 &&
+                          !event.conditional && !event.failureCleanup;
+                  ++transfers;
+                  retired = true;
+                }
+                continue;
+              }
+              if (!prefix)
+                continue;
+              const MirPlace *destination =
+                  candidate.destination
+                      ? body->findPlace(*candidate.destination)
+                      : nullptr;
+              const bool bindingInitialization =
+                  candidate.kind == MirInstructionKind::Initialize &&
+                  destination != nullptr &&
+                  destination->root == MirPlaceRootKind::Binding &&
+                  destination->projections.empty() &&
+                  destination->id != operand.place &&
+                  candidate.operands.size() == 1 &&
+                  candidate.operands.front().kind == MirOperandKind::Value &&
+                  extracted.contains(candidate.operands.front().value);
+              exact =
+                  exact && (candidate.tombstone ||
+                            candidate.kind == MirInstructionKind::EndBorrow ||
+                            bindingInitialization);
+            }
+            exact = exact &&
+                    std::all_of(taken.begin(), taken.end(),
+                                [](bool field) { return field; }) &&
+                    transfers == (owner != nullptr ? 1u : 0u);
+          }
           if (exact && value->info.category == ValueCategory::Place) {
             const MirOperand &operand = instruction.operands.front();
             const MirPlace *subject = body->findPlace(operand.place);

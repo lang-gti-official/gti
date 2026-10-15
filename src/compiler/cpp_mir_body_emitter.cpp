@@ -17024,10 +17024,11 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       value == nullptr ? nullptr
                        : uniqueValueDrop(body, valueId, value->info.type);
   // A source member call's receiver is either its exact borrow or, for a
-  // consuming (`&&`) member, its exact materialized receiver. Neither is a
-  // transfer at Call: the receiver keeps its own obligation, whose
-  // full-expression Drop MIR schedules after the field Initialize, so a
-  // failure there already rolls the published field back.
+  // consuming (`&&`) member, its exact materialized receiver. A receiver that
+  // owns cleanup is not transferred at Call: it keeps its own obligation,
+  // whose full-expression Drop MIR schedules after the field Initialize, so a
+  // failure there already rolls the published field back. A cleanup-free
+  // receiver moved out of a binding is a prepared input instead (below).
   const auto consumingReceiver = [&]() {
     return producer != nullptr && functionTarget != nullptr &&
            exactMemberConsumingReceiver(program, body, *producer,
@@ -17062,6 +17063,10 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   // the field value. These are input handoffs, not publication of the result:
   // that remains exclusively on the Invoke success edge. Reuse the same exact
   // staging proof for named arguments and fresh owning results in either case.
+  // A consuming member's cleanup-free receiver moved out of a binding is one
+  // more such input: its prepared parameter transfers to the callee.
+  const MirInstruction *preparedReceiver =
+      commonProducer ? preparedReceiverStage(body, *producer) : nullptr;
   const bool preparedInputTransfers =
       commonProducer &&
       std::all_of(
@@ -17075,6 +17080,9 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
             // obligation to the callee; its slot proof keeps the result
             // through the producer's success edge and retires it here.
             if (ownedOperandTransfer(body, *producer, event))
+              return true;
+            if (preparedReceiver != nullptr &&
+                event.source == *preparedReceiver->preparedParameterDrop)
               return true;
             return std::count_if(
                        producer->operands.begin(), producer->operands.end(),
@@ -17174,7 +17182,8 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       functionTarget->definitionKind == MirDefinitionKind::Source &&
       functionTarget->linkage == LanguageLinkage::Gti && valueDrop != nullptr &&
       plainCallActivates(body, *producer, valueDrop->id) &&
-      exactPreparedInputTransfers(body, *producer);
+      exactPreparedInputTransfers(body, *producer,
+                                  PreparedReceiverInput::Admitted);
   const MirClassInstance *defaultOwner =
       value == nullptr ? nullptr
                        : uniqueClassInstanceForType(program, value->info.type);
@@ -29021,7 +29030,8 @@ inlinePayloadClassExtract(const MirBody &body, MirValueId valueId) {
       !producer->definedFailure.empty() || !producer->payloadIndex ||
       producer->operands.size() != 1 ||
       (producer->operands.front().kind != MirOperandKind::Value &&
-       producer->operands.front().kind != MirOperandKind::BorrowRead) ||
+       producer->operands.front().kind != MirOperandKind::BorrowRead &&
+       producer->operands.front().kind != MirOperandKind::Move) ||
       valueUses.size() != 1) {
     return nullptr;
   }
@@ -36745,12 +36755,58 @@ private:
     }
     // Native alternative zero is the backend-private disengaged constructor
     // shell; MIR and the copied representation retain source variant indices.
+    // A consuming extraction (a Move of the switch-owned subject binding)
+    // moves the field out of the active alternative; MIR's final extraction
+    // then transfers the enum's obligation out and retires the shell.
+    const MirOperand &subject = extract.operands.front();
+    const bool consuming = subject.kind == MirOperandKind::Move;
+    if (consuming) {
+      output << "std::move(";
+    }
     output << "std::get<" << variant->index + 1 << ">(";
-    emitOperand(extract.operands.front());
+    if (consuming) {
+      MirOperand observed = subject;
+      observed.kind = MirOperandKind::BorrowRead;
+      emitOperand(observed);
+    } else {
+      emitOperand(subject);
+    }
     output << ".__gti_value).__gti_field_" << *extract.payloadIndex;
     if (cppRequiresBytePreservingTransport(
             program, variant->fieldTypes.at(*extract.payloadIndex)))
       output << ".get()";
+    if (consuming) {
+      output << ')';
+    }
+  }
+
+  // The final consuming extraction of an arm carries the subject binding's
+  // TransferOut: every field of the active alternative has moved into the
+  // arm's bindings, so end the drained enum shell's C++ lifetime without its
+  // cleanup. Its moved-from fields are already disarmed.
+  void retireConsumedPayloadSubject(const ScalarBodyFacts &facts,
+                                    const MirInstruction &extract) {
+    if (extract.operation != MirOperation::PayloadExtract ||
+        extract.operands.size() != 1 ||
+        extract.operands.front().kind != MirOperandKind::Move) {
+      return;
+    }
+    for (const MirLifecycleEvent &event : extract.lifecycle) {
+      const MirDropObligation *owner =
+          event.kind == MirLifecycleEventKind::TransferOut
+              ? facts.body.findDropObligation(event.source)
+              : nullptr;
+      const MirPlace *place =
+          owner == nullptr ? nullptr : facts.body.findPlace(owner->place);
+      if (place == nullptr || place->id != extract.operands.front().place ||
+          !slotPlace(facts.body, *place)) {
+        throw std::logic_error(
+            "verified consuming payload extraction lost its subject slot");
+      }
+      writeIndent();
+      output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *place)
+             << ".destroy(); // retire the drained consumed payload enum\n";
+    }
   }
 
   // A class constructed into representation storage for one payload field
@@ -37528,6 +37584,7 @@ private:
       }
       emitPayloadExtractExpression(instruction);
       output << ";\n";
+      retireConsumedPayloadSubject(facts, instruction);
       return;
     }
     if (instruction.operation == MirOperation::Convert) {
@@ -39464,6 +39521,7 @@ private:
             emitPayloadExtractExpression(*extract);
             output << ";\n";
           }
+          retireConsumedPayloadSubject(facts, *extract);
           return;
         }
       }
@@ -58138,12 +58196,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               }
             }
           }
+          // A consuming extraction moves out of the switch-owned subject
+          // binding; MIR verified its arm guard and exactly-once transfer.
+          const auto consumedSubjectOperand = [&](const MirOperand &operand) {
+            const MirPlace *place =
+                operand.kind == MirOperandKind::Move && operand.place != 0
+                    ? body.findPlace(operand.place)
+                    : nullptr;
+            return place != nullptr && place->type == operand.type &&
+                   place->type.kind == SemanticType::Enum &&
+                   place->root == MirPlaceRootKind::Binding &&
+                   place->projections.empty();
+          };
           const bool stagedOperands =
               instruction.operation == MirOperation::PayloadConstruct
                   ? std::all_of(instruction.operands.begin(),
                                 instruction.operands.end(), valueOperand)
                   : std::all_of(instruction.operands.begin(),
-                                instruction.operands.end(), stableReadOperand);
+                                instruction.operands.end(),
+                                [&](const MirOperand &operand) {
+                                  return stableReadOperand(operand) ||
+                                         consumedSubjectOperand(operand);
+                                });
           if (variant == nullptr || variant->spelling.empty() ||
               !stagedOperands || !instruction.localFailureSites.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::Payload) ||

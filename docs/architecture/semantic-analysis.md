@@ -1316,8 +1316,16 @@ resolves exact field types, folds copy/move/ownership/drop traits across every
 alternative, and records construction and switch-pattern selections. A
 concrete class field may own active cleanup, while stored borrowed state and
 active recursive/non-class carriers remain rejected. Pattern bindings are
-fresh immutable arm-local copies and therefore require a copyable field;
-tag-only alternatives admit move-only payloads without extraction. Semantics
+fresh immutable arm-local values. A switch over a named place observes it, so
+a by-value binding is a copy and requires a copyable field; tag-only
+alternatives admit move-only payloads without extraction. A switch whose
+subject has `ValueCategory::Value` (a prvalue or an explicit `std::move`)
+consumes it: semantics records the switch's hidden subject owner as a
+`BindingInfo` (`findConsumedSwitchSubject`), marks its patterns `consuming`,
+and requires each by-value field to be movable or copyable rather than
+copyable. `auto&` and `mut auto&` patterns on a consumed subject are rejected
+with `GTI-S2067`. The explicit move already recorded the moved place in the
+ordinary flow state before any arm is analyzed. Semantics
 records a switch as exhaustive only when it has `default` or every variant is
 covered once with valid patterns. `GTI-S2067` owns payload shape, exact
 construction, unsupported cleanup carriers, copied-pattern capability,
