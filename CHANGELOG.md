@@ -9,6 +9,55 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.442.1 — Conditional and lambda class results
+
+- Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
+  constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
+  and the class result has no destructor, as in
+  `for (...) { Pod t = c ? fresh(i) : (i > 1 ? fresh(2) : Pod(i)); }` or
+  `total += (c ? fresh(i) : (i > 1 ? fresh(2) : Pod(i))).x;`. The nested
+  arm worked the first time and stopped the program the next time it ran.
+  The nested conditional may sit in either arm or both, nest further, and be
+  bound, read through a field, passed on, assigned or returned.
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called on such a nested
+  conditional, as in `(c ? fresh(1) : (d ? fresh(2) : Pod(3))).read()`,
+  including in loops and with `mut` and consuming (`&&`) methods.
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a lambda call returns a class without a
+  default constructor and the result is used other than to initialize a
+  variable: reading a field, as in `make(1).id`, passing it by value to a
+  function or constructor, as in `take(make(2))` or `Holder h{make(3)}`,
+  assigning it to an existing variable, discarding it, or using it in a
+  constructor's member initializer. This covers capturing lambdas, lambdas
+  called more than once and classes with a destructor, which is still run
+  exactly once, including when a later argument of the same call fails.
+- Fix a failed native build ("backend failed while compiling and linking the
+  executable") when such a result, of a class with a destructor, is read
+  inside an operand of `&&` or `||`, as in `skip || make(1).id == 1`.
+- Fix the same internal compiler error for a lambda that is never called
+  when its body passes a temporary that cannot be copied, or whose class has
+  a destructor, by value to a constructor, as in
+  `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` move a local whose
+  class has no destructor, as in
+  `Pod t = c ? std::move(a) : std::move(b);`. Binding, returning, reading a
+  field of, calling a method on, assigning and passing on the result all
+  work now, in functions that can fail too, as do by-value parameters and an
+  arm that moves a local beside one that constructs, copies or calls.
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR") when a field is read straight off a local or by-value parameter moved
+  with `std::move`, as in `return std::move(a).x;`, `(std::move(a)).x` or
+  `int v = std::move(a).x;`, including for a field of a generic class. The
+  move leaves `a` moved-from and the field is read from the moved value, which
+  is destroyed at the end of the full expression; a class with a destructor
+  runs it exactly once, also when a later part of the expression fails, inside
+  a `?:` arm or `&&`/`||` operand, or in a member initializer.
+
 ## 0.442.0 — Native interoperability and compiler correctness
 
 - Declare externally owned C scalar, pointer, callback and passive record objects

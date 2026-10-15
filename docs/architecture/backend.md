@@ -920,11 +920,17 @@ passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
 (`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. A nested join is proved on its own, and the
-nested arm's region starts at that inner join's branch block. A passive arm may
-also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
-with overflow-checked additions, a call that can fail, a `?` operand, or scalar
-control flow inside an argument. Without an exact diamond, the branch is the
+events stay outside this form. An arm may also move a whole named local out,
+as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
+obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
+ownership event that takes the local's key to `Moved`, and the local keeps its
+passive binding drop. That drop ends the moved-from shell after the join on
+the path that moved it, and the live object on the other. A nested join is
+proved on its own, and the nested arm's region starts at that inner join's
+branch block. A passive arm may also evaluate its inputs before that entry, as
+in `c ? f(a + 1) : f(b + 2)` with overflow-checked additions, a call that can
+fail, a `?` operand, or scalar control flow inside an argument. Without an
+exact diamond, the branch is the
 nearest common dominator of the two arm entries, and its two successors start
 the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
 (`exactConditionalArmRegion`): the branch enters it once and nothing else
@@ -933,14 +939,16 @@ region's start; and their ordinary edges stay inside or reach the entry. An
 Invoke's failure edge leaves through its own failure record's cleanup and a
 `Return` leaves the body (a propagated `?` residual), both before the arm
 publishes anything. An owning join whose arms evaluate inputs first keeps the
-ordinary owned-temporary publication it already has. When a passive join's
-single move reaches neither the binding nor the prepared argument
-terminal, the moved value is staged in its own representation-only slot and
-the join's representation ends right after. That staged slot then serves a
-return, field read, assignment or field initializer exactly as a fresh
-result's slot does. In the failure form too, a Return of that staged value
-publishes the caller's result from the slot; the staging Move does not
-publish it.
+ordinary owned-temporary publication it already has. The outer arm's move
+out of a nested join is that join's single move, and the nested join's
+representation ends right after it, so a loop that evaluates the conditional
+again finds both storages empty. When a passive join's single move reaches
+neither the binding nor the prepared argument terminal, the moved value is
+staged in its own representation-only slot and the join's representation ends
+right after. That staged slot then serves a return, field read, assignment or
+field initializer exactly as a fresh result's slot does. In the failure form
+too, a Return of that staged value publishes the caller's result from the
+slot; the staging Move does not publish it.
 A member call on the joined value itself, as in `(c ? a() : b()).read()`,
 has a different MIR shape. MIR gives the join temporary a full-expression
 value obligation, stages the temporary as the call's receiver (a read-only
@@ -951,14 +959,17 @@ directly, because a cleanup-free arm result has none of its own. A
 construction arm already constructed the temporary at that `Initialize`.
 `classValueDestinationSlot` also names the temporary for a call or ordinary
 constructor arm with no lifecycle event beyond its exact prepared input
-transfers, and for a copied place,
-when the `Initialize` follows the producer directly or opens its Invoke
-success block. Each constructs the temporary directly, a call that can fail
-only on success. Constructor admission requires its complete input schedule;
-input transfers do not substitute for the temporary's real full-expression
-drop, which stays inactive if construction fails. The receiver borrows it as `directTemporaryReceiver`
-borrows a fresh result's slot. A nested-join arm and a moved named local are
-not admitted in this form.
+transfers, for a copied place, and for a whole named local moved out by the
+same ownership and passive-drop facts as the arm above, when the `Initialize`
+follows the producer directly or opens its Invoke success block. Each
+constructs the temporary directly, a call that can fail only on success.
+Constructor admission requires its complete input schedule; input transfers
+do not substitute for the temporary's real full-expression drop, which stays
+inactive if construction fails. The receiver borrows it as
+`directTemporaryReceiver` borrows a fresh result's slot. An arm may also move
+out of a nested cleanup-free join, whose storage has no obligation either.
+That move is the nested join's single move, and its writer ends the nested
+storage right after constructing the temporary.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
@@ -1634,8 +1645,10 @@ nested call can participate in an ordinary constructor full expression.
 
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
-An admitted GTI call or ordinary `Construct` publishes once into the slot, and
-the load spells through its verified field chain. The constructor form also
+An admitted GTI call or ordinary `Construct` publishes once into the slot, as
+does a failure-free `Move` of a whole object out of a place, as in
+`std::move(a).x`, which constructs the slot from its source, and the load
+spells through its verified field chain. The constructor form also
 requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
@@ -1643,12 +1656,18 @@ non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
-slot. The result may come from a call, as in `make_tracked(7).number`, or from
-an ordinary `Construct`, as in `tracked(7).number`. A failure-free constructor
+slot. The result may come from a call, as in `make_tracked(7).number`, from
+an ordinary `Construct`, as in `tracked(7).number`, or from a `Move` out of an
+available place, as in `std::move(a).number` on a local or by-value parameter.
+A failure-free constructor
 constructs the slot in place and arms the result's obligation with its own
 `Initialize`. A raising one places the object at the slot's construction
-address and arms the obligation on its Invoke success edge. Either way the
-construction's only other uses must be field views. Views cover nested fields
+address and arms the obligation on its Invoke success edge. A `Move` with no
+failure of its own move-constructs the slot from its source; its one lifecycle
+event transfers the source's obligation to the result (or arms it when the
+source had none), and the source's later Drop ends only the moved-from shell.
+Either way the
+construction's or move's only other uses must be field views. Views cover nested fields
 and a field lent to one member call as in `make_named().text.size()`, in
 function bodies as well as field defaults, member initializers and base
 argument preparations, whose carrier holds the slot. A view is a pure field
@@ -1661,10 +1680,13 @@ result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
-Inside a short-circuit operand or a conditional arm, the producer, a call or a
-construction, instead constructs the result in a conditional temporary that
+Inside a short-circuit operand or a conditional arm, the producer, a call, a
+construction or a `Move` out of a place (as in `c ? std::move(a).number : 0`),
+instead constructs the result in a conditional temporary that
 holds the result's own obligation. A failure-free producer does so at its
-destination; a transformed one arms the temporary on its Invoke success edge.
+destination; a transformed one arms the temporary on its Invoke success edge;
+a `Move` names the temporary as its destination and arms it with its one
+lifecycle event.
 Either may also transfer out the prepared inputs it consumes, as the moved
 receiver in `c ? std::move(p).loud().id : 0` is; the proof admits exactly
 those transfers beside the result's activation.
@@ -1800,6 +1822,20 @@ discard, one consuming call or constructor, a state test, a checked `value()`
 or `error()` extraction, a constructor field, or a whole binding it replaces.
 A binding the result initializes directly keeps the direct construction into
 that binding.
+
+A class result of a callable value invocation follows the same rule
+(`callableClassResultInvocation`). Verified MIR binds the invocation's result
+and parameters to its exact lambda instance, and the invocation completes the
+result on its Invoke success edge under callable propagation, as a
+transformed source call does. A cleanup-free result therefore takes the
+representation-only SSA slot (`classSsaLifetimeSlot`) for one field read,
+by-value call argument, assignment, constructor field or discard. An owning
+result takes the value-rooted slot (`valueRootedClassCallResultSlot`) that its
+field views or one consuming call read, and a by-value argument with a
+prepared parameter receives the result directly in that parameter's slot
+(`stagedClassResultForSource`). The invocation writer passes the selected
+slot's construction address and marks it constructed on success. No class
+result of an invocation becomes a default-constructed C++ local.
 
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
@@ -2316,7 +2352,13 @@ cleanup. Re-entered passive local bindings and passive value-root slots retire
 only their representation before reconstructing the next loop iteration's
 environment. Owning closures and prepared argument temporaries keep their
 verified explicit lifetime protocol. Fused non-escaping closures can still
-use native lambdas.
+use native lambdas. A fused literal is spelled only where its chain is
+consumed: at an invocation, a deduced callable argument or a comma discard,
+each of which selects the literal's calling convention. A chain with no such
+consumer spells no lambda body, so the vocabulary requires neither convention
+of that body. A lambda whose body has no plain form, for example because it
+passes a move-only or destructor-bearing temporary by value into a class
+constructor, can therefore be declared and never invoked.
 Each materialized environment carries a private type alias for its exact
 artifact-local MIR lambda identity. Source-template member families use this
 identity alongside signature and cleanup selectors when distinct closure

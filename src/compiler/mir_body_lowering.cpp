@@ -4410,8 +4410,11 @@ private:
       }
     }
     // A direct-initialized class temporary is a fresh SSA value like a call
-    // result: materialize it before a projection roots a place at it.
+    // result: materialize it before a projection roots a place at it. So is
+    // a value moved out of a place: the Move leaves its source moved-from and
+    // the projection reads the moved temporary, not the source place.
     if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
+        value->kind == HirValueKind::Move ||
         value->kind == HirValueKind::ExpectedPropagation ||
         value->kind == HirValueKind::Propagation ||
         value->kind == HirValueKind::Conditional) {

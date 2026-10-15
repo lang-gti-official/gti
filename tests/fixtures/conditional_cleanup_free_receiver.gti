@@ -6,8 +6,9 @@
 // publishes into the join's temporary, the call borrows that temporary, and
 // the end of the full expression destroys it. The arms are ordinary calls,
 // member calls with a borrowed or consumed receiver, calls taking a moved
-// argument, copies of a place and constructions, in plain bodies and in
-// bodies whose callees can fail.
+// argument, copies of a place, constructions and nested conditionals, in
+// plain bodies and in bodies whose callees can fail. Loops evaluate a nested
+// conditional again on each iteration.
 //
 // Pod has no destructor. Tracked prints its negated id when destroyed.
 // Nothing else prints outside main and run. The plain shape functions below
@@ -175,6 +176,21 @@ int swap_moved(bool left, Plain a, Plain b) {
   return (left ? make_pod(std::move(a)) : b.peek()).swap(0);
 }
 
+// A nested conditional arm: the outer arm moves the nested join's value into
+// the receiver's temporary.
+int read_nested(bool left, int a, int b, int c) {
+  return (left ? fresh(a) : (b > a ? fresh(b) : Pod(c))).read();
+}
+
+int swap_nested(bool left, Plain a, int b, int c) {
+  return (left ? (c > b ? a.peek() : Pod(b)) : fresh(c)).swap(0);
+}
+
+int take_nested(bool left, int a, int b) {
+  Pod first{a};
+  return (left ? (a > b ? fresh(b) : first) : (a > b ? first : Pod(b))).take();
+}
+
 // Bodies with checked arithmetic, in the arms or in the member call.
 int bump_calls(bool left, int a, int b) {
   return (left ? fresh(a) : fresh(b)).bump();
@@ -210,6 +226,26 @@ int loop_calls(bool left, int count) {
   return total;
 }
 
+// Each iteration evaluates the nested conditional again.
+int loop_nested(bool left, int count) {
+  mut int total = 0;
+  for (mut int i = 0; i < count; i += 1) {
+    total = total * 10 + (left ? (i > 0 ? fresh(i) : Pod(7))
+                               : (i > 1 ? Pod(8) : fresh(i + 5))).bump();
+  }
+  return total;
+}
+
+int loop_nested_deep(bool left, int count) {
+  mut int total = 0;
+  for (mut int i = 0; i < count; i += 1) {
+    total = total * 10 +
+            (left ? fresh(i) : (i > 1 ? fresh(4) : (i > 0 ? Pod(5) : fresh(6))))
+                .twice();
+  }
+  return total;
+}
+
 // Bodies whose callees can fail: an arm's callee, or the member call on the
 // joined value.
 int read_raising(bool left, int a, int b, int divisor) {
@@ -222,6 +258,16 @@ int bump_raising(bool left, Plain a, int b, int divisor) {
 
 int ratio_calls(bool left, int a, int b, int divisor) {
   return (left ? fresh(a) : fresh(b)).ratio(divisor);
+}
+
+int loop_nested_raising(bool left, int count, int divisor) {
+  mut int total = 0;
+  for (mut int i = 0; i < count; i += 1) {
+    total = total * 10 +
+            (left ? risky(i, 1) : (i > 0 ? chancy(i, divisor) : Pod(i)))
+                .ratio(1);
+  }
+  return total;
 }
 
 // Runs every shape through one arm; `base` keeps the two runs apart.
@@ -245,6 +291,12 @@ int run(bool left, int base) {
   std::println(read_raising(left, base + 27, base + 28, 1));
   std::println(bump_raising(left, Plain(base + 29), base + 30, 1));
   std::println(ratio_calls(left, base + 32, base + 34, 2));
+  std::println(read_nested(left, base + 57, base + 58, base + 59));
+  std::println(swap_nested(left, Plain(base + 60), base + 61, base + 62));
+  std::println(take_nested(left, base + 63, base + 64));
+  std::println(loop_nested(left, 3));
+  std::println(loop_nested_deep(left, 3));
+  std::println(loop_nested_raising(left, 3, 1));
   mut int total = 0;
   {
     // In a body that can fail, beside a value with cleanup of its own,
@@ -281,8 +333,10 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(run(true, 0));
   std::println(run(false, 100));
   // Failure cleanup. Scenario 1 fails the left arm's callee, 2 the right
-  // arm's, and 3 the member call on the joined value. Cleanup destroys only
-  // what was constructed before the failure.
+  // arm's, 3 the member call on the joined value, and 4 a nested arm's
+  // callee on a loop's second iteration. Scenarios 5 and 6 fail the left
+  // and right constructors after their tracked inputs are prepared. Cleanup
+  // destroys only what was constructed before the failure.
   int scenario = argc - 1;
   Tracked first{201};
   int left = read_raising(scenario == 1, 202, 203, scenario == 1 ? 0 : 1);
@@ -293,8 +347,11 @@ int main(int argc, std::vector<std::string> argv) {
   Tracked third{207};
   int ratio = ratio_calls(scenario != 3, 208, 209, scenario == 3 ? 0 : 1);
   std::println("ratio");
-  int constructed = (scenario == 4 ? FromTracked(Tracked(210), 0)
-                                    : FromTracked(Tracked(211), scenario == 5 ? 0 : 1)).read();
+  Tracked fourth{210};
+  int nested = loop_nested_raising(false, 3, scenario == 4 ? 0 : 1);
+  std::println("nested");
+  int constructed = (scenario == 5 ? FromTracked(Tracked(210), 0)
+                                    : FromTracked(Tracked(211), scenario == 6 ? 0 : 1)).read();
   std::println("constructed");
-  return left + right + ratio - 1616 + constructed - 211;
+  return left + right + ratio + nested - 12628 + constructed - 211;
 }
