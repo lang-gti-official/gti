@@ -16886,6 +16886,10 @@ passiveGeneratedDefaultFieldInitialize(const MirProgram &program,
   return nullptr;
 }
 
+[[nodiscard]] const MirFunctionInstance *
+virtualStatusCallee(const MirProgram &program,
+                    const MirInstruction &instruction);
+
 // A failure-capable class call or constructor used as one constructor field
 // initializer first owns its result in a Value-rooted MIR place. The
 // successful Invoke edge arms that value, and the following Initialize
@@ -17010,21 +17014,28 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                                 stage->preparedParameterDrop == event.source;
                        }) == 1;
           });
+  // A virtual member call reaches the same transformed status ABI through its
+  // exact virtual failure contract (VirtualCall propagation), as an ordinary
+  // raising static call does through DirectCall. Either way the success edge
+  // activates the result and the field Initialize reparents it.
+  const auto statusCall = [&]() {
+    return functionTarget != nullptr &&
+           ((producer->dispatch == CallDispatch::Static &&
+             producer->definedFailure.propagation ==
+                 FailurePropagationKind::DirectCall &&
+             functionTarget->mayRaiseDefinedFailure &&
+             functionTarget->definitionKind == MirDefinitionKind::Source) ||
+            virtualStatusCallee(program, *producer) == functionTarget);
+  };
   const bool functionProducer =
       commonProducer && producer->kind == MirInstructionKind::Call &&
       preparedInputTransfers && producer->functionTarget &&
-      !producer->constructorTarget &&
-      producer->dispatch == CallDispatch::Static &&
-      producer->definedFailure.propagation ==
-          FailurePropagationKind::DirectCall &&
-      functionTarget != nullptr &&
+      !producer->constructorTarget && statusCall() &&
       functionTarget->returnType == value->info.type &&
       functionTarget->parameterTypes == producer->parameterTypes &&
       ((!producer->receiver &&
         (!functionTarget->owner || functionTarget->staticMember)) ||
        exactMemberReceiver()) &&
-      functionTarget->mayRaiseDefinedFailure &&
-      functionTarget->definitionKind == MirDefinitionKind::Source &&
       functionTarget->linkage == LanguageLinkage::Gti;
   const bool constructorProducer =
       commonProducer && producer->kind == MirInstructionKind::Construct &&
@@ -17063,7 +17074,10 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   // own Initialize event, after any prepared input transferred out, rather
   // than on an Invoke edge. The field Initialize still reparents that exact
   // obligation into the field's rollback. A member receiver uses the same
-  // exact receiver proof as the failure-capable call above.
+  // exact receiver proof as the failure-capable call above. Virtual calls
+  // always keep their Invoke edge; MIR's failure effects never prove a
+  // virtual method returning an owning class failure-free, so such a call
+  // reaches the status route above rather than a plain virtual call.
   const bool successfulFunctionProducer =
       commonProducer && producer->kind == MirInstructionKind::Call &&
       producer->functionTarget && !producer->constructorTarget &&
@@ -30803,6 +30817,21 @@ failureFreeVirtualCallee(const MirProgram &program,
   return target;
 }
 
+// A virtual call with an exact failure contract keeps the transformed status
+// ABI unless the dispatch owner's subtree is wholly failure-free. Its target
+// may be a pure-virtual declaration: the contract root, not a source body,
+// names the convention every override implements.
+[[nodiscard]] const MirFunctionInstance *
+virtualStatusCallee(const MirProgram &program,
+                    const MirInstruction &instruction) {
+  const MirFunctionInstance *target =
+      virtualFailureCallee(program, instruction);
+  return target != nullptr &&
+                 failureFreeVirtualCallee(program, instruction) != target
+             ? target
+             : nullptr;
+}
+
 [[nodiscard]] const MirFunctionInstance *
 transformedFailureCallee(const MirProgram &program,
                          const CppMirBodyEmissionMap &representations,
@@ -30812,16 +30841,17 @@ transformedFailureCallee(const MirProgram &program,
       instruction.intrinsic != IntrinsicKind::None) {
     return nullptr;
   }
+  if (const MirFunctionInstance *status =
+          virtualStatusCallee(program, instruction)) {
+    return status;
+  }
   const MirFunctionInstance *target =
       program.findFunctionInstance(*instruction.functionTarget);
-  if (target != nullptr &&
-      virtualFailureCallee(program, instruction) != nullptr) {
-    return failureFreeVirtualCallee(program, instruction) == target ? nullptr
-                                                                    : target;
-  }
   // A deduced-callable template callee keeps the compatibility plain
   // convention. Every other source GTI callee that may raise uses the
-  // transformed failure-record ABI.
+  // transformed failure-record ABI. A virtual call whose dispatch subtree is
+  // wholly failure-free has a target that cannot raise, so it stays a plain
+  // virtual call here too.
   return target != nullptr && target->mayRaiseDefinedFailure &&
                  target->linkage == LanguageLinkage::Gti &&
                  target->definitionKind ==
