@@ -440,6 +440,16 @@ the table is the phase-owned proof used to decide whether those operands and
 the produced enum value require transfer/drop obligations. HIR never derives
 that policy from a backend representation or alternative name.
 
+A switch that semantics recorded as consuming its subject carries one hidden
+subject binding (`HirBinding::switchSubject`) in the statement's `binding`,
+lowered before any arm binding. It owns the enum from the end of the subject's
+full expression to the selected arm's entry, and its ordinary `Binding` drop
+obligation follows the enum's folded traits, exactly like a local declared
+before the switch. Payload extractions of that switch remain typed values of
+the selected field; the statement's subject binding, not a separate HIR
+operation, tells MIR that they take their fields by move. HIR lowering rejects
+a pattern whose `consuming` fact disagrees with its switch.
+
 For the admitted direct by-value callable family, HIR uses the ordinary
 ordered-input schedule rather than a payload-specific call node. A direct
 active enum selects `CopyValue` only when its folded traits permit copying and

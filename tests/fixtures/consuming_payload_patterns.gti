@@ -1,0 +1,333 @@
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+// Consuming payload-enum matches. A switch over a prvalue or an explicit
+// std::move consumes its enum: by-value bindings take their fields by move,
+// and any other arm drops the enum at its entry. Construction prints a
+// tracked id and destruction its negation, so each phase's trace follows from
+// this source alone. Phase 0 runs every consuming shape; phase 1 fails inside
+// a binding arm; phase 2 fails while a tag-only arm drops its consumed enum;
+// phase 3 fails while the subject's other temporaries end, with the consumed
+// enum already owned by the switch.
+mut int32_t zero = 0;
+
+class Tracked {
+  int32_t id;
+
+public:
+  Tracked(int32_t value) : id(value) { std::println(value); }
+  ~Tracked() { std::println(0 - this.id); }
+  int32_t read() { return this.id; }
+};
+
+// Destruction fails when constructed with a zero divisor.
+class Fragile {
+  int32_t id;
+  int32_t divisor;
+
+public:
+  Fragile(int32_t value, int32_t by) : id(value), divisor(by) {
+    std::println(value);
+  }
+  ~Fragile() {
+    std::println(0 - this.id);
+    int32_t checked = 100 / this.divisor;
+  }
+  int32_t read() { return this.id; }
+};
+
+// Nested owning containment: an alternative holding a class of owners.
+class Bundle {
+public:
+  Tracked first;
+  Tracked second;
+  Bundle(int32_t a, int32_t b) : first(Tracked(a)), second(Tracked(b)) {}
+  int32_t total() { return this.first.read() + this.second.read(); }
+};
+
+enum class box {
+  empty,
+  one(Tracked item),
+  two(Tracked left, Tracked right),
+  tagged(Tracked item, int32_t code),
+  bundled(Bundle value),
+};
+
+enum class brittle { none, held(Fragile item) };
+
+box one(int32_t id) { return box::one(Tracked(id)); }
+
+// A prvalue subject moves its payload into the binding.
+int32_t consume_temporary() {
+  switch (one(1)) {
+  case box::one(item):
+    std::println(item.read() + 1000);
+    return item.read();
+  default:
+    return 0;
+  }
+}
+
+// A tag-only arm drops the consumed enum at its entry.
+void observe_tag() {
+  switch (one(2)) {
+  case box::one:
+    std::println(1002);
+    break;
+  default:
+    break;
+  }
+}
+
+// An explicitly moved local is consumed; both fields move into bindings,
+// which drop at the arm's end newest first.
+void consume_named() {
+  box value = box::two(Tracked(3), Tracked(4));
+  switch (std::move(value)) {
+  case box::two(left, right):
+    std::println(left.read() * 10 + right.read());
+    break;
+  default:
+    break;
+  }
+  std::println(1003);
+}
+
+// Owning and scalar fields of one alternative.
+void consume_tagged() {
+  box value = box::tagged(Tracked(5), 6);
+  switch (std::move(value)) {
+  case box::tagged(item, code):
+    std::println(item.read() * code);
+    break;
+  default:
+    break;
+  }
+}
+
+// A default arm drops the consumed enum at its entry.
+void consume_default() {
+  box value = box::one(Tracked(7));
+  switch (std::move(value)) {
+  case box::two(left, right):
+    break;
+  default:
+    std::println(1007);
+    break;
+  }
+}
+
+// A class payload carrying its own owners moves as one value.
+int32_t consume_bundle() {
+  switch (box::bundled(Bundle(8, 9))) {
+  case box::bundled(value):
+    return value.total();
+  default:
+    return 0;
+  }
+}
+
+enum class state<T> { empty, engaged(T value) };
+
+// A source-defined optional: a consuming accessor takes the payload out of
+// its field, and a read-only accessor relays a receiver-derived borrow.
+class maybe<T> {
+  mut state<T> slot;
+
+public:
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  T& peek() {
+    switch (this.slot) {
+    case state<T>::engaged(auto& v):
+      return v;
+    case state<T>::empty:
+      std::panic("empty");
+    }
+  }
+  T value() && {
+    switch (std::move(this.slot)) {
+    case state<T>::engaged(value):
+      return value;
+    case state<T>::empty:
+      std::panic("empty");
+    }
+  }
+};
+
+void generic_optional() {
+  maybe<Tracked> held = maybe<Tracked>(Tracked(10));
+  std::println(held.peek().read() + 1000);
+  Tracked taken = std::move(held).value();
+  std::println(taken.read() + 2000);
+}
+
+T unwrap_or<T>(state<T> source, T fallback) {
+  switch (std::move(source)) {
+  case state<T>::engaged(value):
+    return value;
+  case state<T>::empty:
+    return fallback;
+  }
+}
+
+void generic_function() {
+  Tracked a =
+      unwrap_or<Tracked>(state<Tracked>::engaged(Tracked(11)), Tracked(12));
+  std::println(a.read() + 1000);
+  Tracked b = unwrap_or<Tracked>(state<Tracked>::empty, Tracked(13));
+  std::println(b.read() + 1000);
+  std::println(unwrap_or<int32_t>(state<int32_t>::engaged(14), 0));
+}
+
+// `continue` and `break` leave the arm through its ordinary cleanup.
+int32_t loop_exits() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 3) {
+    index = index + 1;
+    switch (one(20 + index)) {
+    case box::one(item):
+      if (index == 2) {
+        continue;
+      }
+      total = total + item.read();
+      break;
+    default:
+      break;
+    }
+  }
+  return total;
+}
+
+// Returning a binding moves it; the sibling binding drops at the return.
+Tracked keep_left(box value) {
+  switch (std::move(value)) {
+  case box::two(left, right):
+    return left;
+  default:
+    return Tracked(0);
+  }
+}
+
+void early_return() {
+  Tracked kept = keep_left(box::two(Tracked(30), Tracked(31)));
+  std::println(kept.read() + 1000);
+}
+
+// A move-only payload without cleanup is consumed the same way.
+class token {
+  int32_t value;
+
+public:
+  token(int32_t v) : value(v) {}
+  token(token& other) = delete;
+  token(token&& other) = default;
+  int32_t read() { return this.value; }
+};
+
+enum class ticket { none, issued(token item, int32_t extra) };
+
+int32_t consume_passive() {
+  switch (ticket::issued(token(40), 2)) {
+  case ticket::issued(item, extra):
+    return item.read() + extra;
+  default:
+    return 0;
+  }
+}
+
+// Nested owning containment: an alternative's class owns another payload
+// enum. The consumed binding owns that whole chain; observing the inner enum
+// through the binding borrows from it.
+class Envelope {
+public:
+  box inner;
+  Envelope(box value) : inner(std::move(value)) {}
+};
+
+enum class parcel { none, sealed(Envelope envelope) };
+
+int32_t open_parcel(parcel value) {
+  switch (std::move(value)) {
+  case parcel::sealed(envelope):
+    switch (envelope.inner) {
+    case box::one(auto& item):
+      return item.read();
+    default:
+      return 0;
+    }
+  case parcel::none:
+    return -1;
+  }
+}
+
+void drop_parcel() {
+  switch (parcel::sealed(Envelope(box::one(Tracked(81))))) {
+  case parcel::none:
+    break;
+  default:
+    std::println(1081);
+    break;
+  }
+}
+
+int32_t divide_in_arm(int32_t divisor) {
+  switch (box::two(Tracked(50), Tracked(51))) {
+  case box::two(left, right):
+    return left.read() / divisor;
+  default:
+    return 0;
+  }
+}
+
+void fail_tag_drop() {
+  Tracked guard = Tracked(60);
+  switch (brittle::held(Fragile(61, zero))) {
+  case brittle::held:
+    std::println(1061);
+    break;
+  default:
+    break;
+  }
+}
+
+int32_t fail_subject_temporary() {
+  Tracked guard = Tracked(70);
+  switch (one(Fragile(71, zero).read() + 1)) {
+  case box::one(item):
+    return item.read();
+  default:
+    return 0;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int32_t phase = argc - 1;
+  if (phase == 1) {
+    std::println(divide_in_arm(zero));
+    return 0;
+  }
+  if (phase == 2) {
+    fail_tag_drop();
+    return 0;
+  }
+  if (phase == 3) {
+    std::println(fail_subject_temporary());
+    return 0;
+  }
+  std::println(consume_temporary());
+  observe_tag();
+  consume_named();
+  consume_tagged();
+  consume_default();
+  std::println(consume_bundle());
+  generic_optional();
+  generic_function();
+  std::println(loop_exits());
+  early_return();
+  std::println(consume_passive());
+  std::println(open_parcel(parcel::sealed(Envelope(box::one(Tracked(80))))));
+  drop_parcel();
+  return 0;
+}

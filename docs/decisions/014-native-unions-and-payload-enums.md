@@ -82,8 +82,9 @@ concrete fields and declaration-bound storage capabilities supply the owning
 facts that HIR and MIR preserve and verify.
 
 Polymorphic callable transport, direct enum lambda capture, direct fixed-array
-or owning non-class payloads, stored borrowed state, consuming patterns, and a stable source layout
-remain outside this decision. The C++ backend may use `std::variant` plus a
+or owning non-class payloads, stored borrowed state, and a stable source layout
+remain outside this decision. Consuming patterns were added by the
+[2026-10-15 revision](#consuming-matches-revision-2026-10-15). The C++ backend may use `std::variant` plus a
 private disengaged representation state because all language decisions are
 complete before emission; that state is not a source alternative and a future
 backend may choose a different representation.
@@ -116,4 +117,29 @@ this decision.
   backends.
 - **Expose payload enums immediately for arbitrary owning types:** the
   concrete-class family proves exactly-once recursive cleanup, but stored
-  loans and consuming patterns still require separate lifecycle proofs.
+  loans still require separate lifecycle proofs.
+
+## Consuming Matches Revision (2026-10-15)
+
+A `switch` whose subject is a consumed value, a prvalue or an explicit
+`std::move(place)`, consumes the payload enum. Its by-value bindings take
+ownership of their fields by move, so move-only payloads become bindable
+without a copy or a borrow. A named subject place is still observed: bindings
+copy and `auto&`/`mut auto&` borrow. This is the transport rule `?` already
+uses for a result: a prvalue or an explicit move transfers its active
+alternative, and a named place is observed. Borrowed bindings on a consumed
+subject stay rejected, because no stable owner outlives the selection.
+
+The consumed enum is retired at the selected arm's entry rather than at the
+end of the subject's full expression or of the switch. A binding arm moves
+every field of the active alternative into its bindings and releases the
+drained enum without a second drop; any other arm drops the enum before its
+first statement. The earliest point at which the enum can be retired after the
+dispatch reads its tag is the arm's entry, so the consumed value never
+outlives the selection, and an arm's own early exits and defined failures see
+only ordinary arm-scoped bindings. Ending it at the subject's full-expression
+boundary would drop the payload before a binding arm could take it; keeping it
+until the end of the switch would hold a partially moved shell across user
+code. Semantics records the consuming fact, HIR gives the switch one hidden
+subject binding, and verified MIR proves the exactly-once move-out and
+transfer.

@@ -293,6 +293,13 @@ constructs its copy in representation storage, which the Return moves out. The
 copy is the one MIR selected for the `Load`, so no payload is limited to
 passive C-compatible records.
 
+A consuming payload extraction, a `Move` of a switch-owned subject binding,
+spells its field as an rvalue at the binding's construction. The extraction
+that carries the subject's `TransferOut` then ends the drained enum's C++
+lifetime without GTI cleanup; its moved-from fields are already disarmed. MIR's
+operand kind and lifecycle event select both spellings; the backend does not
+infer consumption from the subject's representation.
+
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
 local declaration planning and operand emission use the same view predicate.
@@ -2580,20 +2587,20 @@ receiver is transferred at the call. A consumed receiver's full-expression
 rolls the published field back; the backend emits that schedule unchanged.
 Field declaration defaults such as `Tracked kept = Source(3).make();` run as
 the same constructor-initializer stages. A cleanup-free receiver moved out of
-a binding is instead a prepared parameter that the call transfers out. The
-consuming-receiver proof names that stage, but this proof's input-transfer
-checks do not count the receiver's handoff yet, so it still refuses
-`kept(std::move(source).take())` when `source`'s class needs no cleanup. A
-virtual member call, as in `kept(maker.make())` through a
-`Maker &` or `kept(factory.build(d))` through a `mut` interface reference,
+a binding is instead a prepared parameter that the call transfers like an
+owning argument, as in `kept(std::move(source).take())` where `source`'s class
+needs no cleanup. Both producers count that transfer among the call's
+prepared inputs (`preparedReceiverStage`), so no receiver drop follows the
+field `Initialize`. A virtual member call, as in `kept(maker.make())` through
+a `Maker &` or `kept(factory.build(d))` through a `mut` interface reference,
 takes the transformed route through its exact virtual failure contract: MIR
 gives it `VirtualCall` propagation and an `Invoke` edge whose success edge
 activates the result. The proof requires the status callee that call emission
 selects (`virtualStatusCallee`), which may be a pure-virtual or interface
-contract root, and the same receiver proofs, including a consuming virtual
-member. MIR's failure effects never prove a virtual method returning an owning
-class failure-free, so such a call never takes the plain virtual route, and
-the failure-free producer keeps requiring static dispatch.
+contract root, and the same receiver proofs and input transfers, including a
+consuming virtual member. MIR's failure effects never prove a virtual method
+returning an owning class failure-free, so such a call never takes the plain
+virtual route, and the failure-free producer keeps requiring static dispatch.
 If a constructor has no reachable normal `Return`, its initialized fields never
 transfer to a completed object. The field-slot proof permits zero final object
 publications only after recomputing CFG reachability and proving that absence;

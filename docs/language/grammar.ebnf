@@ -1324,9 +1324,12 @@ payload-pattern-binding = IDENTIFIER | [ "mut" ] "auto" "&" IDENTIFIER ;
    inside an enclosing loop, so GTI has no implicit fallthrough. Each arm is a
    lexical scope even without source braces. A payload-enum label is either a
    unit alternative or `EnumName::case(bindings...)`. Bindings are immutable
-   copied values local to that arm and therefore require a copyable field.
+   values local to that arm. Over a named subject they are copies and
+   require a copyable field; over a consumed subject (a prvalue or an
+   explicit `std::move`) they take their fields by move.
    `auto& name` is a shared payload borrow, and `mut auto& name` is an
-   exclusive borrow requiring mutable stable enum storage;
+   exclusive borrow requiring mutable stable enum storage, so neither applies
+   to a consumed subject;
    omitting the binding produces a tag-only pattern that can observe a
    move-only alternative. Without `default`, every payload variant must appear
    exactly once. *)

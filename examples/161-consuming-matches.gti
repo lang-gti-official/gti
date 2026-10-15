@@ -1,0 +1,110 @@
+// Consuming matches: a `switch` over a temporary or over `std::move(name)`
+// consumes its payload enum. Each by-value binding takes ownership of its
+// field by move, so owning payloads such as strings are matched without a
+// copy or a borrow, and the consumed enum is gone afterwards. A `switch` over
+// a named enum still only observes it: its bindings copy, and `auto&` borrows.
+#include <std/format>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+enum class message {
+  quit,
+  ping,
+  text(std::string body),
+  entry(std::string key, std::string value),
+};
+
+message receive(int32_t index) {
+  if (index == 0) {
+    return message::text(std::string("hello"));
+  }
+  if (index == 1) {
+    return message::entry(std::string("mode"), std::string("fast"));
+  }
+  if (index == 2) {
+    return message::ping;
+  }
+  return message::quit;
+}
+
+// A source-defined optional. `value() &&` consumes the optional and moves the
+// payload out of its own field; `has_value()` only observes it.
+enum class state<T> { empty, engaged(T value) };
+
+class maybe<T> {
+  mut state<T> slot;
+
+public:
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+
+  bool has_value() {
+    switch (this.slot) {
+    case state<T>::engaged:
+      return true;
+    case state<T>::empty:
+      return false;
+    }
+  }
+
+  T value() && {
+    switch (std::move(this.slot)) {
+    case state<T>::engaged(value):
+      return value;
+    case state<T>::empty:
+      std::panic("maybe::value on an empty value");
+    }
+  }
+};
+
+int main() {
+  mut std::vector<std::string> lines{};
+  mut int32_t ignored = 0;
+  mut int32_t index = 0;
+  mut bool running = true;
+  while (running) {
+    // The temporary message is consumed: its strings move into the bindings
+    // and from there into the vector, without being copied.
+    switch (receive(index)) {
+    case message::text(body):
+      lines.push_back(std::move(body));
+      break;
+    case message::entry(key, value):
+      lines.push_back(std::move(key));
+      lines.push_back(std::move(value));
+      break;
+    case message::ping:
+      // An arm without bindings drops the consumed message on entry.
+      ignored = ignored + 1;
+      break;
+    case message::quit:
+      running = false;
+      break;
+    }
+    index = index + 1;
+  }
+  for (std::string& line : lines) {
+    std::println(line);
+  }
+
+  maybe<std::string> greeting = maybe<std::string>(std::string("ready"));
+  if (!greeting.has_value()) {
+    return 1;
+  }
+  std::string taken = std::move(greeting).value();
+  std::println(taken);
+
+  // A named enum is observed rather than consumed; borrow its payload.
+  message last = message::text(std::string("kept"));
+  switch (last) {
+  case message::text(auto& body):
+    if (body.size() != 4) {
+      return 2;
+    }
+    break;
+  default:
+    return 3;
+  }
+  std::println("{} lines, {} ignored", lines.size(), ignored);
+  return 0;
+}

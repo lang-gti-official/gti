@@ -43,6 +43,16 @@ public:
   }
 };
 
+// A receiver that needs no cleanup is moved into a prepared parameter, which
+// the consuming call transfers to its callee.
+class Plain {
+  int base;
+public:
+  Plain(int base) : base(base) {}
+  Tracked take() && { return Tracked(this.base); }
+  Tracked take_checked(int divisor) && { return Tracked(this.base / divisor); }
+};
+
 class Shelf<T> {
   mut T item;
 public:
@@ -140,6 +150,16 @@ public:
   int read() { return this.kept.read(); }
 };
 
+class PlainTaking {
+  mut Tracked kept;
+  mut Tracked checked;
+public:
+  PlainTaking(Plain plain, Plain other, int divisor)
+      : kept(std::move(plain).take()),
+        checked(std::move(other).take_checked(divisor)) {}
+  int read() { return this.kept.read() + this.checked.read(); }
+};
+
 // The second initializer can fail after the first member-call result was
 // published into its field.
 class Pair {
@@ -202,10 +222,14 @@ int main(int argc, std::vector<std::string> argv) {
     FreshChecking fresh{8, has(argv, "fresh") ? 0 : 1};
     total += fresh.read();
   }
+  {
+    PlainTaking plain{Plain(11), Plain(24), has(argv, "plain") ? 0 : 2};
+    total += plain.read();
+  }
   Pair pair{Source(16), Single(9), has(argv, "later") ? 0 : 2};
   bool receiver = has(argv, "receiver");
   Checked checked{
       Guarded(10, receiver && has(argv, "double") ? 0 : 1, receiver ? 0 : 1)};
   std::println("kept");
-  return total + pair.read() + checked.read() - 84;
+  return total + pair.read() + checked.read() - 107;
 }

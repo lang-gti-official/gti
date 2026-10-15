@@ -8058,9 +8058,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
 - **Current disposition:** the generic declaration, recursive owning payload
   and borrowed-pattern campaigns are integrated, including the combined
   lifetime/storage release. Their branch/reconciliation narrative below is
-  historical. Direct capture, consuming patterns, excluded transport/storage
-  profiles and stable-layout work remain bounded separately by ADR 014 and the
-  current language contract; do not reopen generic declaration acceptance.
+  historical. Consuming matches are delivered: a switch over a prvalue or an
+  explicit `std::move` moves payloads into its by-value bindings and retires
+  the enum at the selected arm's entry (ADR 014's 2026-10-15 revision). Direct
+  capture, excluded transport/storage profiles and stable-layout work remain
+  bounded separately by ADR 014 and the current language contract; do not
+  reopen generic declaration acceptance.
 - **State/role:** bounded profiles delivered; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
@@ -8093,13 +8096,14 @@ consumer, and release refreshes remain outstanding for the full campaign.
   direct enum capture, fixed arrays of enums, direct enum result alternatives,
   and stored borrowed payload state remain bounded separately.
 - **Implemented slice:** Nominal payload cases construct by exact case calls.
-  `switch` accepts qualified case patterns, creates immutable copied bindings,
-  and requires a `default` or every variant. Semantic variant identity and
+  `switch` accepts qualified case patterns, creates immutable bindings that
+  copy from an observed named subject and move from a consumed one, and
+  requires a `default` or every variant. Semantic variant identity and
   exhaustiveness survive through HIR/MIR; the C++ backend uses a replaceable
   `std::variant` wrapper without making that library type source semantics.
-- **Remaining scope:** Add direct enum lambda capture, consuming payload
-  bindings, fixed-array and direct result-alternative transport, and
-  deterministic layout in separately proven families.
+- **Remaining scope:** Add direct enum lambda capture, fixed-array and direct
+  result-alternative transport, and deterministic layout in separately proven
+  families.
   The historical general generic-declaration campaign was developed in
   `codex/generic-payload-enums`. The candidate retains ordinary semantic binders
   and exact substituted alternative signatures, including defaults, type/value
@@ -9451,7 +9455,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Borrowed capture/results and inline consuming projection remain general lifetime/origin goals, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **generic, recursively owned and borrowed-pattern profiles delivered** | `L-SUM-01` and ADR 014 cover substituted alternative identity, owning class payloads, finite recursive containment, storage/source-wrapper transport and read/mut arm-scoped bindings. Polymorphic transport, direct capture, non-class owning payloads/fixed arrays, stored reference payloads, consuming patterns and stable layout remain distinct goals. |
+| Payload enums/matching | **generic, recursively owned and borrowed-pattern profiles delivered** | `L-SUM-01` and ADR 014 cover substituted alternative identity, owning class payloads, finite recursive containment, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Polymorphic transport, direct capture, non-class owning payloads/fixed arrays, stored reference payloads and stable layout remain distinct goals. |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
