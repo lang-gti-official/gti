@@ -8413,6 +8413,26 @@ all-origin access checks and producer/entry seeding remain required. Optimized
 C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
 claimed for it.
 
+The next access scaffold snapshots every external origin of a selected scalar
+reference at operand evaluation. Reads, mutations and call exclusivity compare
+all possible owners; one selected reference is one access, so alternatives are
+not spuriously compared against each other as simultaneous aliases. The
+runtime selected address still comes from its exact extraction, not any one
+owner. Producer and same-body reborrow publication remain closed until their
+independent MIR proof is connected. Projected reborrows additionally require
+the ordinary typed runtime projection to be checked against the same suffix on
+every external origin; the root selection descriptor is not that proof.
+
+Complete-flow observations now retain the carrier fact immediately before each
+reachable extraction, independently of its attached annotations. Per-field
+consuming extraction keeps an exact owning shell's fact until its final
+`TransferOut`; ordinary whole-value moves still invalidate facts immediately.
+Tag dominance, unique field consumption and final shell retirement remain
+separate mandatory lifecycle proofs. Reordered, duplicate and missing exact
+retirement mutations accompany this seam. Syntax checks establish only that
+the scaffold compiles; focused semantic/MIR tests and reference-payload runtime
+evidence remain pending for this checkpoint.
+
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The
