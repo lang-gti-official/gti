@@ -307,6 +307,7 @@ struct HirValue {
   std::optional<EnumConstant> enumValue;
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
+  std::optional<PayloadExtractionKind> payloadExtractionKind;
   std::optional<PlaceKey> place;
   std::optional<OwnershipEvent> ownership;
   HirFullExpressionId fullExpression = 0;

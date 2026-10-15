@@ -3572,7 +3572,7 @@ private:
                   lowerPayloadBinding(*payload.name, payload.binding, body);
               const HirValueId extraction = nextValueId++;
               const bool borrowed =
-                  payload.binding.type.kind == SemanticType::Reference;
+                  isReferencePayloadBinding(payload.extractionKind);
               const SemanticType extractedType =
                   borrowed ? payload.binding.type.arguments.front()
                            : payload.binding.type;
@@ -3591,7 +3591,8 @@ private:
                    .operands = {*subject},
                    .enumOwner = payloadPattern->owner,
                    .enumVariant = payloadPattern->variantIndex,
-                   .payloadIndex = payload.payloadIndex});
+                   .payloadIndex = payload.payloadIndex,
+                   .payloadExtractionKind = payload.extractionKind});
               output.program.sourceValueIds[payload.source].push_back(
                   extraction);
               loweredArm.payloadBindings.push_back(
