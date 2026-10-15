@@ -1730,6 +1730,18 @@ out at the call, so in a plain body their slots end the moved-from
 representation at C++ scope exit, after the returned object is initialized. A
 targetless default construction never takes that route; it spells `return T{}`
 itself.
+
+Generated native destructors test their class's initialized active-drop flag
+before calling its cleanup adapter. This is the same guard the adapter already
+checks, not a new assumption that moved-from cleanup is harmless. MIR-directed
+move/drop operations disarm the flag; a false flag therefore bypasses only an
+effect-free adapter path (emergency-state observation and an empty failure
+record, with no source cleanup). A true flag still enters the unchanged adapter,
+including emergency handling, failure propagation and exact source destructor
+order. Native base/member destructors still run after either branch. Exposing
+the guard at this boundary lets native optimization remove retired-shell calls
+without inlining the cold defined-failure machinery or weakening GTI cleanup.
+
 When cleanup such as the drop of a moved-from parameter runs between the call
 and the Return, the result stays in its value-rooted slot and the Return takes
 it out. A fallible cleanup in between reparents the result to its return-result
