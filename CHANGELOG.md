@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.441.1 — Nested conditional results in loops
+## 0.441.1 — Conditional and lambda class results
 
 - Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
   constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
@@ -23,6 +23,23 @@ for what minor and patch releases mean.
   generating a representation") when a method is called on such a nested
   conditional, as in `(c ? fresh(1) : (d ? fresh(2) : Pod(3))).read()`,
   including in loops and with `mut` and consuming (`&&`) methods.
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a lambda call returns a class without a
+  default constructor and the result is used other than to initialize a
+  variable: reading a field, as in `make(1).id`, passing it by value to a
+  function or constructor, as in `take(make(2))` or `Holder h{make(3)}`,
+  assigning it to an existing variable, discarding it, or using it in a
+  constructor's member initializer. This covers capturing lambdas, lambdas
+  called more than once and classes with a destructor, which is still run
+  exactly once, including when a later argument of the same call fails.
+- Fix a failed native build ("backend failed while compiling and linking the
+  executable") when such a result, of a class with a destructor, is read
+  inside an operand of `&&` or `||`, as in `skip || make(1).id == 1`.
+- Fix the same internal compiler error for a lambda that is never called
+  when its body passes a temporary that cannot be copied, or whose class has
+  a destructor, by value to a constructor, as in
+  `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
 
 ## 0.441.0 — `?` on payload enums
 

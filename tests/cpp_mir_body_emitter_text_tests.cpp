@@ -6732,6 +6732,311 @@ int main() {
          "parameter storage");
 }
 
+// A lambda invocation returning a class without a default constructor is the
+// same fresh result as a checked source call's: verified MIR binds it to its
+// lambda instance and completes it on the Invoke success edge under callable
+// propagation. A cleanup-free result read through one field or passed by
+// value, and an owning result read through a field view, therefore publish
+// into the slot a source call's result uses rather than a default-constructed
+// C++ local. An owning result read inside a short-circuit operand constructs
+// in that operand's conditional temporary, and a result returned directly
+// after a moved parameter's cleanup still constructs in the caller's
+// placement storage, with no slot of its own. An invocation without callable
+// propagation or without its exact lambda target cannot enter backend
+// emission.
+void testCallableClassResultSlots() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-callable-class-result-slots.gti", R"(
+#include <std/utility>
+class Ticket {
+public:
+  Ticket(int32_t input) : identity(input) {}
+  Ticket(Ticket&& other) = default;
+  int32_t get() { return this.identity; }
+private:
+  int32_t identity;
+};
+Ticket finish(Ticket input) {
+  auto action = [](Ticket value) -> Ticket { return std::move(value); };
+  return action(std::move(input));
+}
+struct Plain {
+  int id;
+  Plain(int raw) : id(raw) {}
+};
+struct Res {
+  int id;
+  Res(int raw) : id(raw) {}
+  ~Res() {}
+};
+int take(Plain p) { return p.id; }
+int operand(bool skip) {
+  auto owned = [](int raw) -> Res { return Res(raw); };
+  return skip || owned(4).id == 4 ? 1 : 0;
+}
+int main() {
+  auto read = [](int raw) -> Plain { return Plain(raw); };
+  auto pass = [](int raw) -> Plain { return Plain(raw); };
+  auto owned = [](int raw) -> Res { return Res(raw); };
+  return read(1).id + take(pass(2)) + owned(3).id + operand(false) +
+         finish(Ticket(4)).get() - 11;
+}
+)");
+  expect(frontend.canGenerateCode(), "callable class results verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the callable class result entry is retained");
+  if (entry == frontend.mir.functionInstances().end())
+    return;
+  std::vector<lang::MirInstructionId> invocations;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.callableInvocation && instruction.result &&
+          instruction.info.type.kind == lang::SemanticType::Class)
+        invocations.push_back(instruction.id);
+  expect(invocations.size() == 3,
+         "the three class-returning lambda invocations are exercised: " +
+             std::to_string(invocations.size()));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "class results of lambda invocations enter failure-form emission");
+  if (!emitter.supportsFailureBodyText(address))
+    return;
+  const std::string text =
+      emitter.emitFailureBodyText(address, "callable-class-result-v0", 1).text;
+  const auto count = [&](std::string_view needle) {
+    std::size_t found = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size()))
+      ++found;
+    return found;
+  };
+  expect(count("::__gti_program::Plain, true> __gti_mir_v_") == 1 &&
+             count(".get().id") >= 2,
+         "the field-read result lives in a representation-only SSA slot and "
+         "each field read views its slot");
+  // The three invocations, plus the transformed call of `finish`.
+  const std::size_t addressed =
+      count(".construction_address(), __gti_mir_failure_record);");
+  expect(addressed == invocations.size() + 1 &&
+             count(".mark_constructed();") >= addressed,
+         "each invocation constructs its result at its slot's address and "
+         "publishes it only on success: " +
+             std::to_string(addressed));
+  expect(count("::__gti_program::Plain __gti_mir_v_") == 0 &&
+             count("::__gti_program::Res __gti_mir_v_") == 0,
+         "no class result is a default-constructed C++ local");
+  const auto refused = [&](auto &&mutate, const std::string &what) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        mutate(instruction);
+    const lang::CppMirBodyEmitter rejected(malformed, map);
+    expect(!rejected.analyze(address).ready() ||
+               !rejected.supportsFailureBodyText(address),
+           "a forged lambda class result cannot enter backend emission: " +
+               what);
+  };
+  const auto bodyText = [&](const lang::MirFunctionInstance &function) {
+    const lang::MirBodyAddress functionAddress{
+        .kind = lang::MirBodyKind::Function, .owner = function.id};
+    return function.mayRaiseDefinedFailure
+               ? emitter
+                     .emitFailureBodyText(functionAddress,
+                                          "callable-class-result-v0", 1)
+                     .text
+               : emitter
+                     .emitBodyText(functionAddress, "callable-class-result-v0",
+                                   1)
+                     .text;
+  };
+  const auto invokesClassLambda =
+      [](const lang::MirFunctionInstance &function) {
+        return function.entryKind == lang::ProgramEntryKind::None &&
+               std::any_of(
+                   function.body.blocks.begin(), function.body.blocks.end(),
+                   [](const lang::MirBlock &block) {
+                     return std::any_of(
+                         block.instructions.begin(), block.instructions.end(),
+                         [](const lang::MirInstruction &instruction) {
+                           return instruction.kind ==
+                                      lang::MirInstructionKind::Call &&
+                                  instruction.callableInvocation &&
+                                  instruction.info.type.kind ==
+                                      lang::SemanticType::Class;
+                         });
+                   });
+      };
+  // The directly returned result constructs in the caller's storage.
+  const auto finish = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return invokesClassLambda(function) &&
+               function.returnType.kind == lang::SemanticType::Class;
+      });
+  expect(finish != frontend.mir.functionInstances().end() &&
+             supportsSelectedBodyText(frontend.mir, map, finish->id),
+         "a directly returned lambda class result enters emission");
+  if (finish != frontend.mir.functionInstances().end() &&
+      supportsSelectedBodyText(frontend.mir, map, finish->id)) {
+    const std::string finishText = bodyText(*finish);
+    expect(finishText.find("__gti_mir_out_result, __gti_mir_failure_record)") !=
+                   std::string::npos &&
+               finishText.find(", true> __gti_mir_v_") == std::string::npos &&
+               finishText.find(".mark_constructed();") == std::string::npos,
+           "a directly returned lambda class result publishes into the "
+           "caller's placement storage without a slot of its own");
+  }
+  // The short-circuit operand's result lives in its conditional temporary.
+  const auto operand = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return invokesClassLambda(function) &&
+               function.returnType.kind != lang::SemanticType::Class;
+      });
+  expect(operand != frontend.mir.functionInstances().end() &&
+             supportsSelectedBodyText(frontend.mir, map, operand->id),
+         "a lambda result read inside a short-circuit operand enters "
+         "emission");
+  if (operand != frontend.mir.functionInstances().end() &&
+      supportsSelectedBodyText(frontend.mir, map, operand->id)) {
+    const std::string operandText = bodyText(*operand);
+    expect(operandText.find(".construction_address(), "
+                            "__gti_mir_failure_record);") !=
+                   std::string::npos &&
+               operandText.find(", &__gti_mir_v_") == std::string::npos,
+           "the operand's invocation constructs its conditional temporary, "
+           "not an undeclared SSA local");
+  }
+  for (const lang::MirInstructionId call : invocations) {
+    refused(
+        [&](lang::MirInstruction &instruction) {
+          if (instruction.id == call)
+            instruction.definedFailure.propagation =
+                lang::FailurePropagationKind::DirectCall;
+        },
+        "non-callable propagation " + std::to_string(call));
+    refused(
+        [&](lang::MirInstruction &instruction) {
+          if (instruction.id == call)
+            instruction.lambdaTarget.reset();
+        },
+        "missing lambda target " + std::to_string(call));
+  }
+}
+
+// A fused closure literal is spelled only where its chain is consumed: an
+// invocation, a deduced callable argument or a comma discard, each of which
+// selects the literal's convention. A lambda that is never consumed spells no
+// body, so its body needs neither convention, even when no plain form exists
+// (a move-only or destructor-bearing temporary passed by value into a class
+// constructor). The same lambda invoked once still spells its transformed
+// body at that invocation.
+void testUnconsumedFusedClosureSpellsNoBody() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-unconsumed-fused-closure.gti", R"(
+struct Token {
+  int id;
+  Token(int raw) : id(raw) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+};
+struct Logged {
+  int id;
+  Logged(int raw) : id(raw) {}
+  ~Logged() {}
+};
+struct Ticket {
+  int id;
+  Ticket(Token token) : id(token.id) {}
+};
+struct Receipt {
+  int id;
+  Receipt(Logged entry) : id(entry.id) {}
+};
+int unused() {
+  auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
+  auto receipt = [](int raw) -> Receipt { return Receipt(Logged(raw)); };
+  return 0;
+}
+int used() {
+  auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
+  Ticket t = ticket(8);
+  return t.id;
+}
+int main() { return unused() + used() - 8; }
+)");
+  expect(frontend.canGenerateCode(), "unconsumed fused closures verify");
+  if (!frontend.canGenerateCode())
+    return;
+  // `unused` creates two closures and invokes neither; `used` invokes its one.
+  const lang::MirFunctionInstance *unused = nullptr;
+  const lang::MirFunctionInstance *used = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    std::size_t closures = 0;
+    std::size_t invocations = 0;
+    for (const auto &block : candidate.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        closures += instruction.kind == lang::MirInstructionKind::Compute &&
+                    instruction.operation == lang::MirOperation::Closure;
+        invocations += instruction.kind == lang::MirInstructionKind::Call &&
+                       instruction.callableInvocation.has_value();
+      }
+    if (closures == 2 && invocations == 0)
+      unused = &candidate;
+    if (closures == 1 && invocations == 1)
+      used = &candidate;
+  }
+  expect(unused != nullptr && used != nullptr,
+         "both closure-owning functions are retained");
+  if (unused == nullptr || used == nullptr)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto bodyText = [&](const lang::MirFunctionInstance &instance,
+                            std::string_view family) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = instance.id};
+    return instance.mayRaiseDefinedFailure
+               ? emitter.emitFailureBodyText(address, family, 1).text
+               : emitter.emitBodyText(address, family, 1).text;
+  };
+  expect(supportsSelectedBodyText(frontend.mir, map, unused->id),
+         "a function whose lambdas are never consumed enters emission");
+  expect(supportsSelectedBodyText(frontend.mir, map, used->id),
+         "a function invoking the same lambda enters emission");
+  if (!supportsSelectedBodyText(frontend.mir, map, unused->id) ||
+      !supportsSelectedBodyText(frontend.mir, map, used->id))
+    return;
+  const std::string unusedText = bodyText(*unused, "unconsumed-closure-v0");
+  const std::string usedText = bodyText(*used, "unconsumed-closure-v0");
+  expect(unusedText.find("lambda-instance") == std::string::npos &&
+             unusedText.find("spells at its consuming invocation") !=
+                 std::string::npos,
+         "an unconsumed fused closure spells no lambda body");
+  expect(usedText.find("unconsumed-closure-v0 lambda-instance") !=
+             std::string::npos,
+         "an invoked fused closure spells its body at the invocation");
+}
+
 constexpr NamedTest kTests[] = {
     {"testFieldInitializerExpressionVocabulary",
      testFieldInitializerExpressionVocabulary},
@@ -6829,6 +7134,9 @@ constexpr NamedTest kTests[] = {
      testOwningExpectedReplacementSources},
     {"testShortCircuitExpectedPayloadFieldView",
      testShortCircuitExpectedPayloadFieldView},
+    {"testCallableClassResultSlots", testCallableClassResultSlots},
+    {"testUnconsumedFusedClosureSpellsNoBody",
+     testUnconsumedFusedClosureSpellsNoBody},
 };
 
 } // namespace
