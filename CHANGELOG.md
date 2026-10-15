@@ -9,6 +9,36 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.5 — String view storage and stored view returns
+
+- Reject constructor initializers that store a dynamic `std::string_view` or
+  `c_string` by value without retaining its owner, including generic holders
+  and forwarded constructor arguments. Literal-backed constructor inputs remain
+  valid. The diagnostic identifies the initializer and suggests owned text or
+  an explicit checked reference instead of allowing dangling storage.
+- Preserve both the view object's lifetime and its external character owner's
+  lifetime when a field stores a checked text-view reference. JSON decoding uses
+  these checked references without copying the input or its member index.
+- Verify missing, forged, mutable and prematurely retired owner dependencies;
+  preserve exactly-once resource cleanup when a constructor also owns fields.
+- A view read through a checked text reference, such as `this.text`, keeps its
+  external owner. A method can return it, and a local copy can be taken
+  directly from a reference parameter. It cannot be passed to a constructor
+  that stores it by value. Copying it into a local binding through a reference
+  field or a relaying call reports `GTI-S2045` for now.
+- Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
+  missing its escaping loan") when a method or function returns a
+  `std::string_view` or `c_string` field, as in
+  `std::string_view read() { return this.name; }`. The same fix covers an
+  implicit field (`return name;`), a nested field (`return this.label.text;`),
+  a fixed-array element, a field read through a parameter, and a generic
+  holder such as `Box<std::string_view>`.
+- A view field can only hold an ownerless view, so the returned view is
+  independent of the object it was read from. The caller may mutate, move or
+  destroy that object while the view is still in use.
+- A stored view may also be one branch of a function whose other branch
+  returns a view tied to its receiver, in the same way a string literal can.
+
 ## 0.440.4 — Member calls on conditional values without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
@@ -30,6 +60,7 @@ for what minor and patch releases mean.
   same way, whether the result is bound, returned, assigned, passed on, read
   through a field or used to initialize a field. A failing input ends its
   arm before the call, with the usual cleanup.
+
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 

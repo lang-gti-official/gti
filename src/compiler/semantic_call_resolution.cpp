@@ -2812,7 +2812,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     concrete.returnType = resolved.returnType;
     concrete.parameterTypes = resolved.parameterTypes;
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
-            dynamicTextReturnBorrowSummary(concrete)) {
+            dynamicTextReturnBorrowSummary(concrete, resolved.dispatchOwner)) {
       resolved.returnBorrowOrigin = dynamicText->origin;
       resolved.returnBorrowParameter = dynamicText->parameter;
       resolved.returnBorrowAccess = dynamicText->access;

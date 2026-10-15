@@ -2410,12 +2410,26 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
 [[nodiscard]] bool abstractStoredEntry(const MirBody &body,
                                        const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Stored || !loan.entry || loan.escapes ||
-      loan.designatedFields.empty() || loan.parent != 0 ||
-      loan.storedDependency != 0 || loan.lifecycleBound ||
+      loan.parent != 0 || loan.storedDependency != 0 || loan.lifecycleBound ||
       loan.producedBy != 0 || loan.storedField != 0)
     return false;
   const MirPlace *source = body.findPlace(loan.source);
   if (source == nullptr || !source->projections.empty())
+    return false;
+  // A checked text reference borrows two things: the view object and its
+  // caller-owned text. Text has an opaque owner dependency, not a nominal
+  // reference-field path. Whole-program verification checks the exact formal.
+  if (source->root == MirPlaceRootKind::Binding &&
+      source->type.kind == SemanticType::Reference &&
+      source->type.arguments.size() == 1 &&
+      (source->type.arguments.front().kind == SemanticType::StringView ||
+       source->type.arguments.front().kind == SemanticType::CString))
+    return loan.access == AccessMode::ReadOnly &&
+           loan.designatedFields.empty() &&
+           loan.additionalDependencies.empty() &&
+           std::find(loan.carriers.begin(), loan.carriers.end(),
+                     source->binding) == loan.carriers.end();
+  if (loan.designatedFields.empty())
     return false;
   return (source->root == MirPlaceRootKind::This &&
           source->type.kind == SemanticType::Class) ||

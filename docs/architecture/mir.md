@@ -491,6 +491,15 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+Checked references to primitive text views use the same two-dependency model.
+Their abstract `Stored` entry has no nominal field path: it represents the
+opaque caller-owned text and grants read-only access only. Semantic analysis
+creates that entry separately from the physical reference loan; HIR preserves
+both identities and MIR lowering seeds both before body execution. Verification
+requires the exact text-reference formal, independently checks every local
+publication, and rejects missing, substituted or prematurely retired owner
+dependencies. An empty field list is not evidence for an arbitrary carrier or
+permission to omit the external dependency.
 Checked restoration of an opaque reference has a separate explicit proof:
 the concrete restored field paths and access must match a verified restore
 operation or body-proven helper summary. Its hidden dependencies remain bounded
@@ -1607,8 +1616,15 @@ not a requirement to invent an owner for static storage. A read-only summarized
 function may return a literal-backed text view or a null C-string alternative
 without an escaping loan. Program verification independently requires the exact
 typed string/null literal producer, with no borrowed state, input operands,
-loan, side effects or lifecycle events. Clearing a borrowed-state flag or a
-return loan does not establish that witness. All dynamic alternatives still
+loan, side effects or lifecycle events. A copied stored view is the other
+witness: semantics rejects storing a dynamic view in a field or fixed-array
+element, so one exact `Load` copying a place whose final `Field` or `Index`
+projection has the returned view type, with no borrowed state, loan,
+destination, receiver or lifecycle events, is also lifetime independent. A
+reference field ends in a dereference and never qualifies. Clearing a
+borrowed-state flag or a return loan does not establish either witness. A
+function whose returns are all stored views or literals summarizes no owner
+dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 The success loan always uses read-only access, including when the enclosing
