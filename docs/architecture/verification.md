@@ -6357,7 +6357,20 @@ local, fresh, generic, lambda and early-return receivers whose drops run
 before the Return. Each result is destroyed once, by its caller. A failing
 receiver destructor destroys the unpublished result, and a failure in that
 cleanup reports the secondary failure. A body whose drops cannot fail covers
-the plain emission form. Ownership
+the plain emission form.
+`consuming_prepared_receiver_runtime` repeats those eight configurations for
+cleanup-free receivers moved out of a place, which the call receives as a
+prepared parameter. Results are returned directly from immutable and `mut`
+parameters, locals, an early return, a generic receiver, a lambda, a consuming
+`operator()` and an `expected` result. They are also discarded, replace a
+binding, are read through a field (also in a conditional) and initialize
+`expected` bindings, from failure-free and raising members. Each result is
+constructed and destroyed once. A failing guard after the call destroys the
+unpublished returned result, also when that cleanup fails again; a failing
+callee leaves no result, and a failing replacement keeps the old value for
+failure cleanup. `testPreparedConsumingReceiverReturn` in the emitter text
+suite refuses removed, duplicated or unactivated receiver handoffs and a
+non-consuming capability, which MIR verification also rejects. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.

@@ -41,6 +41,7 @@ if(Python3_Interpreter_FOUND)
     comma_class_results_runtime
     construction_assignment_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
+    consuming_prepared_receiver_runtime
     consuming_receiver_runtime consuming_retained_field_replace_runtime
     consuming_returned_result_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime

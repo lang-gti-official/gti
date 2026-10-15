@@ -305,7 +305,20 @@ Results from consuming source members use the ordinary owning-call result
 staging and replacement proof. The exact `Once` receiver must resolve to its
 selected consuming member and materialized receiver place. Receiver cleanup
 remains at the recorded full-expression/failure Drop; it is not an argument
-transfer at Call. Only a successful result activates the replacement stage, so
+transfer at Call. A class receiver moved out of a place without a Value
+obligation of its own, that is a cleanup-free class, is the exception. MIR
+stages it as a prepared parameter on a mutable temporary: the receiver's
+`MoveValue` CallInput activates that obligation and the Call transfers it to
+the callee, exactly like an owning argument's. The receiver proof names the
+prepared slot as the consumed object, whatever the access of the moved-from
+binding, and the call spells the moved source in its place as it does for a
+staged by-value argument. Result proofs that count prepared argument transfers
+count this handoff too where their schedule admits it: the returned-result
+slot, an `Expected<Class, E>` result constructed in the binding that consumes
+it, and a checked call's conditional temporary read through field views.
+Forwarding a cleanup-free result unchanged to the Return, as direct placement
+into the caller's storage does, does not admit it; such a call keeps its staged
+result slot. Only a successful result activates the replacement stage, so
 receiver failure cannot overwrite the old destination, and failed replacement
 cleanup destroys the unpublished result without committing it.
 
@@ -1627,17 +1640,16 @@ it out. A fallible cleanup in between reparents the result to its return-result
 obligation, and the failure path destroys that slot rather than the caller's
 never-constructed storage. The call may be a consuming (`&&`) source member
 whose `Once` receiver passes the shared consuming-receiver proof, as in
-`return std::move(box).release();`. Its receiver is not transferred at the
-call, so the receiver's full-expression drop is one of those later cleanups.
-No other invocation capability is admitted. A cleanup-free receiver moved out
-of a binding is instead a prepared parameter that the call transfers out; the
-consuming-receiver proof does not admit that transport yet, so this proof
-refuses such a returned result. A failure-free call returning a
-reference binds its call-result loan by address in either body form. A plain
-body returning a moved class, callable, owning array or `Expected<Class, E>`
-value stages it at the
-Move, before any later drop of the moved-from source, and returns it from that
-slot; a moved class value that the Return wraps as the success alternative of
+`return std::move(box).release();`. A receiver that owns cleanup is not
+transferred at the call, so its full-expression drop is one of those later
+cleanups. A cleanup-free receiver moved out of a place is a prepared input that
+the call transfers like an owning argument, as in
+`return std::move(maker).make();`; only the moved-from source's drop then
+follows the call. No other invocation capability is admitted. A failure-free
+call returning a reference binds its call-result loan by address in either body
+form. A plain body returning a moved class, callable, owning array or
+`Expected<Class, E>` value stages it at the Move, before any later drop of the
+moved-from source, and returns it from that slot; a moved class value that the Return wraps as the success alternative of
 an `Expected<Class, E>` result is staged the same way. A moved owning payload
 enum already occupies its value-rooted slot. A
 copied class whose source is dropped or overwritten before the Return is copied
