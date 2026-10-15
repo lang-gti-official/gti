@@ -26,6 +26,10 @@ int main() {
     }
     NumberEvent wrapped{copied};
     if (wrapped.number() != uint64_t(42)) { return 8; }
+    // Native union payloads also survive cleanup-free conditional receivers.
+    // Exercise both selected arms without changing the active alternative.
+    if ((event.kind == c_uint(1) ? NumberEvent(copied) : NumberEvent(event.data)).number() != uint64_t(42)) { return 9; }
+    if ((event.kind == c_uint(2) ? NumberEvent(copied) : NumberEvent(event.data)).number() != uint64_t(42)) { return 10; }
     if (copied.number != uint64_t(42)) { return 3; }
     event.kind = c_uint(2);
     event.data.position.x = 3.0;
