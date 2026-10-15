@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.2 — Conformance block types are checked once
+## 0.439.3 — Conformance block types are checked once
 
 - A problem in a conformance block's pattern is reported once, at the
   pattern. With `class holder<std::copy_constructible T>`, the block
@@ -27,6 +27,21 @@ for what minor and patch releases mean.
   for a non-copyable `Ticket`, is now reported at the pattern.
 - Completion inside a block's pattern offers the types in scope whether or
   not the block has operations.
+
+## 0.439.2 — Conditional class results from moved inputs
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:`, or an operand of `&&`
+  or `||`, produces a class result that needs cleanup from a call that
+  consumes a value moved into it, and the result is then bound, returned,
+  assigned, passed on or read through a field. The moved value may be a
+  by-value argument, such as `Quiet t = c ? make(std::move(a)) :
+  make(std::move(b));`, or the receiver of a consuming (`&&`) method, such as
+  `return c ? std::move(a).make() : std::move(b).make();` or
+  `c ? std::move(p).loud().id : 0`. This covers class arguments with and
+  without cleanup, constructors, methods that can fail, arms that mix such
+  calls with ordinary ones, and nested conditionals. Only the arm that runs
+  consumes its input, and its result is destroyed exactly once.
 
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
