@@ -33,15 +33,14 @@ class Box<T> {
 public:
   T item;
   Box(T value) : item(value) {}
-  int read() { return item.value; }
 };
 enum class State<T> { empty, value(T item) };
-static int inspect<T>(T item) { return item.value; }
+static int inspect<T>(int item) { return item; }
 int main() {
   Outer::Inner inner{.value = 7};
   Box<Outer::Inner> box{inner};
   State<int> state = State<int>::empty;
-  return box.read() + inspect<Outer::Inner>(inner)
+  return box.item.value + inspect<Outer::Inner>(inner.value)
     + left() + right() - 47;
 }
 """),
@@ -56,10 +55,10 @@ int main() {
                     external = project / "external" / side
                     external.mkdir(parents=True)
                     (external / "shared.gti").write_text(
-                        f"static int local<T>(T ignored) {{ return {value}; }}\n")
-                    (project / f"app/{side}.gti").write_text(
-                        f'#include "../external/{side}/shared.gti"\n'
+                        f"static int local<T>(T ignored) {{ return {value}; }}\n"
                         f"int {side}() {{ return local<int>(0); }}\n")
+                    (project / f"app/{side}.gti").write_text(
+                        f'#include "../external/{side}/shared.gti"\n')
             for optimization in ("-O0", "-O3"):
                 outputs = []
                 for project in projects:
