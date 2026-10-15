@@ -19,7 +19,7 @@ def virtual_call_field_cases(name="constructor_virtual_call_field"):
     # constructor's rollback when a later initializer fails. A failing
     # override publishes nothing.
     made = "-2\n-1\n"
-    before = made + "-5\n-7\n-6\n-8\n-10\n-3\n"
+    before = made + "-5\n-11\n-7\n-6\n-8\n-10\n-3\n"
     split = division("return Tracked(this.base / divisor)")
     return {fixture.stem: [
         ((), (0, before + "kept\n-6\n-1\n-9\n", "")),

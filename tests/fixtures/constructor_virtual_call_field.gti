@@ -75,6 +75,15 @@ public:
   virtual Tracked release() && { return std::move(this.item); }
 };
 
+// A cleanup-free receiver moved out of a variable is a prepared input that the
+// call transfers to the consuming virtual member.
+class Ticket {
+  int number;
+public:
+  Ticket(int number) : number(number) {}
+  virtual Tracked redeem() && { return Tracked(this.number); }
+};
+
 class Store<T> {
   mut T item;
 public:
@@ -122,6 +131,13 @@ class Fresh {
   mut Tracked kept;
 public:
   Fresh(int value) : kept(Box(value).release()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Redeemed {
+  mut Tracked kept;
+public:
+  Redeemed(Ticket ticket) : kept(std::move(ticket).redeem()) {}
   int read() { return this.kept.read(); }
 };
 
@@ -179,7 +195,8 @@ int main(int argc, std::vector<std::string> argv) {
   {
     Taken taken{Box(6)};
     Fresh fresh{7};
-    total += taken.read() + fresh.read();
+    Redeemed redeemed{Ticket(11)};
+    total += taken.read() + fresh.read() + redeemed.read();
   }
   {
     Keeper<Tracked> keeper{Store<Tracked>(Tracked(8))};
@@ -198,5 +215,5 @@ int main(int argc, std::vector<std::string> argv) {
   Maker maker{};
   Pair pair{maker, dividing, later};
   std::println("kept");
-  return total + split.read() + pair.read() - 50;
+  return total + split.read() + pair.read() - 61;
 }
