@@ -13145,9 +13145,14 @@ private:
         const HirValue *value = findValue(*statement.value);
         if (value != nullptr && value->info.traits.containsBorrowedState) {
           MirLoanId retained = loanForValue(*statement.value);
-          if (retained == 0 && output.returnType.kind == SemanticType::Class &&
+          const bool textReturn =
+              output.returnType.kind == SemanticType::StringView ||
+              output.returnType.kind == SemanticType::CString;
+          if (retained == 0 &&
+              (output.returnType.kind == SemanticType::Class || textReturn) &&
               value->info.traits.copyable) {
-            // A copied nested member has no separate local carrier binding.
+            // A copied nested member, or a text view read through a checked
+            // text reference field, has no separate local carrier binding.
             // Its caller-owned receiver/reference entry supplies the external
             // authority; the exact returned Load remains executable evidence.
             retained =

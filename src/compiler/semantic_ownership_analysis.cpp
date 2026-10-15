@@ -1243,6 +1243,50 @@ auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
          info->traits.containsBorrowedState;
 }
 
+auto SemanticVisitor::Impl::derivesFromTextReference(
+    const ExprPtr &expression) const -> bool {
+  // Follow only the dependency paths semantic text classification follows:
+  // the view itself, a selected conditional arm, or a call's summarized
+  // argument origin. A read through a checked text reference ends the path.
+  if (!expression)
+    return false;
+  const auto textReference = [](const SemanticType &type) {
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+           (type.arguments.front().kind == SemanticType::StringView ||
+            type.arguments.front().kind == SemanticType::CString);
+  };
+  if (const auto *group = exprAs<Grouping>(expression.get()))
+    return derivesFromTextReference(group->expression());
+  if (const auto *binary = exprAs<Binary>(expression.get());
+      binary != nullptr && binary->oper().kind == TokenKind::COMMA)
+    return derivesFromTextReference(binary->right());
+  if (const auto *conditional = exprAs<ConditionalExpr>(expression.get()))
+    return derivesFromTextReference(conditional->thenExpression()) ||
+           derivesFromTextReference(conditional->elseExpression());
+  if (const auto *variable = exprAs<Variable>(expression.get())) {
+    const Symbol *symbol = resolve(variable->name());
+    return symbol != nullptr && !symbol->staticMember &&
+           textReference(symbol->type);
+  }
+  if (const auto *member = exprAs<Get>(expression.get())) {
+    const MemberInfo *field =
+        findMember(memberAccessObjectType(*member), member->name());
+    return field != nullptr && !field->symbol.staticMember &&
+           field->symbol.bindingKind == SemanticBindingKind::Field &&
+           textReference(field->symbol.type);
+  }
+  if (const auto *call = exprAs<Call>(expression.get())) {
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    return resolved != nullptr &&
+           resolved->borrowOrigin == BorrowOriginKind::Argument &&
+           resolved->borrowArgument <
+               resolvedCallArgumentCount(*call, resolved) &&
+           derivesFromTextReference(*resolvedCallArgument(
+               *call, resolved, resolved->borrowArgument));
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
     const ExprPtr &expression, std::string_view destination) -> void {
   const ExpressionInfo *info =

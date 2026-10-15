@@ -5417,6 +5417,28 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                      : "A dynamic std::string_view cannot be stored "
                        "in a field in the single-owner view model.",
              "GTI-S2045");
+    } else if (derivesFromTextReference(initializer)) {
+      // A local copy publishes the reference's external text owner. MIR can
+      // prove that publication only for an exact reference formal; reads
+      // through a reference field or a relaying call need their own proof.
+      const ExprPtr *source = &initializer;
+      while (const auto *group = exprAs<Grouping>(source->get()))
+        source = &group->expression();
+      const auto *variable = exprAs<Variable>(source->get());
+      const Symbol *symbol =
+          variable == nullptr ? nullptr : resolve(variable->name());
+      if (symbol == nullptr || symbol->parameterDeclaration == nullptr) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2045", DiagnosticPhase::Semantics, stmt.name(),
+            std::string(cString ? "An owner-dependent c_string"
+                                : "A dynamic std::string_view") +
+                " read through a checked text reference field or relaying "
+                "call cannot be copied into a local binding yet.");
+        diagnostic.hints.emplace_back(
+            "Use the reference directly, return it, or copy it from the "
+            "reference parameter itself.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
     updated.traits = initializerInfo->traits;

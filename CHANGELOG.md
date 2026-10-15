@@ -21,6 +21,11 @@ for what minor and patch releases mean.
   these checked references without copying the input or its member index.
 - Verify missing, forged, mutable and prematurely retired owner dependencies;
   preserve exactly-once resource cleanup when a constructor also owns fields.
+- A view read through a checked text reference, such as `this.text`, keeps its
+  external owner. A method can return it, and a local copy can be taken
+  directly from a reference parameter. It cannot be passed to a constructor
+  that stores it by value. Copying it into a local binding through a reference
+  field or a relaying call reports `GTI-S2045` for now.
 - Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
   missing its escaping loan") when a method or function returns a
   `std::string_view` or `c_string` field, as in
