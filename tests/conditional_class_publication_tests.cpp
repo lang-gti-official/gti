@@ -417,5 +417,175 @@ int main() {
   expect(argumentStages == 7,
          "six direct/grouped/member argument stages and the "
          "later-failure stage were exercised");
+  // A receiver moved out of a binding inside a conditional arm or
+  // short-circuit operand stages in the hidden temporary that carries its
+  // conditional full-expression drop through the merge. Select each one by
+  // its identity records (a Move into a Temporary destination staged as a
+  // MoveValue receiver), not by a class or member spelling.
+  std::size_t movedReceivers = 0;
+  bool mutatedClass = false;
+  bool mutatedPlain = false;
+  bool mutatedClosure = false;
+  {
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures" / "consuming_conditional_receiver.gti";
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(),
+           "conditional moved receivers have valid MIR");
+    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    for (const auto &function : frontend.mir.functionInstances()) {
+      if (!frontend.canGenerateCode())
+        break;
+      const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                         function.id};
+      const bool failureForm = function.mayRaiseDefinedFailure;
+      const auto supports = [&](const lang::MirProgram &program) {
+        const lang::CppMirBodyEmitter emitter(program, rows);
+        return failureForm ? emitter.supportsFailureBodyText(address)
+                           : emitter.supportsBodyText(address);
+      };
+      const auto instruction = [&](lang::MirInstructionId id) {
+        const lang::MirInstruction *found = nullptr;
+        for (const auto &block : function.body.blocks)
+          for (const auto &candidate : block.instructions)
+            if (candidate.id == id)
+              found = &candidate;
+        return found;
+      };
+      // Admission and text are per body; emit them once for its receivers.
+      std::optional<lang::CppMirBodyEmissionText> text;
+      for (const auto &block : function.body.blocks) {
+        for (const auto &move : block.instructions) {
+          const auto *slot = move.destination
+                                 ? function.body.findPlace(*move.destination)
+                                 : nullptr;
+          if (move.kind != lang::MirInstructionKind::Move || !move.result ||
+              slot == nullptr ||
+              slot->root != lang::MirPlaceRootKind::Temporary ||
+              !slot->projections.empty() || move.operands.size() != 1 ||
+              move.operands.front().kind != lang::MirOperandKind::Move)
+            continue;
+          const auto &uses = function.body.usesOf(*move.result);
+          const auto *stage =
+              uses.size() == 1 && uses.front().kind ==
+                                      lang::MirValueUseKind::InstructionOperand
+                  ? instruction(uses.front().instruction)
+                  : nullptr;
+          if (stage == nullptr ||
+              stage->kind != lang::MirInstructionKind::CallInput ||
+              stage->callInputKind != lang::HirCallInputKind::MoveValue ||
+              stage->callInputRole != lang::MirCallInputRole::Receiver ||
+              !stage->result)
+            continue;
+          const auto &calls = function.body.usesOf(*stage->result);
+          const auto *call =
+              calls.size() == 1 &&
+                      calls.front().kind ==
+                          lang::MirValueUseKind::InstructionReceiver
+                  ? instruction(calls.front().instruction)
+                  : nullptr;
+          if (call == nullptr || !call->callableInvocation)
+            continue;
+          ++movedReceivers;
+          if (!text) {
+            expect(supports(frontend.mir),
+                   "a body consuming conditionally moved receivers emits");
+            const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+            text =
+                failureForm
+                    ? emitter.emitFailureBodyText(address, "moved-receiver", 1)
+                    : emitter.emitBodyText(address, "moved-receiver", 1);
+          }
+          const std::string slotName =
+              "__gti_mir_p_" + std::to_string(slot->id);
+          // A selected read or mutable fallback invokes the same slot as an
+          // lvalue; a consuming member moves from it.
+          expect(text->emitted() &&
+                     text->text.find(slotName + ".construct(std::move(") !=
+                         std::string::npos &&
+                     text->text.find(slotName + ".get()") != std::string::npos,
+                 "the Move constructs the hidden temporary and the call "
+                 "invokes that slot");
+          // Forge the first moved class in each body form and the first
+          // moved closure; every forged program copies the whole fixture.
+          bool &mutatedKind = slot->type.kind == lang::SemanticType::Lambda
+                                  ? mutatedClosure
+                              : failureForm ? mutatedClass
+                                            : mutatedPlain;
+          if (mutatedKind)
+            continue;
+          mutatedKind = true;
+          for (int mutation = 0; mutation != 7; ++mutation) {
+            auto malformed = frontend.mir;
+            auto &body = const_cast<lang::MirFunctionInstance *>(
+                             malformed.findFunctionInstance(function.id))
+                             ->body;
+            auto *changedSlot =
+                const_cast<lang::MirPlace *>(body.findPlace(slot->id));
+            lang::MirDropObligation *obligation = nullptr;
+            for (auto &drop : body.dropObligations)
+              if (drop.place == slot->id)
+                obligation = &drop;
+            bool applied = false;
+            if (mutation == 0) {
+              changedSlot->initiallyAvailable = true;
+              applied = true;
+            } else if (mutation == 1 && obligation != nullptr) {
+              obligation->initiallyActive = true;
+              applied = true;
+            } else if (mutation == 2 && obligation != nullptr) {
+              obligation->value = 0;
+              applied = true;
+            }
+            for (auto &changedBlock : body.blocks)
+              for (auto &changedInstruction : changedBlock.instructions) {
+                if (mutation == 3 && changedInstruction.id == move.id &&
+                    changedInstruction.lifecycle.size() == 1) {
+                  changedInstruction.lifecycle.front().kind =
+                      lang::MirLifecycleEventKind::Reparent;
+                  applied = true;
+                }
+                // The invocation also reads the hidden temporary as a place.
+                if (mutation == 4 && changedInstruction.id == call->id &&
+                    changedInstruction.receiver) {
+                  changedInstruction.receiver->place = slot->id;
+                  applied = true;
+                }
+                // A second instruction writes the hidden temporary.
+                if (mutation == 5 && !applied &&
+                    changedInstruction.kind ==
+                        lang::MirInstructionKind::Initialize &&
+                    changedInstruction.destination != slot->id) {
+                  changedInstruction.destination = slot->id;
+                  applied = true;
+                }
+                // No drop of the receiver remains on the ordinary path.
+                if (mutation == 6 &&
+                    changedInstruction.kind == lang::MirInstructionKind::Drop &&
+                    changedInstruction.destination == slot->id) {
+                  for (auto &event : changedInstruction.lifecycle)
+                    event.failureCleanup = true;
+                  applied = true;
+                }
+              }
+            expect(applied, "each moved-receiver mutation finds its target");
+            (void)lang::rebuildMirValueUses(body);
+            expect(!supports(malformed),
+                   "a conditionally moved receiver rejects forged mutation " +
+                       std::to_string(mutation) + " of move " +
+                       std::to_string(move.id));
+          }
+        }
+      }
+    }
+  }
+  expect(movedReceivers == 29,
+         "every conditionally moved receiver in the fixture was exercised: " +
+             std::to_string(movedReceivers));
+  expect(mutatedClass && mutatedPlain && mutatedClosure,
+         "forged mutations covered moved classes in both body forms and a "
+         "moved closure");
   return failures ? 1 : 0;
 }
