@@ -184,11 +184,20 @@ int main() {
              artifact.contents.find("(*this).converted") != std::string::npos &&
              artifact.contents.find("mir_checked_convert_v1<std::int8_t>") !=
                  std::string::npos &&
-             artifact.contents.find("(*this).empty = std::move(") !=
+             artifact.contents.find(
+                 "::new (static_cast<void *>(std::addressof((*this).empty))) "
+                 "::__gti_program::payload_t{std::in_place_index<2>};") !=
                  std::string::npos &&
-             artifact.contents.find("(*this).valued = std::move(") !=
+             artifact.contents.find(
+                 "::new (static_cast<void *>(std::addressof((*this).valued))) "
+                 "::__gti_program::payload_t{std::in_place_index<1>, "
+                 "__gti_mir_v_") != std::string::npos &&
+             artifact.contents.find(
+                 "std::destroy_at(std::addressof((*this).empty));") !=
                  std::string::npos &&
-             artifact.contents.find("__gti_variant_1{}") != std::string::npos,
+             artifact.contents.find(
+                 "std::destroy_at(std::addressof((*this).valued));") !=
+                 std::string::npos,
          "production emission executes conversion and payload publication in "
          "constructor MIR without duplicate in-class defaults");
 

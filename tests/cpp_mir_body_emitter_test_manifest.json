@@ -118,6 +118,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testPassivePayloadTagObservation",
+      "suite": "preflight"
+    },
+    {
       "name": "testExhaustiveEnumClassification",
       "suite": "preflight"
     },
