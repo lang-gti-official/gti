@@ -29,6 +29,20 @@ for what minor and patch releases mean.
   `scaled<A, B>::factor_type`, instead of "type parameter".
 - Example 158 demonstrates a two-parameter concept.
 
+## 0.434.1 — Constructors that reuse a copied parameter
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class copies a lambda
+  parameter into a field and its constructor body can fail, for example
+  `Keeper(F f) : callback(f), seen(0) { F spare = f; this.seen = call(std::move(spare)); }`,
+  and the lambda captures a struct. Lambdas capturing numbers or nothing
+  already worked; using both kinds of lambda with one class also failed.
+- Fix the native C++ compile failure (`no member named 'get'` in the saved
+  backend log) when a constructor copies a parameter into a field and then
+  passes the same parameter by value again, such as
+  `Stamp(Offset offset) : origin(offset), total(amount(offset)) {}` or
+  `call(f)` in the body of a constructor that also copied `f` into a field.
+
 ## 0.434.0 — Protocol concepts and conformance blocks
 
 - A concept can now have a body instead of `= constraint;`. It declares
