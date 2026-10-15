@@ -2281,8 +2281,13 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
 [[nodiscard]] bool
 independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
                                std::unordered_set<HirBindingId> &visited) {
-  if (source.root != MirPlaceRootKind::Binding || !source.projections.empty() ||
-      source.initiallyAvailable || source.traits.containsBorrowedState ||
+  const bool referenceAlias =
+      source.projections.size() == 1 &&
+      source.projections.front().kind == MirProjectionKind::Dereference;
+  if (source.root != MirPlaceRootKind::Binding ||
+      (!source.projections.empty() && !referenceAlias) ||
+      source.initiallyAvailable ||
+      (!referenceAlias && source.traits.containsBorrowedState) ||
       (source.type.kind != SemanticType::StringView &&
        source.type.kind != SemanticType::CString) ||
       !visited.insert(source.binding).second)
@@ -2310,6 +2315,36 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
           return false;
       }
     }
+  }
+  if (referenceAlias) {
+    const auto *destination = initialization && initialization->destination
+                                  ? body.findPlace(*initialization->destination)
+                                  : nullptr;
+    if (!destination || destination->type.kind != SemanticType::Reference ||
+        destination->type.referenceAccess != AccessMode::ReadOnly ||
+        destination->type.arguments.size() != 1 ||
+        destination->type.arguments.front() != source.type ||
+        initialization->operands.size() != 1)
+      return false;
+    const auto &input = initialization->operands.front();
+    const auto *loan = input.kind == MirOperandKind::Loan
+                           ? body.findLoan(input.loan)
+                           : nullptr;
+    const auto *origin = loan ? body.findPlace(loan->source) : nullptr;
+    if (!loan || loan->kind != MirLoanKind::Local || loan->entry ||
+        loan->access != AccessMode::ReadOnly || loan->storedDependency != 0 ||
+        loan->parent != 0 || !loan->additionalDependencies.empty() || !origin ||
+        origin->type != source.type)
+      return false;
+    // A local readonly reference can relay a proven literal binding. Prove
+    // both its physical address (when explicitly supplied) and loan origin;
+    // an unrelated address cannot borrow the literal's static authority.
+    auto addressVisited = visited;
+    const auto *address = body.findPlace(input.place);
+    return independentlyStaticTextBinding(body, *origin, visited) &&
+           (input.place == 0 ||
+            (address && address->type == source.type &&
+             independentlyStaticTextBinding(body, *address, addressVisited)));
   }
   const auto *literal =
       initialization && initialization->operands.size() == 1 &&
@@ -3800,7 +3835,9 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       const bool shellResult =
           isCarrierReferenceResult(program, instruction) ||
           (instruction.info.category == ValueCategory::Place &&
-           ((instruction.info.type.kind == SemanticType::Class &&
+           (instruction.info.type.kind == SemanticType::StringView ||
+            instruction.info.type.kind == SemanticType::CString ||
+            (instruction.info.type.kind == SemanticType::Class &&
              instruction.info.traits.containsBorrowedState) ||
             (exactMirCapabilityClass(
                  program, instruction.info.type,

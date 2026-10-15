@@ -57,6 +57,11 @@ std::size_t text_size(std::string_view& input, std::string_view& other) {
   TextReader reader{input};
   return reader.size() + other.size();
 }
+std::string_view& relay_text(std::string_view& input) { return input; }
+std::size_t relayed_size(std::string_view& input) {
+  TextReader reader{relay_text(input)};
+  return reader.size();
+}
 )gti";
   const auto run = [&](std::string body) {
     return lang::Frontend().analyze("text-reference-dependencies.gti",
@@ -69,7 +74,7 @@ int main() {
   std::string second = std::string("second");
   std::string_view a = first.view();
   std::string_view b = second.view();
-  return int(text_size(a, b)) - 11;
+  return int(text_size(a, b) + relayed_size(a)) - 16;
 }
 )gti");
   expect(frontend.canGenerateCode(),
@@ -88,8 +93,27 @@ int main() {
   bool checkedEntry = false;
   bool checkedWrongOwner = false;
   bool checkedEndpoint = false;
+  bool checkedReturnedReference = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &loan : function.body.loans) {
+      if (loan.kind == lang::MirLoanKind::CallResult &&
+          loan.storedDependency != 0) {
+        const auto *dependency = function.body.findLoan(loan.storedDependency);
+        const auto *origin =
+            dependency ? function.body.findPlace(dependency->source) : nullptr;
+        if (origin && origin->type.kind == lang::SemanticType::Reference &&
+            origin->type.arguments.size() == 1 &&
+            origin->type.arguments.front().kind ==
+                lang::SemanticType::StringView) {
+          auto missing = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              missing.findFunctionInstance(function.id));
+          changed->body.loans[loan.id - 1].storedDependency = 0;
+          expect(!lang::verifyMirProgram(missing).valid(),
+                 "a returned text reference cannot lose its external owner");
+          checkedReturnedReference = true;
+        }
+      }
       const auto *source = function.body.findPlace(loan.source);
       if (!loan.entry || loan.kind != lang::MirLoanKind::Parameter || !source ||
           source->type.kind != lang::SemanticType::Reference ||
@@ -170,7 +194,8 @@ int main() {
       }
     }
   }
-  expect(checkedEntry && checkedWrongOwner && checkedEndpoint,
+  expect(checkedEntry && checkedWrongOwner && checkedEndpoint &&
+             checkedReturnedReference,
          "text reference fixtures exercise missing, forged and early owner "
          "retirement");
   for (const std::string invalid :
