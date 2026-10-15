@@ -2412,7 +2412,15 @@ once. Whole-value move construction and the adjacent Move -> Replace -> Drop
 assignment schedule transfer that obligation without copying or duplicating
 active state. A switch or extraction over a named place read-borrows the owning
 enum place, and its extracted fields are immutable copies, so move-only fields
-admit tag-only matching or a borrowed binding there.
+admit tag-only matching or a borrowed binding there. The read-borrow
+transports only the place's address, so when that place selects a fixed-array
+element no `Load` performs the bounds check. Subject lowering therefore
+finishes each selection at its checked `AddressOf` prefix, with the exact
+semantic bounds origin and `Invoke`, before the `Switch`, as for an
+address-only call argument. Program verification requires, for every `Index`
+in a read-borrowed switch subject's place, that the successful edge of the
+checked `AddressOf` over the place prefix ending at that index dominates the
+reachable switch.
 
 A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the

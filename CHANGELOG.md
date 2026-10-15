@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.4 — Switches over fixed-array elements
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a `switch` observes an element of a
+  fixed array of a payload enum and an arm borrows a payload field, as in
+  `switch (items[i]) { case Choice::some(auto& t): return t.id; ... }`. The
+  index is checked first, so an index out of range still stops with
+  `index_out_of_bounds` before any arm runs. The switch, `auto&` and
+  `mut auto&` bindings and copied fields then all read the element itself.
+  Arrays held in locals, globals and class fields, nested arrays such as
+  `grid[r][c]`, and an enum field of an element at a constant index, such as
+  `records[1].state`, work the same way.
+
 ## 0.440.3 — Conditional results with checked arm arguments
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

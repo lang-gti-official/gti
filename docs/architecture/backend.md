@@ -300,6 +300,19 @@ lifetime without GTI cleanup; its moved-from fields are already disarmed. MIR's
 operand kind and lifecycle event select both spellings; the backend does not
 infer consumption from the subject's representation.
 
+An observing switch whose subject is an enum held by a fixed-array element
+read-borrows that element in place. The element may belong to a local, a
+global or an array field, possibly through nested arrays, or the enum may be a
+field of an element at a constant index. MIR first finishes the element's
+checked selection at an `AddressOf` whose `Invoke` reports the bound, and
+program verification requires the check of every index in the subject place
+to dominate the switch. The backend spells the discriminant, every borrowed
+payload binding and every copied payload field over that one element
+subscription, without copying the enum or checking the index again. Admission
+and the text step accept these places through one shared predicate. A field
+of an element at a runtime index, as in `records[i].state`, has no element
+spelling for any read yet, so such a switch still stops with `GTI-B0001`.
+
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
 local declaration planning and operand emission use the same view predicate.
