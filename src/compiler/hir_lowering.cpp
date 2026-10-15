@@ -3253,6 +3253,7 @@ private:
                   .borrowAccess = implicitMove->borrowAccess,
                   .place = ownership.place,
                   .ownership = ownership};
+    move.borrowDependencies = found->borrowDependencies;
     const HirValueId moveId = move.id;
     body.values.push_back(std::move(move));
     output.program.sourceValueIds[expression.get()].push_back(moveId);

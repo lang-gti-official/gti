@@ -4659,6 +4659,24 @@ int exercise(bool choose) {
   return 0;
 }
 int main() { return exercise(true); }
+)",
+                                 R"(
+#include <std/string>
+class Reading {
+public:
+  int& value;
+  mut std::string text;
+  Reading(int& source, std::string input)
+      : value(source), text(std::move(input)) {}
+};
+int inspect(int& owner, bool choose) {
+  Reading result{owner, (std::string(choose ? "present" : ""))};
+  return result.value;
+}
+int main() {
+  int owner = 42;
+  return inspect(owner, true) + inspect(owner, false) - 84;
+}
 )"};
   for (const auto &source : sources) {
     const auto frontend = analyzeWithStandardLibrary(
@@ -4737,6 +4755,120 @@ int main() { return exercise(true); }
         },
         "argument diamond cannot erase successful result activation");
   }
+}
+
+void testMutableReferencePrefixBeforeOwnedField() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-mutable-reference-owned-prefix.gti", R"(
+#include <std/string>
+class Editing {
+public:
+  mut int& value;
+  mut std::string error;
+  Editing(mut int& source, std::string failure)
+      : value(source), error(std::move(failure)) {}
+};
+int edit(mut int& owner, bool fail) {
+  mut Editing result{owner, std::string(fail ? "failed" : "")};
+  result.value += 1;
+  return result.value;
+}
+int main() {
+  mut int owner = 40;
+  int first = edit(owner, false);
+  return edit(owner, true) - first - 1;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "exclusive reference preceding an owned field must verify");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid())
+    return;
+  const lang::MirConstructorInstance *constructor = nullptr;
+  for (const auto &candidate : frontend.mir.constructorInstances()) {
+    if (candidate.parameterTypes.size() == 2 &&
+        candidate.parameterTypes.front().kind ==
+            lang::SemanticType::Reference &&
+        candidate.parameterTypes.front().referenceAccess ==
+            lang::AccessMode::Mutable &&
+        candidate.initializers.size() == 2 &&
+        candidate.initializers.front().storesReference &&
+        candidate.initializers.back().ownedParameter == 1)
+      constructor = &candidate;
+  }
+  expect(constructor != nullptr, "fixture must retain the exact constructor");
+  if (!constructor)
+    return;
+  const auto references =
+      lang::cppMirStoredReferenceBindings(frontend.mir, *constructor);
+  const auto owned =
+      lang::cppMirOwnedParameterFieldBindings(frontend.mir, *constructor);
+  expect(references && references->size() == 1 && owned && owned->size() == 1,
+         "exact exclusive transfer prefix permits the later owned-field move");
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = constructor->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "mutable reference and owned field retain native constructor support");
+  const auto rejectMutation = [&](const auto &mutate,
+                                  std::string_view message) {
+    auto changed = frontend.mir;
+    auto *candidate = const_cast<lang::MirConstructorInstance *>(
+        changed.findConstructorInstance(constructor->id));
+    mutate(*candidate);
+    const auto bindings =
+        lang::cppMirOwnedParameterFieldBindings(changed, *candidate);
+    expect(!bindings, message);
+    expect(
+        !lang::CppMirBodyEmitter(changed, map).supportsFailureBodyText(address),
+        message);
+  };
+  const auto changeStored = [](auto &candidate, const auto &mutate) {
+    for (auto &loan : candidate.body.loans) {
+      if (loan.storedField == candidate.initializers.front().field) {
+        mutate(loan);
+        return;
+      }
+    }
+  };
+  rejectMutation(
+      [&](auto &candidate) {
+        changeStored(candidate, [&](auto &loan) {
+          loan.storedField = candidate.initializers.back().field;
+        });
+      },
+      "exclusive prefix rejects a substituted reference field");
+  rejectMutation(
+      [&](auto &candidate) {
+        changeStored(candidate, [](auto &loan) { loan.source = 0; });
+      },
+      "exclusive prefix rejects a missing exact formal origin");
+  rejectMutation(
+      [&](auto &candidate) {
+        changeStored(candidate, [](auto &loan) {
+          loan.access = lang::AccessMode::ReadOnly;
+        });
+      },
+      "exclusive prefix rejects substituted shared access");
+  rejectMutation(
+      [&](auto &candidate) {
+        changeStored(candidate, [](auto &loan) { loan.entry = false; });
+      },
+      "exclusive prefix rejects a non-entry transfer");
+  rejectMutation(
+      [](auto &candidate) {
+        candidate.body.blocks.front()
+            .instructions.front()
+            .operands.front()
+            .place = 0;
+      },
+      "exclusive prefix rejects a substituted initializer referent");
+  rejectMutation(
+      [](auto &candidate) {
+        candidate.body.blocks.front().instructions[1].fullExpressionEnd = 0;
+      },
+      "exclusive prefix rejects a missing initializer boundary");
 }
 
 void testOptionalPayloadCleanupComposition() {
@@ -6450,6 +6582,8 @@ constexpr NamedTest kTests[] = {
      testScalarPrefixConstructorStatusAdmission},
     {"testOwningConstructorAcrossArgumentDiamond",
      testOwningConstructorAcrossArgumentDiamond},
+    {"testMutableReferencePrefixBeforeOwnedField",
+     testMutableReferencePrefixBeforeOwnedField},
     {"testOptionalPayloadCleanupComposition",
      testOptionalPayloadCleanupComposition},
     {"testSourceStringCStringAdmissionFailsClosed",

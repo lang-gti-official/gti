@@ -1526,10 +1526,71 @@ auto SemanticVisitor::Impl::storedReferencePaths(const SemanticType &type) const
 auto SemanticVisitor::Impl::storedReferencePath(const SemanticType &type) const
     -> std::optional<StoredReferencePath> {
   auto paths = storedReferencePaths(type);
-  if (paths.size() != 1) {
+  if (paths.size() != 1 || !paths.front().conditions.empty()) {
     return std::nullopt;
   }
   return std::move(paths.front());
+}
+
+auto SemanticVisitor::Impl::completeBorrowDependencySet(
+    const ExprPtr &expression) const
+    -> std::optional<SemanticBorrowDependencySet> {
+  if (!expression)
+    return std::nullopt;
+  if (const auto *complete = semanticModel.findBorrowDependencySet(*expression))
+    return *complete;
+  if (const auto *group = exprAs<Grouping>(expression.get()))
+    return completeBorrowDependencySet(group->expression());
+  if (const auto *binary = exprAs<Binary>(expression.get());
+      binary && binary->oper().kind == TokenKind::COMMA)
+    return completeBorrowDependencySet(binary->right());
+  if (const auto *construction = semanticModel.findConstruction(*expression);
+      construction && construction->directInitialization) {
+    if (const auto *call = exprAs<Call>(expression.get());
+        call && call->arguments().size() == 1)
+      return completeBorrowDependencySet(call->arguments().front());
+    if (const auto *direct = exprAs<DirectInitializer>(expression.get());
+        direct && direct->arguments().size() == 1)
+      return completeBorrowDependencySet(direct->arguments().front());
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::joinedBorrowDependencySets(
+    const std::optional<SemanticBorrowDependencySet> &left,
+    const std::optional<SemanticBorrowDependencySet> &right) const
+    -> std::optional<SemanticBorrowDependencySet> {
+  if (!left || !right)
+    return std::nullopt;
+  auto joined = *left;
+  for (const auto &dependency : right->dependencies)
+    if (std::find(joined.dependencies.begin(), joined.dependencies.end(),
+                  dependency) == joined.dependencies.end())
+      joined.dependencies.push_back(dependency);
+  for (const auto &alternative : right->possibleAlternatives)
+    if (std::find(joined.possibleAlternatives.begin(),
+                  joined.possibleAlternatives.end(),
+                  alternative) == joined.possibleAlternatives.end())
+      joined.possibleAlternatives.push_back(alternative);
+  return joined;
+}
+
+auto SemanticVisitor::Impl::invalidateBorrowDependencySet(
+    const SemanticPlace &place) -> void {
+  if (place.root == nullptr)
+    return;
+  place.root->completeBorrowSet.reset();
+  // A mutable reference can change its referent's active alternative. Clear
+  // the referent's fact, not only the reference binding's physical shell.
+  if (place.root->type.kind != SemanticType::Reference)
+    return;
+  const auto origin = loanPlace(place);
+  if (!origin.root)
+    return;
+  for (auto &scope : scopes)
+    for (auto &[_, symbol] : scope)
+      if (symbol.completeBorrowSet && toolingSymbolFor(symbol) == origin.root)
+        symbol.completeBorrowSet.reset();
 }
 
 auto SemanticVisitor::Impl::storedCarrierConstructorParameter(
@@ -2334,6 +2395,11 @@ auto SemanticVisitor::Impl::nestsBorrowedState(const SemanticType &type) const
 // child-reborrow path, so its reborrows stay children of their source loan.
 auto SemanticVisitor::Impl::composedCarrierPaths(
     std::span<const StoredReferencePath> paths) const -> bool {
+  // Conditional paths need complete-set/tag proof, not this legacy
+  // unconditional constructor-field mapping.
+  if (std::any_of(paths.begin(), paths.end(),
+                  [](const auto &path) { return !path.conditions.empty(); }))
+    return false;
   if (paths.size() > 1)
     return true;
   if (paths.empty())
@@ -4130,6 +4196,7 @@ auto SemanticVisitor::Impl::validateMutableCallArgumentLoans(
       continue;
     }
     const SemanticLoanPlace stable = transientLoanPlace(arguments[index]);
+    invalidateBorrowDependencySet(semanticPlace(arguments[index]));
     recordMutableBindingUse(stable.root);
     if (stable.root == 0 && !stable.receiver) {
       continue;
@@ -5123,6 +5190,14 @@ auto SemanticVisitor::Impl::recordLoanFlowBreak(
 }
 
 auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
+  // The semantic loop body is visited once. An incoming exact alternative is
+  // not a proof for every backedge iteration. Until conditional sets join the
+  // existing loop fixed-point contract, keep that fact unknown; a dominating
+  // construction inside the body can establish a fresh complete set. This
+  // never changes the actual loans or their availability/endpoint analysis.
+  for (auto &scope : scopes)
+    for (auto &[_, symbol] : scope)
+      symbol.completeBorrowSet.reset();
   const std::size_t index = loanFlow.loops.size();
   loanFlow.loops.push_back({.region = loanFlow.currentRegion,
                             .order = loanFlow.currentOrder,
@@ -9496,6 +9571,10 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     return;
   }
   const ValueState before = mutableSymbol->valueState;
+  if (mutableSymbol->completeBorrowSet)
+    semanticModel.recordBorrowDependencySet(expr,
+                                            *mutableSymbol->completeBorrowSet);
+  mutableSymbol->completeBorrowSet.reset();
   invalidateRawPointerOrigins(placeForSymbol(*mutableSymbol));
   mutableSymbol->valueState = ValueState::Moved;
   mutableSymbol->moveOrigins = {tokenSpan(variable->name())};
@@ -9582,6 +9661,7 @@ auto SemanticVisitor::Impl::analyzeImplicitReturnMove(
   }
 
   const ValueState before = mutableSymbol->valueState;
+  mutableSymbol->completeBorrowSet.reset();
   invalidateRawPointerOrigins(placeForSymbol(*mutableSymbol));
   mutableSymbol->valueState = ValueState::Moved;
   mutableSymbol->moveOrigins = {tokenSpan(variable->name())};

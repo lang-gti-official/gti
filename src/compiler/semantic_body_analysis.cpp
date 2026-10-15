@@ -5461,6 +5461,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   if (auto *target = resolveMutable(stmt.name())) {
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
+    if (target->bindingKind == SemanticBindingKind::LocalVariable &&
+        target->type.kind != SemanticType::Reference &&
+        initializerType == declaredType && !contextualConstruction) {
+      const auto complete = completeBorrowDependencySet(initializer);
+      if (complete && !complete->possibleAlternatives.empty())
+        target->completeBorrowSet = complete;
+    }
   }
   if (initializer && declaredType.kind == SemanticType::Reference &&
       exprAs<DirectInitializer>(initializer.get()) == nullptr) {
@@ -5854,6 +5861,13 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                      .after = ValueState::Available});
         }
         reinitializePlace(placeForSymbol(*target));
+        const auto complete = completeBorrowDependencySet(expr.value());
+        target->completeBorrowSet =
+            target->type.kind != SemanticType::Reference &&
+                    targetType == valueType && complete &&
+                    !complete->possibleAlternatives.empty()
+                ? complete
+                : std::nullopt;
       }
     }
   }
@@ -10507,6 +10521,8 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
   }
   if (symbol->valueState != ValueState::Available) {
     reportUnavailableValue(expr.name(), *symbol);
+  } else if (symbol->completeBorrowSet) {
+    semanticModel.recordBorrowDependencySet(expr, *symbol->completeBorrowSet);
   }
   currentType = symbol->type.kind == SemanticType::Reference &&
                         symbol->type.arguments.size() == 1
@@ -13610,6 +13626,13 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   if (auto *target = resolveMutable(declaration.name())) {
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
+    if (local && target->type.kind != SemanticType::Reference &&
+        inferredType == initializerType) {
+      const auto complete =
+          completeBorrowDependencySet(declaration.initializer());
+      if (complete && !complete->possibleAlternatives.empty())
+        target->completeBorrowSet = complete;
+    }
   }
   const bool retainedReference = (type.reference || rangeOwnerReference) &&
                                  !isDirectOwnerType(initializerType);
