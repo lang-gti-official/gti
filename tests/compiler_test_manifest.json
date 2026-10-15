@@ -102,6 +102,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testConstructorTextStorageContracts",
+      "suite": "declarations"
+    },
+    {
       "name": "testContainerScaffoldSurfaces",
       "suite": "declarations"
     },

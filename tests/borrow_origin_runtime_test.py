@@ -13,7 +13,8 @@ if __name__ == "__main__":
              "a58-map-unique-ptr-value-deref", "borrow_nested_readonly",
              "borrow_nested_map", "a59-readonly-ref-into-mut-nested-container",
              "a59-map-at-then-element-ref", "borrow_projected_parameter_return",
-             "borrow_direct_projected_return", "borrow_static_return_alternative")
+             "borrow_direct_projected_return", "borrow_static_return_alternative",
+             "borrow_stored_view_return")
     # The original map is deliberately empty: compilation must succeed, but
     # its checked at() call must retain the defined missing-key failure.
     map_lines = (root.parent / "stdlib/std/map.gti").read_text().splitlines()
@@ -22,6 +23,7 @@ if __name__ == "__main__":
     missing_line = next(index + 1 for index in range(at_line, len(map_lines))
                         if "gti_internal::require_key" in map_lines[index])
     cases = {name: [((), (0, "2\n", ""))] for name in names[1:3]}
+    cases["borrow_stored_view_return"] = [((), (0, "x\n", ""))]
     cases["a59-map-at-then-element-ref"] = [((), (70, "",
         f"<std/map>:{missing_line}: runtime error[GTI-R0015]: "
         "key_not_found in key_lookup\n"))]

@@ -2570,6 +2570,28 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          stored.carriers.front() == source.binding;
 }
 
+// Text has an opaque owner, not a nominal reference-field path. This is only
+// the representation shape of the separate read-only entry witness; program
+// verification still proves the exact formal, dependency links and endpoints.
+[[nodiscard]] bool opaqueTextReferenceEntry(const MirLoan &dependency,
+                                            const MirPlace &source) {
+  return source.root == MirPlaceRootKind::Binding && source.binding != 0 &&
+         source.projections.empty() && source.initiallyAvailable &&
+         source.type.kind == SemanticType::Reference &&
+         source.type.arguments.size() == 1 &&
+         (source.type.arguments.front().kind == SemanticType::StringView ||
+          source.type.arguments.front().kind == SemanticType::CString) &&
+         source.type.referenceAccess == AccessMode::ReadOnly &&
+         dependency.kind == MirLoanKind::Stored && dependency.entry &&
+         !dependency.escapes && !dependency.lifecycleBound &&
+         dependency.source == source.id && dependency.parent == 0 &&
+         dependency.storedDependency == 0 && dependency.storedField == 0 &&
+         dependency.producedBy == 0 &&
+         dependency.access == AccessMode::ReadOnly &&
+         dependency.carriers.empty() && dependency.designatedFields.empty() &&
+         dependency.additionalDependencies.empty();
+}
+
 // A shared reference to a borrow-carrying object retains two distinct facts:
 // the physical formal shell and that shell's external dependency. Publishing
 // the reference field binds the same native parameter; it does not copy the
@@ -2595,7 +2617,9 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          dependency->storedDependency == 0 && dependency->storedField == 0 &&
          dependency->producedBy == 0 && dependency->source == source.id &&
          dependency->access == AccessMode::ReadOnly &&
-         !dependency->designatedFields.empty() && dependency->carriers.empty();
+         (!dependency->designatedFields.empty() ||
+          opaqueTextReferenceEntry(*dependency, source)) &&
+         dependency->carriers.empty();
 }
 
 [[nodiscard]] bool
@@ -2623,8 +2647,9 @@ sharedPhysicalStoredParameter(const MirBody &body,
       dependency->storedDependency != 0 || dependency->storedField != 0 ||
       dependency->producedBy != 0 || dependency->source != source.id ||
       dependency->access != AccessMode::ReadOnly ||
-      dependency->designatedFields.empty() || !dependency->carriers.empty() ||
-      !stored.additionalDependencies.empty())
+      (dependency->designatedFields.empty() &&
+       !opaqueTextReferenceEntry(*dependency, source)) ||
+      !dependency->carriers.empty() || !stored.additionalDependencies.empty())
     return false;
   if (std::count_if(body.loans.begin(), body.loans.end(),
                     [&](const MirLoan &shell) {
@@ -4376,10 +4401,21 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
       return false;
     const auto &borrow = *cursor++;
     const auto *loan = borrow.loan ? body.findLoan(*borrow.loan) : nullptr;
+    const auto *loanSource = loan ? body.findPlace(loan->source) : nullptr;
+    const auto *loadedSource = body.findPlace(load.operands.front().place);
+    const bool sharedPhysicalLoad =
+        loan && loanSource && loadedSource &&
+        sharedPhysicalStoredParameter(body, reference, *loan, *loanSource) &&
+        loadedSource->root == MirPlaceRootKind::Binding &&
+        loadedSource->binding == loanSource->binding &&
+        loadedSource->projections.size() == 1 &&
+        loadedSource->projections.front().kind ==
+            MirProjectionKind::Dereference &&
+        loadedSource->type == reference.targetType.arguments.front();
     if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
         loan->kind != MirLoanKind::Stored ||
         loan->storedField != reference.field ||
-        loan->source != load.operands.front().place ||
+        (loan->source != load.operands.front().place && !sharedPhysicalLoad) ||
         loan->producedBy != reference.arguments.front() ||
         borrow.hirValue != load.hirValue || borrow.result ||
         borrow.destination || borrow.receiver || borrow.operands.size() != 1 ||

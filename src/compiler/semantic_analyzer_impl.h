@@ -1860,9 +1860,16 @@ private:
 
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
+  [[nodiscard]] bool derivesFromTextReference(const ExprPtr &expression) const;
 
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
+
+  [[nodiscard]] std::vector<
+      std::pair<std::size_t, const ConstructorInitializer *>>
+  ownerlessTextConstructorInputs(
+      const SemanticType &type, const ConstructorDecl *constructor,
+      std::span<const SemanticType> parameterTypes) const;
 
   [[nodiscard]] BindingInfo
   bindingInfo(SemanticType type,
@@ -3875,14 +3882,20 @@ private:
     std::size_t parameter = 0;
   };
 
-  [[nodiscard]] PredeclaredTextBorrowSource
-  predeclaredTextBorrowSource(const ExprPtr &expression,
-                              const FunctionInfo &function);
+  [[nodiscard]] PredeclaredTextBorrowSource predeclaredTextBorrowSource(
+      const ExprPtr &expression, const FunctionInfo &function,
+      const SemanticType &ownerType = SemanticType::Unknown);
+
+  [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
+                                        const FunctionInfo &function,
+                                        SemanticType ownerType);
 
   std::unordered_set<const FunctionDecl *> activeTextBorrowSummaries;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
-  dynamicTextReturnBorrowSummary(const FunctionInfo &function);
+  dynamicTextReturnBorrowSummary(
+      const FunctionInfo &function,
+      const SemanticType &ownerType = SemanticType::Unknown);
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);

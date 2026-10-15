@@ -1,0 +1,71 @@
+#include <std/string>
+
+// A view or c_string field holds only an ownerless view, so returning one
+// copies that independent value rather than borrowing the receiver.
+struct Label {
+  std::string_view text = "label";
+  c_string native = nullptr;
+};
+
+class Named {
+  std::string_view name;
+public:
+  Named(std::string_view name) : name(name) {}
+  std::string_view read() { return this.name; }
+};
+
+class Catalog {
+  std::string_view title = "catalog";
+  Label label;
+  std::string_view aliases[2] = {"first", "second"};
+  std::string owned{"owned"};
+  mut int32_t touches = 0;
+public:
+  Catalog() = default;
+  std::string_view Title() { return title; }
+  std::string_view Nested() { return (this.label.text); }
+  std::string_view Alias(uint64_t index) { return this.aliases[index]; }
+  c_string Native() { return this.label.native; }
+  std::string_view Fallback(bool empty) {
+    if (empty) { return ""; }
+    return this.label.text;
+  }
+  std::string_view Choose(bool stored) {
+    if (stored) { return this.title; }
+    return this.owned.view();
+  }
+  void Touch() mut { this.touches = this.touches + 1; }
+  int32_t Touches() { return this.touches; }
+};
+
+std::string_view LabelText(Label& label) { return label.text; }
+std::string_view CopiedLabelText(Label label) { return label.text; }
+
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+int main() {
+  Named named{"x"};
+  std::println(named.read());
+
+  mut Catalog catalog{};
+  std::string_view title = catalog.Title();
+  std::string_view nested = catalog.Nested();
+  std::string_view alias = catalog.Alias(uint64_t(1));
+  // Ownerless results do not retain the receiver, so it stays mutable.
+  catalog.Touch();
+  if (title != "catalog" || nested != "label" || alias != "second") { return 1; }
+  if (catalog.Touches() != 1 || catalog.Native() != nullptr) { return 2; }
+  if (catalog.Fallback(true) != "" || catalog.Fallback(false) != "label") { return 3; }
+  if (catalog.Choose(true) != "catalog" || catalog.Choose(false) != "owned") { return 4; }
+
+  Label label{};
+  if (LabelText(label) != "label" || CopiedLabelText(label) != "label") { return 5; }
+  Box<std::string_view> box{"boxed"};
+  if (box.get() != "boxed") { return 6; }
+  return 0;
+}

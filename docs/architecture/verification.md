@@ -77,6 +77,28 @@ releases the live guard once. Main `911fd4ca` stops the reported program with
 array-field and element-field switches stop the same way, and the `this.items`
 switch fails in the native compiler with an undeclared place alias.
 
+## Constructor text-view lifetimes (0.440.5)
+
+`compiler_pipeline` covers direct, generic, defaulted and constexpr ownerless
+constructor inputs, rejected dynamic field storage and computed initializers,
+and diagnostic source relationships. `carrier_shell_references` checks the
+independent physical-view and external-owner dependencies, rejects missing or
+forged authority and early retirement, and exercises production C++ emission.
+The owner-dependent-view selection in `lsp_protocol` verifies the same diagnostic
+and related initializer span, including UTF-16 offsets and unsaved corrections.
+
+`constructor_text_reference_runtime` observes successful resource cleanup and
+constructor rollback across C++20/C++23 at O0/O1/O3, disabled copy elision and
+ASan/UBSan. `json_runtime` and the two production corpus sweeps cover the
+source-defined JSON adapters and example 026. A text reference does not turn a
+dynamic view into ownerless storage: its character-owner dependency must remain
+live until the last dependent reference retires. A literal exception requires
+independent MIR proof, not merely a cleared borrowed-state trait.
+The existing constexpr reference-observer suite also retains its text-owner
+witnesses: literal bytes are owned by the constant value, while ordinary MIR
+verification still rejects a missing owner link before execution. Nominal
+stored-reference objects remain outside that constant-execution profile.
+
 ## Consuming payload-enum matches (0.438.0)
 
 `sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
@@ -8188,7 +8210,14 @@ and parameter text relays with literal/null branches, plus an unsafe raw-receive
 relay used by editor previews. It rejects missing or forged literal witnesses,
 cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
 O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
-adding runtime lifetime state.
+adding runtime lifetime state. The stored-view return fixture covers view and
+`c_string` fields returned through `this`, an implicit field, a nested field, a
+fixed-array element, reference and by-value parameters and a concrete generic
+instance, all without an owner summary, and a stored alternative beside a
+receiver relay. It requires the specific missing-escaping-loan rejection for a
+borrowed loaded value, a dereference-ending or mistyped stored place, and a
+cleared dependent loan. A shadowing local and a local-owner escape beside a
+stored view fail in semantics.
 
 ### Operator-place composition focused gates
 
