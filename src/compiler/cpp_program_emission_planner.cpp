@@ -3887,10 +3887,18 @@ public:
              << *descriptor.classInstance << ") {\n";
       first = false;
       ++indentation;
-      writeIndent();
-      output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
-                "record, unwinding, &::gti_internal::backend::"
-                "__gti_failure_artifact_descriptor_v1);\n";
+      // With no source destructor and one child there is no second action to
+      // sequence after a failure. Forward the exact record/unwinding and
+      // result; the caller still owns native retirement. Multi-action and
+      // source-destructor recipes retain their ordered failure context.
+      const bool singleAction =
+          !descriptor.destructor && descriptor.aggregate.size() == 1;
+      if (!singleAction) {
+        writeIndent();
+        output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
+                  "record, unwinding, &::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1);\n";
+      }
       if (descriptor.destructor) {
         const auto *body = mir.findDestructorInstance(*descriptor.destructor);
         if (body == nullptr)
@@ -3925,22 +3933,28 @@ public:
           throw std::logic_error(
               "unique cleanup lost its MIR-selected subobject");
         writeIndent();
-        output << "if (!sequence.step(";
+        output << (singleAction ? "return " : "if (!sequence.step(");
+        const std::string record =
+            singleAction ? "record" : "sequence.record()";
+        const std::string unwinding =
+            singleAction ? "unwinding" : "sequence.unwinding()";
         if (step.uniqueOwnerBase) {
           if (!step.classInstance)
             throw std::logic_error(
                 "unique cleanup lost its next aggregate step");
           output << receiver << "template __gti_mir_unique_cleanup_failure<"
-                 << *step.classInstance
-                 << ">(sequence.record(), sequence.unwinding())";
+                 << *step.classInstance << ">(" << record << ", " << unwinding
+                 << ")";
         } else {
-          output << cppMirCleanupValueExpression(
-              mir, step, receiver, "sequence.record()", "sequence.unwinding()");
+          output << cppMirCleanupValueExpression(mir, step, receiver, record,
+                                                 unwinding);
         }
-        output << ")) return false;\n";
+        output << (singleAction ? ";\n" : ")) return false;\n");
       }
-      writeIndent();
-      output << "return sequence.success();\n";
+      if (!singleAction) {
+        writeIndent();
+        output << "return sequence.success();\n";
+      }
       --indentation;
       writeIndent();
       output << "}\n";

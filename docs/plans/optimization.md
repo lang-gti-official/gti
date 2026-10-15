@@ -74,7 +74,7 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
 | RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. The sort slice is delivered in 0.410.1 as bounded iterative introsort; see [RT-9](#rt-9-library-algorithm-and-data-structure-choices). |
 | RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
-| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. The earlier 1.6-times scalar / 1.13-times string result is historical, not current. Exact-head macOS measurements at `bcb67338` meet the workload quality gates and show no observed material regression; see the evidence below. Final GCC/Linux comparison remains outstanding, so cross-platform parity and promotion of `std::experimental::optional` are not yet declared complete. |
+| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. The earlier 1.6-times scalar / 1.13-times string result is historical, not current. Exact-head macOS measurements at `bcb67338` show no observed material regression, but the subsequent GCC/Linux run at `e456d644` finds a real 4.4% string residual. Singleton cleanup forwarding addresses unnecessary wrapper sequencing; fresh candidate measurements are required before performance acceptance or promotion of `std::experimental::optional`. |
 
 RT-11 evidence (2026-10-15): `scripts/benchmark_compare.py` compared the source
 and built-in optional workloads with Apple Clang 21, C++23, `-O2`, two warmups
@@ -109,6 +109,19 @@ exact-candidate paired run remains required to close Linux performance
 acceptance; successful compiler construction is not runtime timing evidence.
 The expedited release's full-suite waiver does not waive this distinction or
 turn an unfinished measurement into proof.
+
+The normal-workflow follow-up at clean `e456d644` completed both GCC 14
+15-pair runs with the same workload and quality thresholds. Its scalar median
+source/built-in ratio is 0.8820 (bootstrap 95% interval 0.8800–0.8856), but
+string is 1.0441 (1.0308–1.0518), with all 30 string pairs slower. String
+executables are 153080/148672 bytes; representative separate build costs are
+2.54/2.45 seconds. This is a real unaccepted regression, not platform parity.
+The candidate single-action cleanup forwarding described in the MIR contract
+removes nested wrapper sequence objects only when no second cleanup action
+can occur. Multi-action and source-destructor recipes retain their failure
+sequencing. Fresh paired GCC and macOS results, allocation counts, native size
+and build costs remain required; a smaller emitted helper alone is not proof
+that the regression has been removed.
 
 Closed-world executable lowering from #176 is already integrated; the old
 whole-stdlib code-size observations must be remeasured, not used as current
