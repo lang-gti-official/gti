@@ -557,13 +557,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
 
   result.program.lambdas.reserve(source.lambdaInstances().size());
   for (const HirLambda &instance : source.lambdaInstances()) {
-    MirLambdaInstance lowered{.id = instance.id,
-                              .declaration = instance.declaration,
-                              .type = instance.type,
-                              .returnType = instance.returnType,
-                              .parameterTypes = instance.parameterTypes,
-                              .parameterBindings = instance.parameterBindings,
-                              .capability = instance.capability};
+    MirLambdaInstance lowered{
+        .id = instance.id,
+        .declaration = instance.declaration,
+        .type = instance.type,
+        .returnType = instance.returnType,
+        .parameterTypes = instance.parameterTypes,
+        .parameterBindings = instance.parameterBindings,
+        .capability = instance.capability,
+        .returnBorrowOrigin = instance.returnBorrowOrigin,
+        .returnBorrowParameter = instance.returnBorrowParameter,
+        .returnBorrowAccess = instance.returnBorrowAccess};
     lowered.captureTypes.reserve(instance.captures.size());
     lowered.captureModes.reserve(instance.captures.size());
     lowered.captureSymbols.reserve(instance.captures.size());

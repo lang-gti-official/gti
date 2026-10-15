@@ -56,6 +56,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
 | Relate several types through one concept, with a result type that depends on all of them | [158: multi-parameter concepts](158-multi-parameter-concepts.gti) |
 | Propagate a failure from your own result type with `?` | [159: tryable propagation](159-tryable-propagation.gti) |
+| Return a reference through a callback, a generic relay, an invocation pointer or a callable view | [160: borrowed callback results](160-borrowed-callback-results.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -220,6 +221,7 @@ is a teaching helper, not a production server.
 | `157-protocol-concepts.gti` | a concept with an associated unit type and two operations, a conformance block for one class and a generic one for every instance of a class template, and a generic function that returns the associated type through `requires` |
 | `158-multi-parameter-concepts.gti` | a two-parameter concept whose sum type depends on both operands, a block for one pair of unit types and a generic block whose repeated parameter requires matching kinds, and a generic function that requires the pair |
 | `159-tryable-propagation.gti` | a validator's generic result type joining `?` through a `std::tryable` block, and a return type that receives the residual through an `implicit` constructor |
+| `160-borrowed-callback-results.gti` | a lambda, a generic relay with `borrowed_from`, a `std::function_ptr` and a `std::function_ref` each returning a read-only reference that borrows one reference argument, including a field of a class argument |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

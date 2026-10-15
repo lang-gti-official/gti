@@ -1516,6 +1516,11 @@ struct MirLambdaInstance {
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
+  // A reference result's owner contract: the parameter whose entry loan the
+  // escaping Return loan must reach. Captures never own a result.
+  BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  std::size_t returnBorrowParameter = 0;
+  AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   MirEffectSummary effectSummary;
   MirBody body;
 

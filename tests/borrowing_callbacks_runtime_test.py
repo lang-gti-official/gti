@@ -11,6 +11,7 @@ if __name__ == "__main__":
     line = next(index for index, text in enumerate(failure.read_text().splitlines(), 1)
                 if 'std::panic("callback failed")' in text)
     main(names=("borrowing_callbacks", "checked_callable_pointer", "checked_callable_transport",
-                "checked_callable_erasure", "checked_callable_erasure_failure"),
+                "checked_callable_erasure", "checked_callable_erasure_failure",
+                "checked_callable_result_origin"),
          cases={"checked_callable_erasure_failure": [((), (70, "1\n2\n",
              f'{failure.name}:{line}: runtime error[GTI-R0017]: panic: "callback failed"\n'))]})
