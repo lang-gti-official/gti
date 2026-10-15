@@ -956,8 +956,10 @@ lifecycle event beyond its prepared input transfers, and for a copied place,
 when the `Initialize` follows the producer directly or opens its Invoke
 success block. Each constructs the temporary directly, a call that can fail
 only on success, and the receiver borrows it as `directTemporaryReceiver`
-borrows a fresh result's slot. A nested-join arm and a moved named local are
-not admitted in this form.
+borrows a fresh result's slot. An arm may also move out of a nested
+cleanup-free join, whose storage has no obligation either. That move is the
+nested join's single move, and its writer ends the nested storage right after
+constructing the temporary. A moved named local is not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is

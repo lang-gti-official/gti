@@ -27,7 +27,8 @@ def nested_join_cases(name="conditional_cleanup_free_nested_join"):
     # A raising callee in a nested arm fails the loop's last iteration; only
     # the guard was constructed before it.
     failure = (f"{fixture.name}:{line('Pod divide(int a, int b)')}: "
-               "runtime error[GTI-R0002]: division_by_zero in integer_division\n")
+               "runtime error[GTI-R0002]: "
+               "division_by_zero in integer_division\n")
     expected = [
         (0, left + right + trace(123, -99), ""),
         (70, left + right + trace(-99), failure),

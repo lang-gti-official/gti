@@ -19,6 +19,10 @@ for what minor and patch releases mean.
   arm worked the first time and stopped the program the next time it ran.
   The nested conditional may sit in either arm or both, nest further, and be
   bound, read through a field, passed on, assigned or returned.
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called on such a nested
+  conditional, as in `(c ? fresh(1) : (d ? fresh(2) : Pod(3))).read()`,
+  including in loops and with `mut` and consuming (`&&`) methods.
 
 ## 0.440.4 — Member calls on conditional values without cleanup
 
