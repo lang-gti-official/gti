@@ -1,0 +1,218 @@
+#include <std/string>
+#include <std/vector>
+
+// A cleanup-free class moved into a consuming (`&&`) receiver is staged as a
+// prepared parameter that the call hands to the callee, like an owning
+// argument. Every owning result below is traced: each is constructed once and
+// destroyed once, at the point its consumer requires.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// The same kind of result, read through a field of the temporary.
+class Shown {
+public:
+  int id;
+  Shown(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Shown() { std::println(std::to_string(-this.id)); }
+};
+
+// A result whose destructor can fail while failure cleanup destroys it.
+class Fragile {
+  int id;
+  int divisor;
+public:
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {
+    std::println(std::to_string(value));
+  }
+  ~Fragile() {
+    std::println(std::to_string(-this.id));
+    int fragile = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+// Destroyed after the returned result exists; its destructor can fail.
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() { int guard = 1 / this.divisor; }
+};
+
+// The receivers hold only scalar state and have no destructor.
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  Tracked make() && { return Tracked(this.base); }
+  Tracked divide(int divisor) && { return Tracked(this.base / divisor); }
+  Shown show() && { return Shown(this.base); }
+  Shown show_divided(int divisor) && { return Shown(this.base / divisor); }
+  expected<Tracked, int> attempt(bool fail) && {
+    if (fail) {
+      return unexpected(this.base);
+    }
+    return Tracked(this.base);
+  }
+  Fragile fragile(int divisor) && { return Fragile(this.base, divisor); }
+};
+
+class Tagged<T> {
+  int base;
+public:
+  Tagged(int base) : base(base) {}
+  Tracked make() && { return Tracked(this.base); }
+};
+
+class Factory {
+  int base;
+public:
+  Factory(int base) : base(base) {}
+  Tracked operator()() && { return Tracked(this.base); }
+};
+
+// Results returned directly. The moved-from source's drop still runs between
+// the call and the Return.
+Tracked take_param(Maker maker) { return std::move(maker).make(); }
+
+Tracked take_mut(mut Maker maker) { return std::move(maker).make(); }
+
+Tracked take_local(int value) {
+  Maker local{value};
+  return std::move(local).make();
+}
+
+Tracked take_either(bool left, Maker a, Maker b) {
+  if (left) {
+    return std::move(a).make();
+  }
+  return std::move(b).make();
+}
+
+Tracked take_tagged<T>(Tagged<T> tagged) { return std::move(tagged).make(); }
+
+Tracked take_call(Factory factory) { return std::move(factory)(); }
+
+expected<Tracked, int> take_expected(Maker maker, bool fail) {
+  return std::move(maker).attempt(fail);
+}
+
+// The guard's destructor runs after fragile() has produced the result.
+Fragile take_guarded(Maker maker, int item_divisor, int divisor) {
+  Guard guard{divisor};
+  return std::move(maker).fragile(item_divisor);
+}
+
+// Results held in their own slot: discarded, replacing a binding, or read
+// through a field, from failure-free and raising members.
+void discard_made(Maker maker) { [[discard]] std::move(maker).make(); }
+
+void discard_divided(Maker maker, int divisor) {
+  [[discard]] std::move(maker).divide(divisor);
+}
+
+int replace_made(Maker maker) {
+  mut Tracked kept = Tracked(20);
+  kept = std::move(maker).make();
+  return kept.read();
+}
+
+int replace_divided(Maker maker, int divisor) {
+  mut Tracked kept = Tracked(22);
+  kept = std::move(maker).divide(divisor);
+  return kept.read();
+}
+
+int view_shown(Maker maker) { return std::move(maker).show().id; }
+
+int view_divided(Maker maker, int divisor) {
+  return std::move(maker).show_divided(divisor).id;
+}
+
+int view_either(bool take, Maker maker, int divisor) {
+  return take ? std::move(maker).show_divided(divisor).id : 0;
+}
+
+// Expected results constructed in the binding that consumes them.
+int bind_expected(Maker maker, bool fail) {
+  expected<Tracked, int> result = std::move(maker).attempt(fail);
+  if (!result) {
+    return result.error();
+  }
+  return result.value().read();
+}
+
+int choose_expected(bool left, Maker a, Maker b) {
+  expected<Tracked, int> result =
+      left ? std::move(a).attempt(false) : std::move(b).attempt(true);
+  if (!result) {
+    return result.error();
+  }
+  return result.value().read();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int total = 0;
+  {
+    Tracked first = take_param(Maker(1));
+    total += first.read();
+  }
+  {
+    Tracked second = take_mut(Maker(2));
+    total += second.read();
+  }
+  {
+    Tracked local = take_local(3);
+    total += local.read();
+  }
+  {
+    Tracked chosen = take_either(false, Maker(30), Maker(4));
+    total += chosen.read();
+  }
+  {
+    Tracked tagged = take_tagged<int>(Tagged<int>(5));
+    total += tagged.read();
+  }
+  {
+    auto take = [](Maker maker) -> Tracked { return std::move(maker).make(); };
+    Tracked taken = take(Maker(6));
+    total += taken.read();
+  }
+  {
+    Tracked called = take_call(Factory(7));
+    total += called.read();
+  }
+  {
+    auto result = take_expected(Maker(8), false);
+    total += result.value().read();
+    auto failed = take_expected(Maker(9), true);
+    total += failed.error();
+  }
+  discard_made(Maker(10));
+  discard_divided(Maker(11), 1);
+  total += replace_made(Maker(21));
+  total += replace_divided(Maker(23), 1);
+  total += view_shown(Maker(12));
+  total += view_divided(Maker(13), 1);
+  total += view_either(true, Maker(14), 1);
+  total += view_either(false, Maker(99), 0);
+  total += bind_expected(Maker(15), false);
+  total += bind_expected(Maker(16), true);
+  total += choose_expected(true, Maker(17), Maker(98));
+  total += choose_expected(false, Maker(97), Maker(18));
+  // One argument fails the guard after the result exists, two also fail that
+  // result's destructor during failure cleanup, three fail a consuming callee
+  // before its result exists, and four fail one while it would replace a
+  // binding, which keeps the old value for failure cleanup.
+  Fragile kept = take_guarded(Maker(40), argc == 3 ? 0 : 1,
+                              argc == 2 || argc == 3 ? 0 : 1);
+  std::println("kept");
+  int divided = view_divided(Maker(50), argc == 4 ? 0 : 1);
+  int replaced = replace_divided(Maker(51), argc == 5 ? 0 : 1);
+  return total + kept.read() + divided + replaced - 335;
+}
