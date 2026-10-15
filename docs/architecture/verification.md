@@ -6656,6 +6656,21 @@ was still engaged. A raising callee in a nested arm fails the last iteration
 and leaves no result. `testNestedCleanupFreeJoinMove` in the emitter text
 suite checks that both nested joins and a viewed outer join end their storage
 right after the move that empties it.
+`conditional_moved_local_join_runtime` runs the same eight configurations over
+a cleanup-free class value that each arm of a conditional moves out of a whole
+named local, a by-value parameter included. Each shape runs through both arms,
+bound, assigned, passed on, read through a field, used as a member-call
+receiver (also for a class holding a view) and returned, in plain and
+failure-form bodies, beside a construction, copy, call or nested-join arm, with
+the moved-from locals reassigned afterwards, the join assigned back into a
+moved local, both arms moving one local, and inside a loop. Failures after a
+bound join, before a returned join and in the joined value's member call
+destroy only what was constructed. `testCleanupFreeConditionalMovedLocalArms`
+in the emitter text suite checks that each moved local's binding drop ends its
+shell exactly once, and that the arm proofs themselves refuse a removed,
+weakened or retargeted ownership event, a lifecycle event on the `Move`, forged
+cleanup on the moved-from local and a conditional activation, all of which MIR
+verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,

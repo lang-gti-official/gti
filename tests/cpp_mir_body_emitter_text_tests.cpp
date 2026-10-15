@@ -5268,6 +5268,191 @@ int main() {
          "moving out of it");
 }
 
+// A cleanup-free arm may move a whole named local out. MIR records only the
+// local's ownership transition to Moved: the Move has no lifecycle event and
+// the local keeps its binding drop, which ends the moved-from shell after the
+// join. The bound, returned and field-read joins publish into
+// representation-only storage; the receiver join's arm activates the
+// temporary's own full-expression obligation directly. A removed, weakened or
+// retargeted ownership event, a forged lifecycle event on the Move, forged
+// cleanup on the moved-from local and a conditional activation are refused.
+// Without the arm proofs' ownership, passive-drop and activation checks, all
+// but the lifecycle forgery would reach text emission.
+void testCleanupFreeConditionalMovedLocalArms() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-cleanup-free-conditional-moved-local-arms.gti", R"(
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+int bound(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  Pod kept = left ? std::move(a) : std::move(b);
+  return kept.read();
+}
+Pod returned(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return left ? std::move(a) : std::move(b);
+}
+int field(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).x;
+}
+int receiver(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).read();
+}
+int main() {
+  return bound(true, 1, 2) + returned(false, 3, 4).read() +
+         field(true, 5, 6) + receiver(false, 7, 8) - 18;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "cleanup-free conditional moved-local arms verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t representationOnly = 0;
+  std::size_t activating = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arm Moves out of a whole named local, and each arm's
+    // Initialize into the join temporary.
+    struct Arm {
+      lang::MirInstructionId move = 0;
+      lang::MirInstructionId initialize = 0;
+      lang::MirPlaceId local = 0;
+    };
+    std::vector<Arm> arms;
+    for (const auto &block : function.body.blocks)
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index) {
+        const auto &move = block.instructions[index];
+        const auto &initialize = block.instructions[index + 1];
+        const lang::MirPlace *local =
+            move.kind == lang::MirInstructionKind::Move &&
+                    move.operands.size() == 1 &&
+                    move.operands[0].kind == lang::MirOperandKind::Move
+                ? function.body.findPlace(move.operands[0].place)
+                : nullptr;
+        if (local != nullptr &&
+            local->root == lang::MirPlaceRootKind::Binding && move.ownership &&
+            initialize.kind == lang::MirInstructionKind::Initialize)
+          arms.push_back({move.id, initialize.id, local->id});
+      }
+    if (arms.size() != 2)
+      continue;
+    const lang::MirInstruction *firstInitialize = nullptr;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == arms[0].initialize)
+          firstInitialize = &instruction;
+    const bool activates =
+        firstInitialize != nullptr && !firstInitialize->lifecycle.empty();
+    representationOnly += !activates;
+    activating += activates;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional admits its moved-local arms");
+    if (!supportsSelectedBodyText(frontend.mir, map, function.id))
+      continue;
+    // Each arm constructs the join storage from its local, and each local's
+    // binding drop destroys it once, whether or not its arm ran.
+    const std::string text =
+        emitter.emitBodyText(address, "moved-local-arm-test-v0", 1).text;
+    for (const Arm &arm : arms) {
+      const std::string local = "__gti_mir_p_" + std::to_string(arm.local);
+      std::size_t destroys = 0;
+      for (std::size_t at = text.find(local + ".destroy();");
+           at != std::string::npos;
+           at = text.find(local + ".destroy();", at + 1))
+        ++destroys;
+      expect(text.find(".construct(std::move(" + local + ".get()));") !=
+                     std::string::npos &&
+                 destroys == 1,
+             "a moved-local arm constructs the join from its local, and the "
+             "local's binding drop ends its shell once:\n" +
+                 text);
+    }
+    // The verifier rejects each forgery too; the backend's own arm proof
+    // must refuse it without relying on that.
+    const auto refused = [&](auto &&mutate, const std::string &what) {
+      auto malformed = frontend.mir;
+      mutate(*lang::findMirBody(malformed, address));
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a forged moved-local arm fails MIR verification: " + what);
+      expect(!supportsSelectedBodyText(malformed, map, function.id),
+             "a forged moved-local arm cannot enter backend emission: " + what);
+    };
+    const auto onInstruction = [](lang::MirBody &body,
+                                  lang::MirInstructionId id, auto &&mutate) {
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == id)
+            mutate(instruction);
+    };
+    const lang::MirPlace *other = function.body.findPlace(arms[1].local);
+    expect(other != nullptr && other->key.has_value(),
+           "the other arm's local has an ownership key");
+    if (other == nullptr || !other->key)
+      continue;
+    const std::string_view forgeries[] = {
+        "no ownership event", "maybe-moved ownership", "read ownership",
+        "the other local's ownership", "lifecycle event on the move"};
+    for (std::size_t mutation = 0; mutation != std::size(forgeries);
+         ++mutation) {
+      refused(
+          [&](lang::MirBody &body) {
+            onInstruction(body, arms[0].move, [&](auto &move) {
+              if (mutation == 0)
+                move.ownership.reset();
+              else if (mutation == 1)
+                move.ownership->after = lang::OwnershipStateSet::MaybeMoved;
+              else if (mutation == 2)
+                move.ownership->kind = lang::OwnershipEventKind::Read;
+              else if (mutation == 3)
+                move.ownership->place = *other->key;
+              else
+                move.lifecycle.push_back(
+                    {.kind = lang::MirLifecycleEventKind::Initialize});
+            });
+          },
+          std::string(forgeries[mutation]));
+    }
+    // The moved-from local's binding drop must stay passive: it ends the
+    // moved-from shell on one path and the live object on the other.
+    refused(
+        [&](lang::MirBody &body) {
+          for (auto &drop : body.dropObligations)
+            if (drop.place == arms[0].local)
+              drop.dropType.requiresActiveCleanup = true;
+        },
+        "cleanup on the moved-from local");
+    if (activates)
+      refused(
+          [&](lang::MirBody &body) {
+            onInstruction(body, arms[0].initialize, [](auto &initialize) {
+              initialize.lifecycle.front().conditional = true;
+            });
+          },
+          "conditional activation");
+  }
+  expect(representationOnly == 3 && activating == 1,
+         "the bound, returned and field-read joins and the receiver join "
+         "were exercised: " +
+             std::to_string(representationOnly) + ", " +
+             std::to_string(activating));
+}
+
 // A construction consuming a cleanup-free Expected<Class, E> argument may
 // publish its own result through its consuming Return or into a constructor
 // field. The success class has no default constructor: a failure-free
@@ -7100,6 +7285,8 @@ constexpr NamedTest kTests[] = {
      testPreparedConsumingReceiverLaterFailure},
     {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
     {"testCleanupFreeConditionalCallArms", testCleanupFreeConditionalCallArms},
+    {"testCleanupFreeConditionalMovedLocalArms",
+     testCleanupFreeConditionalMovedLocalArms},
     {"testCleanupFreeJoinReceiver", testCleanupFreeJoinReceiver},
     {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",

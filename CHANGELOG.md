@@ -41,6 +41,14 @@ for what minor and patch releases mean.
   a destructor, by value to a constructor, as in
   `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
 
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` move a local whose
+  class has no destructor, as in
+  `Pod t = c ? std::move(a) : std::move(b);`. Binding, returning, reading a
+  field of, calling a method on, assigning and passing on the result all
+  work now, in functions that can fail too, as do by-value parameters and an
+  arm that moves a local beside one that constructs, copies or calls.
+
 ## 0.441.0 — `?` on payload enums
 
 - `?` works directly on a payload enum that has a `std::tryable` block, such
