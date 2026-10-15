@@ -6500,7 +6500,16 @@ that fails again during that cleanup reports the secondary failure.
 receiver stage as an alias of its full-expression slot. It refuses forged
 handoffs that MIR verification also rejects: a slot outside any full
 expression, a Move that activates nothing, a transfer at invocation and a
-prepared parameter. Ownership
+prepared parameter. `testGenericInstanceSpecialMemberRows` in the same suite
+builds `maybe<T>` and `box<T>` over a move-only payload without a default
+constructor and over `int`. Each class row's boundary, copy-construction and
+copy-assignment proofs follow its own sealed instance rather than the generic
+declaration, and they agree with the copy and default constructors its emitted
+concrete class spells. `testConcreteApplicationSpecialMembers` in the
+declarations suite checks the same applications' HIR and MIR statuses. A
+default constructor whose `std::default_initializable<T>` requirement fails is
+`Deleted` on `box<Tracked>`, while `box<int>` and the open primary keep it, and
+default construction of `box<Tracked>` is rejected. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.

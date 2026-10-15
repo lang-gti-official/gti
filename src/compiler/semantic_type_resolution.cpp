@@ -2853,12 +2853,7 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
 
   const GenericSubstitution substitution = classSubstitution(type);
   std::vector<AppliedConceptRequirement> requirements =
-      constructor->requirements;
-  for (AppliedConceptRequirement &requirement : requirements) {
-    for (SemanticType &argument : requirement.arguments) {
-      argument = substituteType(argument, substitution);
-    }
-  }
+      defaultConstructorRequirements(*constructor, substitution);
   if (firstRequirementFailure(requirements)) {
     return std::nullopt;
   }
@@ -2891,6 +2886,34 @@ auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
       .borrowAccess = constructor->borrowAccess,
       .generatedDefault = requestsStructuralDefaultConstruction(*constructor),
       .kind = ConstructorKind::Ordinary};
+}
+
+auto SemanticVisitor::Impl::defaultConstructorRequirements(
+    const ConstructorInfo &constructor,
+    const GenericSubstitution &substitution) const
+    -> std::vector<AppliedConceptRequirement> {
+  std::vector<AppliedConceptRequirement> requirements =
+      constructor.requirements;
+  for (AppliedConceptRequirement &requirement : requirements) {
+    for (SemanticType &argument : requirement.arguments) {
+      argument = substituteType(argument, substitution);
+    }
+  }
+  return requirements;
+}
+
+auto SemanticVisitor::Impl::declaredDefaultConstructorApplies(
+    const SemanticType &type) const -> bool {
+  const ClassInfo *owner = classInfo(type);
+  const ConstructorInfo *constructor =
+      owner == nullptr ? nullptr : defaultConstructor(*owner);
+  // A constructor template's own parameters are never deduced by default
+  // construction; its status is not a property of the class arguments.
+  if (constructor == nullptr || !constructor->genericParameters.empty()) {
+    return true;
+  }
+  return !firstRequirementFailure(
+      defaultConstructorRequirements(*constructor, classSubstitution(type)));
 }
 
 auto SemanticVisitor::Impl::genericTypeParameterCount(
