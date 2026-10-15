@@ -11698,15 +11698,21 @@ private:
               retained.access == AccessMode::Mutable &&
               output.loans[retained.parent - 1].kind == MirLoanKind::Stored &&
               output.loans[retained.parent - 1].access == AccessMode::Mutable;
+          // Reusing a shared identity for a later value copy does not create
+          // a new accessor chain. Validate the retained loan's original
+          // producer, not the latest binding's initializer.
           const HirValue *initializer =
-              statement.value ? findValue(*statement.value) : nullptr;
+              retained.producedBy != 0 ? findValue(retained.producedBy)
+              : statement.value        ? findValue(*statement.value)
+                                       : nullptr;
           const auto arguments = initializer != nullptr
                                      ? callArgumentValues(*initializer)
                                      : std::vector<HirValueId>{};
           MirLoanId accessorAncestor = expectedParent;
           if (accessorAncestor == 0 && desired->storedDependency != 0 &&
               desired->access == AccessMode::ReadOnly) {
-            const auto dependency = semanticLoans.find(desired->storedDependency);
+            const auto dependency =
+                semanticLoans.find(desired->storedDependency);
             MirLoanId ancestor = retained.parent;
             std::unordered_set<MirLoanId> visited;
             while (const auto *link = output.findLoan(ancestor)) {
@@ -13206,7 +13212,10 @@ private:
         const HirValue *value = findValue(*statement.value);
         if (value != nullptr && value->info.traits.containsBorrowedState) {
           MirLoanId retained = loanForValue(*statement.value);
-          if (retained == 0 && output.returnType.kind == SemanticType::Class &&
+          if (retained == 0 &&
+              (output.returnType.kind == SemanticType::Class ||
+               output.returnType.kind == SemanticType::StringView ||
+               output.returnType.kind == SemanticType::CString) &&
               value->info.traits.copyable) {
             // A copied nested member has no separate local carrier binding.
             // Its caller-owned receiver/reference entry supplies the external

@@ -52,6 +52,7 @@ struct TextReader {
   std::string_view& text;
   TextReader(std::string_view& input) : text(input) {}
   std::size_t size() { return this.text.size(); }
+  std::string_view read() { return this.text; }
 };
 std::size_t text_size(std::string_view& input, std::string_view& other) {
   TextReader reader{input};
@@ -60,7 +61,8 @@ std::size_t text_size(std::string_view& input, std::string_view& other) {
 std::string_view& relay_text(std::string_view& input) { return input; }
 std::size_t relayed_size(std::string_view& input) {
   TextReader reader{relay_text(input)};
-  return reader.size();
+  std::string_view copied = reader.read();
+  return copied.size();
 }
 )gti";
   const auto run = [&](std::string body) {
@@ -94,7 +96,22 @@ int main() {
   bool checkedWrongOwner = false;
   bool checkedEndpoint = false;
   bool checkedReturnedReference = false;
+  bool checkedCopiedReturn = false;
   for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.returnType.kind == lang::SemanticType::StringView &&
+        function.returnBorrowOrigin == lang::BorrowOriginKind::Receiver) {
+      for (const auto &block : function.body.blocks) {
+        if (!block.terminator.returnLoan)
+          continue;
+        auto missing = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            missing.findFunctionInstance(function.id));
+        changed->body.blocks[block.id - 1].terminator.returnLoan.reset();
+        expect(!lang::verifyMirProgram(missing).valid(),
+               "a copied text-reference field cannot erase its return owner");
+        checkedCopiedReturn = true;
+      }
+    }
     for (const auto &loan : function.body.loans) {
       if (loan.kind == lang::MirLoanKind::CallResult &&
           loan.storedDependency != 0) {
@@ -195,7 +212,7 @@ int main() {
     }
   }
   expect(checkedEntry && checkedWrongOwner && checkedEndpoint &&
-             checkedReturnedReference,
+             checkedReturnedReference && checkedCopiedReturn,
          "text reference fixtures exercise missing, forged and early owner "
          "retirement");
   for (const std::string invalid :
@@ -205,6 +222,14 @@ int main() {
         "int main() { std::string owner = std::string(\"text\"); "
         "mut std::string_view view = owner.view(); TextReader reader{view}; "
         "view = \"changed\"; return int(reader.size()); }",
+        "int main() { mut std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); TextReader reader{view}; "
+        "std::string_view copy = reader.read(); owner.clear(); "
+        "return int(copy.size()); }",
+        "std::string_view escape_copy() { "
+        "std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); TextReader reader{view}; "
+        "return reader.read(); }",
         "TextReader escape() { std::string owner = std::string(\"text\"); "
         "std::string_view view = owner.view(); return TextReader(view); }"}) {
     const auto rejected = run(invalid);
