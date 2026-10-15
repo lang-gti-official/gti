@@ -8323,9 +8323,50 @@ or mutable calls. Incoming loop facts remain unknown until the general
 conditional loop contract is implemented; first-iteration facts are not reused
 for backedges. No loan endpoint or availability check is replaced by this
 value-fact analysis. Nonempty conditional construction/transport and
-declaration-owned result summaries remain incomplete; guards on unsupported
+guarded declaration-owned result summaries remain incomplete; guards on unsupported
 loan/call records fail closed and reference-bearing payload admission stays
 closed.
+
+The next result-summary checkpoint adds declaration-relative, known-empty
+function contracts and exact direct-call transport. Semantic analysis demands
+ordinary bodies independently of declaration order and reanalyzes concrete
+generic queries in isolated workers; unknown, recursive, resource-limited and
+nonreturning results stay unknown. Explicit unknown facts shadow older instance
+snapshots. MIR uses one producer/storage/return reconstruction engine, with
+memoized independent callee proof, rather than trusting a declaration claim.
+Each reachable normal return must refine the declared alternative inventory;
+extra well-typed dependency-free alternatives are conservative and remain valid
+after optimizer branch elimination. Missing actual alternatives, duplicate or
+wrong type/tag/field paths and invented dependencies fail verification. Calls
+publish result facts only on their successful edge. Synthetic early returns
+from propagation currently make the summary unknown until their selected
+residual operation's complete result contract can be instantiated.
+
+Dependency-free by-value payload-enum parameters now seed a complete set with
+every concrete alternative. Semantics derives it from the strict type inventory;
+MIR independently reconstructs it from exact formal bindings, types, available
+entry storage and sealed payload rows. This does not infer an empty set for an
+unknown reference parameter or after a mutable call. Optimized focused tests
+cover forwarding the complete entry inventory and reject substituted formal
+types/bindings, unavailable entry storage and omitted alternatives. Nonempty
+conditional entry loans remain a subsequent proof step.
+
+This checkpoint is work in progress. Before enabling nonempty contracts, replace
+the provisional per-query depth/entry limits with the existing generic-instance
+resource policy: cycles remain unknown, exhaustion reports the established
+resource diagnostic, and eviction of completed cache entries must only cause
+recomputation, never different acceptance. Recheck the memoized MIR observation
+path and the coordinated schema revision with all affected targets relinked.
+
+Focused optimized macOS evidence covers declaration order, exact generic
+substitution, unknown/mutated inputs, direct/indirect recursion, no-return
+distinction, forged contracts and O0/O3 optimization. This is a prerequisite,
+not completion of reference-bearing result factories: the next increment must
+normalize every guarded external origin/access to a declaration-relative
+parameter/receiver mapping, transport it at calls, and integrate the full
+conditional input inventory and residual-return proof. Normal full-suite,
+platform, native matrix and performance validation apply to final integration;
+the earlier expedited full-suite waiver is no longer active.
 
 Example 165's original shared and mutable class-wrapper paths now compile and
 run at O2 with the expected output. General constructor-staging fixes admit
@@ -8383,6 +8424,26 @@ owner's access/liveness, and preserves the cached address after shell retirement
 Same-referent aliases retain the original selection plus their checked parent.
 Projected aliases additionally require an exact typed runtime projection applied
 to every possible owner; no projection is admitted by choosing the first owner.
+
+The next access scaffold snapshots every external origin of a selected scalar
+reference at operand evaluation. Reads, mutations and call exclusivity compare
+all possible owners; one selected reference is one access, so alternatives are
+not spuriously compared against each other as simultaneous aliases. The
+runtime selected address still comes from its exact extraction, not any one
+owner. Producer and same-body reborrow publication remain closed until their
+independent MIR proof is connected. Projected reborrows additionally require
+the ordinary typed runtime projection to be checked against the same suffix on
+every external origin; the root selection descriptor is not that proof.
+
+Complete-flow observations now retain the carrier fact immediately before each
+reachable extraction, independently of its attached annotations. Per-field
+consuming extraction keeps an exact owning shell's fact until its final
+`TransferOut`; ordinary whole-value moves still invalidate facts immediately.
+Tag dominance, unique field consumption and final shell retirement remain
+separate mandatory lifecycle proofs. Reordered, duplicate and missing exact
+retirement mutations accompany this seam. Syntax checks establish only that
+the scaffold compiles; focused semantic/MIR tests and reference-payload runtime
+evidence remain pending for this checkpoint.
 
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.

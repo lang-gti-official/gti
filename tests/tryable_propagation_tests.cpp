@@ -73,6 +73,66 @@ int main() {
            std::string("missing ") + code + " with '" + fragment + "'");
   };
 
+  const std::string nativePayloads = R"gti(
+[[c_abi]] struct NativeAddress { mut const int* address; mut int stamp; };
+[[c_abi]] struct NativeBatch { NativeAddress records[2]; };
+[[c_abi]] union NativeChoice { int integer; const int* address; };
+extern "C" {
+  NativeAddress native_address();
+  NativeBatch native_batch();
+  NativeChoice native_choice();
+}
+enum NativeEvent {
+  address(NativeAddress value), batch(NativeBatch value),
+  choice(NativeChoice value), empty
+};
+int main() {
+  unsafe {
+    NativeAddress address = native_address();
+    NativeBatch batch = native_batch();
+    NativeChoice choice = native_choice();
+    NativeEvent first = NativeEvent::address(address);
+    NativeEvent second = NativeEvent::batch(batch);
+    NativeEvent third = NativeEvent::choice(choice);
+    switch (first) {
+      case NativeEvent::address(value): return value.stamp;
+      case NativeEvent::batch: return 1;
+      case NativeEvent::choice: return 2;
+      case NativeEvent::empty: return 3;
+    }
+  }
+}
+)gti";
+  accepted(nativePayloads,
+           "validated native layouts must establish complete empty payload "
+           "dependencies, including nested records, arrays and native unions");
+  const auto nativePayloadResult = analyze(nativePayloads);
+  if (nativePayloadResult.canGenerateCode()) {
+    auto missingNativeEvidence = nativePayloadResult.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(
+             missingNativeEvidence)) {
+      for (auto &value : function.body.values) {
+        if (value.borrowDependencies &&
+            value.info.type.kind == lang::SemanticType::Enum) {
+          value.borrowDependencies.reset();
+          changed = true;
+          break;
+        }
+      }
+      if (changed)
+        break;
+    }
+    expect(changed, "native payload fixture must publish complete evidence");
+    expect(!lang::verifyMirProgram(missingNativeEvidence).valid(),
+           "native-layout payloads must not bypass required complete evidence");
+  }
+  rejected(R"gti(
+[[c_abi]] struct InvalidNative { int& owner; };
+enum InvalidEvent { value(InvalidNative native), empty };
+int main() { return 0; }
+)gti", "GTI-S2064", "outside the bounded C ABI record field set");
+
   const std::string types = R"gti(
 struct Rejected {
   int code;
@@ -315,7 +375,7 @@ int main() {
     }
   }
   for (const std::string source :
-       {"Token unknown(Token input) { return input; }",
+       {"Token unknown(Token& input) { return input; }",
         "void replace(mut Token& input) { input = Token::item(9); } "
         "Token unknown() { mut auto value = Token::empty; replace(value); "
         "return value; }"}) {

@@ -1460,6 +1460,37 @@ int main() {
            "no field may move out of a subject whose obligation already "
            "transferred");
     expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 std::swap(*moves.front(), *moves.back());
+                 return true;
+               }),
+           "reordered consuming extractions cannot reuse a retired carrier "
+           "dependency set");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.front()->lifecycle = moves.back()->lifecycle;
+                 return true;
+               }),
+           "duplicate subject transfers cannot preserve a carrier fact "
+           "through later field extraction");
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 for (auto &event : moves.back()->lifecycle)
+                   if (event.kind == lang::MirLifecycleEventKind::TransferOut) {
+                     event.source = 0;
+                     return true;
+                   }
+                 return false;
+               }),
+           "a final transfer with no exact shell obligation cannot justify "
+           "retained extraction facts");
+    expect(consumingMutationRejected(
                temporary, 1,
                [](lang::MirBody &, lang::MirBlock &,
                   std::vector<lang::MirInstruction *> &moves) {
