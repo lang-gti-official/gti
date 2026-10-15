@@ -60,6 +60,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Propagate a failure from your own result type with `?` | [159: tryable propagation](159-tryable-propagation.gti) |
 | Return a reference through a callback, a generic relay, an invocation pointer or a callable view | [160: borrowed callback results](160-borrowed-callback-results.gti) |
 | Propagate an empty optional with `?`, moving a move-only value out | [162: experimental optional](162-experimental-optional.gti) |
+| Propagate a failed `result<T, E>` enum with `?`, moving owned strings out | [163: payload-enum propagation](163-payload-enum-propagation.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -228,6 +229,7 @@ is a teaching helper, not a production server.
 | `160-borrowed-callback-results.gti` | a lambda, a generic relay with `borrowed_from`, a `std::function_ptr` and a `std::function_ref` each returning a read-only reference that borrows one reference argument, including a field of a class argument |
 | `161-consuming-matches.gti` | a switch over temporary messages that moves their owned strings into its bindings, an arm without bindings that drops its message on entry, a source-defined optional whose `&&` accessor moves the value out of its field, and a borrowed match over a named enum |
 | `162-experimental-optional.gti` | the source-defined `std::experimental::optional` holding a move-only record, `?` moving it out or returning an empty optional, and `std::experimental::nullopt` |
+| `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

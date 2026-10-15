@@ -2025,6 +2025,15 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                           target->linkage == LanguageLinkage::Gti &&
                           target->returnType == argumentPlace->type &&
                           target->returnBorrowOrigin == BorrowOriginKind::None;
+        } else if (producer != nullptr &&
+                   producer->kind == MirInstructionKind::Compute &&
+                   producer->operation == MirOperation::PayloadConstruct) {
+          // A payload enum's alternative is its ordinary construction.
+          exactProducer =
+              argumentPlace != nullptr &&
+              argumentPlace->type.kind == SemanticType::Enum &&
+              producer->info.type == argumentPlace->type &&
+              program.findPayloadEnum(argumentPlace->type) != nullptr;
         }
         const bool supportedResult =
             supportsEphemeralBorrowResult(functionTarget, instruction.info);
@@ -6437,13 +6446,18 @@ verifyMirPayloadEnums(const MirProgram &program) {
               exact = exact && matched && event.target == 0 &&
                       !event.conditional && !event.failureCleanup;
             } else if (event.kind == MirLifecycleEventKind::Initialize) {
+              // An owning alternative arms the enum's cleanup. A passive one
+              // is initialized only into the slot of a temporary that a call
+              // borrows, whose value obligation has no cleanup to run.
               const MirDropObligation *target =
                   body->findDropObligation(event.target);
               ++resultInitializations;
-              exact = exact && enumeration->requiresActiveCleanup &&
-                      event.source == 0 && target != nullptr &&
+              exact = exact && event.source == 0 && target != nullptr &&
                       target->dropType.type == enumeration->type &&
-                      target->dropType.requiresActiveCleanup &&
+                      target->dropType.requiresActiveCleanup ==
+                          enumeration->requiresActiveCleanup &&
+                      (enumeration->requiresActiveCleanup ||
+                       target->kind == MirDropObligationKind::Value) &&
                       !event.conditional && !event.failureCleanup;
             } else {
               exact = false;
@@ -6455,9 +6469,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
                 exact && transferred[fieldIndex] ==
                              variant->payloadRequiresActiveCleanup[fieldIndex];
           }
-          exact = exact && resultInitializations ==
-                               static_cast<std::size_t>(
-                                   enumeration->requiresActiveCleanup);
+          exact = exact && (enumeration->requiresActiveCleanup
+                                ? resultInitializations == 1
+                                : resultInitializations <= 1);
         } else {
           const MirValue *value = instruction.result
                                       ? body->findValue(*instruction.result)

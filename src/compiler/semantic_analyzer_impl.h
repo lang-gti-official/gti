@@ -1566,11 +1566,9 @@ private:
     std::vector<std::string> namespaceScope;
     std::vector<std::string> functionScope;
     std::vector<GenericParameterInfo> genericParameters;
-    // One pattern per concept parameter: a closed concrete type, or a class
-    // template applied to block parameters, whose template is then recorded
-    // in patternTemplates (zero for a concrete pattern).
+    // One pattern per concept parameter: a closed concrete type, or one class
+    // or enum template applied to block parameters (an open pattern).
     std::vector<SemanticType> patterns;
-    std::vector<ClassId> patternTemplates;
     std::vector<SemanticType> associatedTypes;
     std::vector<Symbol> operations;
     bool operationsBound = false;
@@ -3640,10 +3638,13 @@ private:
                    const std::vector<SemanticType> &arguments) const;
   [[nodiscard]] std::optional<std::vector<SemanticType>>
   classTemplateArguments(const SemanticType &type, ClassId owner) const;
+  [[nodiscard]] static bool openConformancePattern(const SemanticType &pattern);
+  [[nodiscard]] std::optional<std::vector<SemanticType>>
+  patternInstanceArguments(const SemanticType &pattern,
+                           const SemanticType &type) const;
   [[nodiscard]] bool
   conformancePatternsOverlap(const RegisteredConformance &existing,
-                             const std::vector<SemanticType> &patterns,
-                             const std::vector<ClassId> &templates) const;
+                             const std::vector<SemanticType> &patterns) const;
   [[nodiscard]] std::optional<ConceptId>
   protocolConceptOwner(const TypeRef &owner,
                        const std::vector<std::string> &fromScope) const;
@@ -4667,6 +4668,13 @@ private:
   [[nodiscard]] const Expr *
   transparentTemporaryProducer(const ExprPtr &expression) const;
 
+  // Whether `type` is an enum with payload alternatives: a self-contained
+  // aggregate value like a class or struct, unlike a scalar-backed enum.
+  [[nodiscard]] bool payloadEnumType(const SemanticType &type) const;
+
+  // A fresh self-contained class, struct or payload-enum value that one call
+  // may borrow transiently, as opposed to an existing place or a value that
+  // carries borrowed state.
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
