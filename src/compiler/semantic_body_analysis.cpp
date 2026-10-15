@@ -1959,6 +1959,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                            classSubstitution(openClassType(owner.id)));
   bool initializedBase = false;
   bool sawFieldInitializer = false;
+  const auto ownerlessInputs = ownerlessTextConstructorInputs(
+      openClassType(owner.id), &stmt, parameterTypes);
   for (const ConstructorInitializer &initializer : stmt.initializers()) {
     semanticModel.recordFullExpression(initializer);
     const Token &target = initializer.target.name.last();
@@ -2080,6 +2082,16 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                             true, fieldType.kind != SemanticType::Reference);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
+    if (field != nullptr && initializer.arguments.size() == 1 &&
+        (fieldType.kind == SemanticType::StringView ||
+         fieldType.kind == SemanticType::CString) &&
+        isOwnerDependentTextExpression(initializer.arguments.front()) &&
+        std::none_of(
+            ownerlessInputs.begin(), ownerlessInputs.end(),
+            [&](const auto &input) { return input.second == &initializer; })) {
+      reportOwnerDependentTextStorage(initializer.arguments.front(),
+                                      "stored in a constructor field");
+    }
     if (field != nullptr && initializer.arguments.size() == 1 &&
         fieldType.kind == SemanticType::Reference) {
       forceProgramStorageBoundaryAccess(initializer.arguments.front());
@@ -7500,7 +7512,9 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   }
 
   const SemanticTypeTraits traits = typeTraits(currentType);
-  if (traits.containsBorrowedState) {
+  if (traits.containsBorrowedState ||
+      isOwnerDependentTextExpression(expr.thenExpression()) ||
+      isOwnerDependentTextExpression(expr.elseExpression())) {
     report(expr.question(),
            "Conditional expressions cannot yet produce a value of type '" +
                typeSpelling(currentType) +
