@@ -8450,6 +8450,16 @@ cannot become a missing-parent exception; its transferred reference needs exact
 typed entry provenance and a verified handoff. The changed verifier translation
 unit passes optimized syntax checking; runtime admission is not yet claimed.
 
+The selected-reference origin check now compares the exact field/tag identity
+and every retained external place/access against the independent pre-extraction
+projection. A missing carrier fact is unknown, never an empty successful proof;
+the scalar result cannot omit, add, or substitute possible owners. Physical
+address selection remains distinct from this owner comparison. Active parents,
+abstract entry provenance and group handoff are separate required proofs, so
+the public reference-payload gate remains closed. The optimized combined build
+and focused backend, complete-borrow-summary and sum-type regressions pass;
+these do not yet constitute positive reference-payload runtime acceptance.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
