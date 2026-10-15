@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.2 — Constructor text-view lifetime checks
+
+- Reject constructor initializers that store a dynamic `std::string_view` or
+  `c_string` by value without retaining its owner, including generic holders
+  and forwarded constructor arguments. Literal-backed constructor inputs remain
+  valid. The diagnostic identifies the initializer and suggests owned text or
+  an explicit checked reference instead of allowing dangling storage.
+- Preserve both the view object's lifetime and its external character owner's
+  lifetime when a field stores a checked text-view reference. JSON decoding uses
+  these checked references without copying the input or its member index.
+- Verify missing, forged, mutable and prematurely retired owner dependencies;
+  preserve exactly-once resource cleanup when a constructor also owns fields.
+
 ## 0.440.1 — Conditional member-call results without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
