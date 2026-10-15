@@ -37322,7 +37322,8 @@ private:
               "verified owning payload construction lost its variant row");
         }
         if (field.directConstruction) {
-          const std::string target = destinationSpelling(facts, field.field->id);
+          const std::string target =
+              destinationSpelling(facts, field.field->id);
           output << "std::destroy_at(std::addressof(" << target << "));\n";
           writeIndent();
           output << "::new (static_cast<void *>(std::addressof(" << target
