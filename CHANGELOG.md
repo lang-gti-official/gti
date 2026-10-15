@@ -39,6 +39,9 @@ for what minor and patch releases mean.
   these checked references without copying the input or its member index.
 - Verify missing, forged, mutable and prematurely retired owner dependencies;
   preserve exactly-once resource cleanup when a constructor also owns fields.
+- Preserve named shared references through stored adapters and nested accessor
+  calls. Emit `c_string&` with pointer-object constness consistently through
+  reference fields, retained loans and return channels.
 
 ## 0.440.4 — Member calls on conditional values without cleanup
 

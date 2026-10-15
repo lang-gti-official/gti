@@ -764,6 +764,17 @@ std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
                                            row->ownerClass == 0);
 }
 
+std::string cppAccessQualifiedTypeSpelling(const SemanticType &type,
+                                           AccessMode access,
+                                           std::string spelling) {
+  if (access != AccessMode::ReadOnly)
+    return spelling;
+  // CString is spelled directly as const char*, rather than through a named
+  // value/alias type. Its reference borrows the pointer slot, not the bytes.
+  return type.kind == SemanticType::CString ? spelling + " const"
+                                            : "const " + spelling;
+}
+
 std::string cppNativeTypeSpelling(const LoweredProgram &program,
                                   CppStandard standard,
                                   const SemanticType &type) {
@@ -1251,11 +1262,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     return cppLoweredQualifiedName(enumInfo->qualifiedName, false);
   }
   case SemanticType::Reference: {
-    std::string result;
-    if (type.referenceAccess == AccessMode::ReadOnly) {
-      result += "const ";
-    }
-    result += type.arguments.empty() ? "void" : spell(type.arguments.front());
+    const SemanticType referent =
+        type.arguments.empty() ? SemanticType::Void : type.arguments.front();
+    std::string result = cppAccessQualifiedTypeSpelling(
+        referent, type.referenceAccess, spell(referent));
     result += " &";
     return result;
   }

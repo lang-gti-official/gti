@@ -37,6 +37,7 @@ struct CReader {
   c_string read() { return this.text; }
 };
 c_string& relay_c_text(c_string& input) { return input; }
+c_string& nested_c_text(c_string& input) { return relay_c_text(input); }
 
 std::size_t inspect(std::string_view input, bool fail) {
   TextOwner reader{relay_text(input), Ticket(), fail};
@@ -60,8 +61,17 @@ int main(int argc, std::vector<std::string> argv) {
     std::string_view implicit_copy = reader.read_implicit();
     if (implicit_copy.size() != std::size_t(7)) { return 6; }
     c_string pointer = owner.c_string();
-    CReader c_reader{relay_c_text(pointer)};
+    c_string& pointer_reference = relay_c_text(pointer);
+    CReader direct_c_reader{pointer_reference};
+    c_string direct_c_copy = direct_c_reader.read();
+    CReader c_reader{nested_c_text(pointer_reference)};
     c_string c_copy = c_reader.read();
+    unsafe {
+      std::string direct_copy{direct_c_copy};
+      std::string nested_copy{c_copy};
+      if (direct_copy.size() != std::size_t(7) ||
+          nested_copy.size() != std::size_t(7)) { return 7; }
+    }
     c_string empty = nullptr;
     CReader empty_reader{empty};
   }

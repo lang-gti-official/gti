@@ -968,9 +968,10 @@ public:
   void emitLoweredFailureResultParameter(const SemanticType &returnType,
                                          bool callableTemplate = false,
                                          bool retainVoidChannel = false) {
-    const auto emitType = [&](const SemanticType &type) {
+    const auto emitType = [&](const SemanticType &type,
+                              AccessMode access = AccessMode::Mutable) {
       if (!callableTemplate) {
-        emitSemanticType(type);
+        emitAccessQualifiedType(type, access);
         return;
       }
       const std::string spelling =
@@ -979,14 +980,11 @@ public:
         throw std::logic_error(
             "lowered callable template has an unspellable projected result");
       }
-      output << spelling;
+      output << cppAccessQualifiedTypeSpelling(type, access, spelling);
     };
     if (returnType.kind == SemanticType::Reference &&
         returnType.arguments.size() == 1) {
-      if (returnType.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      emitType(returnType.arguments.front());
+      emitType(returnType.arguments.front(), returnType.referenceAccess);
       output << " **__gti_mir_out_result, ";
     } else if (returnType != SemanticType::Void) {
       emitType(returnType);
@@ -5969,10 +5967,8 @@ public:
       // Forward it rather than returning a native record through C++ copying.
     } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
-      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      emitSemanticType(instance.returnType.arguments.front());
+      emitAccessQualifiedType(instance.returnType.arguments.front(),
+                              instance.returnType.referenceAccess);
       output << " *__gti_result = nullptr;\n";
     } else if (placementResult) {
       writeIndent();
@@ -6169,10 +6165,8 @@ public:
       // Preserve the internal byte-transport result convention at the adapter.
     } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
-      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      emitSemanticType(instance.returnType.arguments.front());
+      emitAccessQualifiedType(instance.returnType.arguments.front(),
+                              instance.returnType.referenceAccess);
       output << " *__gti_result = nullptr;\n";
     } else if (placementResult) {
       writeIndent();
@@ -9307,6 +9301,11 @@ public:
 
   void emitSemanticType(const SemanticType &type) {
     output << cppSemanticTypeSpelling(loweredProgram, standard, type);
+  }
+
+  void emitAccessQualifiedType(const SemanticType &type, AccessMode access) {
+    output << cppAccessQualifiedTypeSpelling(
+        type, access, cppSemanticTypeSpelling(loweredProgram, standard, type));
   }
 
   [[nodiscard]] static bool isMoveOnlyOwner(const SemanticTypeTraits &traits) {

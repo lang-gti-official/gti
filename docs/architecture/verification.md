@@ -12,7 +12,11 @@ and related initializer span, including UTF-16 offsets and unsaved corrections.
 
 `constructor_text_reference_runtime` observes successful resource cleanup and
 constructor rollback across C++20/C++23 at O0/O1/O3, disabled copy elision and
-ASan/UBSan. `json_runtime` and the two production corpus sweeps cover the
+ASan/UBSan. Named shared-reference aliases are exercised both directly and
+through nested accessor returns, including actual C-string reads. The carrier
+suite rejects detached accessor parents and invalidation of either the view
+object or its backing owner. `json_runtime` and the two production corpus sweeps
+cover the
 source-defined JSON adapters and example 026. A text reference does not turn a
 dynamic view into ownerless storage: its character-owner dependency must remain
 live until the last dependent reference retires. A literal exception requires
