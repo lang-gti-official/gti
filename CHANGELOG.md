@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.7 — Borrowed arguments before a nested call taking a class by value
+## 0.440.1 — Borrowed arguments before a nested call taking a class by value
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a call passes a local by reference and
@@ -22,6 +22,21 @@ for what minor and patch releases mean.
 - A class argument of the outer call that is built from a string, such as
   `pick(plain, std::string("xy"), argc > 1 ? 0 : 2)`, no longer stops with
   this error either.
+
+## 0.440.0 — Virtual method calls on temporaries
+
+- A temporary can now call any `virtual` method, override or interface
+  implementation, the same way it already called ordinary methods:
+  `Tracked t = Maker().make();`, `kept(Maker().make())`, the field default
+  `Tracked kept = Maker().make();` and `Counting(4).build(1)` through a `mut`
+  interface method. The selected override still runs, and the temporary is
+  destroyed at the end of the full expression, also when the override fails.
+  Read-only calls previously stopped with an internal compiler error
+  (`GTI-B0001`); `mut` calls were rejected with `GTI-S2081` ("Virtual dispatch
+  on a temporary receiver is not supported").
+- Fix the internal compiler error ("failed to construct valid MIR") when a
+  temporary of a derived class calls a method it inherits without overriding,
+  such as `Derived().base_method()`.
 
 ## 0.439.6 — Borrowed arguments before a conditional whose test can fail
 

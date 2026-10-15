@@ -149,7 +149,7 @@ is a teaching helper, not a production server.
 | `068-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
 | `069-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |
 | `070-qualified-specializations.gti` | coherent exact specialization of a qualified generic class such as `std::hash<T>` |
-| `071-fresh-temporary-borrows.gti` | mutable calls on fresh receivers and read-only temporary arguments restricted to one call |
+| `071-fresh-temporary-borrows.gti` | mutable calls on fresh receivers, including a dynamically dispatched interface override, and read-only temporary arguments restricted to one call |
 | `072-filesystem-paths.gti` | pathname assignment and direct output of fresh owned strings |
 | `073-constructor-local-generics.gti` | inferred constructor-local types and iterator/sentinel string construction |
 | `074-read-only-range-loans.gti` | loop-bounded element loans over fixed arrays and owned temporary ranges |
@@ -423,9 +423,11 @@ may specialize `std::hash` for its own `Widget`, but it could not specialize it
 for an unrelated builtin or foreign type.
 
 `071-fresh-temporary-borrows.gti` keeps both temporary capabilities bounded to
-one full expression. A fresh receiver can call a mutable method, while an exact
-read-only reference parameter can observe a fresh self-contained result only
-for the duration of one call; neither rule creates a storable reference.
+one full expression. A fresh receiver can call a mutable method, including a
+virtual member or interface implementation whose override is still selected
+dynamically, while an exact read-only reference parameter can observe a fresh
+self-contained result only for the duration of one call; neither rule creates
+a storable reference.
 
 `072-filesystem-paths.gti` performs pathname manipulation only. Assigning or
 observing a `std::filesystem::path` does not access the host filesystem, and
