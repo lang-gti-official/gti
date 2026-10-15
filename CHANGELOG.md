@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.5 — Nested conditional results in loops
+## 0.441.1 — Nested conditional results in loops
 
 - Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
   constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
@@ -23,6 +23,25 @@ for what minor and patch releases mean.
   generating a representation") when a method is called on such a nested
   conditional, as in `(c ? fresh(1) : (d ? fresh(2) : Pod(3))).read()`,
   including in loops and with `mut` and consuming (`&&`) methods.
+
+## 0.441.0 — `?` on payload enums
+
+- `?` works directly on a payload enum that has a `std::tryable` block, such
+  as a `result<T, E>`-style enum. The operand may be a temporary, a named
+  enum (copied) or `std::move(name)`. Owning payloads move out exactly once,
+  and the residual is returned as the enum itself:
+  `std::string name = ?owner(id);`.
+- A conformance block's pattern may name an enum template, as it names a
+  class template: `for <T, E> concept std::tryable<result<T, E>>`.
+- An ordinary call may borrow a fresh payload-enum value for a read-only
+  reference parameter, as it already borrowed a fresh class value:
+  `observe(make_state())`, `observe(state::engaged(1))`.
+- Fix two internal compiler errors (`GTI-B0001`) when a function that can
+  fail returns an owning payload enum:
+  - the result of a call that cannot fail, such as `return pass(std::move(x));`;
+  - a freshly constructed variant while other owning locals still have to be
+    destroyed, such as `return found::present(Tracked(n));` with a live local.
+- Example 163 demonstrates it.
 
 ## 0.440.4 — Member calls on conditional values without cleanup
 
