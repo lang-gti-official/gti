@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.437.0 — Consuming payload-enum matches
+## 0.438.0 — Consuming payload-enum matches
 
 - A `switch` over a temporary or over an explicit `std::move(name)` now
   consumes its payload enum. By-value bindings take ownership of their fields
@@ -30,8 +30,29 @@ for what minor and patch releases mean.
 - Switching over a temporary enum whose payload has cleanup no longer fails in
   native compilation, and copyable payloads bound from a consumed subject are
   moved rather than copied.
-- Example 160 moves owned strings out of messages and takes a value out of a
+- Example 161 moves owned strings out of messages and takes a value out of a
   source-defined optional.
+
+## 0.437.0 — Borrowed results through callbacks
+
+- A lambda can return a read-only reference that borrows exactly one of its
+  read-only reference parameters; every `return` must derive from that
+  parameter, captures are never origins, and results derived from a mutable
+  parameter or an ambiguous parameter list are rejected (`GTI-S2017`).
+  Direct invocation, a generic `F`/`F&` relay and a signature-erased view
+  all give the result the argument's borrow.
+- `std::function_ptr<R&(Args...)>` and `std::function_ref<R&(Args...)>`
+  carry a result-origin contract inferred from the signature's one read-only
+  reference parameter; the target must publish the same origin, and each call
+  result borrows that argument. Erased objects never compete as origins.
+- `[[borrowed_from(name)]]` on a declaration whose result type is a generic
+  parameter binds the instances whose result is a checked reference and may
+  name a final parameter pack. Example 160 and the
+  `checked_callable_result_origin` fixture accompany the feature.
+- Fixed: invoking a `std::function_ptr` or `std::function_ref` whose signature
+  takes a scalar reference parameter (`int&`) failed in the backend with
+  `GTI-B0001`; the invocation now drains that argument's staged borrow like a
+  source call.
 
 ## 0.436.2 — Calls on receivers moved inside conditional expressions
 

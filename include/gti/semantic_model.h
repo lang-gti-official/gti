@@ -828,6 +828,12 @@ struct LambdaInfo {
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
+  // A reference result borrows from exactly one read-only reference
+  // parameter, inferred like a free function's summary; captures are never
+  // result origins.
+  BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  std::size_t returnBorrowParameter = 0;
+  AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   // Exact concrete instance proven by ordinary body analysis to perform no
   // raw memory/address-arithmetic access. Unknown remains conservative.
   SemanticType rawAccessFreeType = SemanticType::Unknown;
@@ -1374,6 +1380,11 @@ struct ResolvedLambdaCallInfo {
   std::vector<SemanticType> parameterTypes;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
+  // The lambda's result-origin contract, so the call result borrows the
+  // argument it names exactly like a function call result.
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
 };
 
 struct DeferredCallableCallInfo {

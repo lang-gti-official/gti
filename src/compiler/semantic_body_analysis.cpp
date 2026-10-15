@@ -434,6 +434,10 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       argument = substituteType(argument, substitution);
     }
   }
+  if (concreteFunction.explicitReturnBorrowOrigin &&
+      containsOpenTypeParameter(function->returnType)) {
+    resolveGenericReturnBorrowContract(*function, concreteFunction);
+  }
   if (!concreteFunction.explicitReturnBorrowOrigin) {
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
             dynamicTextReturnBorrowSummary(concreteFunction)) {
@@ -2904,6 +2908,16 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         reportContract(
             attribute,
             "A borrowed_from contract requires a GTI function or method.");
+      } else if (functionInfo != nullptr &&
+                 containsOpenTypeParameter(functionInfo->returnType)) {
+        // A generic result decides per instance: the contract binds the
+        // instances whose result is a checked reference and is inert for
+        // the others. The named parameter may be a final pack whose one
+        // eligible element owns the result in each such instance.
+        if (!contract.argument) {
+          reportContract(attribute, "A borrowed_from contract requires one "
+                                    "reference parameter name or 'this'.");
+        }
       } else if (functionInfo == nullptr ||
                  functionInfo->returnType.kind != SemanticType::Reference) {
         reportContract(attribute, "A borrowed_from contract requires a checked "
@@ -8456,12 +8470,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   validateOwningPayloadEnumByValueBoundary(
       returnType, expr.returnType().name.last(), "lambda return",
       directOwningPayloadTransport);
-  if (returnType.kind == SemanticType::Reference) {
-    report(expr.returnType().name.last(),
-           "Lambda reference returns require an escape-aware lifetime model "
-           "and are not supported yet.",
-           "GTI-S2027");
-  } else if (typeTraits(returnType).containsBorrowedState) {
+  if (returnType.kind != SemanticType::Reference &&
+      typeTraits(returnType).containsBorrowedState) {
     report(expr.returnType().name.last(),
            "Lambda return types cannot carry borrowed state until lambda "
            "owner-dependency summaries are supported.",
@@ -8817,7 +8827,42 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       recordParameterEntryLoan(parameter);
     }
   }
+  // A reference result borrows from exactly one read-only reference
+  // parameter, inferred like a free function's summary. Captures are not
+  // lifetime origins, and a mutable dependency cannot escape.
+  const std::optional<LambdaReturnContext> enclosingLambdaReturn =
+      currentLambdaReturn;
+  LambdaReturnContext lambdaReturn{.declaration = &expr};
+  for (const auto &parameterType : parameterTypes)
+    SemanticType::appendExpandedArgument(lambdaReturn.parameterTypes,
+                                         parameterType);
+  if (returnType.kind == SemanticType::Reference) {
+    const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+        returnType, lambdaReturn.parameterTypes, 0, true, IntrinsicKind::None);
+    // A pack or open parameter type decides the origin only once concrete;
+    // the instance's reanalysis reports a missing contract then.
+    const bool openParameters = std::any_of(
+        lambdaReturn.parameterTypes.begin(), lambdaReturn.parameterTypes.end(),
+        [&](const SemanticType &type) {
+          return containsOpenTypeParameter(type);
+        });
+    lambdaReturn.deferred =
+        openParameters || containsOpenTypeParameter(returnType);
+    if (summary.origin == BorrowOriginKind::Argument &&
+        summary.access == AccessMode::ReadOnly) {
+      lambdaReturn.origin = summary.origin;
+      lambdaReturn.parameter = summary.parameter;
+      lambdaReturn.access = summary.access;
+    } else if (!lambdaReturn.deferred) {
+      reportMissingLambdaReturnBorrowSummary(expr, summary);
+    }
+  }
+  currentLambdaReturn = std::move(lambdaReturn);
   analyze(expr.body());
+  const BorrowOriginKind lambdaReturnOrigin = currentLambdaReturn->origin;
+  const std::size_t lambdaReturnParameter = currentLambdaReturn->parameter;
+  const AccessMode lambdaReturnAccess = currentLambdaReturn->access;
+  currentLambdaReturn = enclosingLambdaReturn;
   if (returnType != SemanticType::Void && returnType != SemanticType::Unknown &&
       summarizeFlow(expr.body()).canFallThrough &&
       !loanFlow.deferredConstexprSelection) {
@@ -8904,6 +8949,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  .capability = mutableCaptures
                                    ? CallableInvocationCapability::Mutable
                                    : CallableInvocationCapability::Read,
+                 .returnBorrowOrigin = lambdaReturnOrigin,
+                 .returnBorrowParameter = lambdaReturnParameter,
+                 .returnBorrowAccess = lambdaReturnAccess,
                  .rawAccessFreeType =
                      rawAccessFree && !containsOpenTypeParameter(currentType)
                          ? currentType
