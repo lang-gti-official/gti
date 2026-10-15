@@ -113,6 +113,20 @@ for what minor and patch releases mean.
   through a field or used to initialize a field. A failing input ends its
   arm before the call, with the usual cleanup.
 
+## 0.440.5 — Borrowed arguments before a conditional that creates an object
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call borrows an argument, a new object
+  or a local passed by reference, and a later argument creates another object
+  in the right operand of `&&` or `||` or in one arm of `?:`, then calls a
+  method on it or passes it to a function by reference. Examples are
+  `both(make(1), off || make(2).positive())`,
+  `both(make(1), on && Tracked(2).positive())` and
+  `both(local, on ? seen(make(2)) : false)`. That object is destroyed once
+  after the call, at the end of the full expression, when its operand ran, and
+  never when the operand was skipped, also when its construction, the call
+  that uses it or a later argument fails.
+
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
