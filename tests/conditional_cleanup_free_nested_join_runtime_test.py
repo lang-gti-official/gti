@@ -21,9 +21,9 @@ def nested_join_cases(name="conditional_cleanup_free_nested_join"):
     # the number. The borrowed receiver with cleanup is destroyed at the end
     # of each iteration.
     left = trace(123, 1123, 6663, 7777, 111222, 123, 0, -1, -2, -3, 123, 123,
-                 123)
+                 234, 123)
     right = trace(122, 2222, 125, 9983, 111222, 111, 0, -1, -2, -3, 123, 111,
-                  123)
+                  5673, 123)
     # A raising callee in a nested arm fails the loop's last iteration; only
     # the guard was constructed before it.
     failure = (f"{fixture.name}:{line('Pod divide(int a, int b)')}: "
