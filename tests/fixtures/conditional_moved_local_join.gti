@@ -26,6 +26,15 @@ public:
   ~Tracked() { std::println(-this.id); }
 };
 
+// A cleanup-free class holding a view of text that outlives it.
+class Label {
+public:
+  std::string_view text;
+  int weight;
+  Label(std::string_view text, int weight) : text(text), weight(weight) {}
+  int score() { return this.weight * 10 + int(this.text.size()); }
+};
+
 int consume(Pod input) { return input.read(); }
 
 Pod fresh(int id) { return Pod(id); }
@@ -110,6 +119,14 @@ int reassigned(bool left, int one, int two) {
   return kept.read() * 100 + a.read() + b.read();
 }
 
+// A moved value holding a view, read through a member call.
+int labelled(bool left, std::string_view one, std::string_view two,
+             int weight) {
+  Label a{one, weight};
+  Label b{two, weight + 1};
+  return (left ? std::move(a) : std::move(b)).score();
+}
+
 int looped(bool left, int start) {
   mut int total = 0;
   for (mut int index = 0; index < 3; ++index) {
@@ -172,6 +189,7 @@ int run(bool left, int base) {
   total += nested(left, false, base + 19, base + 20) * 10;
   total += reassigned(left, base + 21, base + 22) * 11;
   total += looped(left, base + 23) * 12;
+  total += labelled(left, "abc", "hello", base + 24) * 13;
   std::println(total);
   total = 0;
   total += bound_raising(left, base + 31, base + 32, 1);
