@@ -110,6 +110,14 @@
       "suite": "preflight"
     },
     {
+      "name": "testPassiveEnumTemporaryBorrowAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPassiveEnumTemporaryObservationThenTransfer",
+      "suite": "preflight"
+    },
+    {
       "name": "testDischargedCompoundOperatorVocabulary",
       "suite": "preflight"
     },
@@ -199,6 +207,10 @@
     },
     {
       "name": "testOwningConstructorAcrossArgumentDiamond",
+      "suite": "preflight"
+    },
+    {
+      "name": "testMutableReferencePrefixBeforeOwnedField",
       "suite": "preflight"
     },
     {

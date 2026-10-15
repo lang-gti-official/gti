@@ -3284,6 +3284,21 @@ private:
     const MirValueId id = output.values.size() + 1;
     output.values.push_back(
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
+    if (const auto *source = findValue(sourceValue);
+        source && source->info.type == output.values.back().info.type &&
+        source->borrowDependencies &&
+        !source->borrowDependencies->possibleAlternatives.empty()) {
+      // Transport source-established complete sets, including known-empty
+      // alternatives. MIR independently reconstructs their value/storage flow;
+      // absence is never upgraded to an empty proof by lowering.
+      if (!source->borrowDependencies->dependencies.empty()) {
+        valid = false;
+      } else {
+        output.values.back().borrowDependencies = MirBorrowDependencySet{
+            .possibleAlternatives =
+                source->borrowDependencies->possibleAlternatives};
+      }
+    }
     return id;
   }
 

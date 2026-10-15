@@ -4321,8 +4321,11 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
   if (scalarPrefix())
     return true;
   // A stored-reference prefix has no runtime construction or ownership
-  // transfer. Claim only its exact parameter Load/Borrow/boundary triples;
-  // their native reference bindings precede the owned-field move too.
+  // transfer. Shared references use exact Load/Borrow/boundary triples. An
+  // exclusive formal already transfers its entry loan into the reference
+  // field and has only Load/boundary; the shared publication proof must name
+  // that exact formal, referent and field before omitting a Borrow record.
+  // Their native reference bindings precede the owned-field move too.
   const auto references = cppMirStoredReferenceBindings(program, constructor);
   if (!references || references->empty())
     return false;
@@ -4350,19 +4353,32 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
         !load.localFailureSites.empty() || !load.definedFailure.empty() ||
         cursor == position)
       return false;
-    const auto &borrow = *cursor++;
-    const auto *loan = borrow.loan ? body.findLoan(*borrow.loan) : nullptr;
-    if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
-        loan->kind != MirLoanKind::Stored ||
-        loan->storedField != reference.field ||
-        loan->source != load.operands.front().place ||
-        loan->producedBy != reference.arguments.front() ||
-        borrow.hirValue != load.hirValue || borrow.result ||
-        borrow.destination || borrow.receiver || borrow.operands.size() != 1 ||
-        borrow.operands.front().place != loan->source ||
-        !borrow.lifecycle.empty() || !borrow.localFailureSites.empty() ||
-        !borrow.definedFailure.empty() || cursor == position)
-      return false;
+    const auto transferred = std::find_if(
+        body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+          const auto *source = body.findPlace(loan.source);
+          return source &&
+                 transferredMutableStoredParameter(reference, loan, *source);
+        });
+    if (transferred != body.loans.end()) {
+      if (storedReferenceFieldPublication(program, body, constructor.id,
+                                          load) != &reference)
+        return false;
+    } else {
+      const auto &borrow = *cursor++;
+      const auto *loan = borrow.loan ? body.findLoan(*borrow.loan) : nullptr;
+      if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
+          loan->kind != MirLoanKind::Stored ||
+          loan->storedField != reference.field ||
+          loan->source != load.operands.front().place ||
+          loan->producedBy != reference.arguments.front() ||
+          borrow.hirValue != load.hirValue || borrow.result ||
+          borrow.destination || borrow.receiver ||
+          borrow.operands.size() != 1 ||
+          borrow.operands.front().place != loan->source ||
+          !borrow.lifecycle.empty() || !borrow.localFailureSites.empty() ||
+          !borrow.definedFailure.empty() || cursor == position)
+        return false;
+    }
     const auto &boundary = *cursor++;
     const auto expression =
         std::find_if(body.fullExpressions.begin(), body.fullExpressions.end(),
