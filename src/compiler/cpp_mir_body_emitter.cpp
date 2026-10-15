@@ -6687,6 +6687,11 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
                                slot->root == MirPlaceRootKind::Temporary &&
                                (producer->kind == MirInstructionKind::Load ||
                                 producer->kind == MirInstructionKind::Move);
+  // A payload enum's alternative is its ordinary construction.
+  const bool payloadConstruction =
+      producer != nullptr && producer->kind == MirInstructionKind::Compute &&
+      producer->operation == MirOperation::PayloadConstruct &&
+      sourceType.kind == SemanticType::Enum;
   // The independent program verifier binds this targetless construction to
   // the exact owner's generated default constructor. Preserve its existing
   // explicit value-slot lifecycle just like a source-declared constructor.
@@ -6702,7 +6707,7 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (borrowedValueStage && value->id != stage.operands.front().value) ||
       (!ordinaryConstruction && !functionCall && !generatedDefault &&
-       !expectedExtraction && !joinedTemporary) ||
+       !expectedExtraction && !joinedTemporary && !payloadConstruction) ||
       value->sourceValue != stage.hirValue || value->info.type != sourceType ||
       !producer->result || *producer->result != value->id ||
       producer->hirValue != stage.hirValue ||
@@ -6854,7 +6859,8 @@ directTemporaryArgument(const MirBody &body, const MirInstruction &call,
       operand.type.kind != SemanticType::Reference ||
       operand.type.referenceAccess != AccessMode::ReadOnly ||
       operand.type.arguments.size() != 1 ||
-      operand.type.arguments.front().kind != SemanticType::Class) {
+      (operand.type.arguments.front().kind != SemanticType::Class &&
+       operand.type.arguments.front().kind != SemanticType::Enum)) {
     return {};
   }
   const MirValue *stageValue = body.findValue(operand.value);
@@ -61385,9 +61391,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           returnMoveDefinition(body, block.terminator.value->value) ==
               nullptr &&
           placementDirectReturnCall(program_, representations_, body,
-                                    block.terminator.value->value) == nullptr) {
-        // The caller passes uninitialized storage. Only a verified Move or
-        // a call constructing directly in that storage may publish another
+                                    block.terminator.value->value) == nullptr &&
+          returnedCallResultSlot(program_, body,
+                                 block.terminator.value->value) == nullptr) {
+        // The caller passes uninitialized storage. Only a verified Move, a
+        // call constructing directly in that storage, or a failure-free
+        // call's result constructed there from its slot may publish another
         // active value; assignment would overwrite a nonexistent object.
         return false;
       }
