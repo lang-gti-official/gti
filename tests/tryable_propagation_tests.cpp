@@ -206,6 +206,47 @@ int main() {
            "a residual must return through an implicit operator or a "
            "defaulted implicit constructor",
            {"__gti_operator_conversion"});
+  // An enum declares no constructors, but a class residual still converts to
+  // a payload-enum return type through its own implicit operator.
+  accepted(R"gti(
+enum class Outcome {
+  ok(int value),
+  failed(int code),
+};
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+  implicit operator Outcome() { return Outcome::failed(this.code); }
+};
+class Attempt {
+public:
+  int code;
+  Attempt(int failure) : code(failure) {}
+  Attempt(Attempt& other) = delete;
+  Attempt(Attempt&& other) = default;
+};
+for concept std::tryable<Attempt> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Attempt& attempt) { return attempt.code == 0; }
+  int take_value(Attempt attempt) { return 5; }
+  Rejected take_residual(Attempt attempt) { return Rejected(attempt.code); }
+};
+Outcome run(int failure) {
+  int value = ?Attempt(failure);
+  return Outcome::ok(value);
+}
+int main() {
+  switch (run(3)) {
+  case Outcome::ok(value):
+    return value;
+  case Outcome::failed(code):
+    return code;
+  }
+}
+)gti",
+           "a class residual must convert to a payload-enum return type",
+           {"__gti_operator_conversion"});
   rejected(R"gti(
 struct Rejected {
   int code;
