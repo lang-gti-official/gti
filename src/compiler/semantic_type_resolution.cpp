@@ -6854,8 +6854,14 @@ auto SemanticVisitor::Impl::resolveRequirements(
     return std::none_of(requirement.arguments.begin(),
                         requirement.arguments.end(), containsOpenTypeParameter);
   });
+  // A generated clause is a conformance block's application, restated on
+  // each of its operations. validateConformanceTypes validates the block's
+  // patterns once, so a restated copy does not report them again.
+  const bool restated = clause->keyword.generated;
   for (const TypeRef *argument : argumentsToValidate) {
-    validateType(*argument);
+    if (!restated) {
+      validateType(*argument);
+    }
     recordTypeUse(*argument);
   }
   requirementScopes.pop_back();

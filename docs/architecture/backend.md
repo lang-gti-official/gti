@@ -343,11 +343,15 @@ cleanup destroys the unpublished result without committing it.
 
 A member or closure receiver moved out of a named binding materializes at its
 `Move`: the backend constructs the receiver's lifetime slot from the binding
-there, and the Receiver `MoveValue` input and the call only alias that slot. A
-consuming member is invoked on the slot as an rvalue; a selected read-only or
-mutable fallback is invoked on it as an lvalue. When the full expression has
-no internal merge, the slot is the moved value's own Value-rooted place. Inside
-one arm of a conditional expression or a short-circuit operand, MIR instead
+there, and the Receiver `MoveValue` input and the call only alias that slot.
+Local declaration planning gives neither SSA identity storage of its own. The
+receiver stage is not a copy stage, even when the class's representation row
+carries a generic declaration's default and copy constructors for an instance
+that is move-only. A consuming member is invoked on the slot as an rvalue; a
+selected read-only or mutable fallback is invoked on it as an lvalue. When the
+full expression has no internal merge, the slot is the moved value's own
+Value-rooted place. Inside one arm of a conditional expression or a
+short-circuit operand, MIR instead
 names as the Move's destination the hidden temporary that carries the
 receiver's full-expression obligation through the merge, and the Drops after
 the merge are conditional on the arm that ran. That temporary is the receiver's

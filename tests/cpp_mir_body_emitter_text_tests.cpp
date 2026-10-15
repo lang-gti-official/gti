@@ -4493,6 +4493,133 @@ int main() {
                           std::to_string(bodies));
 }
 
+// A generic owner's representation row takes its special members from the
+// generic declaration, so maybe<Tracked> declares value-initialization even
+// though the instance over a cleanup-bearing payload is move-only. Moving it
+// out of a binding into a consuming call stages a MoveValue receiver that
+// aliases the Move's full-expression slot. That stage owns no storage and is
+// not a copy stage, so local declaration must not demand any for it.
+void testMovedGenericOwnerReceiverStage() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-generic-owner-receiver.gti", R"(
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+enum class state<T> { empty, engaged(T value) };
+class maybe<T> {
+  mut state<T> slot;
+public:
+  maybe() : slot(state<T>::empty) {}
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  int probe() && { return 1; }
+};
+int main() {
+  maybe<Tracked> owner = maybe<Tracked>(Tracked(7));
+  int probed = std::move(owner).probe();
+  return probed - 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "a consuming member may consume a moved generic owner");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::MirBodyAddress address{};
+  bool failureForm = false;
+  lang::MirInstructionId move = 0;
+  lang::MirInstructionId stage = 0;
+  lang::MirInstructionId call = 0;
+  lang::MirValueId staged = 0;
+  lang::MirDropObligationId lifetime = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+            instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+            !instruction.result || instruction.operands.size() != 1)
+          continue;
+        const auto *moved =
+            function.body.findValue(instruction.operands.front().value);
+        const lang::MirInstruction *producer = nullptr;
+        for (const auto &candidate : block.instructions)
+          if (moved != nullptr && candidate.id == moved->definition)
+            producer = &candidate;
+        for (const auto &consumer : block.instructions)
+          if (producer != nullptr &&
+              producer->kind == lang::MirInstructionKind::Move &&
+              producer->lifecycle.size() == 1 &&
+              consumer.kind == lang::MirInstructionKind::Call &&
+              consumer.receiver &&
+              consumer.receiver->value == *instruction.result &&
+              consumer.callableInvocation ==
+                  lang::CallableInvocationCapability::Once) {
+            address = {.kind = lang::MirBodyKind::Function,
+                       .owner = function.id};
+            failureForm = function.mayRaiseDefinedFailure;
+            move = producer->id;
+            stage = instruction.id;
+            call = consumer.id;
+            staged = *instruction.result;
+            lifetime = producer->lifecycle.front().target;
+          }
+      }
+  expect(call != 0 && stage != 0 && lifetime != 0,
+         "the moved owner is staged as a receiver aliasing its full-expression "
+         "slot");
+  if (call == 0 || stage == 0 || lifetime == 0)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto plan = emitter.buildPlan(address);
+  expect(plan.admitted(),
+         "the moved generic owner's receiver stage needs no local of its own");
+  if (!plan.admitted())
+    return;
+  const auto text = failureForm
+                        ? emitter.emitFailureBodyText(plan, "generic-owner", 1)
+                        : emitter.emitBodyText(plan, "generic-owner", 1);
+  expect(text.emitted() &&
+             text.text.find("call input " + std::to_string(staged) +
+                            " aliases the caller-owned receiver lifetime") !=
+                 std::string::npos &&
+             text.text.find("__gti_mir_v_" + std::to_string(staged) + ';') ==
+                 std::string::npos &&
+             text.text.find("__gti_mir_v_" + std::to_string(staged) + '{') ==
+                 std::string::npos,
+         "the call reads the moved owner through its receiver lifetime slot");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    if (mutation == 0)
+      for (auto &drop : body->dropObligations)
+        if (drop.id == lifetime)
+          drop.fullExpression = 0;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.id == move && mutation == 1)
+          instruction.lifecycle.clear();
+        else if (instruction.id == call && mutation == 2)
+          instruction.lifecycle.push_back(
+              {.kind = lang::MirLifecycleEventKind::TransferOut,
+               .source = lifetime});
+        else if (instruction.id == stage && mutation == 3)
+          instruction.preparedParameterDrop = lifetime;
+      }
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "a forged moved owner receiver handoff fails MIR verification " +
+               std::to_string(mutation));
+    expect(
+        !lang::CppMirBodyEmitter(malformed, map).buildPlan(address).admitted(),
+        "a forged moved owner receiver handoff cannot enter backend "
+        "emission " +
+            std::to_string(mutation));
+  }
+}
+
 // Once a later argument can fail, the same prepared receiver occupies its
 // slot from the stage: the call consumes that slot, and the failure edge
 // destroys it once. Removed, duplicated or ordinary failure-edge Drops must not
@@ -5912,6 +6039,7 @@ constexpr NamedTest kTests[] = {
     {"testPreparedConsumingReceiverLaterFailure",
      testPreparedConsumingReceiverLaterFailure},
     {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
+    {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
