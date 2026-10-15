@@ -482,6 +482,14 @@
       "suite": "text"
     },
     {
+      "name": "testCallableClassResultSlots",
+      "suite": "text"
+    },
+    {
+      "name": "testUnconsumedFusedClosureSpellsNoBody",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },

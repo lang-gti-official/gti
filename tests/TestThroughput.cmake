@@ -86,6 +86,7 @@ if(Python3_Interpreter_FOUND)
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     grouped_lambda_runtime
     lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
+    lambda_class_result_consumers_runtime
     nested_borrow_fields nested_guarded_expected_runtime
     native_c_scalar_runtime nested_raw_pointer_runtime
     nested_nominal_result_runtime operator_place_composition_runtime owned_expected_error_runtime
