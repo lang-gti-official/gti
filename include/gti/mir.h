@@ -352,6 +352,21 @@ struct MirBorrowDependencySet {
                          const MirBorrowDependencySet &) = default;
 };
 
+// The evaluated reference address is selected from this exact payload
+// extraction, not from the first of its possible external owner places.
+// This descriptor does not grant a loan: independent dependency/liveness
+// verification must establish every possible owner of the selected referent.
+struct MirReferenceSelection {
+  MirValueId value = 0;
+  MirPlaceId carrier = 0;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+
+  friend bool operator==(const MirReferenceSelection &,
+                         const MirReferenceSelection &) = default;
+};
+
 struct MirLoan {
   MirLoanId id = 0;
   SemanticLoanId semanticLoan = 0;
@@ -366,6 +381,7 @@ struct MirLoan {
   // Abstract entry dependencies designate a field rather than a concrete
   // caller place; concrete dependencies name their body-local source place.
   std::vector<MirLoanDependency> additionalDependencies;
+  std::optional<MirReferenceSelection> referenceSelection;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;

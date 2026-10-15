@@ -3667,6 +3667,51 @@ private:
       return;
     }
     lowered.semanticLoan = loan.semanticLoan;
+    if (loan.referenceSelection) {
+      const auto &selection = *loan.referenceSelection;
+      const auto *value = findValue(selection.value);
+      const auto found = loweredValues.find(selection.value);
+      const auto *resolved = found == loweredValues.end()
+                                 ? nullptr
+                                 : output.findValue(found->second);
+      const auto *block = resolved == nullptr
+                              ? nullptr
+                              : output.findBlock(resolved->definitionBlock);
+      const MirInstruction *producer = nullptr;
+      if (block != nullptr)
+        for (const auto &instruction : block->instructions)
+          if (instruction.id == resolved->definition)
+            producer = &instruction;
+      if (value == nullptr || resolved == nullptr || producer == nullptr ||
+          value->kind != HirValueKind::PayloadExtraction ||
+          value->operands.size() != 1 ||
+          value->operands.front() != selection.carrier ||
+          producer->kind != MirInstructionKind::Compute ||
+          producer->operation != MirOperation::PayloadExtract ||
+          producer->hirValue != selection.value ||
+          producer->result != resolved->id || producer->operands.size() != 1 ||
+          output.findPlace(producer->operands.front().place) == nullptr ||
+          !producer->payloadExtractionKind ||
+          !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
+        valid = false;
+        return;
+      }
+      MirReferenceSelection selected{.value = resolved->id,
+                                     .carrier =
+                                         producer->operands.front().place,
+                                     .fields = selection.fields,
+                                     .conditions = selection.conditions,
+                                     .reference = selection.reference};
+      if (lowered.referenceSelection &&
+          *lowered.referenceSelection != selected) {
+        valid = false;
+        return;
+      }
+      lowered.referenceSelection = std::move(selected);
+    } else if (lowered.referenceSelection) {
+      valid = false;
+      return;
+    }
     if (loan.storedDependency != 0) {
       const auto dependency = semanticLoans.find(loan.storedDependency);
       if (dependency == semanticLoans.end() ||
