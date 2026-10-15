@@ -19,6 +19,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.deferredFlowOwners.clear();
   genericDefaultConstants.clear();
   genericDefaultConstantUses.clear();
+  conformanceTypeChecks.clear();
   requirementScopes.clear();
   requestSession.mutableLocalCandidates.clear();
   requestSession.mutableBindingUses.clear();
@@ -253,6 +254,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   recordClassTypes();
   recordClassLifecycles();
   validateTypeAliasConstraints();
+  validateConformanceTypes();
   registerDesignatedConstructors();
 }
 

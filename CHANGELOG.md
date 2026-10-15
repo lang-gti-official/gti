@@ -9,6 +9,25 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.2 — Conformance block types are checked once
+
+- A problem in a conformance block's pattern is reported once, at the
+  pattern. With `class holder<std::copy_constructible T>`, the block
+  `for <T> concept wrapped<holder<T>>` used to report the unsatisfied
+  constraint (`GTI-S2029`) at `holder<T>` once for the block and again for
+  each operation; an unknown pattern type repeated the same way. Each
+  operation's own parameter types are still checked at their own location.
+- A block's pattern and `using` types are checked once every class's members
+  and lifecycle are known, as other declarations are. A valid block over a
+  concrete type, such as `for concept wrapped<box<Coin>>` where `box`
+  requires `std::equality_comparable` and `Coin` defines `operator==`, no
+  longer fails with `Type 'unknown class' does not satisfy ...`, and a
+  `using` type may project through a block declared later in the file. A
+  concrete pattern that fails such a requirement, such as `holder<Ticket>`
+  for a non-copyable `Ticket`, is now reported at the pattern.
+- Completion inside a block's pattern offers the types in scope whether or
+  not the block has operations.
+
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
