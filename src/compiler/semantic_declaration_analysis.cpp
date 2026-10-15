@@ -16,6 +16,28 @@ signatureClassReceiver(const ClassDecl &owner) {
          : qualifier->lexeme == "mut" ? ReceiverMutability::Mutable
                                       : ReceiverMutability::Consuming;
 }
+
+// A signature family distinguishes its members by the receiver qualifier and
+// by whether the pattern's result is a checked reference (`R&(Args...)`), so
+// a reference-result specialization can spell its result declarator exactly.
+struct SignatureClassKey {
+  ReceiverMutability receiver = ReceiverMutability::ReadOnly;
+  bool referenceResult = false;
+  friend bool operator==(const SignatureClassKey &,
+                         const SignatureClassKey &) = default;
+};
+[[nodiscard]] std::optional<SignatureClassKey>
+signatureClassKey(const ClassDecl &owner) {
+  const auto receiver = signatureClassReceiver(owner);
+  if (!receiver) {
+    return std::nullopt;
+  }
+  const auto &pattern = owner.genericArgumentPatterns().front();
+  return SignatureClassKey{.receiver = *receiver,
+                           .referenceResult =
+                               !pattern.arguments.empty() &&
+                               pattern.arguments.back().reference.has_value()};
+}
 } // namespace
 
 auto SemanticVisitor::Impl::collectRootNativeStorageSymbols(
@@ -2492,18 +2514,17 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       if (const auto existing = classIds.find(qualified);
           existing != classIds.end()) {
         const ClassInfo &first = classInfo(existing->second);
-        const auto receiver = signatureClassReceiver(*classDecl);
-        if (receiver && signatureClassReceiver(*first.declaration) &&
+        const auto key = signatureClassKey(*classDecl);
+        if (key && signatureClassKey(*first.declaration) &&
             first.kind == classDecl->kind() &&
             samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit) &&
             std::none_of(first.signatureFamilyMembers.begin(),
                          first.signatureFamilyMembers.end(),
                          [&](ClassId member) {
-                           return signatureClassReceiver(
-                                      *classInfo(member).declaration) ==
-                                  receiver;
+                           return signatureClassKey(
+                                      *classInfo(member).declaration) == key;
                          }) &&
-            signatureClassReceiver(*first.declaration) != receiver) {
+            signatureClassKey(*first.declaration) != key) {
           familyPrimary = existing->second;
         }
       }
@@ -2822,10 +2843,14 @@ auto SemanticVisitor::Impl::selectSignatureClassDefinition(
   }
   const auto primary = classInfo(id).signatureFamilyPrimary;
   const auto &family = classInfo(primary == 0 ? id : primary);
+  const SignatureClassKey requested{
+      .receiver = arguments.front().signatureReceiver,
+      .referenceResult =
+          !arguments.front().arguments.empty() &&
+          arguments.front().arguments.front().kind == SemanticType::Reference};
   for (ClassId member : family.signatureFamilyMembers) {
     const auto &candidate = classInfo(member);
-    if (signatureClassReceiver(*candidate.declaration) ==
-        arguments.front().signatureReceiver) {
+    if (signatureClassKey(*candidate.declaration) == requested) {
       return member;
     }
   }
