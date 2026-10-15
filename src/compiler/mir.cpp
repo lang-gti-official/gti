@@ -638,6 +638,9 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                  instruction.hirValue == sourceValue &&
                  (instruction.kind == MirInstructionKind::Call ||
                   instruction.kind == MirInstructionKind::Construct ||
+                  (instruction.kind == MirInstructionKind::Compute &&
+                   instruction.operation == MirOperation::PayloadConstruct &&
+                   instruction.info.type.kind == SemanticType::Enum) ||
                   (place.root == MirPlaceRootKind::Temporary &&
                    (instruction.kind == MirInstructionKind::Move ||
                     instruction.kind == MirInstructionKind::Load) &&
@@ -9968,7 +9971,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           input.info.type.kind != SemanticType::Reference ||
           input.info.type.referenceAccess != AccessMode::ReadOnly ||
           input.info.type.arguments.size() != 1 ||
-          input.info.type.arguments.front().kind != SemanticType::Class ||
+          (input.info.type.arguments.front().kind != SemanticType::Class &&
+           input.info.type.arguments.front().kind != SemanticType::Enum) ||
           input.info.category != ValueCategory::Value ||
           operand.kind != MirOperandKind::BorrowRead ||
           operand.type != input.info.type) {
@@ -9995,6 +9999,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !producer->lambdaTarget && !producer->bodyTarget &&
           !producer->callableInvocation &&
           producer->intrinsic == IntrinsicKind::None;
+      const bool payloadConstruction =
+          producer != nullptr && referent.kind == SemanticType::Enum &&
+          producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::PayloadConstruct &&
+          producer->enumOwner == referent.enumId && producer->enumVariant &&
+          !producer->constructorTarget && !producer->functionTarget &&
+          !producer->lambdaTarget;
       if (place == nullptr || source == nullptr || producer == nullptr ||
           loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||
@@ -10014,7 +10025,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->info.category != ValueCategory::Value ||
           producer->info.traits.containsBorrowedState ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
-          (!ordinaryConstruction && !ordinaryCall)) {
+          (!ordinaryConstruction && !ordinaryCall && !payloadConstruction)) {
         return false;
       }
 
@@ -10772,7 +10783,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           (source->root != MirPlaceRootKind::Value &&
            (!receiver || source->root != MirPlaceRootKind::Temporary)) ||
           !source->projections.empty() ||
-          source->type.kind != SemanticType::Class ||
+          (source->type.kind != SemanticType::Class &&
+           source->type.kind != SemanticType::Enum) ||
           source->access != AccessMode::Mutable ||
           source->traits.containsBorrowedState != receiver ||
           (!receiver && loan.storedDependency != 0)) {

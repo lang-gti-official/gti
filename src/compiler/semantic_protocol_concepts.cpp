@@ -1226,6 +1226,12 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
   if (valid) {
     ResolvedCallInfo selected{.returnType = returnType,
                               .parameterTypes = parameterTypes};
+    const auto inferred = functionReturnBorrowSummary(
+        returnType, parameterTypes, 0, false, IntrinsicKind::None);
+    selected.borrowOrigin = inferred.origin;
+    selected.borrowArgument = inferred.parameter;
+    selected.borrowAccess = inferred.access;
+    selected.borrowArguments = inferred.parameters;
     if (returnType.kind == SemanticType::Reference &&
         operation.returnBorrowParameter) {
       selected.borrowOrigin = BorrowOriginKind::Argument;
@@ -1234,7 +1240,11 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
     }
     semanticModel.record(expr, std::move(selected));
   }
-  currentType = valid ? returnType : SemanticType::Unknown;
+  currentType = !valid ? SemanticType::Unknown
+                : returnType.kind == SemanticType::Reference &&
+                        returnType.arguments.size() == 1
+                    ? returnType.arguments.front()
+                    : returnType;
   return true;
 }
 

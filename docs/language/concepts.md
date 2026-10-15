@@ -767,6 +767,12 @@ in member or ordinary name lookup, so a block cannot change what
 `value.member()` means. Calls to block functions are ordinary calls,
 including evaluation order, ownership transfer and failure cleanup.
 
+An associated type definition can name a checked reference: `using element =
+int&;` is shared and `using element = mut int&;` is exclusive. The modifier
+belongs to the reference type, not mutable storage for the alias. `mut` on a
+non-reference associated type is rejected; this does not add general reference
+aliases outside conformance blocks.
+
 An operation may declare `[[borrowed_from(parameter)]]`. This names the
 parameter position that supplies a checked reference result; an implementation
 may rename that parameter but must preserve its position and contract. For an

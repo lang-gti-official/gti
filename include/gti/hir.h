@@ -485,6 +485,7 @@ struct HirEnumerator {
   EnumConstant value;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  std::vector<SymbolId> payloadSymbols;
   std::vector<bool> payloadRequiresActiveCleanup;
 };
 

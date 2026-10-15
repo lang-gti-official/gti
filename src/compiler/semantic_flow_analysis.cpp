@@ -11969,7 +11969,7 @@ auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, Mutability mutability,
     const std::vector<std::string> &fromScope) const -> SemanticType {
   SemanticType result = typeOf(type, fromScope);
-  if (result.kind == SemanticType::Reference) {
+  if (result.kind == SemanticType::Reference && type.reference) {
     result.referenceAccess = mutability == Mutability::Mutable
                                  ? AccessMode::Mutable
                                  : AccessMode::ReadOnly;

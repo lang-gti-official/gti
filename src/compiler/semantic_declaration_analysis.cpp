@@ -1919,6 +1919,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
       const auto found = info.enumerators.find(enumerator.name.lexeme);
       std::vector<SemanticType> payloadTypes;
       payloadTypes.reserve(enumerator.payload.size());
+      std::vector<SymbolId> payloadSymbols;
+      payloadSymbols.reserve(enumerator.payload.size());
       std::unordered_set<std::string> payloadNames;
       for (const Parameter &parameter : enumerator.payload) {
         validateType(parameter.type);
@@ -1963,16 +1965,23 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
         // at construction, where class traits are complete; enum payload
         // resolution runs before member metadata exists.
         payloadTypes.push_back(type);
+        payloadSymbols.push_back(recordToolingSymbol(
+            parameter.name, SymbolKind::Field,
+            qualifiedName(info.namespaceScope, info.name.lexeme) +
+                "::" + enumerator.name.lexeme + "::" + parameter.name.lexeme,
+            type, parameter.mutability == Mutability::Mutable));
       }
       if (found != info.enumerators.end()) {
         found->second.payloadTypes = payloadTypes;
+        found->second.payloadSymbols = payloadSymbols;
       }
       modelEnumerators.push_back(
           {.declaration = &enumerator,
            .value = {.magnitude = variantIndex},
            .explicitValue = enumerator.initializer != nullptr,
            .variantIndex = variantIndex,
-           .payloadTypes = std::move(payloadTypes)});
+           .payloadTypes = std::move(payloadTypes),
+           .payloadSymbols = std::move(payloadSymbols)});
     }
     semanticModel.recordEnumType(
         *info.declaration,

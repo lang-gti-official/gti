@@ -449,7 +449,11 @@ private:
     Token name =
         consume(TokenKind::IDENTIFIER, "Expect type alias name after 'using'.");
     consume(TokenKind::EQUAL, "Expect '=' after type alias name.");
+    std::optional<Token> access;
+    if (match({TokenKind::MUT}))
+      access = previous();
     TypeRef target = parseType();
+    target.referenceMutability = std::move(access);
     consume(TokenKind::SEMICOLON, "Expect ';' after type alias declaration.");
     return std::make_shared<TypeAliasDecl>(std::move(keyword), std::move(name),
                                            std::move(target));

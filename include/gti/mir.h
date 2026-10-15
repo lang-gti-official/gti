@@ -1743,6 +1743,7 @@ struct MirIntegralEnum {
 struct MirPayloadEnumVariant {
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  std::vector<SymbolId> payloadSymbols;
   std::vector<bool> payloadRequiresActiveCleanup;
 
   friend bool operator==(const MirPayloadEnumVariant &,

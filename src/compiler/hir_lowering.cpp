@@ -932,7 +932,8 @@ private:
       HirEnumerator variant{.source = enumerator.declaration,
                             .value = enumerator.value,
                             .variantIndex = enumerator.variantIndex,
-                            .payloadTypes = enumerator.payloadTypes};
+                            .payloadTypes = enumerator.payloadTypes,
+                            .payloadSymbols = enumerator.payloadSymbols};
       for (const SemanticType &payload : enumerator.payloadTypes) {
         variant.payloadRequiresActiveCleanup.push_back(
             instanceProvider->requiresActiveCleanupFor(payload));
@@ -4705,6 +4706,14 @@ private:
         kind = consumes ? HirCallInputKind::CopyValue
                         : HirCallInputKind::ReadBorrow;
       }
+      // Passive enum transport is the ordinary by-value scalar path; it
+      // does not manufacture a prepared owning-parameter obligation. The
+      // selected Move still consumes a moved source exactly once.
+      if (consumes && movedOperand.info.type.kind == SemanticType::Enum &&
+          movedOperand.info.traits.drop == DropKind::Trivial &&
+          movedOperand.info.traits.copyable &&
+          !movedOperand.info.traits.containsBorrowedState)
+        kind = HirCallInputKind::Value;
       if (!consumes && kind == HirCallInputKind::ReadBorrow) {
         const auto source = std::find_if(body.values.begin(), body.values.end(),
                                          [&](const HirValue &candidate) {

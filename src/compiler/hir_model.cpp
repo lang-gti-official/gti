@@ -189,6 +189,26 @@ HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
   HirProgramPlanVerificationResult result;
+  for (const HirEnum &enumeration : program.enumDeclarations()) {
+    if (!enumeration.payload)
+      continue;
+    const auto *source = semantics.findEnumType(enumeration.declaration);
+    bool exact = source != nullptr && source->payload &&
+                 source->enumerators.size() == enumeration.enumerators.size();
+    std::unordered_set<SymbolId> fields;
+    for (std::size_t variant = 0;
+         exact && variant < enumeration.enumerators.size(); ++variant) {
+      const auto &row = enumeration.enumerators[variant];
+      exact =
+          row.payloadSymbols == source->enumerators[variant].payloadSymbols &&
+          row.payloadSymbols.size() == row.payloadTypes.size();
+      for (const auto field : row.payloadSymbols)
+        exact = exact && field != 0 && fields.insert(field).second;
+    }
+    if (!exact)
+      result.errors.emplace_back(
+          "payload enum lost its exact variant field declaration identities");
+  }
   std::unordered_map<SymbolId, const SymbolRecord *> instanceSymbols;
   for (const SymbolRecord &symbol : program.instanceSymbols()) {
     if (symbol.id == 0 ||
@@ -1020,6 +1040,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                    (consumes ? movesPlace(call.operands.front())
                              : call.operands.front() == plan.movedPlace);
       }
+      if (consumes && operand->info.type.kind == SemanticType::Enum &&
+          operand->info.traits.drop == DropKind::Trivial &&
+          operand->info.traits.copyable &&
+          !operand->info.traits.containsBorrowedState)
+        kind = HirCallInputKind::Value;
       return call.kind == HirValueKind::Call && call.source == nullptr &&
              call.intrinsic == IntrinsicKind::None && target != nullptr &&
              (step == nullptr || target->declaration == step->function) &&

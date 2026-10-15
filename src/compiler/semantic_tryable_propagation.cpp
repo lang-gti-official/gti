@@ -257,14 +257,17 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                       operand + ">' block is declared.",
                   blockHint);
   }
-  // The propagation plan stages a class operand's temporary or place; other
-  // operand kinds, such as payload enums, are a later slice.
-  if (operandType.kind != SemanticType::Class) {
-    return reject("Error propagation through 'std::tryable' currently needs "
-                  "a class or struct operand, but received '" +
-                      operand + "'.",
-                  "Wrap the value in a class or struct and give that type "
-                  "the 'std::tryable' block.");
+  // Both nominal records and sums stage their one selected concrete value.
+  // Tag selection and payload ownership remain the ordinary enum rules;
+  // propagation itself only owns the three verified protocol calls.
+  if (operandType.kind != SemanticType::Class &&
+      operandType.kind != SemanticType::Enum) {
+    return reject(
+        "Error propagation through 'std::tryable' currently needs "
+        "a class, struct, or enum operand, but received '" +
+            operand + "'.",
+        "Wrap the value in a class, struct, or enum and give that type "
+        "the 'std::tryable' block.");
   }
   if (const std::optional<ConstraintFailure> failure =
           protocolConformanceFailure(

@@ -880,9 +880,9 @@ stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
 or an independently escaping child reference.
 
-An ordinary borrowed class may declare a destructor. A borrowed class with
-active cleanup (including cleanup inherited from owned fields) retains its
-dependencies until cleanup finishes, not just its last explicit read. Moving
+An ordinary borrowed class may declare a destructor. A borrowed class whose
+source destructor or nested borrowed field/base can use or release a dependency
+retains that dependency until cleanup finishes, not just its last explicit read. Moving
 it transfers the cleanup obligation and the same dependency protection. It may
 be passed by value or moved into another direct field under the existing
 constructor origin contract. Failed construction rolls back initialized fields
@@ -892,6 +892,15 @@ resource thread-safe. Intermediate borrowed carrier shells and their external
 owners must also outlive that cleanup. Existing bounded structured last-use
 rules still apply; a narrower scope can make the complete dependency endpoint
 explicit. See [cleanup-bound guards](../../examples/118-cleanup-bound-guards.gti).
+
+Generated cleanup of an unrelated owning field is not a dependency-release
+operation. A record containing `int& value` and an owning error string may
+relay `value` after consuming the record; destroying the string does not end
+the external integer's lifetime. A source destructor, a declaration-bound
+resource capability, or a nested cleanup-bound borrowed field/base still
+retains its dependencies until destruction. Unknown or recursive release
+shapes are conservative. Semantics records this structural distinction and MIR
+independently verifies it; it is not a special case for result or view names.
 
 The compiler-trusted mutex guard retains its separate direct exclusive-access
 capability. Wrapping it in another carrier remains outside the supported
@@ -1326,6 +1335,12 @@ checked reference and may name a final parameter pack, in which case the one
 reference element of the expanded pack in that instance owns the result.
 `std::function_ref` and `std::function_ptr` declare their call operators this
 way.
+
+A return type obtained from an associated type may itself be a reference.
+With an explicit, verified `borrowed_from` contract, that exact reference type
+does not require appending a second `&` to the projection spelling. The same
+instance checks prove its origin and access; generic locals and parameters
+retain their existing explicit reference-declarator rules.
 
 The named parameter may also be a by-value carrier with exactly one stored
 checked dependency. In that case the result must relay that external owner:

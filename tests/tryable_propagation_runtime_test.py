@@ -57,7 +57,7 @@ def main():
                          "-o", str(borrowed), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             shown = run([str(borrowed)])
-            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "42\n3\n", ""), \
+            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "42\n3\n9\n3\n9\n12\n", ""), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
             print(f"tryable propagation: {name} passed", flush=True)
 
