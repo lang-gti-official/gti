@@ -2065,6 +2065,14 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(experimental_optional_runtime PROPERTIES TIMEOUT 900)
 
   add_test(
+    NAME payload_enum_propagation_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/payload_enum_propagation_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(payload_enum_propagation_runtime PROPERTIES TIMEOUT 900)
+
+  add_test(
     NAME recursive_cleanup_failure_runtime
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/recursive_cleanup_failure_test.py"
@@ -3383,6 +3391,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conditional_checked_arm_input_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME conditional_cleanup_free_receiver_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_cleanup_free_receiver_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_cleanup_free_receiver_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME lambda_class_result_consumers_runtime
     COMMAND "${Python3_EXECUTABLE}"

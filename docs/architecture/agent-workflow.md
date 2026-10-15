@@ -226,15 +226,16 @@ the repository's native build dependencies. Ubuntu profiles use the local
 `tailscale ssh` client, which validates the server's advertised node host key
 through the Tailscale coordination server ([Tailscale CLI](https://tailscale.com/docs/reference/tailscale-cli)).
 Tailscale authentication/policy must already permit `root` access. The Mini
-retains ordinary SSH and its existing keys/host verification. Neither transport
-disables host-key checks or changes SSH configuration.
+uses its Tailscale address with ordinary SSH and its existing keys/host
+verification. Neither transport disables host-key checks or changes SSH
+configuration.
 
 Three named presets are available; saved connection overrides live only under
 the Git common directory:
 
 | Runner | Connection | OS / declared capacity | Default build / test workers |
 | --- | --- | --- | --- |
-| `mini` | `lukeh@192.168.0.53` | macOS; observed host CPU count | half CPUs / all CPUs |
+| `mini` | `lukeh@100.103.38.120` | macOS; observed host CPU count | half CPUs / all CPUs |
 | `ubuntu-6` | `root@100.77.66.96` | Ubuntu; 6 vCPUs, 13 GB RAM | 3 / 6 |
 | `ubuntu-8` | `root@100.81.111.76` | Ubuntu; 8 vCPUs, 13 GB RAM | 3 / 6 |
 
@@ -248,7 +249,7 @@ From any task worktree, configure once (settings are shared in the Git common
 directory, not committed):
 
 ```sh
-python3 scripts/remote_runner.py --runner mini configure
+python3 scripts/remote_runner.py --runner mini --host lukeh@100.103.38.120 configure
 python3 scripts/remote_runner.py --runner ubuntu-6 configure
 python3 scripts/remote_runner.py --runner ubuntu-8 configure
 python3 scripts/remote_runner.py hosts
@@ -296,6 +297,10 @@ concurrent configuration cannot lose a peer's profile. Custom names can be
 registered with `--runner NAME --host USER@HOST` and the applicable paths/client.
 Saved settings also retain the original flat connection fields for the selected
 default, allowing older task worktrees to keep using the Mini during an update.
+Saved host overrides take precedence over preset changes. The explicit Mini
+configure command above updates an existing LAN-address configuration too.
+Detached runs retain their recorded endpoint; configuring a new default does
+not rewrite their connection records.
 
 All runs use one window **per host**, not their isolated Git directories. The
 Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses

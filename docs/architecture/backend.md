@@ -941,6 +941,21 @@ return, field read, assignment or field initializer exactly as a fresh
 result's slot does. In the failure form too, a Return of that staged value
 publishes the caller's result from the slot; the staging Move does not
 publish it.
+A member call on the joined value itself, as in `(c ? a() : b()).read()`,
+has a different MIR shape. MIR gives the join temporary a full-expression
+value obligation, stages the temporary as the call's receiver (a read-only
+or mutable temporary borrow; a consuming member's receiver is staged as the
+mutable one), and drops it at the end of the full expression. The join's Move is then only the temporary's materialization and
+has no use. Each arm's `Initialize` activates the temporary's obligation
+directly, because a cleanup-free arm result has none of its own. A
+construction arm already constructed the temporary at that `Initialize`.
+`classValueDestinationSlot` also names the temporary for a call arm with no
+lifecycle event beyond its prepared input transfers, and for a copied place,
+when the `Initialize` follows the producer directly or opens its Invoke
+success block. Each constructs the temporary directly, a call that can fail
+only on success, and the receiver borrows it as `directTemporaryReceiver`
+borrows a fresh result's slot. A nested-join arm and a moved named local are
+not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
@@ -2500,8 +2515,14 @@ names that storage and declares no slot. When a fallible drop, such as a
 moved-from parameter's, precedes the return, MIR's unpublished-result
 reparent keeps the obligation, and its rollback destroys the caller storage.
 An active payload-enum return must be published by a fresh `PayloadConstruct`,
-a verified `Move`, or that direct call. Any other return fails admission
-rather than assigning into uninitialized caller storage.
+a verified `Move`, or that direct call. A failure-free call's owning result,
+and a fresh variant whose publication cannot be fused because later cleanup
+such as another local's fallible drop intervenes, instead wait in their
+value-rooted slot; at the Return the caller's result is constructed from that
+slot, and a failure on the way destroys the still-unpublished value. Any other
+return fails admission rather than assigning into uninitialized caller
+storage. A cleanup-free enum's value-rooted place, which a call borrows for a
+fresh temporary, is the SSA value itself and has no separate local.
 Constructor arguments use the same proof, including fresh unit variants.
 A fresh cleanup-free class construction that is one alternative field fuses
 into the variant braces only when it is adjacent to its `PayloadConstruct`.
