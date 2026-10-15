@@ -2355,8 +2355,8 @@
         "concrete_instance_adapter": 40
       }
     },
-    "159-consuming-matches.gti": {
-      "declarations": 1353,
+    "160-consuming-matches.gti": {
+      "declarations": 1354,
       "bodies": 237,
       "generated_items": 148,
       "generated_kinds": {
@@ -2372,8 +2372,8 @@
     }
   },
   "totals": {
-    "declarations": 116194,
-    "bodies": 17398,
-    "generated_items": 10784
+    "declarations": 117548,
+    "bodies": 17635,
+    "generated_items": 10932
   }
 }
