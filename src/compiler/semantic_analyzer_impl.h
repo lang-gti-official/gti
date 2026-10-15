@@ -1576,6 +1576,16 @@ private:
     bool operationsBound = false;
   };
 
+  // A block's written patterns and `using` types, with the scope they are
+  // written in, kept for validateConformanceTypes whether or not the block
+  // registered.
+  struct ConformanceTypeCheck {
+    SourceUnitId sourceUnit = 0;
+    std::vector<std::string> namespaceScope;
+    std::vector<GenericParameterInfo> genericParameters;
+    std::vector<const TypeRef *> types;
+  };
+
   struct ConformanceMatch {
     std::size_t conformance = 0;
     std::vector<SemanticType> binding;
@@ -3602,6 +3612,7 @@ private:
   void registerConformances(const StmtList &statements,
                             std::vector<std::string> scope);
   void bindConformanceOperations();
+  void validateConformanceTypes();
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
                    const std::vector<SemanticType> &arguments) const;
@@ -5546,10 +5557,13 @@ private:
       requestSession.catalog.exactClassSpecializations;
   std::vector<RegisteredConformance> &conformances =
       requestSession.catalog.conformances;
-  // The parameters of the conformance block being registered, so diagnostics
-  // can spell them before the block is in `conformances`.
+  // The parameters of the conformance block being registered or validated,
+  // so diagnostics can spell them while the block is not in `conformances`.
   const std::vector<GenericParameterInfo> *registeringConformanceParameters =
       nullptr;
+  // Filled by registerConformances, emptied by validateConformanceTypes in
+  // the same registration.
+  std::vector<ConformanceTypeCheck> conformanceTypeChecks;
   std::vector<EnumInfo> &enums = requestSession.catalog.enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
       &typeParameterScopes = requestSession.typeParameterScopes;

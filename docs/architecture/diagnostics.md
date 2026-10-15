@@ -839,7 +839,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   operation. For coherence, explain that the package must own the concept or
   the pattern's type. Do not offer a fix-it: choosing a pattern, a package or
   a missing definition requires intent. An unsatisfied `requires C<X>` at a
-  call stays `GTI-S2029`, with a hint naming the missing block.
+  call stays `GTI-S2029`, with a hint naming the missing block. A block's
+  patterns and `using` types keep their ordinary type diagnostics, such as
+  `GTI-S2029` for an unsatisfied class constraint. Each reports once, at the
+  written type, and not again for the requirement each operation restates.
 - `GTI-S2079` owns an exact-`bool` static assertion that evaluates to false.
   Point at the complete condition, begin with the stable text `Static assertion
   failed.`, append the decoded user message when present, and attach concrete
