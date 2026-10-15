@@ -1340,6 +1340,15 @@ SemanticModel::isExhaustiveSwitch(const SwitchStmt &statement) const {
          (base != nullptr && base->isExhaustiveSwitch(statement));
 }
 
+[[nodiscard]] const BindingInfo *
+SemanticModel::findConsumedSwitchSubject(const SwitchStmt &statement) const {
+  const auto found = consumedSwitchSubjects.find(&statement);
+  if (found != consumedSwitchSubjects.end()) {
+    return &found->second;
+  }
+  return base == nullptr ? nullptr : base->findConsumedSwitchSubject(statement);
+}
+
 [[nodiscard]] const ResolvedPayloadConstructionInfo *
 SemanticModel::findPayloadConstruction(const Call &call) const {
   const auto found = payloadConstructions.find(&call);
@@ -1874,6 +1883,7 @@ void SemanticModel::clear() {
   enumerators.clear();
   switchCases.clear();
   exhaustiveSwitches.clear();
+  consumedSwitchSubjects.clear();
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
@@ -2572,6 +2582,11 @@ void SemanticModel::recordSwitchCase(const Expr &expression,
 
 void SemanticModel::recordExhaustiveSwitch(const SwitchStmt &statement) {
   exhaustiveSwitches.insert(&statement);
+}
+
+void SemanticModel::recordConsumedSwitchSubject(const SwitchStmt &statement,
+                                                BindingInfo subject) {
+  consumedSwitchSubjects.insert_or_assign(&statement, std::move(subject));
 }
 
 void SemanticModel::recordPayloadConstruction(

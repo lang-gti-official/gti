@@ -293,6 +293,13 @@ constructs its copy in representation storage, which the Return moves out. The
 copy is the one MIR selected for the `Load`, so no payload is limited to
 passive C-compatible records.
 
+A consuming payload extraction, a `Move` of a switch-owned subject binding,
+spells its field as an rvalue at the binding's construction. The extraction
+that carries the subject's `TransferOut` then ends the drained enum's C++
+lifetime without GTI cleanup; its moved-from fields are already disarmed. MIR's
+operand kind and lifecycle event select both spellings; the backend does not
+infer consumption from the subject's representation.
+
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
 local declaration planning and operand emission use the same view predicate.

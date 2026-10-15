@@ -1,5 +1,29 @@
 # Compiler Verification
 
+## Consuming payload-enum matches (0.438.0)
+
+`sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
+`std::move` subjects bind move-only fields of owning single, multi-field and
+mixed alternatives, a terminal subject leaves its switch unreachable, and
+concrete generic instances consume owning and scalar payloads, each through
+verified MIR. The test requires every binding arm to carry exactly one subject
+transfer and tag-only or `default` arms to drop the subject, keeps the moved
+place moved on every path, and rejects borrowed bindings on prvalue and moved
+subjects. Six program-verifier mutations reject a missing transfer, a field
+taken twice, a transfer before the arm's last extraction, a wrong variant, an
+arm entered from the default edge, and a copied extraction that carries the
+transfer. `consuming_payload_patterns_runtime` traces construction and
+destruction in C++20/C++23 at O0/O1/O2/O3 and ASan/UBSan. It covers prvalue
+and moved subjects, drops at tag-only and `default` arm entry, multi-field,
+mixed and nested owning alternatives, a source-defined optional's `&&`
+accessor, a generic function, `continue`/`break`/`return` from arms and a
+cleanup-free move-only payload. Its failure phases end inside an arm, in a
+payload destructor at tag-only arm entry, and in a subject temporary's
+destructor while the switch owns the enum; each releases every live owner
+exactly once. The same test runs example 161 in every mode. The MIR and
+lowered-program censuses add only example 161, and a consumed passive subject
+emits machine code identical to main's copy path at `-O3`.
+
 ## Receivers moved inside conditional arms (0.436.2)
 
 `consuming_conditional_receiver_runtime` and the moved-receiver section of
@@ -5319,7 +5343,7 @@ not a substitute for the combined production suite:
 | Construction, replacement and partial cleanup | `mir_backend_owned_lifecycle`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `optional_compiler_contract`, `optional_runtime`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
 | Borrow/reference composition | `compiler_ownership`, `borrowing_composition_pipeline`, `ordered_borrow_composition_runtime`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
 | Eligible container/value-wrapper consistency | `optional_runtime`, `vector_construction_only_runtime`, `generic_clone_runtime`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
-| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, exact transport and partial cleanup. |
+| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, exact transport and partial cleanup. |
 
 The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
 after a full Release/Ninja rebuild on macOS arm64 (AppleClang 21, LLVM 22.1.8,
@@ -6745,6 +6769,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
 | `optional_runtime` | empty, value, move, checked read, reset, emplacement, fallback, and move-only payload behavior; inline allocation-free representation; copy and assignment rejection; live-borrow protection; exact cleanup; and `GTI-R0008` wrong-state reporting at O0/O3 under C++20/C++23 |
 | `class_payload_enum_runtime` | passive and active-cleanup class alternatives; fresh/copy/move construction; tag inspection through a checked reference; same-tag replacement plus cross-tag move assignment; distinct cleanup of two same-type owning fields; unit and `std::string` alternatives; normal/control-flow/defined-failure exactly-once drop; direct owning by-value call/return; and declaration-time rejection of move-only copied bindings at O0/O3 under C++20/C++23 |
+| `consuming_payload_patterns_runtime` | switches over prvalue and `std::move` subjects moving owning, multi-field, mixed, nested and cleanup-free move-only payloads into bindings; tag-only and `default` arm-entry drops; generic optional `&&` accessors and generic functions; `continue`/`break`/`return` from arms; defined failure inside an arm, at tag-only arm entry and in a subject temporary; example 161; C++20/C++23 O0/O1/O2/O3 and ASan/UBSan |
 | `payload_enum_containment_runtime` | ordinary class/struct direct fields; constructor and in-class initialization; containing-value move/call/return/assignment, including an immutable source and nested scope directly in the hosted entry; direct mutable-field replacement; return, break, and continue cleanup; partial-construction defined-failure rollback; C++ type-definition ordering and private disengaged representation; precise polymorphic-owner and fixed-array `GTI-S2067` rejection; and O0/O3 under C++20/C++23 |
 | `generic_payload_enum_runtime` | generic free-function and unrelated user-defined owner transport/capture, consuming extraction, vector reallocation/iteration, optional inline storage/reset, partial-owner rollback, later-argument and callee failure, failing and non-failing cleanup, implicit-copy/live-borrow/use-after-move diagnostics, C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
 | `compiler_ownership` / `ordered_borrow_composition_runtime` | completed mutation before checked lookup through user-defined tree/table, method, generic/free helper and constructor paths; borrowed-carrier call inputs; exact MIR order and forged-order rejection; earlier mutation, lookup and invocation failures; reverse-order, lexical-loan, exclusive-read, mutable-parameter and escaping-local rejection; precise diagnostic spans; C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
