@@ -3329,6 +3329,16 @@ conditional-publication and prepared-argument mutation checks; these test the
 real storage and cleanup protocol rather than requiring obsolete source-grouping
 `Identity` instructions.
 
+The same gate selects all 29 receivers that the conditional-receiver fixture
+moves inside conditional arms and short-circuit operands, using their Move,
+Receiver `MoveValue` input and invocation identities. Each body must construct
+the hidden temporary at the Move and invoke the call through it. For the first
+moved class in each body form and the first moved closure, seven mutations are
+rejected after rebuilding use records: forged slot availability, an initially
+active obligation, an obligation from another source, a Move that reparents
+instead of activating, the call reading the temporary as a place, a second
+writer, and the loss of every ordinary-path Drop.
+
 `conditional_class_publication` adds production C++ admission and malformed-MIR
 checks for the passive conditional repair, retaining an active-cleanup control.
 Its mutations rebuild use records before checking rejection of forged initial
@@ -6357,7 +6367,20 @@ local, fresh, generic, lambda and early-return receivers whose drops run
 before the Return. Each result is destroyed once, by its caller. A failing
 receiver destructor destroys the unpublished result, and a failure in that
 cleanup reports the secondary failure. A body whose drops cannot fail covers
-the plain emission form. Ownership
+the plain emission form.
+`consuming_conditional_receiver_runtime` moves receivers out of named bindings
+inside conditional arms and short-circuit operands in the same eight
+configurations, running each shape through both arms. The shapes are scalar and
+class results from by-value parameters and locals, one consuming arm beside a
+fresh result, direct and generic returns, moved closures, a consuming call that
+can fail, read-only and mutable fallbacks, fields moved out of a consumed
+receiver, and receivers whose cleanup cannot fail, which keep their callees in
+the plain emission form. Each moved receiver is destroyed once, at the end of
+its full expression, and only on the arm that ran. A failing receiver destructor
+in either arm reports at the drop after the merge. Cleanup then destroys the
+published result and skips the other arm's receiver, and a failure in that
+cleanup reports the secondary failure. A consuming call that fails inside its
+arm destroys its receiver on that failure edge. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
