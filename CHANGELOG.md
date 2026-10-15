@@ -23,6 +23,17 @@ for what minor and patch releases mean.
 - Moving a whole local with `std::move` does not need `mut`, so an otherwise
   unused `mut` on that local still receives the warning and its quick fix.
 
+## 0.440.5 — Reading a field of a moved local
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR") when a field is read straight off a local or by-value parameter moved
+  with `std::move`, as in `return std::move(a).x;`, `(std::move(a)).x` or
+  `int v = std::move(a).x;`, including for a field of a generic class. The
+  move leaves `a` moved-from and the field is read from the moved value, which
+  is destroyed at the end of the full expression; a class with a destructor
+  runs it exactly once, also when a later part of the expression fails, inside
+  a `?:` arm or `&&`/`||` operand, or in a member initializer.
+
 ## 0.440.4 — Member calls on conditional values without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
