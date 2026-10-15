@@ -56539,14 +56539,167 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       return representation == CppMirTypeRepresentationKind::Scalar ||
              representation == CppMirTypeRepresentationKind::StringView;
     };
+    const auto cleanupFreeResult = [&](const StagedClassResult &result) {
+      if (!result.producer ||
+          (!result.producer->functionTarget &&
+           !result.producer->constructorTarget) ||
+          result.producer->loan || result.producer->successResultDrop ||
+          !result.producer->lifecycle.empty())
+        return false;
+      const auto owner = std::find_if(
+          program_.classInstances().begin(), program_.classInstances().end(),
+          [&](const MirClassInstance &candidate) {
+            return candidate.type == result.producer->info.type;
+          });
+      return owner != program_.classInstances().end() &&
+             !owner->requiresActiveCleanup &&
+             !owner->traits.containsBorrowedState;
+    };
+    // An owning construction published into a prepared argument slot of
+    // `target`, the outer call or a nested call inside the region. The
+    // existing prepared-result proof owns the activation, exact Reparent and
+    // sole consuming handoff; the borrowed address stays stable while the
+    // constructor runs at its MIR position. A checked constructor activates
+    // its result on the Invoke success edge; one that cannot fail initializes
+    // it at the construction itself.
+    const auto owningConstructorResult = [&](const StagedClassResult &result,
+                                             const MirInstruction &target) {
+      const auto *producer = result.producer;
+      const bool checkedActivation =
+          producer != nullptr && producer->successResultDrop &&
+          producer->lifecycle.empty() &&
+          invokePairedInstruction(body, producer->id);
+      const bool failureFreeActivation =
+          producer != nullptr && !producer->successResultDrop &&
+          producer->definedFailure.empty() &&
+          producer->localFailureSites.empty() &&
+          !invokePairedInstruction(body, producer->id) &&
+          producer->lifecycle.size() == 1 &&
+          producer->lifecycle.front().kind ==
+              MirLifecycleEventKind::Initialize &&
+          producer->lifecycle.front().source == 0 &&
+          !producer->lifecycle.front().conditional &&
+          !producer->lifecycle.front().failureCleanup;
+      return producer != nullptr && result.consumer == &target &&
+             result.stage != nullptr && result.drop != nullptr &&
+             producer->kind == MirInstructionKind::Construct &&
+             producer->constructorTarget &&
+             producer->constructorKind == ConstructorKind::Ordinary &&
+             (checkedActivation || failureFreeActivation) &&
+             !producer->receiver && !producer->loan &&
+             !producer->info.traits.containsBorrowedState &&
+             result.stage->callSite == target.callSite &&
+             result.stage->callInputRole == MirCallInputRole::Argument &&
+             result.stage->callInputKind == HirCallInputKind::MoveValue &&
+             result.stage->definedFailure.empty() &&
+             std::all_of(producer->operands.begin(), producer->operands.end(),
+                         [&](const MirOperand &operand) {
+                           return operand.kind == MirOperandKind::Value &&
+                                  passiveRegionValue(operand.type);
+                         });
+    };
+    // The producer of a class result staged for `target` runs at its MIR
+    // position: an owning construction or a cleanup-free call, with plain
+    // inputs and at most a read-borrowed receiver. Its Invoke failure edge, or
+    // a construction that cannot fail, precedes publication.
+    const auto preparedClassProducer = [&](const StagedClassResult &result,
+                                           const MirInstruction &target) {
+      const MirInstruction *producer = result.producer;
+      if (producer == nullptr ||
+          (producer->kind != MirInstructionKind::Call &&
+           producer->kind != MirInstructionKind::Construct) ||
+          !(cleanupFreeResult(result) ||
+            owningConstructorResult(result, target)) ||
+          producer->rawMemoryAccess ||
+          !exactConstructorPermission(program_, *producer) ||
+          !(invokePairedInstruction(body, producer->id) ||
+            (producer->kind == MirInstructionKind::Construct &&
+             producer->constructorTarget &&
+             cppMirConstructorStatusCannotFail(program_,
+                                               *producer->constructorTarget))))
+        return false;
+      const auto *receiver =
+          producer->receiver ? borrowStagedCallInput(body, *producer->receiver)
+                             : nullptr;
+      return (!producer->receiver ||
+              (receiver != nullptr &&
+               receiver->callInputKind == HirCallInputKind::ReadBorrow)) &&
+             std::all_of(producer->operands.begin(), producer->operands.end(),
+                         [&](const MirOperand &operand) {
+                           return operand.kind == MirOperandKind::Value &&
+                                  passiveRegionValue(operand.type);
+                         });
+    };
+    // An owning class argument of `call`, the outer call or a nested call
+    // inside the region, is prepared in that call's own parameter slot: an
+    // exact construction or cleanup-free call publishes there, or a local
+    // other than the borrowed place's root is moved or copied in. The
+    // prepared-slot proofs own the slot's activation and its sole TransferOut
+    // into `call`, and every failure edge between preparation and that call
+    // destroys it once. A distinct temporary prepared and consumed this way
+    // cannot carry, replace or end the borrowed storage.
+    struct PreparedArgument {
+      // The construction, call or Move feeding the stage; none for a copy.
+      const MirInstruction *producer = nullptr;
+      const MirInstruction *stage = nullptr;
+    };
+    const auto preparedArgument =
+        [&](const MirOperand &input,
+            const MirInstruction &call) -> PreparedArgument {
+      if (input.kind != MirOperandKind::Value ||
+          input.type.kind != SemanticType::Class)
+        return {};
+      const StagedClassResult constructed =
+          stagedClassResultForResult(body, input.value);
+      const MirInstruction *copied =
+          materializedConstructorArgumentStage(body, input.value);
+      const StagedTemporarySource source =
+          copied != nullptr ? stagedTemporarySourceFor(body, *copied)
+                            : StagedTemporarySource{};
+      PreparedArgument argument;
+      if (constructed.consumer == &call &&
+          preparedClassProducer(constructed, call))
+        argument = {constructed.producer, constructed.stage};
+      else if (source.place != nullptr &&
+               !sameMirPlaceRoot(*source.place, *place))
+        argument = {source.moved ? definitionFor(body, copied->operands.front())
+                                 : nullptr,
+                    copied};
+      const MirInstruction *stage = argument.stage;
+      const MirPlace *slot = stage != nullptr && stage->destination
+                                 ? body.findPlace(*stage->destination)
+                                 : nullptr;
+      const MirDropObligation *drop =
+          stage != nullptr && stage->preparedParameterDrop
+              ? body.findDropObligation(*stage->preparedParameterDrop)
+              : nullptr;
+      const MirValue *record = stage != nullptr && stage->result
+                                   ? body.findValue(*stage->result)
+                                   : nullptr;
+      const MirInstruction *producer = argument.producer;
+      if (slot == nullptr || drop == nullptr || record == nullptr ||
+          record->id != input.value || stage->callSite != call.callSite ||
+          stage->callInputRole != MirCallInputRole::Argument ||
+          stage->receiver || stage->loan || stage->rawMemoryAccess ||
+          stage->unsafeOperation != UnsafeOperationKind::None ||
+          !stage->definedFailure.empty() || !stage->localFailureSites.empty() ||
+          (producer != nullptr &&
+           (producer->loan || producer->rawMemoryAccess ||
+            producer->unsafeOperation != UnsafeOperationKind::None)) ||
+          !ownedArgumentReachesConsumer(body, record->definitionBlock,
+                                        stage->id, record->id, *slot, *drop,
+                                        &call))
+        return {};
+      return argument;
+    };
     // A nested call can run wholly inside the argument region: the test of a
     // conditional argument, one arm's value, or a direct scalar argument. It
     // executes at its MIR position with its own Invoke failure edge, and its
-    // inputs are staged for it alone: plain values and borrows of
-    // binding-rooted places as receiver or arguments, none of them a mutable
-    // borrow of the borrowed place's root. Its plain result owns nothing and
-    // cannot carry the borrowed address, whichever region instruction
-    // consumes it.
+    // inputs are staged for it alone: plain values, borrows of binding-rooted
+    // places as receiver or arguments, none of them a mutable borrow of the
+    // borrowed place's root, and owning arguments prepared in its own
+    // parameter slots. Its plain result owns nothing and cannot carry the
+    // borrowed address, whichever region instruction consumes it.
     const auto nestedCallBorrow = [&](const MirInstruction &input,
                                       const MirInstruction &call) {
       const MirPlace *borrowed =
@@ -56585,7 +56738,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !call.result || call.destination || call.loan ||
           call.rawMemoryAccess ||
           call.unsafeOperation != UnsafeOperationKind::None ||
-          !call.lifecycle.empty() || call.callSite == consumer->callSite ||
+          call.callSite == consumer->callSite ||
           !(isPassiveScalarValueType(call.info.type) ||
             passiveRegionValue(call.info.type)) ||
           (!call.definedFailure.empty() &&
@@ -56599,18 +56752,37 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !nestedCallBorrow(*receiver, call))
           return false;
       }
-      return std::all_of(
+      std::vector<MirDropObligationId> transfers;
+      const bool inputs = std::all_of(
           call.operands.begin(), call.operands.end(),
           [&](const MirOperand &input) {
             if (input.kind != MirOperandKind::Value || input.value == id)
               return false;
             const MirInstruction *borrow = borrowStagedCallInput(body, input);
-            return borrow != nullptr
-                       ? borrow->callInputRole == MirCallInputRole::Argument &&
-                             nestedCallBorrow(*borrow, call)
-                       : isPassiveScalarValueType(input.type) ||
-                             passiveRegionValue(input.type);
+            if (borrow != nullptr)
+              return borrow->callInputRole == MirCallInputRole::Argument &&
+                     nestedCallBorrow(*borrow, call);
+            if (isPassiveScalarValueType(input.type) ||
+                passiveRegionValue(input.type))
+              return true;
+            const PreparedArgument prepared = preparedArgument(input, call);
+            if (prepared.stage == nullptr)
+              return false;
+            transfers.push_back(*prepared.stage->preparedParameterDrop);
+            return true;
           });
+      // Its only lifecycle effect is the one TransferOut of each prepared
+      // argument it consumes.
+      return inputs && call.lifecycle.size() == transfers.size() &&
+             std::all_of(call.lifecycle.begin(), call.lifecycle.end(),
+                         [&](const MirLifecycleEvent &event) {
+                           return event.kind ==
+                                      MirLifecycleEventKind::TransferOut &&
+                                  event.target == 0 && !event.conditional &&
+                                  !event.failureCleanup &&
+                                  std::count(transfers.begin(), transfers.end(),
+                                             event.source) == 1;
+                         });
     };
     // A bare local, a binding-rooted field/reference path, or an exact
     // full-expression slot has a stable native address. Erasing its borrowed
@@ -56723,158 +56895,43 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             nestedCallBorrow(instruction, *peerConsumer) &&
             nestedPlainCall(*peerConsumer))
           continue;
-        const auto nestedResult =
-            instruction.result
-                ? stagedClassResultForSource(body, *instruction.result)
-                : StagedClassResult{};
-        const auto nestedArgument =
-            instruction.result
-                ? stagedClassResultForResult(body, *instruction.result)
-                : StagedClassResult{};
-        const auto cleanupFreeResult = [&](const StagedClassResult &result) {
-          if (!result.producer ||
-              (!result.producer->functionTarget &&
-               !result.producer->constructorTarget) ||
-              result.producer->loan || result.producer->successResultDrop ||
-              !result.producer->lifecycle.empty())
-            return false;
-          const auto owner = std::find_if(
-              program_.classInstances().begin(),
-              program_.classInstances().end(),
-              [&](const MirClassInstance &candidate) {
-                return candidate.type == result.producer->info.type;
-              });
-          return owner != program_.classInstances().end() &&
-                 !owner->requiresActiveCleanup &&
-                 !owner->traits.containsBorrowedState;
-        };
-        // The same argument diamond may precede an owning construction.
-        // Its existing prepared-result proof owns the activation, exact
-        // Reparent and sole consuming handoff; the receiver address stays
-        // stable while the constructor runs at its MIR position. A checked
-        // constructor activates its result on the Invoke success edge; one
-        // that cannot fail initializes it at the construction itself.
-        const auto owningConstructorResult =
-            [&](const StagedClassResult &result) {
-              const auto *producer = result.producer;
-              const bool checkedActivation =
-                  producer != nullptr && producer->successResultDrop &&
-                  producer->lifecycle.empty() &&
-                  invokePairedInstruction(body, producer->id);
-              const bool failureFreeActivation =
-                  producer != nullptr && !producer->successResultDrop &&
-                  producer->definedFailure.empty() &&
-                  producer->localFailureSites.empty() &&
-                  !invokePairedInstruction(body, producer->id) &&
-                  producer->lifecycle.size() == 1 &&
-                  producer->lifecycle.front().kind ==
-                      MirLifecycleEventKind::Initialize &&
-                  producer->lifecycle.front().source == 0 &&
-                  !producer->lifecycle.front().conditional &&
-                  !producer->lifecycle.front().failureCleanup;
-              return producer != nullptr && result.consumer == consumer &&
-                     result.stage != nullptr && result.drop != nullptr &&
-                     producer->kind == MirInstructionKind::Construct &&
-                     producer->constructorTarget &&
-                     producer->constructorKind == ConstructorKind::Ordinary &&
-                     (checkedActivation || failureFreeActivation) &&
-                     !producer->receiver && !producer->loan &&
-                     !producer->info.traits.containsBorrowedState &&
-                     result.stage->callSite == consumer->callSite &&
-                     result.stage->callInputRole ==
-                         MirCallInputRole::Argument &&
-                     result.stage->callInputKind ==
-                         HirCallInputKind::MoveValue &&
-                     result.stage->definedFailure.empty() &&
-                     std::all_of(
-                         producer->operands.begin(), producer->operands.end(),
-                         [&](const MirOperand &operand) {
-                           return operand.kind == MirOperandKind::Value &&
-                                  cppMirExpectedTypeRepresentation(
-                                      operand.type) ==
-                                      CppMirTypeRepresentationKind::Scalar;
-                         });
-            };
-        if ((instruction.kind == MirInstructionKind::Call ||
-             instruction.kind == MirInstructionKind::Construct) &&
-            nestedResult.producer == &instruction &&
-            (cleanupFreeResult(nestedResult) ||
-             owningConstructorResult(nestedResult)) &&
-            !instruction.rawMemoryAccess &&
-            exactConstructorPermission(program_, instruction) &&
-            (invokePairedInstruction(body, instruction.id) ||
-             (instruction.kind == MirInstructionKind::Construct &&
-              instruction.constructorTarget &&
-              cppMirConstructorStatusCannotFail(
-                  program_, *instruction.constructorTarget)))) {
-          const auto *receiver =
-              instruction.receiver
-                  ? borrowStagedCallInput(body, *instruction.receiver)
-                  : nullptr;
-          const bool readReceiver =
-              !instruction.receiver ||
-              (receiver != nullptr &&
-               receiver->callInputKind == HirCallInputKind::ReadBorrow);
-          const bool scalarArguments = std::all_of(
-              instruction.operands.begin(), instruction.operands.end(),
-              [&](const MirOperand &operand) {
-                return operand.kind == MirOperandKind::Value &&
-                       cppMirExpectedTypeRepresentation(operand.type) ==
-                           CppMirTypeRepresentationKind::Scalar;
-              });
-          if (readReceiver && scalarArguments)
-            continue;
-        }
-        if (nestedArgument.stage == &instruction &&
-            (cleanupFreeResult(nestedArgument) ||
-             owningConstructorResult(nestedArgument)) &&
-            nestedArgument.consumer == consumer && !instruction.loan &&
-            !instruction.rawMemoryAccess &&
-            instruction.unsafeOperation == UnsafeOperationKind::None &&
-            instruction.definedFailure.empty())
-          continue;
-        // Another local moved or copied into its prepared argument slot for
-        // the same call is a different object from the borrowed place. The
-        // prepared-slot proof owns that slot's construction, failure-edge
-        // cleanup and sole handoff; the borrowed address is untouched.
-        const auto movedUses =
-            instruction.kind == MirInstructionKind::Move && instruction.result
+        // Each step preparing an owning argument of the outer call or of such
+        // a nested call, the producer or Move feeding its slot and the stage
+        // itself, is proved together with the call that consumes it.
+        const auto producedUses =
+            instruction.kind != MirInstructionKind::CallInput &&
+                    instruction.result
                 ? nonRootRecordUses(body, *instruction.result)
                 : std::vector<MirValueUse>{};
-        const MirInstruction *preparedStage =
+        const MirInstruction *preparedInput =
             instruction.kind == MirInstructionKind::CallInput ? &instruction
-            : movedUses.size() == 1 && movedUses.front().kind ==
-                                           MirValueUseKind::InstructionOperand
-                ? findInstruction(body, movedUses.front().instruction)
+            : producedUses.size() == 1 &&
+                    producedUses.front().kind ==
+                        MirValueUseKind::InstructionOperand
+                ? findInstruction(body, producedUses.front().instruction)
                 : nullptr;
-        const auto preparedUses =
-            preparedStage != nullptr && preparedStage->result
-                ? nonRootRecordUses(body, *preparedStage->result)
+        const auto preparedInputUses =
+            preparedInput != nullptr && preparedInput->result
+                ? nonRootRecordUses(body, *preparedInput->result)
                 : std::vector<MirValueUse>{};
-        const StagedTemporarySource preparedSource =
-            preparedStage != nullptr &&
-                    preparedStage->kind == MirInstructionKind::CallInput &&
-                    preparedStage->operands.size() == 1
-                ? stagedTemporarySourceFor(body, *preparedStage)
-                : StagedTemporarySource{};
-        if (preparedStage != nullptr && preparedStage->result &&
-            materializedConstructorArgumentStage(
-                body, *preparedStage->result) == preparedStage &&
-            preparedStage->callSite == consumer->callSite &&
-            preparedUses.size() == 1 &&
-            preparedUses.front().kind == MirValueUseKind::InstructionOperand &&
-            preparedUses.front().instruction == consumer->id &&
-            preparedSource.place != nullptr &&
-            (preparedStage == &instruction ||
-             (preparedSource.moved && instruction.operands.size() == 1 &&
-              instruction.operands.front().place ==
-                  preparedSource.place->id)) &&
-            !sameMirPlaceRoot(*preparedSource.place, *place) &&
-            !instruction.loan && !instruction.rawMemoryAccess &&
-            instruction.unsafeOperation == UnsafeOperationKind::None &&
-            instruction.definedFailure.empty() &&
-            instruction.localFailureSites.empty())
-          continue;
+        const MirInstruction *preparedCall =
+            preparedInputUses.size() == 1 &&
+                    preparedInputUses.front().kind ==
+                        MirValueUseKind::InstructionOperand
+                ? findInstruction(body, preparedInputUses.front().instruction)
+                : nullptr;
+        if (preparedCall != nullptr &&
+            preparedInputUses.front().operandIndex <
+                preparedCall->operands.size() &&
+            (preparedCall == consumer || nestedPlainCall(*preparedCall))) {
+          const PreparedArgument prepared = preparedArgument(
+              preparedCall->operands[preparedInputUses.front().operandIndex],
+              *preparedCall);
+          if (prepared.stage == preparedInput &&
+              (preparedInput == &instruction ||
+               prepared.producer == &instruction))
+            continue;
+        }
         const bool peerBorrow =
             peerPlace != nullptr && instruction.result &&
             instruction.callSite == stage->callSite &&
