@@ -2324,11 +2324,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 41
       }
+    },
+    "158-multi-parameter-concepts.gti": {
+      "declarations": 1158,
+      "bodies": 135,
+      "generated_items": 87,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 16,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 40
+      }
     }
   },
   "totals": {
-    "declarations": 113719,
-    "bodies": 17128,
-    "generated_items": 10610
+    "declarations": 114877,
+    "bodies": 17263,
+    "generated_items": 10697
   }
 }
