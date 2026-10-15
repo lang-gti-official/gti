@@ -930,9 +930,20 @@ the joined value instead builds a join temporary with its own full-expression
 `Value` obligation, which the arm's `Initialize`, right after the `Move`,
 activates directly; `classValueDestinationSlot` admits that moved-local arm by
 the same ownership and passive-drop facts. A nested join is proved on its
-own, and the nested arm's region starts at that inner join's branch block.
-When a passive
-join's single move reaches neither the binding nor the prepared argument
+own, and the nested arm's region starts at that inner join's branch block. A
+passive arm may also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
+with overflow-checked additions, a call that can fail, a `?` operand, or scalar
+control flow inside an argument. Without an exact diamond, the branch is the
+nearest common dominator of the two arm entries, and its two successors start
+the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
+(`exactConditionalArmRegion`): the branch enters it once and nothing else
+enters it or its arm's entry; its blocks are ordinary code dominated by the
+region's start; and their ordinary edges stay inside or reach the entry. An
+Invoke's failure edge leaves through its own failure record's cleanup and a
+`Return` leaves the body (a propagated `?` residual), both before the arm
+publishes anything. An owning join whose arms evaluate inputs first keeps the
+ordinary owned-temporary publication it already has. When a passive join's
+single move reaches neither the binding nor the prepared argument
 terminal, the moved value is staged in its own representation-only slot and
 the join's representation ends right after. That staged slot then serves a
 return, field read, assignment or field initializer exactly as a fresh
