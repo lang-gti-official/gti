@@ -3680,8 +3680,17 @@ lexical cleanup without preventing other fields' verified initialization.
 A borrowed bare-local call input may remain representation-erased across a
 conditional scalar argument. Its stage must dominate the unique consuming call,
 and every normal path through the acyclic argument region must reach that call.
-Scalar computations, loads, input stages, and scalar expression-temporary
-initialization may intervene. The proof also covers a nested read-receiver or
+Scalar and text-view computations, loads and input stages, and scalar
+expression-temporary initialization may intervene. A nested function or method
+call may run wholly inside the region, for example as the conditional's test,
+one arm's value, or a direct scalar argument. Its inputs are scalar or
+text-view values and borrows staged for it alone: the receiver and arguments
+may borrow binding-rooted places through fields and reference dereferences,
+and a mutable borrow never names the borrowed place's root. Its scalar or
+text-view result has no loan or lifecycle, and any region instruction may
+consume it: a branch, a computation, a temporary or an input stage. The call
+keeps its MIR position and its own Invoke failure edge, which leaves the
+region before the outer call. The proof also covers a nested read-receiver or
 free function call, or an exact constructor, with scalar inputs and a cleanup-free nominal result whose
 sole consumer is an exact prepared argument slot for the outer call. Its
 failure edge precedes publication; result preparation does not change the
