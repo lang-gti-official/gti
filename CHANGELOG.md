@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.436.2 — Consuming methods on classes without destructors
+## 0.436.3 — Consuming methods on classes without destructors
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a consuming (`&&`) method is called on a
@@ -30,6 +30,21 @@ for what minor and patch releases mean.
   field in a constructor's member-initializer list. A field read inside `?:`,
   such as `ok ? std::move(maker).show().id : 0`, fails the same way when the
   method cannot fail, as it does when the value is passed as an argument.
+
+## 0.436.2 — Calls on receivers moved inside conditional expressions
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method or lambda is called on a
+  receiver moved out of a variable inside one arm of a conditional
+  expression, or in the right operand of `&&` or `||`, such as
+  `Tracked t = left ? std::move(a).release() : std::move(b).release();` or
+  `ready && std::move(job).finish()`. This failed for consuming (`&&`)
+  methods, for read-only and `mut` methods called on a moved receiver, for
+  moved lambdas, and for fields that a consuming method moves out of `this`,
+  in ordinary and generic functions, whether the result was stored, passed,
+  returned or read. Only the receiver of the arm that ran is destroyed, once,
+  at the end of the full expression. If its destructor fails, the result it
+  produced is destroyed before the failure propagates.
 
 ## 0.436.1 — Method calls in constructor member initializers
 
