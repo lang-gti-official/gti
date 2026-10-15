@@ -2809,6 +2809,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       genericParametersFor(stmt);
   beginTypeParameterScope(genericParameters);
   const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
+  const FunctionInfo *primaryFunctionInfo =
+      instanceBaseModel == nullptr ? functionInfo
+                                   : instanceBaseModel->findFunction(stmt);
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
@@ -2913,8 +2916,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         reportContract(
             attribute,
             "A borrowed_from contract requires a GTI function or method.");
-      } else if (functionInfo != nullptr &&
-                 containsOpenTypeParameter(functionInfo->returnType)) {
+      } else if (primaryFunctionInfo != nullptr &&
+                 containsOpenTypeParameter(primaryFunctionInfo->returnType)) {
         // A generic result decides per instance: the contract binds the
         // instances whose result is a checked reference and is inert for
         // the others. The named parameter may be a final pack whose one
@@ -3035,7 +3038,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       stmt.returnType(),
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
-      methodDeclaration ? "method return type" : "function return type");
+      methodDeclaration ? "method return type" : "function return type", false,
+      false, false,
+      hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
   if (nestsBorrowedState(declaredReturnType) &&
       !isFallibleBorrowType(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {

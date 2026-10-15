@@ -1,6 +1,5 @@
 #include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
-#include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
@@ -44,9 +43,6 @@ int main() {
     expect(result.canGenerateCode(), message);
     if (!result.canGenerateCode()) {
       dump(result);
-      if (result.hirValid && !result.mirValid) {
-        std::cerr << lang::MirPrinter().print(result.mir);
-      }
       return;
     }
     const std::string cpp = gti_test::emitCpp(result).contents;
@@ -192,7 +188,7 @@ constexpr Status constant() {
 int main() { return 0; }
 )gti",
            "GTI-S2086", "constexpr function");
-  rejected(types + R"gti(
+  const std::string enumProtocol = types + R"gti(
 enum class Parse {
   ok(int value),
   failed(int code),
@@ -200,17 +196,87 @@ enum class Parse {
 for concept std::tryable<Parse> {
   using value_type = int;
   using residual_type = Rejected;
-  bool has_value(Parse& parse) { return true; }
-  int take_value(Parse parse) { return 1; }
-  Rejected take_residual(Parse parse) { return Rejected(1); }
+  bool has_value(Parse& parse) {
+    switch (parse) {
+      case Parse::ok: return true;
+      case Parse::failed: return false;
+    }
+  }
+  int take_value(Parse parse) {
+    switch (parse) {
+      case Parse::ok(value): return value;
+      case Parse::failed: return 0;
+    }
+  }
+  Rejected take_residual(Parse parse) {
+    switch (parse) {
+      case Parse::ok: return Rejected(0);
+      case Parse::failed(code): return Rejected(code);
+    }
+  }
 };
 Status enumerated() {
   int value = ?Parse::ok(1);
   return Status(value);
 }
-int main() { return 0; }
-)gti",
-           "GTI-S2086", "class or struct operand");
+int main() { return enumerated().code - 1; }
+)gti";
+  accepted(enumProtocol, "a payload enum can implement propagation directly");
+  const auto enumProof = analyze(enumProtocol);
+  if (enumProof.canGenerateCode()) {
+    for (int corruption = 0; corruption != 9; ++corruption) {
+      auto malformed = enumProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputKind !=
+                    lang::HirCallInputKind::ReadTemporaryBorrow ||
+                !instruction.loan || instruction.operands.size() != 1)
+              continue;
+            auto &loan = function.body.loans[*instruction.loan - 1];
+            auto &place = function.body.places[loan.source - 1];
+            if (place.type.kind != lang::SemanticType::Enum)
+              continue;
+            if (corruption == 0)
+              place.sourceValue = 0;
+            if (corruption == 1)
+              loan.producedBy = 0;
+            if (corruption == 2)
+              loan.escapes = true;
+            if (corruption == 3)
+              loan.access = lang::AccessMode::Mutable;
+            if (corruption == 4)
+              instruction.operands.front().place = 0;
+            if (corruption == 5)
+              instruction.loan.reset();
+            if (corruption >= 6) {
+              auto obligation = std::find_if(
+                  function.body.dropObligations.begin(),
+                  function.body.dropObligations.end(),
+                  [&](const lang::MirDropObligation &candidate) {
+                    return candidate.place == place.id;
+                  });
+              if (obligation == function.body.dropObligations.end())
+                continue;
+              if (corruption == 6)
+                obligation->fullExpression = 0;
+              if (corruption == 7)
+                obligation->value = 0;
+              if (corruption == 8)
+                obligation->dropType.requiresActiveCleanup = true;
+            }
+            changed = true;
+          }
+      expect(changed,
+             "enum temporary mutation must select its materialization");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR must reject a missing, mismatched, escaping or upgraded "
+             "enum temporary argument loan or lifetime obligation");
+    }
+  }
   const std::string borrowed = R"gti(
 struct Rejected {
   int code;
@@ -263,7 +329,7 @@ for concept std::tryable<Editing> {
   using value_type = mut int&;
   using residual_type = Rejected;
   bool has_value(Editing& value) { return value.code == 0; }
-  [[borrowed_from(value)]] mut int& take_value(Editing value) {
+  [[borrowed_from(value)]] mut int& take_value(mut Editing value) {
     return value.external;
   }
   Rejected take_residual(Editing value) { return Rejected(value.code); }
@@ -303,6 +369,54 @@ Status read(int& owner) {
 }
 int main() { int owner = 7; return read(owner).code - 7; }
 )gti");
+  const std::string guarded = R"gti(
+class Guard {
+public:
+  int& owner;
+  Guard(int& value) : owner(value) {}
+  ~Guard() {}
+};
+class Envelope {
+public:
+  Guard guard;
+  Envelope(Guard value) : guard(std::move(value)) {}
+};
+)gti";
+  rejected(guarded + R"gti(
+[[borrowed_from(value)]] int& escape(Guard value) { return value.owner; }
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "cleanup-bound carrier cannot escape");
+  rejected(guarded + R"gti(
+[[borrowed_from(value)]] int& escape(Envelope value) {
+  return value.guard.owner;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "cleanup-bound carrier cannot escape");
+  const auto guardProof = analyze(guarded + R"gti(
+int main() {
+  int owner = 7;
+  Guard guard{owner};
+  return guard.owner - 7;
+}
+)gti");
+  expect(guardProof.canGenerateCode(),
+         "a source destructor retains its reference until ordinary cleanup");
+  if (guardProof.canGenerateCode()) {
+    auto malformed = guardProof.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+      for (auto &loan : function.body.loans) {
+        if (loan.lifecycleBound) {
+          loan.lifecycleBound = false;
+          changed = true;
+        }
+      }
+    expect(changed, "guard mutation must select a lifecycle-bound dependency");
+    expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+           "MIR must reject omitted destructor-bound dependency retention");
+  }
   if (proof.canGenerateCode()) {
     for (int corruption = 0; corruption < 4; ++corruption) {
       auto malformed = proof.mir;

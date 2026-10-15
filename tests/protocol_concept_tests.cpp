@@ -2,11 +2,20 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <string>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+} // namespace lang
 
 // Protocol concepts: a concept with a body declares associated types and
 // operations, and a type satisfies it only through a `for concept` block.
@@ -120,6 +129,112 @@ int main() {
 }
 )gti",
            "protocol result origins relay a by-value carrier's external owner");
+  const std::string borrowedRelay = borrowed + R"gti(
+[[borrowed_from(value)]]
+observed<T>::element relay<T>(T value) requires observed<T> {
+  return observed<T>::get(value);
+}
+int main() {
+  int owner = 7;
+  Reading view{owner};
+  int& result = relay(view);
+  return result - 7;
+}
+)gti";
+  accepted(borrowedRelay,
+           "generic protocol calls preserve the declared result origin");
+  rejected(borrowed + R"gti(
+[[borrowed_from(owner)]] int& escape(int& owner) {
+  int local = 3;
+  Reading view{local};
+  return observed<Reading>::get(view);
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "Returned reference");
+  const auto relayProof = analyze(borrowedRelay);
+  if (relayProof.canGenerateCode()) {
+    for (int corruption = 0; corruption != 5; ++corruption) {
+      auto malformed = relayProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (function.returnType.kind != lang::SemanticType::Reference ||
+            function.returnBorrowOrigin != lang::BorrowOriginKind::Argument)
+          continue;
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Call ||
+                !instruction.loan)
+              continue;
+            auto &loan = function.body.loans[*instruction.loan - 1];
+            if (loan.kind != lang::MirLoanKind::CallResult)
+              continue;
+            if (corruption == 0)
+              loan.parent = 0;
+            if (corruption == 1)
+              loan.source = 0;
+            if (corruption == 2)
+              loan.access = lang::AccessMode::Mutable;
+            if (corruption == 3)
+              loan.producedBy = 0;
+            if (corruption == 4)
+              instruction.borrowOrigin = lang::BorrowOriginKind::None;
+            changed = true;
+          }
+      }
+      expect(changed, "forwarding mutation must select the exact call chain");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR must reject substituted origin, permission or producer in "
+             "a returned-reference forwarding chain");
+    }
+  }
+  const std::string mutableAssociated = R"gti(
+concept writable<T> { typename element; };
+for concept writable<int> { using element = mut int&; };
+int main() { return 0; }
+)gti";
+  accepted(mutableAssociated,
+           "associated types preserve explicit mutable reference access");
+  accepted(R"gti(
+concept editable<T> {
+  typename element;
+  [[borrowed_from(value)]] element get(T value);
+};
+class Editing {
+public:
+  mut int& value;
+  Editing(mut int& owner) : value(owner) {}
+};
+for concept editable<Editing> {
+  using element = mut int&;
+  [[borrowed_from(value)]] mut int& get(mut Editing value) {
+    return value.value;
+  }
+};
+[[borrowed_from(value)]] editable<T>::element relay<T>(mut T value)
+    requires editable<T> {
+  return editable<T>::get(std::move(value));
+}
+int main() {
+  mut int owner = 4;
+  Editing view{owner};
+  mut int& value = relay(std::move(view));
+  value = 8;
+  return value - 8;
+}
+)gti",
+           "generic protocol return projections preserve exclusive access");
+  const auto formattedMutable = lang::Formatter().format(mutableAssociated);
+  accepted(formattedMutable,
+           "formatting preserves mutable reference associated types");
+  expect(lang::Formatter().format(formattedMutable) == formattedMutable,
+         "mutable associated type formatting is idempotent");
+  rejected(R"gti(
+concept writable<T> { typename element; };
+for concept writable<int> { using element = mut int; };
+int main() { return 0; }
+)gti",
+           "GTI-S2030", "requires a checked reference");
   rejected(R"gti(
 concept observed<T> {
   [[borrowed_from(missing)]] int& get(T& source);

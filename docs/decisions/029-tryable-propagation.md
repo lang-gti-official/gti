@@ -97,10 +97,10 @@ body, satisfied through `for concept` blocks outside the type.
   `std::experimental::optional`, over a payload enum and consuming payload
   matches, has the block, and is the planned replacement.
 - `?` through `std::tryable` is not available in constant evaluation yet.
-- The operand must be a class or struct type in this phase. A payload enum
-  can have a block, but `?` on it is rejected until the propagation plan can
-  stage enum temporaries and places. Wrapping the enum in a class works, and
-  is how `std::experimental::optional` is meant to be built.
+- The original implementation admitted only class or struct operands. The
+  2026-10-15 generalization admits enum operands directly through the same
+  selected-call plan; ordinary tag, move, and cleanup rules own enum transport.
+  A wrapper class is an API choice, not a propagation requirement.
 - Violations are reported as `GTI-S2086`.
 
 ## Borrowed protocol results (2026-10-15)

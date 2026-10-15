@@ -39,7 +39,7 @@ for <T> concept measurable<Crate<T>> {
 };
 
 for concept measurable<Rope> {
-  using unit_type = int;
+  using unit_type = mut int&;
   int measure(Rope& item) { return 0; }
 };
 
@@ -97,7 +97,8 @@ for concept measurable<Rope> {
       (type_alias_declaration
         (identifier)
         (type
-          (primitive_type)))
+          (primitive_type)
+          (reference_declarator)))
       (function_declaration
         (type
           (primitive_type))

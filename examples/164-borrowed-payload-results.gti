@@ -5,7 +5,7 @@
 class Reading {
 public:
   int& value;
-  std::string error;
+  mut std::string error;
 
   Reading(int& source, std::string failure)
       : value(source), error(std::move(failure)) {}
@@ -19,7 +19,7 @@ for concept std::tryable<Reading> {
   [[borrowed_from(result)]] int& take_value(Reading result) {
     return result.value;
   }
-  std::string take_residual(Reading result) {
+  std::string take_residual(mut Reading result) {
     return std::move(result.error);
   }
 };
@@ -37,9 +37,71 @@ Status inspect(int& owner, bool fail) {
   return Status(value);
 }
 
+class Editing {
+public:
+  mut int& value;
+  mut std::string error;
+  Editing(mut int& source, std::string failure)
+      : value(source), error(std::move(failure)) {}
+};
+
+for concept std::tryable<Editing> {
+  using value_type = mut int&;
+  using residual_type = std::string;
+  bool has_value(Editing& result) { return result.error.empty(); }
+  [[borrowed_from(result)]] mut int& take_value(mut Editing result) {
+    return result.value;
+  }
+  std::string take_residual(mut Editing result) {
+    return std::move(result.error);
+  }
+};
+
+Status edit(mut int& owner, bool fail) {
+  Editing result{owner, std::string(fail ? "bad" : "")};
+  mut int& value = ?std::move(result);
+  value += 1;
+  return Status(value);
+}
+
+// A payload enum can implement the same protocol directly.
+enum Parse { ready(int value), failed(int code) };
+for concept std::tryable<Parse> {
+  using value_type = int;
+  using residual_type = std::string;
+  bool has_value(Parse& result) {
+    switch (result) {
+      case Parse::ready: return true;
+      case Parse::failed: return false;
+    }
+  }
+  int take_value(Parse result) {
+    switch (result) {
+      case Parse::ready(value): return value;
+      case Parse::failed: return 0;
+    }
+  }
+  std::string take_residual(Parse result) {
+    switch (result) {
+      case Parse::ready: return std::string("");
+      case Parse::failed(code): return std::to_string(code);
+    }
+  }
+};
+
+Status parse() {
+  int value = ?Parse::ready(12);
+  return Status(value);
+}
+
 int main() {
   int owner = 42;
   std::println(std::to_string(inspect(owner, false).code));
   std::println(std::to_string(inspect(owner, true).code));
+  mut int changing = 8;
+  std::println(std::to_string(edit(changing, false).code));
+  std::println(std::to_string(edit(changing, true).code));
+  std::println(std::to_string(changing));
+  std::println(std::to_string(parse().code));
   return 0;
 }

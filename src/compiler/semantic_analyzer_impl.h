@@ -161,6 +161,8 @@ public:
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] bool
+  lifecycleBoundBorrowCarrierFor(const SemanticType &type) const override;
   [[nodiscard]] std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override;
 
@@ -1430,6 +1432,7 @@ private:
     EnumConstant value;
     std::size_t variantIndex = 0;
     std::vector<SemanticType> payloadTypes;
+    std::vector<SymbolId> payloadSymbols;
     Symbol symbol;
   };
 
@@ -1879,14 +1882,21 @@ private:
   struct StoredField {
     StoredField(const VariableDecl *field) : declaration(field) {}
     StoredField(const LambdaCapture *field) : capture(field) {}
+    StoredField(const Parameter *field) : payload(field) {}
 
     [[nodiscard]] const Token &name() const {
-      return declaration != nullptr ? declaration->name() : capture->name;
+      return declaration != nullptr ? declaration->name()
+             : capture != nullptr   ? capture->name
+                                    : payload->name;
     }
     bool operator==(const StoredField &) const = default;
 
     const VariableDecl *declaration = nullptr;
     const LambdaCapture *capture = nullptr;
+    // The parameter declaration belongs to one exact enum alternative. Its
+    // stable symbol is also the alternative-qualified dependency identity;
+    // it is not an ordinary class member or an unconditional field.
+    const Parameter *payload = nullptr;
   };
 
   struct StoredReferencePath {
@@ -3138,7 +3148,8 @@ private:
                                   std::string_view context,
                                   bool allowRvalueReference = false,
                                   bool typeMetadata = false,
-                                  bool genericFunctionParameter = false);
+                                  bool genericFunctionParameter = false,
+                                  bool contractedReferenceResult = false);
 
   void validateReferenceReferent(const SemanticType &type, const Token &site);
 

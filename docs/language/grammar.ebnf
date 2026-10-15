@@ -195,7 +195,9 @@ namespace-body         = "{" { declaration } "}" ;
 
 namespace-alias        = "=" qualified-name ";" ;
 
-type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
+type-alias-declaration = "using" IDENTIFIER "=" [ "mut" ] type ";" ;
+(* A mutable associated type definition must name a checked reference.
+   Ordinary reference aliases remain outside the implemented alias surface. *)
 
 native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
 

@@ -4741,6 +4741,7 @@ private:
     const HirValue *temporary = findValue(id);
     if (temporary == nullptr ||
         (temporary->info.type.kind != SemanticType::Class &&
+         temporary->info.type.kind != SemanticType::Enum &&
          (!allowExpected ||
           temporary->info.type.kind != SemanticType::Expected)) ||
         temporary->info.category != ValueCategory::Value ||
@@ -5836,7 +5837,8 @@ private:
       if (type.kind != SemanticType::Reference ||
           type.referenceAccess != AccessMode::ReadOnly ||
           type.arguments.size() != 1 ||
-          type.arguments.front().kind != SemanticType::Class ||
+          (type.arguments.front().kind != SemanticType::Class &&
+           type.arguments.front().kind != SemanticType::Enum) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
           source->root != MirPlaceRootKind::Value ||
@@ -7952,6 +7954,18 @@ private:
         (ancestor != 0 && output.findLoan(ancestor) == nullptr)) {
       return false;
     }
+    // Control-flow expressions may transparently forward one selected
+    // checked call result. Use only aliases recorded after type/access/loan
+    // verification by forwardBorrowResult, not an arbitrary equal source ID.
+    std::unordered_set<HirValueId> aliases;
+    for (;;) {
+      const auto forwarded = forwardedBorrowValues.find(valueId);
+      if (forwarded == forwardedBorrowValues.end())
+        break;
+      if (!aliases.insert(valueId).second)
+        return false;
+      valueId = forwarded->second;
+    }
     std::unordered_set<MirLoanId> visited;
     MirLoanId link = outermost;
     while (link != ancestor) {
@@ -8386,6 +8400,7 @@ private:
       return;
     }
     valueLoans.insert_or_assign(value.id, loan);
+    forwardedBorrowValues.insert_or_assign(value.id, source);
     loweredValues.insert_or_assign(value.id, mirValueFor(source));
     valuePlaces.insert_or_assign(value.id,
                                  clonePlace(placeForValue(source), value));
@@ -13475,6 +13490,7 @@ private:
   // its arm, including mixed copied/borrowed bindings of passive enums.
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
+  std::unordered_map<HirValueId, HirValueId> forwardedBorrowValues;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_set<HirBindingId> referenceAccessorBindings;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;

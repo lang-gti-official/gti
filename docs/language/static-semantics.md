@@ -1543,8 +1543,9 @@ For `?operand` with any other operand type `X`, `std::tryable<X>` must hold
 - for a dependent `X`, through a `std::tryable<X>` conjunct of the enclosing
   `requires` clause.
 
-In this phase `X` is a class or struct type; a payload enum with a block is
-rejected. The operand is transported like a by-value argument of type `X`. A
+`X` can be a class, struct, or enum type. An enum can implement the protocol
+directly; no wrapper record is required. The operand is transported like a
+by-value argument of type `X`. A
 temporary
 or `std::move(place)` operand needs a movable `X`. A named place needs a
 copyable `X` and remains available. A borrowed `X` must currently have one
