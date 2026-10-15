@@ -17,8 +17,9 @@ for what minor and patch releases mean.
   argument can fail, such as `Quiet q = std::move(maker).make(1 / d);`. This
   covers `mut` and immutable parameters and locals, returned, discarded,
   replacing and field-read results, `expected` results, generic classes,
-  lambdas, consuming `operator()`, loops and constructor member initializers
-  such as `Holder(Maker m, int d) : item(std::move(m).make(1 / d)) {}`. If the
+  lambdas, consuming `operator()`, loops, the arms of `?:` and constructor
+  member initializers such as
+  `Holder(Maker m, int d) : item(std::move(m).make(1 / d)) {}`. If the
   argument fails, the method never runs, and arguments already evaluated are
   destroyed once.
 - The same error no longer stops a constructor member initializer that passes
