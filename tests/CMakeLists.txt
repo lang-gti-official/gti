@@ -1,6 +1,28 @@
+add_executable(gti_foreign_variable_borrow_tests foreign_variable_borrow_tests.cpp)
+target_link_libraries(gti_foreign_variable_borrow_tests PRIVATE gti_compiler)
+add_test(NAME foreign_variable_borrow COMMAND gti_foreign_variable_borrow_tests)
+
+add_executable(gti_foreign_variable_tests foreign_variable_tests.cpp)
+target_link_libraries(gti_foreign_variable_tests PRIVATE gti_cpp_backend)
+add_test(NAME foreign_variable_pipeline COMMAND gti_foreign_variable_tests)
+add_test(NAME native_variable_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py"
+    $<TARGET_FILE:gti> --example native-variable-bindings)
+set_tests_properties(native_variable_bindgen PROPERTIES TIMEOUT 600)
+
 # Preserve the build-tree location of test executables and corpus tools while
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+
+add_executable(gti_foreign_variable_syntax_tests foreign_variable_syntax_tests.cpp)
+target_link_libraries(gti_foreign_variable_syntax_tests PRIVATE gti_compiler)
+add_test(NAME foreign_variable_syntax COMMAND gti_foreign_variable_syntax_tests)
+if(TARGET gti_lsp)
+  add_test(NAME foreign_variable_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/foreign_variable_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(foreign_variable_lsp PROPERTIES TIMEOUT 90)
+endif()
 
 add_executable(gti_protected_member_tests protected_member_tests.cpp)
 target_link_libraries(gti_protected_member_tests PRIVATE gti_compiler)
@@ -848,6 +870,11 @@ add_executable("gti_failure_metadata_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_metadata_tests.cpp")
 target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
 add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
+add_test(NAME cpp_identifier_relocation
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/cpp_identifier_relocation_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(cpp_identifier_relocation PROPERTIES TIMEOUT 300)
 
 add_executable("gti_mir_shared_failure_cleanup_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_shared_failure_cleanup_tests.cpp")
@@ -937,6 +964,9 @@ set_tests_properties(native_enum_bindgen PROPERTIES TIMEOUT 300)
 add_test(NAME native_typedef_bindgen
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py" $<TARGET_FILE:gti> --example native-callback-slots)
 set_tests_properties(native_typedef_bindgen PROPERTIES TIMEOUT 300)
+add_test(NAME native_union_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py" $<TARGET_FILE:gti> --example native-union-bindings)
+set_tests_properties(native_union_bindgen PROPERTIES TIMEOUT 300)
 add_test(NAME native_array_index_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_array_index_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(native_array_index_runtime PROPERTIES TIMEOUT 300)
@@ -1147,6 +1177,13 @@ add_executable(gti_protocol_concept_tests
   "${PROJECT_SOURCE_DIR}/tests/protocol_concept_tests.cpp")
 target_link_libraries(gti_protocol_concept_tests PRIVATE gti_cpp_backend)
 add_test(NAME protocol_concepts COMMAND gti_protocol_concept_tests)
+if(TARGET gti_lsp)
+  add_test(NAME conformance_header_lsp
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/conformance_header_lsp_test.py"
+                   "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(conformance_header_lsp PROPERTIES TIMEOUT 120)
+endif()
 add_executable(gti_tryable_propagation_tests
   "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
 target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend)
@@ -3842,6 +3879,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(constructor_borrow_replacement_runtime PROPERTIES TIMEOUT 240)
+    add_test(
+      NAME constructor_text_reference_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/constructor_text_reference_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(constructor_text_reference_runtime PROPERTIES TIMEOUT 240)
     add_test(
       NAME allocation_default_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"

@@ -1296,7 +1296,8 @@ SFINAE, or a general template metaprogramming facility.
 
 `union Name { fields... };` declares untagged overlapping storage. A union is
 nongeneric, complete, baseless, non-empty, and public. It contains only
-instance fields and cannot declare attributes, access sections, methods,
+instance fields and cannot declare attributes other than the explicit `[[c_abi]]`
+representation opt-in, access sections, methods,
 constructors, a destructor, static fields, or field initializers. Fields may be
 fixed-width scalars, raw pointers, integral scoped enums, concrete fixed arrays
 of admitted fields, nested valid unions, or valid `[[c_abi]]` records. A
@@ -1308,7 +1309,10 @@ Every union member read or write requires an `unsafe` block because the
 compiler does not track the active field. Ordinary mutability still applies: a
 write also requires a mutable union place and a field declared with `mut`.
 Union copies are passive byte-representation copies; unions do not acquire
-hidden lifecycle behavior. `GTI-S2066` owns declaration-shape failures, while
+hidden lifecycle behavior. `[[c_abi]] union` restricts fields to the native C
+record allowlist and admits C ABI passage and generated-header/import support;
+see [native C interoperation](native-c-interop.md#passive-native-records).
+`GTI-S2066` owns ordinary union declaration-shape failures, while
 the ordinary unsafe diagnostic owns safe member access.
 
 The declaration spellings `enum Name` and `enum class Name` have identical

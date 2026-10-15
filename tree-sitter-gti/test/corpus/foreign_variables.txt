@@ -1,0 +1,46 @@
+==================
+Foreign variables share a C linkage block with functions
+==================
+
+extern "C" {
+  mut c_int counter;
+  c_int limit;
+  mut Callback slot;
+  [[link_name("native_count")]] mut c_int renamed;
+  c_int read_counter();
+}
+
+---
+
+(source_file
+  (extern_c_declaration
+    (string_literal)
+    (extern_c_variable_declaration
+      (type
+        (user_type
+          (identifier)))
+      (identifier))
+    (extern_c_variable_declaration
+      (type
+        (user_type
+          (identifier)))
+      (identifier))
+    (extern_c_variable_declaration
+      (type
+        (user_type
+          (identifier)))
+      (identifier))
+    (extern_c_variable_declaration
+      (native_link_name_attribute
+        (identifier)
+        (string_literal))
+      (type
+        (user_type
+          (identifier)))
+      (identifier))
+    (extern_c_function_prototype
+      (type
+        (user_type
+          (identifier)))
+      (identifier)
+      (parameter_clause))))

@@ -38,8 +38,8 @@ def cleanup_free_receiver_cases(name="conditional_cleanup_free_receiver"):
     # fails while borrowing it. Cleanup destroys only what was constructed
     # before the failure.
     expected = [
-        (0, shapes + trace("left", "right", "ratio", "nested", -210, -207, -204,
-                           -201), ""),
+        (0, shapes + trace("left", "right", "ratio", "nested", -211,
+                           "constructed", -210, -207, -204, -201), ""),
         (70, shapes + trace(-201), primary(line("Pod risky(int id"))),
         (70, shapes + trace("left", -204, -201),
          primary(line("Pod chancy(int id"))),
@@ -47,6 +47,12 @@ def cleanup_free_receiver_cases(name="conditional_cleanup_free_receiver"):
          primary(line("int ratio(int divisor)"))),
         (70, shapes + trace("left", "right", "ratio", -210, -207, -204, -201),
          primary(line("Pod chancy(int id"))),
+        (70, shapes + trace("left", "right", "ratio", "nested", -210, -210,
+                           -207, -204, -201),
+         primary(line("FromTracked(Tracked input"))),
+        (70, shapes + trace("left", "right", "ratio", "nested", -211, -210,
+                           -207, -204, -201),
+         primary(line("FromTracked(Tracked input"))),
     ]
     return {fixture.stem: [(tuple(["case"] * index), result)
                            for index, result in enumerate(expected)]}

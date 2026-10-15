@@ -779,8 +779,9 @@ private:
   }
 
   void printValue(const LoweredStorageDeclaration &value) {
-    output << "storage(symbol=" << value.symbol << ";owner=" << value.ownerClass
-           << ";type=";
+    output << "storage(symbol=" << value.symbol
+           << ";external=" << std::quoted(value.externalSymbol)
+           << ";owner=" << value.ownerClass << ";type=";
     type(value.type);
     output << ";access=" << number(value.access) << ';';
     traits(value.traits);
@@ -817,7 +818,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v19\n";
+  output << "lowered-program-v20\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

@@ -38,7 +38,9 @@ You do not need to read the entire sequence to find an API pattern:
 | Encode and decode any struct as JSON with no codec | [141: reflected JSON](141-reflected-json.gti) |
 | Organize a reflected JSON configuration with nested types | [147: nested configuration](147-nested-configuration.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
+| Import named C unions and nested event payloads | [native union bindings project](native-union-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
+| Access actual C-owned globals, callback slots and passive records | [native variable bindings project](native-variable-bindings/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
@@ -104,7 +106,7 @@ is a teaching helper, not a production server.
 | `023-direct-initialization.gti` | exact construction, field replacement, generated and nominal-field defaults, designated defaults and finite value-generic layouts |
 | `024-static.gti` | source-local storage and type-owned class members |
 | `025-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
-| `026-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
+| `026-stored-references.gti` | owner-tied iterators and text adapters retaining both a view binding and its character owner |
 | `027-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
 | `028-callable-parameters.gti` | confined generic operations, borrowed stateful/lambda callables, reference forwarding and inferred conditional results |
 | `029-callable-predicates.gti` | exact bool predicate results from confined generic callables |

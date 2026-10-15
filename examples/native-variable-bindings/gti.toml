@@ -1,0 +1,17 @@
+manifest-version = 1
+
+[package]
+name = "native-variable-bindings"
+version = "0.1.0"
+
+[package.native]
+c-sources = ["native/foreign_variables.c"]
+
+[bindgen.foreign_variables]
+header = "native/foreign_variables.h"
+namespace = "native"
+rename = { foreign_epoch = "epoch" }
+
+[targets.native-variable-bindings]
+kind = "executable"
+root = "src/main.gti"

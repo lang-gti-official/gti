@@ -104,6 +104,8 @@
     name: (identifier) @function.method))
 (extern_c_function_prototype
   name: (identifier) @function)
+(extern_c_variable_declaration
+  name: (identifier) @variable)
 (method_declaration
   name: (identifier) @function.method)
 (operator_declaration

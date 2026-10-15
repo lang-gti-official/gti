@@ -90,6 +90,23 @@ public:
 
 Pod fresh(int id) { return Pod(id); }
 
+// The result has no cleanup, but its constructor still receives a prepared
+// class argument. The selected input is transferred exactly once, and failure
+// before publication must not activate the joined result.
+class FromPlain {
+public:
+  int value;
+  FromPlain(Plain input) : value(input.get()) {}
+  int read() { return this.value; }
+};
+
+class FromTracked {
+public:
+  int value;
+  FromTracked(Tracked input, int divisor) : value(input.id / divisor) {}
+  int read() { return this.value; }
+};
+
 Pod make_pod(Plain source) { return Pod(source.get()); }
 
 Pod unwrap(Tracked source) { return Pod(source.id); }
@@ -309,12 +326,17 @@ int run(bool left, int base) {
 }
 
 int main(int argc, std::vector<std::string> argv) {
+  if ((true ? FromPlain(Plain(41)) : FromPlain(Plain(42))).read() != 41 ||
+      (false ? FromPlain(Plain(41)) : FromPlain(Plain(42))).read() != 42) {
+    return 90;
+  }
   std::println(run(true, 0));
   std::println(run(false, 100));
   // Failure cleanup. Scenario 1 fails the left arm's callee, 2 the right
   // arm's, 3 the member call on the joined value, and 4 a nested arm's
-  // callee on a loop's second iteration. Cleanup destroys only what was
-  // constructed before the failure.
+  // callee on a loop's second iteration. Scenarios 5 and 6 fail the left
+  // and right constructors after their tracked inputs are prepared. Cleanup
+  // destroys only what was constructed before the failure.
   int scenario = argc - 1;
   Tracked first{201};
   int left = read_raising(scenario == 1, 202, 203, scenario == 1 ? 0 : 1);
@@ -328,5 +350,8 @@ int main(int argc, std::vector<std::string> argv) {
   Tracked fourth{210};
   int nested = loop_nested_raising(false, 3, scenario == 4 ? 0 : 1);
   std::println("nested");
-  return left + right + ratio + nested - 12628;
+  int constructed = (scenario == 5 ? FromTracked(Tracked(210), 0)
+                                    : FromTracked(Tracked(211), scenario == 6 ? 0 : 1)).read();
+  std::println("constructed");
+  return left + right + ratio + nested - 12628 + constructed - 211;
 }
