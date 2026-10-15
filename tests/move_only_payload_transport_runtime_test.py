@@ -5,13 +5,15 @@ A payload enum whose alternative holds a move-only class with no destructor
 needs no cleanup but cannot be copied. The fixture passes such an enum by
 value to free functions, a method, a constructor, a lambda and a generic
 function, returns its payload from a consuming arm (the reported shape),
-observes a named enum, a parameter and a field in place, and stores one in a
-fixed array, a vector and std::experimental::optional. Tokens trace
-construction (id) and consumption (id + 1000), so each payload appears once
-in each role. The same shapes over an owning enum trace construction (id)
-and destruction (-id), so each payload is destroyed exactly once. Phases 1
-and 2 fail inside a consuming arm reached through a by-value argument, for
-the cleanup-free and the owning enum; every live owner is released once.
+returns the enum from a function that can fail, observes a named enum, a
+parameter and a field in place, and moves the enum through a fixed array, a
+vector and a loop and its payload class through std::experimental::optional.
+Tokens trace construction (id) and consumption (id + 1000), so each payload
+appears once in each role. The same shapes over an owning enum trace
+construction (id) and destruction (-id), so each payload is destroyed exactly
+once. Phases 1 and 2 fail inside a consuming arm reached through a by-value
+argument, for the cleanup-free and the owning enum; every live owner is
+released once.
 """
 
 import pathlib
@@ -25,8 +27,8 @@ from unique_class_allocation_runtime_test import run
 CASES = [
     (0, 0, [1, 1001, 2, 1002, 0, 1000, 3, 2001, 1003, 4, 2001, 5, 2005, 6,
             2001, 1006, 7, 1007, 8, 1008, 9, 1009, 10, 1, 11, 2001, 1011, 12,
-            1012, 13, 1013, 21, 1021, 22, 2001, -22, 1022, 23, -23, 2001, 24,
-            -24, 1024, -21], None),
+            1012, 13, 1013, 25, 1025, 21, 1021, 22, 2001, -22, 1022, 23, -23,
+            2001, 24, -24, 1024, -21], None),
     (1, 70, [50, 51, -50], ("ordinary", "slot")),
     (2, 70, [60, 61, -61, -60], ("ordinary", "parcel")),
 ]

@@ -101,6 +101,12 @@ public:
 
 T relay<T>(T value) { return value; }
 
+// A function that can fail publishes its slot result by move.
+slot checked(int32_t divisor) {
+  int32_t id = 100 / divisor;
+  return slot::held(token(id));
+}
+
 int32_t divide_slot(slot choice, int32_t divisor) {
   switch (std::move(choice)) {
   case slot::held(item):
@@ -151,6 +157,7 @@ void transport() {
     round = round + 1;
     std::println(redeem(slot::held(token(11 + round))));
   }
+  std::println(redeem(checked(4)));
 }
 
 class Tracked {
