@@ -16,9 +16,10 @@ for what minor and patch releases mean.
   stores the result of a `virtual` method call and the result's class needs
   cleanup, such as `Holder(Maker& maker) : kept(maker.make()) {}`. This covers
   overrides selected through a base or interface reference, pure-virtual and
-  interface methods, `mut` and consuming (`&&`) virtual methods, and generic
-  classes. If the selected override fails, the field is never initialized; if
-  a later member initializer fails, the field is destroyed before the failure
+  interface methods, `mut` and consuming (`&&`) virtual methods, generic
+  classes, and field defaults such as `Tracked kept = shared_maker.make();`.
+  If the selected override fails, the field is never initialized; if a later
+  member initializer fails, the field is destroyed before the failure
   propagates.
 - Calling a non-consuming `virtual` method on a temporary, such as
   `Tracked t = Maker().make();`, `kept(Maker().make())` or the field default

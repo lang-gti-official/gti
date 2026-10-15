@@ -26,6 +26,13 @@ public:
   Tracked make() override { return Tracked(2); }
 };
 
+class Tripling : public Maker {
+public:
+  Tracked make() override { return Tracked(3); }
+};
+
+Tripling shared_maker{};
+
 // The base member cannot fail; its override can.
 class Source {
 public:
@@ -124,6 +131,14 @@ public:
   Keeper(Store<T> store) : kept(std::move(store).take()) {}
 };
 
+// A declaration default runs as the selected constructor's initializer stage.
+class Defaulted {
+  mut Tracked kept = shared_maker.make();
+public:
+  Defaulted() {}
+  int read() { return this.kept.read(); }
+};
+
 // The second initializer can fail after the first virtual result was
 // published into its field.
 class Pair {
@@ -174,10 +189,14 @@ int main(int argc, std::vector<std::string> argv) {
     Narrowed narrowed{halving, 3};
     total += narrowed.read();
   }
+  {
+    Defaulted defaulted{};
+    total += defaulted.read();
+  }
   Dividing dividing{18};
   Split split{dividing, split_divisor};
   Maker maker{};
   Pair pair{maker, dividing, later};
   std::println("kept");
-  return total + split.read() + pair.read() - 47;
+  return total + split.read() + pair.read() - 50;
 }
