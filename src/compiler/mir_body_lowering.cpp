@@ -3745,10 +3745,11 @@ private:
     std::erase_if(lowered.additionalDependencies, [](const auto &dependency) {
       return dependency.source == 0;
     });
-    if (!loan.entry && !loan.designatedFields.empty())
+    if (!loan.entry &&
+        (!loan.designatedFields.empty() || loan.referenceSelection))
       lowered.additionalDependencies.clear();
     for (const auto &dependency : loan.additionalDependencies) {
-      if (!dependency.designatedFields.empty()) {
+      if (!dependency.designatedFields.empty() || loan.referenceSelection) {
         MirPlaceId concreteSource = 0;
         if (!loan.entry) {
           const auto matches = [&](MirPlaceId id) {
@@ -3762,6 +3763,17 @@ private:
               concreteSource = previous.source;
               break;
             }
+          // A selected scalar reference can have several alternative owners
+          // even though it no longer contains a reference-bearing field path.
+          // Its carrier has already materialized every external origin. Map
+          // those existing places; never use the selected runtime address as
+          // a replacement for an omitted owner.
+          if (concreteSource == 0 && loan.referenceSelection)
+            for (const auto &place : output.places)
+              if (place.root != MirPlaceRootKind::Value && matches(place.id)) {
+                concreteSource = place.id;
+                break;
+              }
           if (concreteSource == 0) {
             valid = false;
             return;
@@ -9978,7 +9990,17 @@ private:
         valid = false;
         return {};
       }
-      output.places[field - 1].key = desired->place;
+      // Ordinary payload borrowing protects the enum's field storage. A
+      // stored-reference extraction instead protects external owners and
+      // retains its evaluated address separately in referenceSelection.
+      const MirPlaceId origin =
+          desired->referenceSelection ? placeForLoan(*desired, value) : field;
+      if (origin == 0) {
+        valid = false;
+        return {};
+      }
+      if (!desired->referenceSelection)
+        output.places[field - 1].key = desired->place;
       MirLoanId parent = 0;
       if (desired->parent != 0) {
         const auto found = semanticLoans.find(desired->parent);
@@ -9989,7 +10011,7 @@ private:
         parent = found->second;
       }
       const MirLoanId loan =
-          createLoan(MirLoanKind::Local, field, desired->access, valueId,
+          createLoan(MirLoanKind::Local, origin, desired->access, valueId,
                      binding, 0, parent);
       recordLoanIdentity(loan, *desired, binding);
       (void)appendInstruction(
