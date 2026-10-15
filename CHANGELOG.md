@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.3 — Conditional member-call results without cleanup
+## 0.439.6 — Conditional member-call results without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when both arms of `?:` produce a class
@@ -25,6 +25,61 @@ for what minor and patch releases mean.
   `Pod f(bool c, int a, int b) { return c ? lift(a) : lift(b); }`. The
   caller read a result that was never written, which could also crash an
   optimized build.
+
+## 0.439.5 — Consuming method calls with a later argument that can fail
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a consuming (`&&`) method is called on a
+  value moved out of a variable whose class needs no cleanup and a later
+  argument can fail, such as `Quiet q = std::move(maker).make(1 / d);`. This
+  covers `mut` and immutable parameters and locals, returned, discarded,
+  replacing and field-read results, `expected` results, generic classes,
+  lambdas, consuming `operator()`, loops, the arms of `?:` and constructor
+  member initializers such as
+  `Holder(Maker m, int d) : item(std::move(m).make(1 / d)) {}`. If the
+  argument fails, the method never runs, and arguments already evaluated are
+  destroyed once.
+- The same error no longer stops a constructor member initializer that passes
+  a moved or copied class argument before an argument that can fail, such as
+  `item(build(std::move(m), 1 / d))`.
+
+## 0.439.4 — Consuming calls on moved generic classes
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a consuming (`&&`) method is called on a
+  generic class value moved out of a local or parameter, such as
+  `int t = std::move(m).probe();`. It happened when the class declares a
+  default constructor, does not delete its copy constructor, and is
+  instantiated with a type that needs cleanup. Examples are `maybe<Tracked>`
+  with an owning payload-enum field `mut state<T> slot;` or a plain
+  `mut T item;` field, where `Tracked` has a destructor.
+- The fix covers methods that leave the fields in place and methods that move
+  a field out first, such as
+  `T value() && { switch (std::move(this.slot)) { ... } }`. It also covers
+  results that are returned, wrapped in `expected`, or stored by a member
+  initializer. The moved value is destroyed once, at the end of the full
+  expression that consumed it.
+- Classes that delete their copy constructor, such as
+  `std::experimental::optional`, were not affected.
+
+## 0.439.3 — Conformance block types are checked once
+
+- A problem in a conformance block's pattern is reported once, at the
+  pattern. With `class holder<std::copy_constructible T>`, the block
+  `for <T> concept wrapped<holder<T>>` used to report the unsatisfied
+  constraint (`GTI-S2029`) at `holder<T>` once for the block and again for
+  each operation; an unknown pattern type repeated the same way. Each
+  operation's own parameter types are still checked at their own location.
+- A block's pattern and `using` types are checked once every class's members
+  and lifecycle are known, as other declarations are. A valid block over a
+  concrete type, such as `for concept wrapped<box<Coin>>` where `box`
+  requires `std::equality_comparable` and `Coin` defines `operator==`, no
+  longer fails with `Type 'unknown class' does not satisfy ...`, and a
+  `using` type may project through a block declared later in the file. A
+  concrete pattern that fails such a requirement, such as `holder<Ticket>`
+  for a non-copyable `Ticket`, is now reported at the pattern.
+- Completion inside a block's pattern offers the types in scope whether or
+  not the block has operations.
 
 ## 0.439.2 — Conditional class results from moved inputs
 
