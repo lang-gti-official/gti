@@ -1625,9 +1625,17 @@ When cleanup such as the drop of a moved-from parameter runs between the call
 and the Return, the result stays in its value-rooted slot and the Return takes
 it out. A fallible cleanup in between reparents the result to its return-result
 obligation, and the failure path destroys that slot rather than the caller's
-never-constructed storage. A failure-free call returning a reference binds its
-call-result loan by address in either body form. A plain body returning a moved
-class, callable, owning array or `Expected<Class, E>` value stages it at the
+never-constructed storage. The call may be a consuming (`&&`) source member
+whose `Once` receiver passes the shared consuming-receiver proof, as in
+`return std::move(box).release();`. Its receiver is not transferred at the
+call, so the receiver's full-expression drop is one of those later cleanups.
+No other invocation capability is admitted. A cleanup-free receiver moved out
+of a binding is instead a prepared parameter that the call transfers out; the
+consuming-receiver proof does not admit that transport yet, so this proof
+refuses such a returned result. A failure-free call returning a
+reference binds its call-result loan by address in either body form. A plain
+body returning a moved class, callable, owning array or `Expected<Class, E>`
+value stages it at the
 Move, before any later drop of the moved-from source, and returns it from that
 slot; a moved class value that the Return wraps as the success alternative of
 an `Expected<Class, E>` result is staged the same way. A moved owning payload
