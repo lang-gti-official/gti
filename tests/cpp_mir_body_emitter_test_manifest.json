@@ -102,6 +102,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testBorrowedArgumentNestedOwningArgumentAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalExpectedArgumentReceiverAdmission",
       "suite": "preflight"
     },
@@ -427,6 +431,10 @@
     },
     {
       "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
+      "name": "testCheckedConditionalArmInputs",
       "suite": "text"
     },
     {
