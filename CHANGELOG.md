@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.1 — Returning stored string view fields
+## 0.440.2 — Returning stored string view fields
 
 - Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
   missing its escaping loan") when a method or function returns a
@@ -23,6 +23,23 @@ for what minor and patch releases mean.
   destroy that object while the view is still in use.
 - A stored view may also be one branch of a function whose other branch
   returns a view tied to its receiver, in the same way a string literal can.
+
+## 0.440.1 — Conditional member-call results without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` produce a class
+  result without a destructor from a method call, such as
+  `Pod t = c ? a.peek() : b.peek();` or
+  `return c ? std::move(a).pod() : std::move(b).pod();`, or from a call that
+  consumes a value moved into it, such as
+  `Pod t = c ? make(std::move(a)) : make(std::move(b));`. This covers
+  read-only, mutable and consuming (`&&`) receivers, methods and functions
+  that can fail, and arms that mix such calls with ordinary ones.
+- Fix a wrong result when a function returns such a conditional and an arm
+  calls a function that can fail, as in
+  `Pod f(bool c, int a, int b) { return c ? lift(a) : lift(b); }`. The
+  caller read a result that was never written, which could also crash an
+  optimized build.
 
 ## 0.440.0 — Virtual method calls on temporaries
 
