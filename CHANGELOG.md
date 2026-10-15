@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.6 — Conditional member-call results without cleanup
+## 0.440.1 — Conditional member-call results without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when both arms of `?:` produce a class
@@ -25,6 +25,38 @@ for what minor and patch releases mean.
   `Pod f(bool c, int a, int b) { return c ? lift(a) : lift(b); }`. The
   caller read a result that was never written, which could also crash an
   optimized build.
+
+## 0.440.0 — Virtual method calls on temporaries
+
+- A temporary can now call any `virtual` method, override or interface
+  implementation, the same way it already called ordinary methods:
+  `Tracked t = Maker().make();`, `kept(Maker().make())`, the field default
+  `Tracked kept = Maker().make();` and `Counting(4).build(1)` through a `mut`
+  interface method. The selected override still runs, and the temporary is
+  destroyed at the end of the full expression, also when the override fails.
+  Read-only calls previously stopped with an internal compiler error
+  (`GTI-B0001`); `mut` calls were rejected with `GTI-S2081` ("Virtual dispatch
+  on a temporary receiver is not supported").
+- Fix the internal compiler error ("failed to construct valid MIR") when a
+  temporary of a derived class calls a method it inherits without overriding,
+  such as `Derived().base_method()`.
+
+## 0.439.6 — Borrowed arguments before a conditional whose test can fail
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call passes a local by reference and
+  a later argument is a conditional whose test calls a function that can
+  fail, such as `use(plain, has(argv, "split") ? 0 : 2)` or
+  `User user{plain, has(argv, "split") ? 0 : 2};`. The same fix covers a
+  test that is a method call (including a `mut` method on another local),
+  that reads the borrowed local itself, or that compares a returned
+  `std::string_view`; a call in one arm, as in `argc > 1 ? count(argv) : 0`;
+  a `mut` reference argument; a borrowed method receiver; and a local lambda
+  as the called function. If the test or arm fails, each live local is
+  destroyed once, as before.
+- A conditional argument whose arms select a `std::string_view`, such as
+  `describe(plain, argc > 1 ? "yes" : "no")`, also no longer stops with this
+  error after a local passed by reference.
 
 ## 0.439.5 — Consuming method calls with a later argument that can fail
 

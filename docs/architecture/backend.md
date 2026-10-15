@@ -345,14 +345,12 @@ A member or closure receiver moved out of a named binding materializes at its
 `Move`: the backend constructs the receiver's lifetime slot from the binding
 there, and the Receiver `MoveValue` input and the call only alias that slot.
 Local declaration planning gives neither SSA identity storage of its own. The
-receiver stage is not a copy stage, even when the class's representation row
-carries a generic declaration's default and copy constructors for an instance
-that is move-only. A consuming member is invoked on the slot as an rvalue; a
-selected read-only or mutable fallback is invoked on it as an lvalue. When the
-full expression has no internal merge, the slot is the moved value's own
-Value-rooted place. Inside one arm of a conditional expression or a
-short-circuit operand, MIR instead
-names as the Move's destination the hidden temporary that carries the
+receiver stage is not a copy stage. A consuming member is invoked on the slot
+as an rvalue; a selected read-only or mutable fallback is invoked on it as an
+lvalue. When the full expression has no internal merge, the slot is the moved
+value's own Value-rooted place. Inside one arm of a conditional expression or a
+short-circuit operand, MIR instead names as the Move's destination the hidden
+temporary that carries the
 receiver's full-expression obligation through the merge, and the Drops after
 the merge are conditional on the arm that ran. That temporary is the receiver's
 slot only when the Move activates its unique Value obligation, the input and
@@ -1309,7 +1307,12 @@ hidden slot and emits the selected method through the staged `BorrowRead` or
 `BorrowWrite` input. Verification and emission use the same MIR
 materialization query. The corresponding MIR drop remains the only destruction
 authority on normal and defined-failure paths. The backend does not infer
-mutability from a C++ rvalue or reselect the native member overload.
+mutability from a C++ rvalue or reselect the native member overload. A
+virtual member's call keeps its MIR dispatch: the slot is presented as the
+member's owner class (the temporary's own class or one of its bases) and the
+table selects the override, through the transformed status ABI when the family
+is failure-capable. The emitter allocates no storage for a by-value receiver
+here.
 
 For a verified read-only temporary argument input, the body emitter uses the
 same exact value-rooted lifetime slot and passes that slot to the selected
@@ -1999,7 +2002,15 @@ A selected, nameable application of an eligible top-level generic class
 similarly emits as an ordinary `__gti_type_<digest>_<source-name>` class. The
 digest owns the nominal primary, source-unit identity, generic parameter shape,
 and exact type/value arguments. Fields, bases, initializers, lifecycle status,
-and constructors come from the matching sealed MIR class instance. An ordinary
+and constructors come from the matching sealed MIR class instance. A deleted
+status spells `= delete`, including a default constructor whose requirements
+the application fails. The representation snapshot's class row takes its
+boundary, copy-construction and copy-assignment proofs from the same instance
+statuses. The generic declaration's statuses describe only its open primary, so
+`maybe<Tracked>` over a move-only payload is not copy-constructible even though
+`maybe<T>` generates a copy constructor. A class type without exactly one
+sealed instance keeps its declaration's statuses. Compiler-capability and
+passive C ABI types keep their unconditional boundary proofs. An ordinary
 method on that class, and a nameable generic method on an ordinary class, uses
 `__gti_member_<digest>_<source-name>` unless C++ requires the source spelling
 for an operator or virtual override family. Nameable generic constructors on
@@ -3723,10 +3734,19 @@ Unused passive constructor tags retain their exact
 lexical cleanup without preventing other fields' verified initialization.
 
 A borrowed bare-local call input may remain representation-erased across a
-conditional scalar argument. Its stage must dominate the unique consuming call,
-and every normal path through the acyclic argument region must reach that call.
-Scalar computations, loads, input stages, and scalar expression-temporary
-initialization may intervene. The proof also covers a nested read-receiver or
+conditional scalar or text-view argument. Its stage must dominate the unique
+consuming call, and every normal path through the acyclic argument region must
+reach that call. Scalar and text-view computations, loads, input stages and
+expression temporaries may intervene. A nested function or method call may run
+wholly inside the region, for example as the conditional's test, one arm's
+value, or a direct scalar argument. Its inputs are scalar or
+text-view values and borrows staged for it alone: the receiver and arguments
+may borrow binding-rooted places through fields and reference dereferences,
+and a mutable borrow never names the borrowed place's root. Its scalar or
+text-view result has no loan or lifecycle, and any region instruction may
+consume it: a branch, a computation, a temporary or an input stage. The call
+keeps its MIR position and its own Invoke failure edge, which leaves the
+region before the outer call. The proof also covers a nested read-receiver or
 free function call, or an exact constructor, with scalar inputs and a cleanup-free nominal result whose
 sole consumer is an exact prepared argument slot for the outer call. Its
 failure edge precedes publication; result preparation does not change the

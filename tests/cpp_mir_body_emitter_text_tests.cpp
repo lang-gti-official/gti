@@ -2605,6 +2605,135 @@ int main() {
          "and the backend boundary");
 }
 
+// A class row's special-member facts are its application's, not its generic
+// declaration's. Both declarations copy and default-construct for their open
+// primary; over a move-only payload without a default constructor, each
+// application deletes its copies, and box<Tracked> also loses the default
+// constructor its requirements exclude. The rows must agree with the emitted
+// concrete classes.
+void testGenericInstanceSpecialMemberRows() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-generic-instance-rows.gti", R"(
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+
+enum class state<T> { empty, engaged(T value) };
+
+class maybe<T> {
+  mut state<T> slot;
+public:
+  maybe() : slot(state<T>::empty) {}
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  int get() { return 1; }
+};
+
+class box<T> {
+  mut T item;
+public:
+  box() requires std::default_initializable<T> : item(T()) {}
+  box(T value) : item(std::move(value)) {}
+  int get() { return 1; }
+};
+
+int main() {
+  maybe<Tracked> owned = maybe<Tracked>(Tracked(3));
+  maybe<Tracked> vacant = maybe<Tracked>();
+  maybe<int> scalar = maybe<int>();
+  box<Tracked> boxed = box<Tracked>(Tracked(5));
+  box<int> zero = box<int>();
+  return owned.get() + vacant.get() + scalar.get() + boxed.get() + zero.get() -
+         5;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the generic special-member row fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  const lang::CppMirBodyEmissionMapRows rows =
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
+  const std::string text = gti_test::emitCpp(frontend).contents;
+  struct Expectation {
+    std::string_view name;
+    bool tracked;
+    bool defaultConstructible;
+    bool copyable;
+  };
+  for (const Expectation &expected : {Expectation{"maybe", true, true, false},
+                                      Expectation{"maybe", false, true, true},
+                                      Expectation{"box", true, false, false},
+                                      Expectation{"box", false, true, true}}) {
+    const std::string label = std::string(expected.name) + "<" +
+                              (expected.tracked ? "Tracked" : "int") + ">";
+    const auto instance = std::find_if(
+        frontend.mir.classInstances().begin(),
+        frontend.mir.classInstances().end(),
+        [&](const lang::MirClassInstance &candidate) {
+          const lang::LoweredClassDeclaration *declaration =
+              lowered.findClassDeclaration(candidate.declaration);
+          return declaration != nullptr &&
+                 declaration->qualifiedName == expected.name &&
+                 candidate.type.arguments.size() == 1 &&
+                 (expected.tracked ? candidate.type.arguments.front().kind ==
+                                         lang::SemanticType::Class
+                                   : candidate.type.arguments.front() ==
+                                         lang::SemanticType::Int32);
+        });
+    expect(instance != frontend.mir.classInstances().end(),
+           label + " should have one sealed MIR instance");
+    if (instance == frontend.mir.classInstances().end()) {
+      continue;
+    }
+    // The declaration's statuses describe the open primary for both
+    // applications; only the instance distinguishes them.
+    const lang::LoweredClassDeclaration *declaration =
+        lowered.findClassDeclaration(instance->declaration);
+    expect(declaration != nullptr &&
+               declaration->defaultConstructor ==
+                   lang::SpecialMemberStatus::Declared &&
+               declaration->copyConstructor ==
+                   lang::SpecialMemberStatus::Generated &&
+               declaration->copyAssignment ==
+                   lang::SpecialMemberStatus::Generated,
+           label + "'s declaration should keep its open-primary statuses");
+    const auto row =
+        std::find_if(rows.types.begin(), rows.types.end(),
+                     [&](const lang::CppMirTypeRepresentation &candidate) {
+                       return candidate.type == instance->type;
+                     });
+    expect(row != rows.types.end() && row->concreteGenericClass,
+           label + " should have a direct concrete class row");
+    if (row == rows.types.end()) {
+      continue;
+    }
+    expect(row->boundaryConstructible == expected.defaultConstructible &&
+               row->copyConstructible == expected.copyable &&
+               row->copyable == expected.copyable,
+           label + "'s row should carry its own instance's special members");
+
+    // The emitted concrete class spells the same lifecycle. Every default-
+    // constructible application is default-constructed by the program, so
+    // its class declares that constructor.
+    const std::string name =
+        row->spelling.substr(row->spelling.rfind("::") + 2);
+    expect(text.find(name + "(const " + name + " &other) = " +
+                     (expected.copyable ? "default;" : "delete;")) !=
+               std::string::npos,
+           label + "'s emitted copy constructor should match its row");
+    expect(text.find(" " + name + "()" +
+                     (expected.defaultConstructible ? ";" : " = delete;")) !=
+               std::string::npos,
+           label + "'s emitted default constructor should match its row");
+  }
+}
+
 void testReferenceParameterBorrowUsesReferentCarrier() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-reference-parameter-range.gti", R"(
@@ -6155,6 +6284,8 @@ constexpr NamedTest kTests[] = {
      testContextualSignedMinimumInFailureCaller},
     {"testPlainCopyReturnUsesExactSourcePlace",
      testPlainCopyReturnUsesExactSourcePlace},
+    {"testGenericInstanceSpecialMemberRows",
+     testGenericInstanceSpecialMemberRows},
     {"testReferenceParameterBorrowUsesReferentCarrier",
      testReferenceParameterBorrowUsesReferentCarrier},
     {"testAdjacentClassCopyAssignmentFusion",

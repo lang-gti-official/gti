@@ -3075,6 +3075,18 @@ private:
   resolveDefaultConstruction(const SemanticType &type,
                              bool baseSubobject = false) const;
 
+  // A declared default constructor's requirements for one concrete
+  // application of its class.
+  [[nodiscard]] std::vector<AppliedConceptRequirement>
+  defaultConstructorRequirements(const ConstructorInfo &constructor,
+                                 const GenericSubstitution &substitution) const;
+
+  // Construction never selects a declared default constructor whose
+  // requirements fail for an application's arguments, so that application
+  // has no default constructor.
+  [[nodiscard]] bool
+  declaredDefaultConstructorApplies(const SemanticType &type) const;
+
   [[nodiscard]] static std::size_t genericTypeParameterCount(
       const std::vector<GenericParameterInfo> &parameters);
 
