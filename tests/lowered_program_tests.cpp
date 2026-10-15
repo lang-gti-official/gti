@@ -765,6 +765,26 @@ void testMutationRejection() {
   }
 
   lang::LoweredProgram duplicateIdentity = original;
+  lang::LoweredProgram missingSourceIdentity = original;
+  for (auto &declaration :
+       lang::LoweredProgramTestAccess::declarations(missingSourceIdentity)) {
+    if (auto *payload =
+            std::get_if<lang::LoweredClassDeclaration>(&declaration.payload)) {
+      payload->sourceUnit = 999999;
+      break;
+    }
+  }
+  const auto sourceIssues = lang::verifyLoweredProgram(missingSourceIdentity);
+  expect(std::any_of(
+             sourceIssues.begin(), sourceIssues.end(),
+             [](const auto &issue) {
+               return issue.kind == lang::LoweredProgramIssueKind::
+                                        InvalidDeclarationInventory &&
+                      issue.detail ==
+                          "lowered declaration has no logical source identity";
+             }),
+         "a declaration without a logical source identity must fail before "
+         "emission");
   auto &duplicateDeclarations =
       lang::LoweredProgramTestAccess::declarations(duplicateIdentity);
   lang::LoweredFunctionDeclaration *firstFunction = nullptr;

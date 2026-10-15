@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.7 — Reproducible generated names and conformance diagnostics
+
+- Generated C++ identifiers remain the same when a project or its standard
+  library moves to another directory. Distinct source units retain distinct
+  nominal identities, including external files with the same basename.
+- Conformance block header errors are reported once, independently of the
+  number of operations. An indirectly included concept retains its declaration
+  location and direct-include suggestion even when the block has no operations.
+
 ## 0.439.6 — Borrowed arguments before a conditional whose test can fail
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

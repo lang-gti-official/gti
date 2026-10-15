@@ -848,6 +848,11 @@ add_executable("gti_failure_metadata_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_metadata_tests.cpp")
 target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
 add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
+add_test(NAME cpp_identifier_relocation
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/cpp_identifier_relocation_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(cpp_identifier_relocation PROPERTIES TIMEOUT 300)
 
 add_executable("gti_mir_shared_failure_cleanup_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_shared_failure_cleanup_tests.cpp")
@@ -1147,6 +1152,13 @@ add_executable(gti_protocol_concept_tests
   "${PROJECT_SOURCE_DIR}/tests/protocol_concept_tests.cpp")
 target_link_libraries(gti_protocol_concept_tests PRIVATE gti_cpp_backend)
 add_test(NAME protocol_concepts COMMAND gti_protocol_concept_tests)
+if(TARGET gti_lsp)
+  add_test(NAME conformance_header_lsp
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/conformance_header_lsp_test.py"
+                   "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(conformance_header_lsp PROPERTIES TIMEOUT 120)
+endif()
 add_executable(gti_tryable_propagation_tests
   "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
 target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend)
