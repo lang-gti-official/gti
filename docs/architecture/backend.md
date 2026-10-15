@@ -3741,26 +3741,30 @@ consuming call, and every normal path through the acyclic argument region must
 reach that call. Scalar and text-view computations, loads, input stages and
 expression temporaries may intervene. A nested function or method call may run
 wholly inside the region, for example as the conditional's test, one arm's
-value, or a direct scalar argument. Its inputs are scalar or
-text-view values and borrows staged for it alone: the receiver and arguments
-may borrow binding-rooted places through fields and reference dereferences,
-and a mutable borrow never names the borrowed place's root. Its scalar or
-text-view result has no loan or lifecycle, and any region instruction may
-consume it: a branch, a computation, a temporary or an input stage. The call
-keeps its MIR position and its own Invoke failure edge, which leaves the
-region before the outer call. The proof also covers a nested read-receiver or
-free function call, or an exact constructor, with scalar inputs and a cleanup-free nominal result whose
-sole consumer is an exact prepared argument slot for the outer call. Its
-failure edge precedes publication; result preparation does not change the
-borrowed local's address. An owning class argument for the same call may also
-be prepared before the conditional. It is either an exact constructor with
-scalar inputs, activated on its checked Invoke success edge or at a
-construction that cannot fail, or another local moved or copied into its exact
-prepared argument slot. Each prepared slot keeps its own failure-edge cleanup
-and sole handoff to the call, and none is the borrowed place. Whether the
-receiver is a method object or a local lambda does not change this proof.
-Other user-call shapes, other owning transfers, raw memory, loans, and
-arbitrary stores remain outside this proof. Thus the deferred local
+value, or a direct scalar argument. Its inputs are scalar or text-view values,
+borrows staged for it alone, and class arguments prepared in its own parameter
+slots: the receiver and arguments may borrow binding-rooted places through
+fields and reference dereferences, and a mutable borrow never names the
+borrowed place's root. Its scalar or text-view result has no loan, its only
+lifecycle effect is the handoff of its prepared arguments, and any region
+instruction may consume it: a branch, a computation, a temporary or an input
+stage. The call keeps its MIR position and its own Invoke failure edge, which
+leaves the region before the outer call. The proof also covers a nested
+read-receiver or free function call, or an exact constructor, with scalar or
+text-view inputs and a cleanup-free nominal result whose sole consumer is an
+exact prepared argument slot for the outer call or a nested call. Its failure
+edge precedes publication; result preparation does not change the borrowed
+local's address. An owning class argument of either call may also be prepared
+in the region, and one of the outer call before the conditional. It is either
+an exact constructor with scalar or text-view inputs, activated on its checked
+Invoke success edge or at a construction that cannot fail, or another local
+moved or copied into its exact prepared argument slot. The outer and nested
+calls share one prepared-slot proof: the slot's activation, its sole
+TransferOut to the consuming call, and a Drop of the slot on every failure edge
+between preparation and that call. No prepared slot is the borrowed place.
+Whether the receiver is a method object or a local lambda does not change
+this proof. Other user-call shapes, other owning transfers, raw memory, loans,
+and arbitrary stores remain outside this proof. Thus the deferred local
 address denotes the same object that was selected before argument evaluation;
 the backend does not reorder an observable address computation across a branch.
 
