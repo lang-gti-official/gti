@@ -1,5 +1,27 @@
 # Compiler Verification
 
+## Receivers moved inside conditional arms (0.436.2)
+
+`consuming_conditional_receiver_runtime` and the moved-receiver section of
+`conditional_class_publication`, both described below, carry the regression
+evidence. Against the 0.434.2 emitter (main `3b09c90b`) the fixture fails with
+`GTI-B0001`, as do eighteen reduced probes: scalar, stored, passed,
+member-read, returned and generic results, nested and mixed conditionals, one
+binding moved in both arms, `&&` and `||` operands, a consuming call that can
+fail, read-only and `mut` fallbacks, moved closures, a consuming `operator()`
+override, a field moved out of `this`, and callees in the plain form. The fixed
+compiler compiles each, and both arms run with the expected destruction order.
+Fresh-temporary receivers, `if`-statement returns, unconditional moves and
+cleanup-free receivers compile with both compilers. With the exclusivity checks
+of the new admission disabled, the publication gate reports the forged receiver
+read and second writer as admitted for all three forged receivers, and the loss
+of every ordinary-path Drop for one of them. Emitting all 1104 top-level
+fixtures and examples at O0 and O3 with the `3b09c90b` compiler and the fix on
+that base, with one `GTI_STDLIB_PATH`, gives byte-identical C++ for 1998 pairs
+and identical diagnostics for the 208 that fail; only the new fixture
+changed. The summed
+emission time was 1304.6 s before and 1298.7 s after.
+
 ## Fields moved ahead of fallible constructor work (0.435.1)
 
 `generic_callable_transport_runtime` adds `generic_closure_field_move.gti`.
@@ -3359,6 +3381,16 @@ conditional-publication and prepared-argument mutation checks; these test the
 real storage and cleanup protocol rather than requiring obsolete source-grouping
 `Identity` instructions.
 
+The same gate selects all 29 receivers that the conditional-receiver fixture
+moves inside conditional arms and short-circuit operands, using their Move,
+Receiver `MoveValue` input and invocation identities. Each body must construct
+the hidden temporary at the Move and invoke the call through it. For the first
+moved class in each body form and the first moved closure, seven mutations are
+rejected after rebuilding use records: forged slot availability, an initially
+active obligation, an obligation from another source, a Move that reparents
+instead of activating, the call reading the temporary as a place, a second
+writer, and the loss of every ordinary-path Drop.
+
 `conditional_class_publication` adds production C++ admission and malformed-MIR
 checks for the passive conditional repair, retaining an active-cleanup control.
 Its mutations rebuild use records before checking rejection of forged initial
@@ -6400,7 +6432,20 @@ unpublished returned result, also when that cleanup fails again; a failing
 callee leaves no result, and a failing replacement keeps the old value for
 failure cleanup. `testPreparedConsumingReceiverReturn` in the emitter text
 suite refuses removed, duplicated or unactivated receiver handoffs and a
-non-consuming capability, which MIR verification also rejects. Ownership
+non-consuming capability, which MIR verification also rejects.
+`consuming_conditional_receiver_runtime` moves receivers out of named bindings
+inside conditional arms and short-circuit operands in the same eight
+configurations, running each shape through both arms. The shapes are scalar and
+class results from by-value parameters and locals, one consuming arm beside a
+fresh result, direct and generic returns, moved closures, a consuming call that
+can fail, read-only and mutable fallbacks, fields moved out of a consumed
+receiver, and receivers whose cleanup cannot fail, which keep their callees in
+the plain emission form. Each moved receiver is destroyed once, at the end of
+its full expression, and only on the arm that ran. A failing receiver destructor
+in either arm reports at the drop after the merge. Cleanup then destroys the
+published result and skips the other arm's receiver, and a failure in that
+cleanup reports the secondary failure. A consuming call that fails inside its
+arm destroys its receiver on that failure edge. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
