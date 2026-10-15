@@ -20117,6 +20117,18 @@ public:
   CleanupReadPair(Resource& left, Resource& right) : first(left), second(right) {}
   int read() { return this.first.read() + this.second.read(); }
 };
+class DestructorReadPair {
+  CarrierGuard guard{};
+  Resource& first;
+  Resource& second;
+public:
+  DestructorReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  ~DestructorReadPair() {
+    [[discard]] this.first.read();
+    [[discard]] this.second.read();
+  }
+  int read() { return this.first.read() + this.second.read(); }
+};
 class CleanupInspector {
   CarrierGuard guard{};
   Resource& resource;
@@ -20174,6 +20186,11 @@ Resource global_resource{};
   return CleanupReadPair(first, second).read();
 )"),
                                   std::string(R"(
+  Resource first{};
+  Resource second{};
+  return DestructorReadPair(first, second).read();
+)"),
+                                  std::string(R"(
   Resource resource{};
   return conditional_cleanup(resource, true);
 )")}) {
@@ -20188,8 +20205,11 @@ Resource global_resource{};
     expect(frontend.canGenerateCode(),
            "borrowed temporaries support immediate readonly and "
            "mutable method calls, preserving owner reuse between expressions");
+    const bool dependentCleanup =
+        body.find("DestructorReadPair(first, second)") != std::string::npos;
     if (frontend.canGenerateCode() &&
-        body.find("CleanupReadPair(first, second)") != std::string::npos) {
+        (dependentCleanup ||
+         body.find("CleanupReadPair(first, second)") != std::string::npos)) {
       bool checkedCarrier = false;
       bool checkedEarlyEnd = false;
       for (const auto &function : frontend.mir.functionInstances()) {
@@ -20206,11 +20226,12 @@ Resource global_resource{};
                                    ? lang::MirTemporaryCarrierDependency{}
                                    : lang::findMirTemporaryCarrierDependency(
                                          function.body, *place);
-          expect(carrier && carrier.loan->lifecycleBound &&
-                     !shell.lifecycleBound &&
-                     carrier.loan->additionalDependencies.size() == 1,
-                 "cleanup-bearing temporary keeps both owners in its owning "
-                 "Stored loan and a distinct non-owning receiver shell");
+          expect(
+              carrier && carrier.loan->lifecycleBound == dependentCleanup &&
+                  !shell.lifecycleBound &&
+                  carrier.loan->additionalDependencies.size() == 1,
+              "temporary retains both owners, marks only actual borrowed "
+              "cleanup as lifecycle-bound, and separates its receiver shell");
           if (!carrier)
             continue;
           checkedCarrier = true;
