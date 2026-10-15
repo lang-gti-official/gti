@@ -1269,6 +1269,20 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
   return std::nullopt;
 }
 
+// An enum observed in place through a fixed-array selection: an element of an
+// array local, global or array field, or a field of an element whose indices
+// are compile-time in bounds. MIR finishes each checked selection at its
+// AddressOf before a switch reads the enum, so its discriminant and payload
+// reads spell the same element subscription as every other use of the place.
+// Admission and the text step share this predicate.
+[[nodiscard]] bool observedEnumElementPlace(const MirBody &body,
+                                            const MirPlace &place) {
+  return place.type.kind == SemanticType::Enum &&
+         (arrayElementAccess(body, place) ||
+          arrayFieldElementAccess(body, place) ||
+          constantArrayElementFieldAccess(body, place));
+}
+
 // A string-view element place reads through the terminal bounds-checked
 // helper, exactly like the compatibility subscript: string_view_at
 // contains a violated bound itself, so both text forms spell the plain
@@ -37158,6 +37172,12 @@ private:
         emitStoragePlaceValue(*currentFacts, *place);
         return;
       }
+      if (place != nullptr && currentFacts != nullptr &&
+          place->type == operand.type &&
+          observedEnumElementPlace(currentFacts->body, *place)) {
+        emitStoragePlaceValue(*currentFacts, *place);
+        return;
+      }
       if (place != nullptr && ((place->root == MirPlaceRootKind::Binding &&
                                 place->projections.empty()) ||
                                (place->root == MirPlaceRootKind::This &&
@@ -55562,6 +55582,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             : nullptr;
     return place != nullptr && place->type == operand.type &&
            (slotPlace(*place) || directReferenceCarrier(body, *place) ||
+            observedEnumElementPlace(body, *place) ||
             (place->type.kind == SemanticType::Enum &&
              (place->root == MirPlaceRootKind::Binding ||
               place->root == MirPlaceRootKind::This)));

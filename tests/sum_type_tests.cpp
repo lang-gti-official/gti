@@ -2,6 +2,7 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
+#include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/optimizer.h"
@@ -1833,6 +1834,287 @@ int main() {
          "observing switch reads its parameter in place");
 }
 
+// The blocks of a body whose switch read-borrows a fixed-array element.
+std::vector<const lang::MirBlock *> elementSwitches(const lang::MirBody &body) {
+  std::vector<const lang::MirBlock *> switches;
+  for (const lang::MirBlock &block : body.blocks) {
+    const lang::MirTerminator &terminator = block.terminator;
+    const lang::MirPlace *subject =
+        terminator.kind == lang::MirTerminatorKind::Switch &&
+                terminator.value &&
+                terminator.value->kind == lang::MirOperandKind::BorrowRead
+            ? body.findPlace(terminator.value->place)
+            : nullptr;
+    if (subject != nullptr &&
+        std::any_of(subject->projections.begin(), subject->projections.end(),
+                    [](const lang::MirPlaceProjection &projection) {
+                      return projection.kind == lang::MirProjectionKind::Index;
+                    }))
+      switches.push_back(&block);
+  }
+  return switches;
+}
+
+// The checked AddressOf over the subject place's prefix of `length`
+// projections whose successful Invoke edge dominates the switch block.
+const lang::MirInstruction *
+checkedElementSelection(const lang::MirBody &body,
+                        const lang::MirDominanceInfo &dominance,
+                        const lang::MirBlock &switchBlock,
+                        const lang::MirPlace &subject, std::size_t length) {
+  for (const lang::MirBlock &block : body.blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Invoke)
+      continue;
+    for (const lang::MirInstruction &check : block.instructions) {
+      const lang::MirPlace *selected =
+          check.id == block.terminator.invokeInstruction &&
+                  check.operation == lang::MirOperation::AddressOf &&
+                  check.operands.size() == 1
+              ? body.findPlace(check.operands.front().place)
+              : nullptr;
+      if (selected != nullptr && selected->root == subject.root &&
+          selected->binding == subject.binding &&
+          selected->symbol == subject.symbol &&
+          selected->projections.size() == length &&
+          std::equal(selected->projections.begin(), selected->projections.end(),
+                     subject.projections.begin()) &&
+          dominance.dominates(block.terminator.target, switchBlock.id))
+        return &check;
+    }
+  }
+  return nullptr;
+}
+
+// An observing switch over a fixed-array element read-borrows the element in
+// place. Each index the subject place selects is checked first, at an
+// AddressOf whose failure edge reports the bound; program verification
+// requires that check to dominate the switch. The arms' payload reads share
+// the switch's subject, and the C++ backend spells the discriminant and every
+// payload read over the same element subscription.
+void testFixedArrayElementSubjects() {
+  const auto program = analyzeWithPrelude("fixed-array-element-subject.gti", R"(
+struct token {
+  mut int32_t id;
+  token(int32_t raw) : id(raw) {}
+};
+enum class choice {
+  none,
+  some(token item),
+  pair(int32_t left, int32_t right),
+};
+struct record {
+  choice state;
+  record(choice value) : state(value) {}
+};
+class shelf {
+  choice[2] items;
+
+public:
+  shelf() : items({choice::none, choice::some(token(3))}) {}
+  int32_t at(int32_t index) {
+    switch (this.items[index]) {
+    case choice::some(auto& item):
+      return item.id;
+    default:
+      return 0;
+    }
+  }
+};
+choice[2] table = {choice::none, choice::some(token(5))};
+int32_t dynamic(int32_t index) {
+  choice[3] items = {choice::none, choice::some(token(4)), choice::pair(5, 6)};
+  switch (items[index]) {
+  case choice::some(auto& item):
+    return item.id;
+  case choice::pair(left, auto& right):
+    return left * 10 + right;
+  case choice::none:
+    return 0;
+  }
+}
+int32_t constant() {
+  choice[2] items = {choice::none, choice::some(token(4))};
+  switch (items[1]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+int32_t nested(int32_t row, int32_t column) {
+  choice[2][2] grid = {{choice::none, choice::some(token(7))},
+                       {choice::pair(1, 2), choice::none}};
+  switch (grid[row][column]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+int32_t global(int32_t index) {
+  switch (table[index]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+int32_t field() {
+  record[2] records = {record(choice::none), record(choice::some(token(8)))};
+  switch (records[1].state) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+int32_t update(int32_t index) {
+  mut choice[2] items = {choice::none, choice::some(token(9))};
+  switch (items[index]) {
+  case choice::some(mut auto& item):
+    item.id = item.id + 1;
+    break;
+  default:
+    break;
+  }
+  switch (items[index]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+int main() {
+  shelf books{};
+  return dynamic(1) + dynamic(2) + constant() + nested(0, 1) + global(1) +
+         field() + update(1) + books.at(1) - 97;
+}
+)");
+  if (!program.canGenerateCode()) {
+    printDiagnostics(program);
+  }
+  expect(program.canGenerateCode() &&
+             lang::verifyMirProgram(program.mir).valid(),
+         "observing switches over fixed-array elements verify end to end");
+  if (!program.canGenerateCode())
+    return;
+
+  std::size_t switches = 0;
+  std::size_t checks = 0;
+  std::size_t extractions = 0;
+  bool exactChecks = true;
+  bool sharedSubjects = true;
+  for (const auto &function : program.mir.functionInstances()) {
+    const lang::MirBody &body = function.body;
+    const std::optional<lang::MirDominanceInfo> dominance =
+        lang::computeMirDominance(body);
+    for (const lang::MirBlock *block : elementSwitches(body)) {
+      ++switches;
+      const lang::MirOperand &subject = *block->terminator.value;
+      const lang::MirPlace &place = *body.findPlace(subject.place);
+      for (std::size_t length = 1; length <= place.projections.size();
+           ++length) {
+        if (place.projections[length - 1].kind !=
+            lang::MirProjectionKind::Index)
+          continue;
+        const lang::MirInstruction *check =
+            dominance ? checkedElementSelection(body, *dominance, *block, place,
+                                                length)
+                      : nullptr;
+        checks += check != nullptr;
+        exactChecks = exactChecks && check != nullptr &&
+                      check->localFailureSites.size() == 1 &&
+                      check->definedFailure.localOrigins.size() == 1 &&
+                      check->definedFailure.localOrigins.front().outcomes ==
+                          std::vector<lang::DefinedFailureOutcome>{
+                              {lang::DefinedFailureCode::IndexOutOfBounds,
+                               lang::DefinedFailureDetail::FixedArray}};
+      }
+      for (const lang::MirBlock &arm : body.blocks)
+        for (const lang::MirInstruction &instruction : arm.instructions)
+          if (instruction.operation == lang::MirOperation::PayloadExtract &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().place == subject.place) {
+            ++extractions;
+            sharedSubjects =
+                sharedSubjects && instruction.operands.front() == subject;
+          }
+    }
+  }
+  expect(switches == 8 && checks == 9 && exactChecks,
+         "each element switch follows the bounds-checked selection of every "
+         "fixed-array index in its subject place");
+  expect(extractions == 10 && sharedSubjects,
+         "borrowed and copied payload bindings read the switch's element "
+         "subject");
+
+  // A switch reached past an index check that has lost its failure edge must
+  // fail verification, including the outer index of a nested selection.
+  const auto rejectsUncheckedSelection = [&](std::size_t indices) {
+    lang::MirProgram forged = program.mir;
+    bool changed = false;
+    for (const auto &function : forged.functionInstances()) {
+      auto &body = const_cast<lang::MirBody &>(function.body);
+      const std::optional<lang::MirDominanceInfo> dominance =
+          lang::computeMirDominance(body);
+      for (const lang::MirBlock *block : elementSwitches(body)) {
+        const lang::MirPlace &place =
+            *body.findPlace(block->terminator.value->place);
+        if (changed || !dominance ||
+            static_cast<std::size_t>(std::count_if(
+                place.projections.begin(), place.projections.end(),
+                [](const lang::MirPlaceProjection &projection) {
+                  return projection.kind == lang::MirProjectionKind::Index;
+                })) != indices)
+          continue;
+        const auto first = std::find_if(
+            place.projections.begin(), place.projections.end(),
+            [](const lang::MirPlaceProjection &projection) {
+              return projection.kind == lang::MirProjectionKind::Index;
+            });
+        const lang::MirInstruction *check = checkedElementSelection(
+            body, *dominance, *block, place,
+            static_cast<std::size_t>(first - place.projections.begin()) + 1);
+        if (check == nullptr)
+          continue;
+        const lang::MirInstructionId checkId = check->id;
+        for (lang::MirBlock &candidate : body.blocks) {
+          lang::MirTerminator &edge = candidate.terminator;
+          if (edge.kind != lang::MirTerminatorKind::Invoke ||
+              edge.invokeInstruction != checkId)
+            continue;
+          edge.kind = lang::MirTerminatorKind::Goto;
+          edge.invokeInstruction = 0;
+          edge.failureRecord = 0;
+          edge.elseTarget = 0;
+          changed = true;
+        }
+      }
+    }
+    return changed && hasMirMessage(lang::verifyMirProgram(forged),
+                                    "before its checked selection");
+  };
+  expect(rejectsUncheckedSelection(1),
+         "an element switch past an index check without its failure edge "
+         "must fail verification");
+  expect(rejectsUncheckedSelection(2),
+         "a nested element switch with an unchecked outer index must fail "
+         "verification");
+
+  std::string emitted;
+  try {
+    emitted = gti_test::emitCpp(program).contents;
+  } catch (const std::exception &error) {
+    std::cerr << "element subject emission: " << error.what() << '\n';
+  }
+  expect(emitted.find("mir_checked_array_bound_v1(") != std::string::npos &&
+             emitted.find("].__gti_value.index()") != std::string::npos &&
+             emitted.find("].__gti_value).__gti_field_") != std::string::npos &&
+             emitted.find("].state.__gti_value.index()") != std::string::npos,
+         "the C++ backend checks the bound, then switches on and reads "
+         "payloads from the element itself");
+}
+
 } // namespace
 
 int main() {
@@ -1845,6 +2127,7 @@ int main() {
   testBorrowedPayloadPatterns();
   testConsumingPayloadPatterns();
   testCleanupFreeMoveOnlyPayloads();
+  testFixedArrayElementSubjects();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

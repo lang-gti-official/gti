@@ -12573,7 +12573,10 @@ private:
                                                         SemanticType::Reference;
                      });
                }))) {
-        emitPlaceDependencies(*statement.value);
+        // The read-borrow transports only the subject's address, so no Load
+        // performs a selected fixed-array element's bounds check. Finish that
+        // selection at its checked AddressOf before the switch observes it.
+        emitPlaceDependencies(*statement.value, true);
         subject = {.kind = MirOperandKind::BorrowRead,
                    .place = sourcePlace,
                    .type = sourceValue->info.type};

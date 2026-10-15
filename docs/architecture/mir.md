@@ -2426,6 +2426,15 @@ Program verification rejects any `Copy` operand, in an instruction or a
 terminator, that names a payload enum whose folded traits forbid copying, so
 such an enum is only ever borrowed or moved.
 
+The read-borrow transports only the place's address, so when that place selects
+a fixed-array element no `Load` performs the bounds check. Subject lowering
+therefore finishes each selection at its checked `AddressOf` prefix, with the
+exact semantic bounds origin and `Invoke`, before the `Switch`, as for an
+address-only call argument. Program verification requires, for every `Index` in
+a read-borrowed switch subject's place, that the successful edge of the checked
+`AddressOf` over the place prefix ending at that index dominates the reachable
+switch.
+
 A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the
 binding's obligation, and registers that binding with the enclosing scope's
