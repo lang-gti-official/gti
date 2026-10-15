@@ -12552,7 +12552,13 @@ private:
       const MirPlaceId sourcePlace = placeForValue(*statement.value);
       if (sourceValue != nullptr && sourcePlace != 0 &&
           sourceValue->info.category == ValueCategory::Place &&
-          sourceValue->info.type.kind == SemanticType::Enum) {
+          sourceValue->info.type.kind == SemanticType::Enum &&
+          std::any_of(program.enumDeclarations().begin(),
+                      program.enumDeclarations().end(),
+                      [&](const HirEnum &enumeration) {
+                        return enumeration.payload &&
+                               enumeration.type == sourceValue->info.type;
+                      })) {
         // Matching observes the discriminant of a place; it does not copy
         // the complete enum merely because its payload happens to be passive.
         // Arm bindings still perform their independently selected copy/borrow.
