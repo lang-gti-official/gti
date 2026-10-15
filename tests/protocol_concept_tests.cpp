@@ -391,6 +391,24 @@ int apply<A, B>(A& value) requires scaled<A, B> {
 int main() { return 0; }
 )gti",
            "GTI-S2005", "expects 'scaled<A, B>::factor_type'");
+  // A constraint a block's pattern fails names the block's own parameter.
+  rejected(R"gti(
+concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+};
+class holder<std::copy_constructible T> {
+public:
+  T item;
+  holder(T value) : item(value) {}
+};
+for <T> concept wrapped<holder<T>> {
+  using value_type = T;
+  T unwrap(holder<T> value) { return value.item; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2029", "Type 'T' does not satisfy");
 
   // Declarations.
   rejected(R"gti(
