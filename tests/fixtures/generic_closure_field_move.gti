@@ -1,0 +1,145 @@
+// A constructor moves its closure parameter into a field and then runs work
+// that can fail: a call in its body, a call on the moved field, a fallible
+// sibling initializer, or checked arithmetic. The move publishes the field
+// before any of that work, so the native member-initializer list constructs
+// it in the failure form too. A struct capture gives the closure a lexical
+// drop, a number capture a trivial one, and every closure instance of one
+// class shares its native constructor template. A scalar sibling before the
+// closure field, and a copy of the same formal into an earlier field, take the
+// same route. The rule is not closure-specific: a payload enum moved into a
+// field also publishes through the constructor record. The last call fails
+// inside the constructor body when given an argument.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+int call<F>(F f) { return f(); }
+
+class Keeper<F> {
+public:
+  F callback;
+  mut int seen;
+  Keeper(F f) : callback(std::move(f)), seen(0) {
+    this.seen = call([]() -> int { return 4; });
+  }
+  int invoke() { return callback(); }
+};
+
+class Reader<F> {
+public:
+  F callback;
+  mut int seen;
+  Reader(F f) : callback(std::move(f)), seen(0) { this.seen = call(this.callback); }
+  int invoke() { return callback(); }
+};
+
+class Sibling<F> {
+public:
+  F callback;
+  int seen;
+  Sibling(F f) : callback(std::move(f)), seen(call([]() -> int { return 5; })) {}
+  int invoke() { return callback(); }
+};
+
+class Tagged<F> {
+public:
+  int tag;
+  F callback;
+  mut int seen;
+  Tagged(F f, int tag) : tag(tag), callback(std::move(f)), seen(0) {
+    this.seen = call(this.callback) + tag;
+  }
+};
+
+class Twin<F> {
+public:
+  F first;
+  F second;
+  mut int seen;
+  Twin(F f) : first(f), second(std::move(f)), seen(0) {
+    this.seen = call(this.first) + call(this.second);
+  }
+};
+
+class Scaled<F> {
+public:
+  F callback;
+  mut int seen;
+  Scaled(F f, int factor) : callback(std::move(f)), seen(0) { this.seen = factor * 2; }
+  int invoke() { return callback(); }
+};
+
+int keep<F>(F f) {
+  Keeper<F> value = Keeper<F>(f);
+  return value.seen + value.invoke();
+}
+
+int read<F>(F f) {
+  Reader<F> value = Reader<F>(f);
+  return value.seen * 10 + value.invoke();
+}
+
+int sibling<F>(F f) {
+  Sibling<F> value = Sibling<F>(f);
+  return value.seen + value.invoke();
+}
+
+int tagged<F>(F f) {
+  Tagged<F> value = Tagged<F>(f, 100);
+  return value.seen + value.tag;
+}
+
+int twin<F>(F f) {
+  Twin<F> value = Twin<F>(f);
+  return value.seen;
+}
+
+int scaled<F>(F f) {
+  Scaled<F> value = Scaled<F>(f, 21);
+  return value.seen + value.invoke();
+}
+
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+
+enum class Reading { value(int amount), missing };
+
+int amount(Reading reading) {
+  switch (reading) {
+    case Reading::value(auto& amount): return amount;
+    case Reading::missing: return 0;
+  }
+}
+
+class Gauge {
+public:
+  Reading reading;
+  mut int checked;
+  Gauge(Reading reading, int divisor) : reading(std::move(reading)), checked(0) {
+    this.checked = 60 / divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int k = 3;
+  Offset offset{4};
+  std::println(keep([offset]() -> int { return offset.amount; }));
+  std::println(keep([k]() -> int { return k; }));
+  std::println(read([offset]() -> int { return offset.amount; }));
+  std::println(read([k]() -> int { return k; }));
+  std::println(sibling([offset]() -> int { return offset.amount; }));
+  std::println(sibling([k]() -> int { return k; }));
+  std::println(tagged([offset]() -> int { return offset.amount; }));
+  std::println(tagged([k]() -> int { return k; }));
+  std::println(twin([offset]() -> int { return offset.amount; }));
+  std::println(twin([k]() -> int { return k; }));
+  std::println(scaled([offset]() -> int { return offset.amount; }));
+  std::println(scaled([k]() -> int { return k; }));
+  Gauge gauge = Gauge(Reading::value(7), 5);
+  std::println(amount(gauge.reading) + gauge.checked);
+  int divisor = argc == 1 ? 1 : 0;
+  std::println(read([offset, divisor]() -> int { return offset.amount / divisor; }));
+  return 0;
+}
