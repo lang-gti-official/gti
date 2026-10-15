@@ -394,6 +394,10 @@
       "suite": "text"
     },
     {
+      "name": "testCleanupFreeJoinReceiver",
+      "suite": "text"
+    },
+    {
       "name": "testMovedGenericOwnerReceiverStage",
       "suite": "text"
     },

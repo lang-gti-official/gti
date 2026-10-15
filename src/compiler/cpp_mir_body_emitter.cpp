@@ -6566,58 +6566,74 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
       if (nestedJoin || movedLocal)
         return destination;
     }
-    // A cleanup-free named local moved into an arm has no obligation to hand
-    // over: MIR records only the local's ownership transition, and the arm's
-    // Initialize, right after the Move, activates the temporary's own
-    // full-expression obligation directly. The local keeps its binding drop,
-    // which ends the moved-from shell.
-    if (directMove && definition->lifecycle.empty() &&
-        initialize->lifecycle.size() == 1) {
-      const MirPlace *source =
-          body.findPlace(definition->operands.front().place);
-      const MirBlock *published = body.findBlock(value->definitionBlock);
-      bool activatedNext = false;
-      if (published != nullptr)
-        for (std::size_t index = 1; index < published->instructions.size();
-             ++index)
-          activatedNext |=
-              published->instructions[index - 1].id == definition->id &&
-              published->instructions[index].id == initialize->id;
+    // A cleanup-free arm result has no obligation of its own, so its
+    // Initialize may instead activate the temporary's own full-expression
+    // obligation directly. MIR builds this join when a member call borrows
+    // the joined value as its receiver. A call, plain or on its Invoke
+    // success edge, and a copy of a place then construct the temporary right
+    // before that Initialize, as a construction arm does, and the
+    // temporary's Drop ends it. So does the move of a whole cleanup-free named
+    // local: MIR records only the local's ownership transition to Moved, with
+    // no lifecycle event, and the local keeps its passive binding drop, which
+    // ends the moved-from shell.
+    const MirBlock *invoke = invokeProducerBlock(body, *definition);
+    const MirBlock *success =
+        invoke == nullptr ? nullptr : body.findBlock(invoke->terminator.target);
+    const MirBlock *published = body.findBlock(value->definitionBlock);
+    bool activatedNext = success != nullptr && !success->instructions.empty() &&
+                         success->instructions.front().id == initialize->id;
+    if (invoke == nullptr && published != nullptr)
+      for (std::size_t index = 1; index < published->instructions.size();
+           ++index)
+        activatedNext |=
+            published->instructions[index - 1].id == definition->id &&
+            published->instructions[index].id == initialize->id;
+    const MirPlace *movedSource =
+        directMove ? body.findPlace(definition->operands.front().place)
+                   : nullptr;
+    const bool movedCleanupFreeLocal =
+        movedSource != nullptr &&
+        movedSource->root == MirPlaceRootKind::Binding &&
+        movedSource->binding != 0 && movedSource->projections.empty() &&
+        movedSource->type == value->info.type &&
+        definition->operands.front().type == value->info.type &&
+        definition->lifecycle.empty() && definition->ownership &&
+        definition->ownership->kind == OwnershipEventKind::Move &&
+        movedSource->key && definition->ownership->place == *movedSource->key &&
+        definition->ownership->after == OwnershipStateSet::Moved &&
+        definition->definedFailure.empty() &&
+        definition->localFailureSites.empty() &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &drop) {
+                       return drop.place == movedSource->id &&
+                              drop.dropType.requiresActiveCleanup;
+                     });
+    if ((((directFunctionCall || directCopy) &&
+          !definition->successResultDrop &&
+          onlyPreparedInputTransfers(body, *definition)) ||
+         movedCleanupFreeLocal) &&
+        activatedNext && initialize->lifecycle.size() == 1 &&
+        initialize->definedFailure.empty() &&
+        initialize->localFailureSites.empty() &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &drop) {
+                       const MirPlace *place = body.findPlace(drop.place);
+                       return drop.generatedValue == valueId ||
+                              (place != nullptr &&
+                               place->root == MirPlaceRootKind::Value &&
+                               place->value == valueId);
+                     })) {
       const MirLifecycleEvent &activation = initialize->lifecycle.front();
       const MirDropObligation *destinationDrop =
           body.findDropObligation(activation.target);
-      const bool movedCleanupFreeLocal =
-          source != nullptr && source->root == MirPlaceRootKind::Binding &&
-          source->binding != 0 && source->projections.empty() &&
-          source->type == value->info.type &&
-          definition->operands.front().type == value->info.type &&
-          definition->ownership &&
-          definition->ownership->kind == OwnershipEventKind::Move &&
-          source->key && definition->ownership->place == *source->key &&
-          definition->ownership->after == OwnershipStateSet::Moved &&
-          definition->definedFailure.empty() &&
-          definition->localFailureSites.empty() &&
-          initialize->definedFailure.empty() &&
-          initialize->localFailureSites.empty() && activatedNext &&
-          activation.kind == MirLifecycleEventKind::Initialize &&
+      if (activation.kind == MirLifecycleEventKind::Initialize &&
           activation.source == 0 && !activation.conditional &&
           !activation.failureCleanup && destinationDrop != nullptr &&
           destinationDrop->kind == MirDropObligationKind::Value &&
           !destinationDrop->initiallyActive &&
           destinationDrop->place == destination->id &&
           destinationDrop->dropType.type == destination->type &&
-          destinationDrop->fullExpression != 0 &&
-          std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
-                       [&](const MirDropObligation &drop) {
-                         const MirPlace *place = body.findPlace(drop.place);
-                         return drop.generatedValue == valueId ||
-                                (place != nullptr &&
-                                 place->root == MirPlaceRootKind::Value &&
-                                 place->value == valueId) ||
-                                (drop.place == source->id &&
-                                 drop.dropType.requiresActiveCleanup);
-                       });
-      if (movedCleanupFreeLocal)
+          destinationDrop->fullExpression != 0)
         return destination;
     }
     // A temporary destination is a real slot only when MIR explicitly
