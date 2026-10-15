@@ -3308,6 +3308,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(consuming_methods_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME consuming_returned_result_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_returned_result_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(consuming_returned_result_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME consuming_lambda_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_lambda_runtime_test.py"
