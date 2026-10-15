@@ -5011,8 +5011,10 @@ int main() {
 // arm's Initialize activates directly. A call arm, plain or on its Invoke
 // success edge, and a copied place publish into that temporary as a
 // construction arm does; the call borrows it, read-only or mutably, and its
-// Drop ends it. A removed, conditional, duplicated or retargeted activation,
-// and an arm result that activates the obligation itself, are refused.
+// Drop ends it. So does an arm moving out of a nested cleanup-free join, which
+// also ends the nested join's storage. A removed, conditional, duplicated or
+// retargeted activation, an arm result that activates the obligation itself,
+// and a nested join's storage with an obligation of its own are refused.
 void testCleanupFreeJoinReceiver() {
   const auto frontend =
       analyzeWithStandardLibrary("cpp-mir-cleanup-free-join-receiver.gti", R"(
@@ -5046,10 +5048,14 @@ int read_raising(bool left, int a, int b, int divisor) {
 int swap_members(bool left, Maker a, Maker b) {
   return (left ? std::move(a).make() : b.peek()).swap(0);
 }
+int read_nested(bool left, bool inner, int a, int b) {
+  return (left ? fresh(a) : (inner ? fresh(b) : Pod(a))).read();
+}
 int main() {
   return read_calls(true, 1, 2) + swap_copies(false, Pod(3), Pod(4)) +
          read_raising(true, 5, 6, 1) +
-         swap_members(false, Maker(7), Maker(8)) - 18;
+         swap_members(false, Maker(7), Maker(8)) +
+         read_nested(false, true, 9, 10) - 28;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -5061,8 +5067,10 @@ int main() {
   std::size_t bodies = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     // Each arm's Initialize activates the join temporary's own obligation;
-    // the published value is a call result or a copy with none of its own.
+    // the published value is a call result, a copy or the move out of a
+    // nested join, with none of its own.
     std::vector<lang::MirInstructionId> arms;
+    const lang::MirPlace *nestedJoin = nullptr;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
         const auto *slot =
@@ -5091,8 +5099,13 @@ int main() {
                 lang::MirLifecycleEventKind::Initialize &&
             drop != nullptr && drop->place == slot->id && producer != nullptr &&
             (producer->kind == lang::MirInstructionKind::Call ||
-             producer->kind == lang::MirInstructionKind::Load))
+             producer->kind == lang::MirInstructionKind::Load ||
+             producer->kind == lang::MirInstructionKind::Move)) {
           arms.push_back(instruction.id);
+          if (producer->kind == lang::MirInstructionKind::Move)
+            nestedJoin =
+                function.body.findPlace(producer->operands.front().place);
+        }
       }
     if (arms.size() != 2)
       continue;
@@ -5146,9 +5159,31 @@ int main() {
                    std::to_string(mutation));
       }
     }
+    if (nestedJoin != nullptr) {
+      // The nested join's storage gains an obligation of its own, so the
+      // arm's move no longer empties representation-only storage.
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      lang::MirDropObligation forged = body->dropObligations.front();
+      forged.id = 0;
+      for (const auto &drop : body->dropObligations)
+        forged.id = std::max(forged.id, drop.id);
+      ++forged.id;
+      forged.place = nestedJoin->id;
+      forged.dropType.type = nestedJoin->type;
+      body->dropObligations.push_back(forged);
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a nested join storage obligation that nothing activates fails "
+             "MIR verification");
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(!rejected.analyze(address).ready() ||
+                 !supportsSelectedBodyText(malformed, map, function.id),
+             "a nested join whose storage has an obligation cannot enter "
+             "backend emission as a cleanup-free arm");
+    }
   }
-  expect(bodies == 4, "the call, copy, raising and member-call receivers "
-                      "were exercised: " +
+  expect(bodies == 5, "the call, copy, raising, member-call and nested "
+                      "receivers were exercised: " +
                           std::to_string(bodies));
 
   // Both arms publish into the temporary the call borrows; nothing
@@ -5197,6 +5232,234 @@ int main() {
            name + " publishes both arms into the borrowed join temporary, "
                   "which its Drop ends");
   }
+  // The nested arm, whose block follows the call's, moves the nested join's
+  // object into the borrowed temporary and ends the nested storage on the
+  // next line.
+  const std::string nested = bodyText("read_nested");
+  const std::size_t call =
+      nested.find(".get().::__gti_program::Pod::__gti_fn_");
+  const std::size_t receiverStart =
+      call == std::string::npos ? call : nested.rfind("__gti_mir_p_", call);
+  const std::string receiver =
+      receiverStart == std::string::npos
+          ? std::string()
+          : nested.substr(receiverStart, call - receiverStart);
+  const std::size_t moved =
+      receiver.empty()
+          ? std::string::npos
+          : nested.find(receiver + ".construct(std::move(__gti_mir_p_");
+  const std::size_t innerStart =
+      moved == std::string::npos
+          ? moved
+          : moved + receiver.size() +
+                std::string(".construct(std::move(").size();
+  const std::size_t innerEnd = innerStart == std::string::npos
+                                   ? innerStart
+                                   : nested.find('.', innerStart);
+  const std::string inner =
+      innerEnd == std::string::npos
+          ? std::string()
+          : nested.substr(innerStart, innerEnd - innerStart);
+  const std::size_t lineEnd =
+      moved == std::string::npos ? moved : nested.find('\n', moved);
+  const std::size_t retire =
+      inner.empty() ? std::string::npos
+                    : nested.find(inner + ".destroy(); // end moved join "
+                                          "representation\n",
+                                  lineEnd);
+  expect(!inner.empty() && inner != receiver &&
+             nested.find(receiver + ".construct_from(") != std::string::npos &&
+             nested.find(receiver + ".destroy();", call) != std::string::npos &&
+             retire != std::string::npos &&
+             nested.find_first_not_of(' ', lineEnd + 1) == retire,
+         "read_nested publishes both arms into the borrowed join temporary, "
+         "which its Drop ends, and ends the nested join's storage right after "
+         "moving out of it");
+}
+
+// A cleanup-free arm may move a whole named local out. MIR records only the
+// local's ownership transition to Moved: the Move has no lifecycle event and
+// the local keeps its binding drop, which ends the moved-from shell after the
+// join. The bound, returned and field-read joins publish into
+// representation-only storage; the receiver join's arm activates the
+// temporary's own full-expression obligation directly. A removed, weakened or
+// retargeted ownership event, a forged lifecycle event on the Move, forged
+// cleanup on the moved-from local and a conditional activation are refused.
+// Without the arm proofs' ownership, passive-drop and activation checks, all
+// but the lifecycle forgery would reach text emission.
+void testCleanupFreeConditionalMovedLocalArms() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-cleanup-free-conditional-moved-local-arms.gti", R"(
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+int bound(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  Pod kept = left ? std::move(a) : std::move(b);
+  return kept.read();
+}
+Pod returned(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return left ? std::move(a) : std::move(b);
+}
+int field(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).x;
+}
+int receiver(bool left, int one, int two) {
+  Pod a{one};
+  Pod b{two};
+  return (left ? std::move(a) : std::move(b)).read();
+}
+int main() {
+  return bound(true, 1, 2) + returned(false, 3, 4).read() +
+         field(true, 5, 6) + receiver(false, 7, 8) - 18;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "cleanup-free conditional moved-local arms verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t representationOnly = 0;
+  std::size_t activating = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arm Moves out of a whole named local, and each arm's
+    // Initialize into the join temporary.
+    struct Arm {
+      lang::MirInstructionId move = 0;
+      lang::MirInstructionId initialize = 0;
+      lang::MirPlaceId local = 0;
+    };
+    std::vector<Arm> arms;
+    for (const auto &block : function.body.blocks)
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index) {
+        const auto &move = block.instructions[index];
+        const auto &initialize = block.instructions[index + 1];
+        const lang::MirPlace *local =
+            move.kind == lang::MirInstructionKind::Move &&
+                    move.operands.size() == 1 &&
+                    move.operands[0].kind == lang::MirOperandKind::Move
+                ? function.body.findPlace(move.operands[0].place)
+                : nullptr;
+        if (local != nullptr &&
+            local->root == lang::MirPlaceRootKind::Binding && move.ownership &&
+            initialize.kind == lang::MirInstructionKind::Initialize)
+          arms.push_back({move.id, initialize.id, local->id});
+      }
+    if (arms.size() != 2)
+      continue;
+    const lang::MirInstruction *firstInitialize = nullptr;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == arms[0].initialize)
+          firstInitialize = &instruction;
+    const bool activates =
+        firstInitialize != nullptr && !firstInitialize->lifecycle.empty();
+    representationOnly += !activates;
+    activating += activates;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               supportsSelectedBodyText(frontend.mir, map, function.id),
+           "a cleanup-free conditional admits its moved-local arms");
+    if (!supportsSelectedBodyText(frontend.mir, map, function.id))
+      continue;
+    // Each arm constructs the join storage from its local, and each local's
+    // binding drop destroys it once, whether or not its arm ran.
+    const std::string text =
+        emitter.emitBodyText(address, "moved-local-arm-test-v0", 1).text;
+    for (const Arm &arm : arms) {
+      const std::string local = "__gti_mir_p_" + std::to_string(arm.local);
+      std::size_t destroys = 0;
+      for (std::size_t at = text.find(local + ".destroy();");
+           at != std::string::npos;
+           at = text.find(local + ".destroy();", at + 1))
+        ++destroys;
+      expect(text.find(".construct(std::move(" + local + ".get()));") !=
+                     std::string::npos &&
+                 destroys == 1,
+             "a moved-local arm constructs the join from its local, and the "
+             "local's binding drop ends its shell once:\n" +
+                 text);
+    }
+    // The verifier rejects each forgery too; the backend's own arm proof
+    // must refuse it without relying on that.
+    const auto refused = [&](auto &&mutate, const std::string &what) {
+      auto malformed = frontend.mir;
+      mutate(*lang::findMirBody(malformed, address));
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a forged moved-local arm fails MIR verification: " + what);
+      expect(!supportsSelectedBodyText(malformed, map, function.id),
+             "a forged moved-local arm cannot enter backend emission: " + what);
+    };
+    const auto onInstruction = [](lang::MirBody &body,
+                                  lang::MirInstructionId id, auto &&mutate) {
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == id)
+            mutate(instruction);
+    };
+    const lang::MirPlace *other = function.body.findPlace(arms[1].local);
+    expect(other != nullptr && other->key.has_value(),
+           "the other arm's local has an ownership key");
+    if (other == nullptr || !other->key)
+      continue;
+    const std::string_view forgeries[] = {
+        "no ownership event", "maybe-moved ownership", "read ownership",
+        "the other local's ownership", "lifecycle event on the move"};
+    for (std::size_t mutation = 0; mutation != std::size(forgeries);
+         ++mutation) {
+      refused(
+          [&](lang::MirBody &body) {
+            onInstruction(body, arms[0].move, [&](auto &move) {
+              if (mutation == 0)
+                move.ownership.reset();
+              else if (mutation == 1)
+                move.ownership->after = lang::OwnershipStateSet::MaybeMoved;
+              else if (mutation == 2)
+                move.ownership->kind = lang::OwnershipEventKind::Read;
+              else if (mutation == 3)
+                move.ownership->place = *other->key;
+              else
+                move.lifecycle.push_back(
+                    {.kind = lang::MirLifecycleEventKind::Initialize});
+            });
+          },
+          std::string(forgeries[mutation]));
+    }
+    // The moved-from local's binding drop must stay passive: it ends the
+    // moved-from shell on one path and the live object on the other.
+    refused(
+        [&](lang::MirBody &body) {
+          for (auto &drop : body.dropObligations)
+            if (drop.place == arms[0].local)
+              drop.dropType.requiresActiveCleanup = true;
+        },
+        "cleanup on the moved-from local");
+    if (activates)
+      refused(
+          [&](lang::MirBody &body) {
+            onInstruction(body, arms[0].initialize, [](auto &initialize) {
+              initialize.lifecycle.front().conditional = true;
+            });
+          },
+          "conditional activation");
+  }
+  expect(representationOnly == 3 && activating == 1,
+         "the bound, returned and field-read joins and the receiver join "
+         "were exercised: " +
+             std::to_string(representationOnly) + ", " +
+             std::to_string(activating));
 }
 
 // A construction consuming a cleanup-free Expected<Class, E> argument may
@@ -6131,6 +6394,80 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testNestedCleanupFreeJoinMove() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-nested-cleanup-free-join.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+int32_t bound(bool left, int32_t one) {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    plain_value t =
+        left ? make_plain(i) : (i > one ? make_plain(one) : plain_value(i));
+    total += t.number;
+  }
+  return total;
+}
+
+int32_t viewed(bool left, int32_t one) {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1)
+    total += (left ? (i > one ? make_plain(one) : plain_value(i))
+                   : make_plain(i)).number;
+  return total;
+}
+
+int main() { return bound(false, 1) + viewed(true, 1) - 4; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the nested cleanup-free join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Each loop evaluates its conditional again. The outer arm that moves out
+  // of the nested join, and the staged move out of the viewed outer join,
+  // each end the emptied join's storage on the next line, so no iteration
+  // constructs an engaged representation.
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  std::size_t retirements = 0;
+  bool movedFirst = true;
+  for (std::size_t at = text.find(retire); at != std::string::npos;
+       at = text.find(retire, at + 1)) {
+    ++retirements;
+    const std::size_t lineStart = text.rfind('\n', at) + 1;
+    const std::size_t slotStart = text.find("__gti_mir_p_", lineStart);
+    const std::string slot =
+        slotStart < at ? text.substr(slotStart, at - slotStart) : std::string();
+    const std::size_t previousEnd = lineStart - 1;
+    const std::size_t previousStart = text.rfind('\n', previousEnd - 1) + 1;
+    const std::string previous =
+        text.substr(previousStart, previousEnd - previousStart);
+    const std::string moved = ".construct(std::move(" + slot + ".get()));";
+    movedFirst =
+        movedFirst && !slot.empty() && previous.size() > moved.size() &&
+        previous.compare(previous.size() - moved.size(), moved.size(), moved) ==
+            0;
+  }
+  expect(retirements == 3 && movedFirst,
+         "both nested joins and the viewed outer join should end their "
+         "storage right after the move that empties it");
+  // The bound outer join ends its storage at the binding, as before.
+  expect(text.find(".destroy(); // end passive conditional representation\n") !=
+             std::string::npos,
+         "the bound outer join should end its storage at the binding");
+}
+
 // Each arm of a cleanup-free conditional may evaluate its inputs before the
 // call producing its result: an overflow-checked argument, a call that can
 // fail, or a `?` operand. The branch then targets the start of that region,
@@ -6589,6 +6926,311 @@ int main() {
          "parameter storage");
 }
 
+// A lambda invocation returning a class without a default constructor is the
+// same fresh result as a checked source call's: verified MIR binds it to its
+// lambda instance and completes it on the Invoke success edge under callable
+// propagation. A cleanup-free result read through one field or passed by
+// value, and an owning result read through a field view, therefore publish
+// into the slot a source call's result uses rather than a default-constructed
+// C++ local. An owning result read inside a short-circuit operand constructs
+// in that operand's conditional temporary, and a result returned directly
+// after a moved parameter's cleanup still constructs in the caller's
+// placement storage, with no slot of its own. An invocation without callable
+// propagation or without its exact lambda target cannot enter backend
+// emission.
+void testCallableClassResultSlots() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-callable-class-result-slots.gti", R"(
+#include <std/utility>
+class Ticket {
+public:
+  Ticket(int32_t input) : identity(input) {}
+  Ticket(Ticket&& other) = default;
+  int32_t get() { return this.identity; }
+private:
+  int32_t identity;
+};
+Ticket finish(Ticket input) {
+  auto action = [](Ticket value) -> Ticket { return std::move(value); };
+  return action(std::move(input));
+}
+struct Plain {
+  int id;
+  Plain(int raw) : id(raw) {}
+};
+struct Res {
+  int id;
+  Res(int raw) : id(raw) {}
+  ~Res() {}
+};
+int take(Plain p) { return p.id; }
+int operand(bool skip) {
+  auto owned = [](int raw) -> Res { return Res(raw); };
+  return skip || owned(4).id == 4 ? 1 : 0;
+}
+int main() {
+  auto read = [](int raw) -> Plain { return Plain(raw); };
+  auto pass = [](int raw) -> Plain { return Plain(raw); };
+  auto owned = [](int raw) -> Res { return Res(raw); };
+  return read(1).id + take(pass(2)) + owned(3).id + operand(false) +
+         finish(Ticket(4)).get() - 11;
+}
+)");
+  expect(frontend.canGenerateCode(), "callable class results verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto entry =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &function) {
+                     return function.entryKind != lang::ProgramEntryKind::None;
+                   });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "the callable class result entry is retained");
+  if (entry == frontend.mir.functionInstances().end())
+    return;
+  std::vector<lang::MirInstructionId> invocations;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.callableInvocation && instruction.result &&
+          instruction.info.type.kind == lang::SemanticType::Class)
+        invocations.push_back(instruction.id);
+  expect(invocations.size() == 3,
+         "the three class-returning lambda invocations are exercised: " +
+             std::to_string(invocations.size()));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(emitter.analyze(address).ready() &&
+             emitter.supportsFailureBodyText(address),
+         "class results of lambda invocations enter failure-form emission");
+  if (!emitter.supportsFailureBodyText(address))
+    return;
+  const std::string text =
+      emitter.emitFailureBodyText(address, "callable-class-result-v0", 1).text;
+  const auto count = [&](std::string_view needle) {
+    std::size_t found = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size()))
+      ++found;
+    return found;
+  };
+  expect(count("::__gti_program::Plain, true> __gti_mir_v_") == 1 &&
+             count(".get().id") >= 2,
+         "the field-read result lives in a representation-only SSA slot and "
+         "each field read views its slot");
+  // The three invocations, plus the transformed call of `finish`.
+  const std::size_t addressed =
+      count(".construction_address(), __gti_mir_failure_record);");
+  expect(addressed == invocations.size() + 1 &&
+             count(".mark_constructed();") >= addressed,
+         "each invocation constructs its result at its slot's address and "
+         "publishes it only on success: " +
+             std::to_string(addressed));
+  expect(count("::__gti_program::Plain __gti_mir_v_") == 0 &&
+             count("::__gti_program::Res __gti_mir_v_") == 0,
+         "no class result is a default-constructed C++ local");
+  const auto refused = [&](auto &&mutate, const std::string &what) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, address);
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        mutate(instruction);
+    const lang::CppMirBodyEmitter rejected(malformed, map);
+    expect(!rejected.analyze(address).ready() ||
+               !rejected.supportsFailureBodyText(address),
+           "a forged lambda class result cannot enter backend emission: " +
+               what);
+  };
+  const auto bodyText = [&](const lang::MirFunctionInstance &function) {
+    const lang::MirBodyAddress functionAddress{
+        .kind = lang::MirBodyKind::Function, .owner = function.id};
+    return function.mayRaiseDefinedFailure
+               ? emitter
+                     .emitFailureBodyText(functionAddress,
+                                          "callable-class-result-v0", 1)
+                     .text
+               : emitter
+                     .emitBodyText(functionAddress, "callable-class-result-v0",
+                                   1)
+                     .text;
+  };
+  const auto invokesClassLambda =
+      [](const lang::MirFunctionInstance &function) {
+        return function.entryKind == lang::ProgramEntryKind::None &&
+               std::any_of(
+                   function.body.blocks.begin(), function.body.blocks.end(),
+                   [](const lang::MirBlock &block) {
+                     return std::any_of(
+                         block.instructions.begin(), block.instructions.end(),
+                         [](const lang::MirInstruction &instruction) {
+                           return instruction.kind ==
+                                      lang::MirInstructionKind::Call &&
+                                  instruction.callableInvocation &&
+                                  instruction.info.type.kind ==
+                                      lang::SemanticType::Class;
+                         });
+                   });
+      };
+  // The directly returned result constructs in the caller's storage.
+  const auto finish = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return invokesClassLambda(function) &&
+               function.returnType.kind == lang::SemanticType::Class;
+      });
+  expect(finish != frontend.mir.functionInstances().end() &&
+             supportsSelectedBodyText(frontend.mir, map, finish->id),
+         "a directly returned lambda class result enters emission");
+  if (finish != frontend.mir.functionInstances().end() &&
+      supportsSelectedBodyText(frontend.mir, map, finish->id)) {
+    const std::string finishText = bodyText(*finish);
+    expect(finishText.find("__gti_mir_out_result, __gti_mir_failure_record)") !=
+                   std::string::npos &&
+               finishText.find(", true> __gti_mir_v_") == std::string::npos &&
+               finishText.find(".mark_constructed();") == std::string::npos,
+           "a directly returned lambda class result publishes into the "
+           "caller's placement storage without a slot of its own");
+  }
+  // The short-circuit operand's result lives in its conditional temporary.
+  const auto operand = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return invokesClassLambda(function) &&
+               function.returnType.kind != lang::SemanticType::Class;
+      });
+  expect(operand != frontend.mir.functionInstances().end() &&
+             supportsSelectedBodyText(frontend.mir, map, operand->id),
+         "a lambda result read inside a short-circuit operand enters "
+         "emission");
+  if (operand != frontend.mir.functionInstances().end() &&
+      supportsSelectedBodyText(frontend.mir, map, operand->id)) {
+    const std::string operandText = bodyText(*operand);
+    expect(operandText.find(".construction_address(), "
+                            "__gti_mir_failure_record);") !=
+                   std::string::npos &&
+               operandText.find(", &__gti_mir_v_") == std::string::npos,
+           "the operand's invocation constructs its conditional temporary, "
+           "not an undeclared SSA local");
+  }
+  for (const lang::MirInstructionId call : invocations) {
+    refused(
+        [&](lang::MirInstruction &instruction) {
+          if (instruction.id == call)
+            instruction.definedFailure.propagation =
+                lang::FailurePropagationKind::DirectCall;
+        },
+        "non-callable propagation " + std::to_string(call));
+    refused(
+        [&](lang::MirInstruction &instruction) {
+          if (instruction.id == call)
+            instruction.lambdaTarget.reset();
+        },
+        "missing lambda target " + std::to_string(call));
+  }
+}
+
+// A fused closure literal is spelled only where its chain is consumed: an
+// invocation, a deduced callable argument or a comma discard, each of which
+// selects the literal's convention. A lambda that is never consumed spells no
+// body, so its body needs neither convention, even when no plain form exists
+// (a move-only or destructor-bearing temporary passed by value into a class
+// constructor). The same lambda invoked once still spells its transformed
+// body at that invocation.
+void testUnconsumedFusedClosureSpellsNoBody() {
+  const auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-unconsumed-fused-closure.gti", R"(
+struct Token {
+  int id;
+  Token(int raw) : id(raw) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+};
+struct Logged {
+  int id;
+  Logged(int raw) : id(raw) {}
+  ~Logged() {}
+};
+struct Ticket {
+  int id;
+  Ticket(Token token) : id(token.id) {}
+};
+struct Receipt {
+  int id;
+  Receipt(Logged entry) : id(entry.id) {}
+};
+int unused() {
+  auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
+  auto receipt = [](int raw) -> Receipt { return Receipt(Logged(raw)); };
+  return 0;
+}
+int used() {
+  auto ticket = [](int raw) -> Ticket { return Ticket(Token(raw)); };
+  Ticket t = ticket(8);
+  return t.id;
+}
+int main() { return unused() + used() - 8; }
+)");
+  expect(frontend.canGenerateCode(), "unconsumed fused closures verify");
+  if (!frontend.canGenerateCode())
+    return;
+  // `unused` creates two closures and invokes neither; `used` invokes its one.
+  const lang::MirFunctionInstance *unused = nullptr;
+  const lang::MirFunctionInstance *used = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    std::size_t closures = 0;
+    std::size_t invocations = 0;
+    for (const auto &block : candidate.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        closures += instruction.kind == lang::MirInstructionKind::Compute &&
+                    instruction.operation == lang::MirOperation::Closure;
+        invocations += instruction.kind == lang::MirInstructionKind::Call &&
+                       instruction.callableInvocation.has_value();
+      }
+    if (closures == 2 && invocations == 0)
+      unused = &candidate;
+    if (closures == 1 && invocations == 1)
+      used = &candidate;
+  }
+  expect(unused != nullptr && used != nullptr,
+         "both closure-owning functions are retained");
+  if (unused == nullptr || used == nullptr)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto bodyText = [&](const lang::MirFunctionInstance &instance,
+                            std::string_view family) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = instance.id};
+    return instance.mayRaiseDefinedFailure
+               ? emitter.emitFailureBodyText(address, family, 1).text
+               : emitter.emitBodyText(address, family, 1).text;
+  };
+  expect(supportsSelectedBodyText(frontend.mir, map, unused->id),
+         "a function whose lambdas are never consumed enters emission");
+  expect(supportsSelectedBodyText(frontend.mir, map, used->id),
+         "a function invoking the same lambda enters emission");
+  if (!supportsSelectedBodyText(frontend.mir, map, unused->id) ||
+      !supportsSelectedBodyText(frontend.mir, map, used->id))
+    return;
+  const std::string unusedText = bodyText(*unused, "unconsumed-closure-v0");
+  const std::string usedText = bodyText(*used, "unconsumed-closure-v0");
+  expect(unusedText.find("lambda-instance") == std::string::npos &&
+             unusedText.find("spells at its consuming invocation") !=
+                 std::string::npos,
+         "an unconsumed fused closure spells no lambda body");
+  expect(usedText.find("unconsumed-closure-v0 lambda-instance") !=
+             std::string::npos,
+         "an invoked fused closure spells its body at the invocation");
+}
+
 constexpr NamedTest kTests[] = {
     {"testFieldInitializerExpressionVocabulary",
      testFieldInitializerExpressionVocabulary},
@@ -6652,6 +7294,8 @@ constexpr NamedTest kTests[] = {
      testPreparedConsumingReceiverLaterFailure},
     {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
     {"testCleanupFreeConditionalCallArms", testCleanupFreeConditionalCallArms},
+    {"testCleanupFreeConditionalMovedLocalArms",
+     testCleanupFreeConditionalMovedLocalArms},
     {"testCleanupFreeJoinReceiver", testCleanupFreeJoinReceiver},
     {"testMovedGenericOwnerReceiverStage", testMovedGenericOwnerReceiverStage},
     {"testExpectedTemporaryObservationSlot",
@@ -6669,6 +7313,7 @@ constexpr NamedTest kTests[] = {
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
     {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
+    {"testNestedCleanupFreeJoinMove", testNestedCleanupFreeJoinMove},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
@@ -6685,6 +7330,9 @@ constexpr NamedTest kTests[] = {
      testOwningExpectedReplacementSources},
     {"testShortCircuitExpectedPayloadFieldView",
      testShortCircuitExpectedPayloadFieldView},
+    {"testCallableClassResultSlots", testCallableClassResultSlots},
+    {"testUnconsumedFusedClosureSpellsNoBody",
+     testUnconsumedFusedClosureSpellsNoBody},
 };
 
 } // namespace

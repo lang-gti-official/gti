@@ -3443,12 +3443,40 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(conditional_checked_arm_input_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME conditional_cleanup_free_nested_join_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_cleanup_free_nested_join_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_cleanup_free_nested_join_runtime PROPERTIES TIMEOUT 300)
+  add_test(
     NAME conditional_cleanup_free_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/conditional_cleanup_free_receiver_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conditional_cleanup_free_receiver_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME lambda_class_result_consumers_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/lambda_class_result_consumers_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(lambda_class_result_consumers_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME conditional_moved_local_join_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_moved_local_join_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_moved_local_join_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME moved_local_field_read_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/moved_local_field_read_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(moved_local_field_read_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME consuming_generic_owner_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -1,5 +1,71 @@
 # Compiler Verification
 
+## Class results of callable invocations (0.442.1)
+
+- **Defect.** A lambda call returning a class without a default constructor
+  reported `GTI-B0001` unless its result initialized a variable directly:
+  `make(1).id`, `take(make(2))`, `Holder h{make(3)}`, `v = make(4);`, a
+  discarded call and a member initializer all failed, with or without a
+  destructor on the class. Separately, a lambda that was never called failed
+  when its body passed a move-only or destructor-bearing temporary by value
+  into a class constructor, as in `Ticket(Token(raw))`; calling it built.
+  A destructor-bearing result read inside a short-circuit operand, as in
+  `skip || make(1).id == 1`, passed the vocabulary but produced C++ that named
+  an undeclared SSA local, so the native build failed.
+- **Cause and rule.** The class-result slots that a source call's result uses
+  (`classSsaLifetimeSlot`, `valueRootedClassCallResultSlot` and
+  `stagedClassResultForSource`) admitted only function-target producers, so
+  the invocation's result fell back to a value-initialized C++ local, which
+  the vocabulary refuses. `callableClassResultInvocation` now admits a
+  callable value invocation whose verified MIR binds it to its lambda
+  instance and completes it on the Invoke success edge under callable
+  propagation, under each slot's unchanged consumer, activation and transfer
+  proofs; the invocation writer constructs the selected slot, including the
+  conditional temporary (`conditionalTemporaryViewedResult`) that the
+  vocabulary already admitted for a short-circuit operand. A result that
+  `placementDirectReturnCall` constructs directly in the caller's placement
+  storage keeps that route and takes no slot. The uncalled
+  lambda was probed in the plain convention because its fused chain had no
+  consumer, and that body has no plain form: the plain `Ticket(Token)`
+  constructor is outside the vocabulary. `closureChainAdmits` now reports the
+  chain's spelling sites (invocations, deduced callable arguments and comma
+  discards), and a chain with none spells, and therefore probes, no body.
+- **Regression tests.** `lambda_class_result_consumers_runtime` builds a new
+  fixture under C++20 and C++23 at O0, O1 and O3, plus the no-elide and
+  ASan/UBSan modes. It reads fields of results of plain, capturing,
+  twice-called and helper-function lambdas, including in a short-circuit
+  operand, and passes results to a function and a constructor, assigns,
+  discards and initializes a member with them. Destructor-bearing results
+  trace each drop: once after a field read, inside the callee for a moved
+  argument, at once when discarded, at assignment, inside an evaluated
+  short-circuit operand but not a skipped one, and at scope exit. A later
+  argument that raises destroys the already published result once, and a
+  raising invocation publishes nothing. The fixture also declares uninvoked
+  lambdas that construct `Ticket(Token(raw))` and a destructor-bearing
+  equivalent, in `main` and in a helper. In `cpp_mir_body_emitter_text`,
+  `testCallableClassResultSlots` requires each invocation to construct its
+  slot at its address with no default-constructed class local, a
+  short-circuit operand's invocation to construct its conditional temporary
+  rather than an undeclared local, and a result returned directly after a
+  moved parameter's cleanup to construct in the caller's placement storage
+  without a slot of its own. It refuses an invocation forged without
+  callable propagation or without its lambda target.
+  `testUnconsumedFusedClosureSpellsNoBody` admits a function whose two
+  lambdas are never consumed and emits no lambda body for it, while the same
+  lambda invoked once still emits its body. Against the 0.440.2 emitter the
+  runtime fixture and both text tests fail. A differential `--emit-cpp` run
+  over `tests/fixtures`, `tests/coverage` and `examples` against the same tree
+  with the 0.440.3 emitter changes only the new fixture, which no longer
+  fails.
+- **Out of scope.** Reading a nested field of a class call result, as in
+  `build(1).inner.id`, and reading a field of a construction that takes a
+  call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a
+  source function and a lambda alike. A lambda passed to a generic callable
+  parameter whose class result initializes a variable or is passed by value,
+  as in `int run<F>(F f) { Plain v = f(2); return v.id; }`, also still fails;
+  the staged callable's transformed invocation admits a class result only as
+  a direct return, a borrowed receiver or an Expected payload.
+
 ## Constructor text-view lifetimes (0.440.3)
 
 `compiler_pipeline` covers direct, generic, defaulted and constexpr ownerless
@@ -6591,17 +6657,52 @@ member call then uses as its receiver: read-only, `mut` and consuming
 members. Each shape runs through both arms, in plain and failure-form bodies.
 The arms are ordinary calls, member calls borrowing their receiver read-only
 or mutably or consuming it, calls consuming a moved argument, copies of a
-place, constructions, and mixtures of these. The arm callee or the member
-call may fail. The shapes also cover a class with a class field, a generic
-class, a loop, and inputs with cleanup of their own. A failing arm callee
-leaves no joined value, a failing member call fails while borrowing it, and
-cleanup destroys only what was constructed before the failure.
+place, constructions, nested conditionals, and mixtures of these. The arm
+callee or the member call may fail. The shapes also cover a class with a class
+field, a generic class, loops that evaluate a nested conditional again on
+every iteration, and inputs with cleanup of their own. A failing arm callee
+leaves no joined value, a failing member call fails while borrowing it, a
+failing callee in a nested arm on a loop's second iteration leaves none either,
+and cleanup destroys only what was constructed before the failure.
 `testCleanupFreeJoinReceiver` in the emitter text suite checks that both arms
-publish into the borrowed temporary and that its Drop ends it. It refuses a
-removed, conditional, duplicated or retargeted activation, and an arm result
-that activates the obligation itself, all of which MIR verification also
-rejects. A differential `--emit-cpp` of every source under `tests/fixtures`
-and `examples` at O0 and O3 changed only the new fixture.
+publish into the borrowed temporary and that its Drop ends it, and that a
+nested arm ends the nested join's storage right after moving out of it. It
+refuses a removed, conditional, duplicated or retargeted activation, an arm
+result that activates the obligation itself, and a nested join's storage with
+an obligation of its own, all of which MIR verification also rejects. The
+original receiver-only differential `--emit-cpp` check of every source under
+`tests/fixtures` and `examples` at O0 and O3 changed only that receiver fixture.
+The later nested-join differential covered 1,168 programs (2,336 emissions):
+2,326 emissions were identical, two changed acceptance as expected, and eight
+changed only the required storage-retirement text. These are historical
+individual-change results, not validation of the combined recovery.
+`conditional_cleanup_free_nested_join_runtime` runs the same eight
+configurations over loops that evaluate a cleanup-free conditional nested in
+another one's arm again on every iteration. The nested conditional sits in
+either arm, in both, or two levels deep. The result is bound, read through a
+field, passed on, assigned and returned. Its arms are failure-free and raising
+calls, constructions, borrowed and consuming member calls, a generic class, and
+arms that compute overflow-checked arguments first. Earlier, the second iteration aborted because the nested join's storage
+was still engaged. A raising callee in a nested arm fails the last iteration
+and leaves no result. `testNestedCleanupFreeJoinMove` in the emitter text
+suite checks that both nested joins and a viewed outer join end their storage
+right after the move that empties it.
+`conditional_moved_local_join_runtime` runs the same eight configurations over
+a cleanup-free class value that each arm of a conditional moves out of a whole
+named local, a by-value parameter included. Each shape runs through both arms,
+bound, assigned, passed on, read through a field, used as a member-call
+receiver (also for a class holding a literal-backed view) and returned, in
+plain and failure-form bodies, beside a construction, copy, call or nested-join
+arm, with
+the moved-from locals reassigned afterwards, the join assigned back into a
+moved local, both arms moving one local, and inside a loop. Failures after a
+bound join, before a returned join and in the joined value's member call
+destroy only what was constructed. `testCleanupFreeConditionalMovedLocalArms`
+in the emitter text suite checks that each moved local's binding drop ends its
+shell exactly once, and that the arm proofs themselves refuse a removed,
+weakened or retargeted ownership event, a lifecycle event on the `Move`, forged
+cleanup on the moved-from local and a conditional activation, all of which MIR
+verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,

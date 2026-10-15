@@ -1958,7 +1958,12 @@ A `MirBody` owns:
 - a field projection from a class-valued SSA temporary is rooted in that
   producer value, never in the projected load result. The producer dominates
   the place-root use and the following `Load`, so verification cannot admit a
-  self-use-before-definition cycle;
+  self-use-before-definition cycle. Place formation materializes the producer
+  first: a call, construction, direct initializer, propagation, conditional,
+  or a `Move` out of a place. `std::move(a).x` therefore moves `a` into a
+  temporary (leaving `a` moved-from) and reads the field of that temporary;
+  an owning class arms the temporary's full-expression obligation with the
+  Move's lifecycle event;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,
