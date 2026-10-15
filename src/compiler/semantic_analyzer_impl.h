@@ -1936,6 +1936,10 @@ private:
   [[nodiscard]] std::vector<SymbolId>
   storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
+  [[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
+  storedConditionSymbols(const SemanticType &type,
+                         std::span<const StoredReferenceCondition> conditions);
+
   // A present inventory enumerates every independently checked dependency in
   // declaration order. Present-empty is dependency-free; absent is unsupported
   // or unresolved and must never be used to establish empty-set evidence.
