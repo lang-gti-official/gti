@@ -5188,25 +5188,54 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
                   block.terminator.value->kind == MirOperandKind::Value
               ? body.findValue(block.terminator.value->value)
               : nullptr;
-      const auto *literal =
+      const auto *definition =
           returned ? linearDefinition(body, returned->id) : nullptr;
       const bool independentTextLiteral =
           instance.returnBorrowAccess == AccessMode::ReadOnly && returned &&
-          !returned->info.traits.containsBorrowedState && literal &&
-          literal->kind == MirInstructionKind::Compute &&
-          literal->operation == MirOperation::Literal && literal->literal &&
+          !returned->info.traits.containsBorrowedState && definition &&
+          definition->kind == MirInstructionKind::Compute &&
+          definition->operation == MirOperation::Literal &&
+          definition->literal &&
           ((instance.returnType.kind == SemanticType::StringView &&
             returned->info.type == instance.returnType &&
-            std::holds_alternative<std::string>(*literal->literal)) ||
+            std::holds_alternative<std::string>(*definition->literal)) ||
            (instance.returnType.kind == SemanticType::CString &&
             returned->info.type.kind == SemanticType::NullPtr &&
-            std::holds_alternative<std::nullptr_t>(*literal->literal))) &&
-          literal->result == returned->id &&
-          literal->info.type == returned->info.type &&
-          !literal->info.traits.containsBorrowedState && !literal->loan &&
-          literal->operands.empty() && !literal->destination &&
-          !literal->receiver && literal->lifecycle.empty() &&
-          literal->definedFailure.empty() && literal->localFailureSites.empty();
+            std::holds_alternative<std::nullptr_t>(*definition->literal))) &&
+          definition->result == returned->id &&
+          definition->info.type == returned->info.type &&
+          !definition->info.traits.containsBorrowedState && !definition->loan &&
+          definition->operands.empty() && !definition->destination &&
+          !definition->receiver && definition->lifecycle.empty() &&
+          definition->definedFailure.empty() &&
+          definition->localFailureSites.empty();
+      // Semantics rejects storing a dynamic view in a field or fixed-array
+      // element, so storage declared as the view itself holds an ownerless
+      // view. An exact copy of it is lifetime independent like a literal. A
+      // reference field ends in a dereference and stays owner dependent.
+      const MirPlace *stored =
+          definition && definition->kind == MirInstructionKind::Load &&
+                  definition->operands.size() == 1 &&
+                  definition->operands.front().kind == MirOperandKind::Copy
+              ? body.findPlace(definition->operands.front().place)
+              : nullptr;
+      const bool independentStoredText =
+          instance.returnBorrowAccess == AccessMode::ReadOnly && stored &&
+          (instance.returnType.kind == SemanticType::StringView ||
+           instance.returnType.kind == SemanticType::CString) &&
+          !stored->projections.empty() &&
+          (stored->projections.back().kind == MirProjectionKind::Field ||
+           stored->projections.back().kind == MirProjectionKind::Index) &&
+          stored->type == instance.returnType &&
+          !stored->traits.containsBorrowedState &&
+          returned->info.type == instance.returnType &&
+          !returned->info.traits.containsBorrowedState &&
+          definition->result == returned->id &&
+          definition->info.type == returned->info.type &&
+          definition->operands.front().type == instance.returnType &&
+          !definition->info.traits.containsBorrowedState && !definition->loan &&
+          !definition->destination && !definition->receiver &&
+          definition->lifecycle.empty();
       const bool fallibleBorrowErrorReturn =
           instance.returnType.kind == SemanticType::Expected &&
           instance.returnType.arguments.size() == 2 &&
@@ -5220,7 +5249,8 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           block.terminator.value->type.arguments.size() == 1 &&
           block.terminator.value->type.arguments.front() ==
               instance.returnType.arguments.back();
-      if (fallibleBorrowErrorReturn || independentTextLiteral) {
+      if (fallibleBorrowErrorReturn || independentTextLiteral ||
+          independentStoredText) {
         continue;
       }
       return verificationFailure(

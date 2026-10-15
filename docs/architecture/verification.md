@@ -7969,7 +7969,14 @@ and parameter text relays with literal/null branches, plus an unsafe raw-receive
 relay used by editor previews. It rejects missing or forged literal witnesses,
 cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
 O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
-adding runtime lifetime state.
+adding runtime lifetime state. The stored-view return fixture covers view and
+`c_string` fields returned through `this`, an implicit field, a nested field, a
+fixed-array element, reference and by-value parameters and a concrete generic
+instance, all without an owner summary, and a stored alternative beside a
+receiver relay. It requires the specific missing-escaping-loan rejection for a
+borrowed loaded value, a dereference-ending or mistyped stored place, and a
+cleared dependent loan. A shadowing local and a local-owner escape beside a
+stored view fail in semantics.
 
 ### Operator-place composition focused gates
 
