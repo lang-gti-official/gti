@@ -15,6 +15,7 @@ for what minor and patch releases mean.
   entirely in GTI over a payload enum with no compiler-private storage. It
   has the same surface as `std::optional`, plus:
   - a consuming `T value() &&` that moves the value out;
+  - move assignment, which destroys the current value first;
   - `std::experimental::nullopt`;
   - an implicit conversion from `nullopt_t`.
 - `?` works on it through a `std::tryable` block. It moves the value out,

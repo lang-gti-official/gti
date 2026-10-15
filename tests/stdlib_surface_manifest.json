@@ -16,7 +16,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/optional.gti": "f62076eaf40242328ba1c9097866f3a97dc6fac9bacc4ec692128b5733ae4d0e",
+    "stdlib/std/experimental/optional.gti": "623d543812dec501d51b19588e57cc002d22a65865bada09b5eae94951f3efe9",
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
@@ -2066,7 +2066,7 @@
       "status": "executable",
       "operations": ["std::experimental::nullopt", "std::experimental::nullopt_t", "std::experimental::optional"],
       "case_ids": ["experimental-optional"],
-      "required_instantiations": ["move-only unique_ptr and class payloads", "owning string payload", "? moving the value out and returning the empty residual", "consuming value() &&", "empty-access panic after cleanup"],
+      "required_instantiations": ["move-only unique_ptr and class payloads", "owning string payload", "? moving the value out and returning the empty residual", "consuming value() &&", "move assignment over engaged and empty optionals", "empty-access panic after cleanup"],
       "evidence": ["tests/fixtures/stdlib_surface_experimental_optional.gti", "tests/fixtures/experimental_optional.gti", "tests/experimental_optional_runtime_test.py", "examples/162-experimental-optional.gti"]
     },
     {

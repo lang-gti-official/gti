@@ -1,8 +1,9 @@
 // std::experimental::optional over a move-only, destructor-traced payload.
 // Construction prints a tracked id and destruction its negation, so each
 // phase's trace follows from this source alone: `?` and the consuming
-// `value() &&` move the payload out without a copy, reset and emplace end and
-// start exactly one lifetime, and an empty access panics after cleanup.
+// `value() &&` move the payload out without a copy, reset, emplace and move
+// assignment end and start exactly one lifetime each, and an empty access
+// panics after cleanup.
 #include <std/experimental/optional>
 #include <std/string>
 #include <std/vector>
@@ -46,6 +47,21 @@ int run(int phase) {
     std::println(std::to_string(slot.emplace(5).read()));
     Tracked taken = std::move(slot).value();
     std::println(std::to_string(taken.read()));
+    return 0;
+  }
+  if (phase == 2) {
+    // Move assignment ends the destination's value, if any, exactly once.
+    mut std::experimental::optional<Tracked> held =
+        std::experimental::optional<Tracked>(Tracked(7));
+    std::experimental::optional<Tracked> other =
+        std::experimental::optional<Tracked>(Tracked(8));
+    held = std::move(other);
+    std::println(std::to_string(held.value().read()));
+    std::experimental::optional<Tracked> none{};
+    held = std::move(none);
+    std::println(std::to_string(held.has_value() ? 1 : 0));
+    held = std::experimental::optional<Tracked>(Tracked(9));
+    std::println(std::to_string(held.value().read()));
     return 0;
   }
   Tracked guard{6};
