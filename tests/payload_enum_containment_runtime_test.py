@@ -217,7 +217,7 @@ def main() -> int:
         enum_definition = generated.find("struct holder {")
         wrapper_definition = generated.find("class wrapper {")
         required = (
-            "std::variant<std::monostate",
+            "::gti_internal::backend::payload_variant<std::monostate",
             "std::move(__gti_mir_p_",
         )
         if (

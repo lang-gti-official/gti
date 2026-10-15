@@ -129,7 +129,8 @@ std::string cppMirCleanupValueExpression(const MirProgram &program,
           *child.payloadVariant >= enumeration->variants.size())
         throw std::logic_error("MIR payload cleanup lost its field selection");
       const std::string alternative = std::to_string(*child.payloadVariant + 1);
-      std::string field = "std::get<" + alternative + ">(" + receiver +
+      std::string field = "::gti_internal::backend::payload_get<" +
+                          alternative + ">(" + receiver +
                           ".__gti_value).__gti_field_" +
                           std::to_string(*child.payloadField);
       if (cppRequiresBytePreservingTransport(program, child.type))
@@ -36879,7 +36880,8 @@ private:
     if (consuming) {
       output << "std::move(";
     }
-    output << "std::get<" << variant->index + 1 << ">(";
+    output << "::gti_internal::backend::payload_get<" << variant->index + 1
+           << ">(";
     if (consuming) {
       MirOperand observed = subject;
       observed.kind = MirOperandKind::BorrowRead;
