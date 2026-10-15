@@ -14551,6 +14551,220 @@ int main() {
   }
 }
 
+// A field read straight off a value moved out of a named local or by-value
+// parameter, as in `std::move(a).value`, reads the moved temporary. MIR
+// materializes the Move before the projection roots a place at its result;
+// the source is left moved-from. A cleanup-free class stages the moved object
+// in its representation-only slot, which ends after the one read. An owning
+// class keeps it in MIR's value-rooted slot, or in the conditional temporary
+// of a conditional arm, whose full-expression Drop destroys it once; the
+// source's own drop then ends only the moved-from shell. Plain and failure
+// forms alike. A Move with no armed result obligation, or a view moved out of
+// the temporary, leaves the body unsupported. (Regression: GTI-B0001.)
+void testMovedPlaceFieldView() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-place-field-view.gti", R"(
+#include <std/utility>
+
+mut int32_t drops = 0;
+
+class pod {
+public:
+  int32_t value;
+  pod(int32_t value) : value(value) {}
+};
+
+class quiet {
+public:
+  int32_t value;
+  quiet(int32_t value) : value(value) {}
+  ~quiet() {}
+};
+
+class counted {
+public:
+  int32_t value;
+  counted(int32_t value) : value(value) {}
+  ~counted() { drops += 1; }
+};
+
+int32_t pod_local(int32_t seed) { pod a{seed}; return std::move(a).value; }
+int32_t pod_parameter(pod a) { return (std::move(a)).value; }
+int32_t quiet_local(int32_t seed) { quiet a{seed}; return std::move(a).value; }
+int32_t quiet_parameter(quiet a) { return std::move(a).value; }
+int32_t counted_local(int32_t seed) {
+  counted a{seed};
+  int32_t read = std::move(a).value;
+  return read;
+}
+int32_t counted_parameter(counted a) { return std::move(a).value; }
+int32_t counted_arm(bool take, int32_t seed) {
+  counted a{seed};
+  return take ? std::move(a).value : 0;
+}
+
+int main() {
+  return pod_local(1) + pod_parameter(pod(2)) + quiet_local(3) +
+         quiet_parameter(quiet(4)) + counted_local(5) +
+         counted_parameter(counted(6)) + counted_arm(true, 7) - 28;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved place field view fixture should construct valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto idOf = [&](std::string_view name) {
+    for (const auto &function : frontend.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  const std::vector<std::string> names{
+      "pod_local",     "pod_parameter",     "quiet_local", "quiet_parameter",
+      "counted_local", "counted_parameter", "counted_arm"};
+  for (const std::string &name : names)
+    expect(idOf(name) != 0, "the fixture should lower " + name);
+  if (!std::all_of(names.begin(), names.end(),
+                   [&](const std::string &name) { return idOf(name) != 0; }))
+    return;
+
+  // MIR: the projected place is rooted at the Move's result, which is defined
+  // before the Load that reads the field; the source becomes Moved. Only an
+  // owning class arms a result obligation, whose Drop follows the read.
+  struct MovedView {
+    const lang::MirInstruction *move = nullptr;
+    const lang::MirInstruction *load = nullptr;
+    const lang::MirDropObligation *drop = nullptr;
+  };
+  const auto movedView = [&](const lang::MirBody &body) {
+    MovedView view;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Move &&
+            instruction.intrinsic == lang::IntrinsicKind::Move &&
+            instruction.result)
+          view.move = &instruction;
+        const lang::MirPlace *place =
+            instruction.kind == lang::MirInstructionKind::Load &&
+                    instruction.operands.size() == 1
+                ? body.findPlace(instruction.operands.front().place)
+                : nullptr;
+        if (view.move != nullptr && place != nullptr &&
+            place->root == lang::MirPlaceRootKind::Value &&
+            place->value == *view.move->result &&
+            place->projections.size() == 1 &&
+            place->projections.front().kind == lang::MirProjectionKind::Field)
+          view.load = &instruction;
+      }
+    if (view.move != nullptr && view.move->lifecycle.size() == 1)
+      view.drop = body.findDropObligation(view.move->lifecycle.front().target);
+    return view;
+  };
+  for (const std::string &name : names) {
+    const lang::MirFunctionInstance *function =
+        frontend.mir.findFunctionInstance(idOf(name));
+    const MovedView view =
+        function == nullptr ? MovedView{} : movedView(function->body);
+    const bool owning = name.rfind("pod", 0) != 0;
+    const bool moved =
+        view.move != nullptr && view.move->ownership &&
+        view.move->ownership->kind == lang::OwnershipEventKind::Move &&
+        view.move->ownership->after == lang::OwnershipStateSet::Moved;
+    const bool armed =
+        owning ? view.drop != nullptr &&
+                     view.drop->kind == lang::MirDropObligationKind::Value &&
+                     !view.drop->initiallyActive
+               : view.move != nullptr && view.move->lifecycle.empty();
+    expect(view.load != nullptr && moved && armed,
+           name + " should read the field of its moved temporary after the "
+                  "Move, and arm a result obligation only for an owning "
+                  "class");
+  }
+  expect(!frontend.mir.findFunctionInstance(idOf("quiet_local"))
+                 ->mayRaiseDefinedFailure &&
+             frontend.mir.findFunctionInstance(idOf("counted_local"))
+                 ->mayRaiseDefinedFailure,
+         "the fixture should exercise both plain and failure-form bodies");
+
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto bodyText = [&](const lang::MirProgram &program,
+                            const std::string &name) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    const lang::MirFunctionInstance *function =
+        program.findFunctionInstance(idOf(name));
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = idOf(name)};
+    if (function == nullptr)
+      return std::string();
+    if (function->mayRaiseDefinedFailure)
+      return emitter.supportsFailureBodyText(address)
+                 ? emitter.emitFailureBodyText(address, "moved-field-v0", 1)
+                       .text
+                 : std::string();
+    return emitter.supportsBodyText(address)
+               ? emitter.emitBodyText(address, "moved-field-v0", 1).text
+               : std::string();
+  };
+  // The Move constructs the slot from its source, the field is read from that
+  // slot, and the slot then ends: its representation for a cleanup-free class,
+  // MIR's Drop for an owning one. No owning class is declared as an SSA local.
+  for (const std::string &name : names) {
+    const std::string text = bodyText(frontend.mir, name);
+    const bool owning = name.rfind("pod", 0) != 0;
+    const std::string read = ".get().value;";
+    const std::size_t at = text.find(read);
+    const std::string prefix = owning ? "__gti_mir_p_" : "__gti_mir_v_";
+    const std::size_t start =
+        at == std::string::npos ? std::string::npos : text.rfind(prefix, at);
+    const std::string slot = start == std::string::npos
+                                 ? std::string()
+                                 : text.substr(start, at - start);
+    const std::string owner = name.substr(0, name.find('_'));
+    const bool declared =
+        !owning || text.find("mir_lifetime_slot<::__gti_program::" + owner +
+                             "> " + slot + ";") != std::string::npos;
+    const std::size_t constructed = text.find(slot + ".construct(std::move(");
+    const std::size_t ended = text.find(slot + ".destroy", at);
+    expect(!slot.empty() && declared && constructed < at &&
+               ended != std::string::npos &&
+               text.find("::__gti_program::" + owner + " __gti_mir_v_") ==
+                   std::string::npos,
+           name + " should move into its temporary's slot, read the field "
+                  "there and end the slot after the read");
+  }
+
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    const std::string name = mutation == 0 ? "pod_local" : "counted_local";
+    lang::MirProgram malformed = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        malformed.functionInstances());
+    bool changed = false;
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != idOf(name))
+        continue;
+      const MovedView view = movedView(function.body);
+      for (lang::MirBlock &block : function.body.blocks)
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (mutation != 2 && &instruction == view.load) {
+            instruction.operands.front().kind = lang::MirOperandKind::Move;
+            changed = true;
+          }
+          if (mutation == 2 && &instruction == view.move) {
+            instruction.lifecycle.front().conditional = true;
+            changed = true;
+          }
+        }
+      (void)lang::rebuildMirValueUses(function.body);
+    }
+    expect(changed && bodyText(malformed, name).empty(),
+           mutation == 2 ? "an owning moved temporary must be armed "
+                           "unconditionally by its own Move"
+                         : "a field view moved out of a moved temporary must "
+                           "not use the moved temporary's slot");
+  }
+}
+
 // A generated constructor with two or more owned-parameter fields, one of
 // them a text view, keeps that parameter's entry loan and ends it in the
 // prologue. The record has no runtime effect, so the member-initializer
@@ -14775,6 +14989,7 @@ constexpr NamedTest kTests[] = {
     {"testCleanupFreeConstructorTemporaryFieldRead",
      testCleanupFreeConstructorTemporaryFieldRead},
     {"testOwningConstructionFieldView", testOwningConstructionFieldView},
+    {"testMovedPlaceFieldView", testMovedPlaceFieldView},
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},
