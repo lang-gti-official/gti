@@ -1,0 +1,46 @@
+#include <std/string>
+#include <std/vector>
+
+mut int zero = 0;
+
+struct Ticket {
+  std::string text;
+  Ticket() : text(std::string("resource")) {}
+  ~Ticket() { std::println(7); }
+};
+
+struct TextOwner {
+  std::string_view& text;
+  Ticket ticket;
+  TextOwner(std::string_view& input, Ticket resource, bool fail)
+      : text(input), ticket(std::move(resource)) {
+    if (fail) {
+      int constructor_failure = 1 / zero;
+    }
+  }
+  std::size_t size() { return this.text.size(); }
+};
+
+struct TextReader {
+  std::string_view& text;
+  TextReader(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+
+std::size_t inspect(std::string_view input, bool fail) {
+  TextOwner reader{input, Ticket(), fail};
+  return reader.size();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::string_view literal = "literal";
+  std::string_view alias = literal;
+  TextReader static_reader{alias};
+  if (static_reader.size() != std::size_t(7)) { return 1; }
+  mut std::string owner = std::string("dynamic");
+  if (inspect(owner.view(), argc > 1) != std::size_t(7)) { return 2; }
+  // The adapter and its external dependency both retired, without consuming
+  // the original owner. Its resource was destroyed exactly once.
+  owner.clear();
+  return owner.empty() ? 0 : 3;
+}
