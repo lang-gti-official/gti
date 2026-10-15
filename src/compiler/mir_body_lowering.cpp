@@ -12177,11 +12177,172 @@ private:
                  : std::nullopt});
   }
 
+  // A consumed payload-enum switch subject enters its hidden owner binding at
+  // the end of the subject's full expression, exactly like a local declared
+  // from that value: its temporary obligation reparents into the binding, and
+  // the binding joins the enclosing scope's cleanup so a failure while the
+  // subject's other temporaries drop still drops the enum once. Each arm
+  // retires that owner at its entry; the scope never drops it normally.
+  struct ConsumedSwitchSubject {
+    HirBindingId binding = 0;
+    MirPlaceId place = 0;
+    MirDropObligationId obligation = 0;
+    SemanticType type = SemanticType::Unknown;
+  };
+
+  [[nodiscard]] std::optional<ConsumedSwitchSubject>
+  initializeConsumedSwitchSubject(const HirStatement &statement) {
+    const HirBinding *binding = findBinding(*statement.binding);
+    const HirValue *value = findValue(*statement.value);
+    if (binding == nullptr || value == nullptr ||
+        binding->info.type.kind != SemanticType::Enum ||
+        binding->info.type != value->info.type ||
+        value->info.category != ValueCategory::Value || scopes.empty()) {
+      valid = false;
+      return std::nullopt;
+    }
+    const MirPlaceId destination = placeForBinding(*statement.binding);
+    MirOperand initializer = valueOperand(*statement.value);
+    if (terminated()) {
+      return std::nullopt;
+    }
+    routeDirectResultInitialization(initializer, destination);
+    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                              .hirStatement = statement.id,
+                              .destination = destination,
+                              .operands = {std::move(initializer)},
+                              .info = {.type = binding->info.type,
+                                       .category = ValueCategory::Place,
+                                       .access = binding->info.access,
+                                       .traits = binding->info.traits}};
+    const MirDropObligationId target =
+        dropObligationForBinding(*statement.binding);
+    const MirDropObligationId sourceObligation =
+        dropObligationForValue(*statement.value);
+    if (target != 0) {
+      if (temporaryIsActive(sourceObligation)) {
+        appendReparentOrTypedTransfer(initialize, sourceObligation, target);
+        (void)removeTemporary(sourceObligation);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                     .target = target});
+      }
+    } else if (binding->info.traits.drop == DropKind::Lexical &&
+               tracksLocalDrops()) {
+      valid = false;
+    }
+    (void)appendInstruction(std::move(initialize));
+    registerDrop(*statement.binding, destination);
+    return ConsumedSwitchSubject{.binding = *statement.binding,
+                                 .place = destination,
+                                 .obligation = target,
+                                 .type = binding->info.type};
+  }
+
+  // Every path leaving the subject's evaluation retires the hidden owner
+  // explicitly, so it must not remain among the drops of the enclosing scope.
+  static void forgetConsumedSwitchSubject(std::vector<Scope> &state,
+                                          MirPlaceId place) {
+    for (Scope &scope : state) {
+      std::erase(scope.drops, place);
+    }
+  }
+
+  // Retires the consumed subject at an arm's entry. A binding arm moves every
+  // field of the active alternative into its by-value bindings; the final
+  // extraction transfers the enum's obligation out, so the drained shell is
+  // never dropped. Any other arm (tag-only labels or `default`) drops the
+  // enum, and therefore its active payload, before the arm's first statement.
+  void retireConsumedSwitchSubject(const HirStatement &statement,
+                                   const HirSwitchArm &arm,
+                                   const ConsumedSwitchSubject &consumed) {
+    const MirPlace *subjectPlace = output.findPlace(consumed.place);
+    if (subjectPlace == nullptr) {
+      valid = false;
+      return;
+    }
+    if (arm.payloadBindings.empty()) {
+      if (consumed.obligation != 0) {
+        (void)appendNormalDrop(
+            consumed.obligation, consumed.place, scopeDropInfo(subjectPlace),
+            scopeDropLifecycle(consumed.obligation), {consumed.obligation}, {});
+        appendNormalCleanupBoundary({consumed.obligation});
+      }
+      return;
+    }
+    for (std::size_t index = 0; index < arm.payloadBindings.size(); ++index) {
+      const HirSwitchArm::PayloadBinding &payload = arm.payloadBindings[index];
+      const HirBinding *binding = findBinding(payload.binding);
+      const HirValue *extraction = findValue(payload.value);
+      const MirPlaceId destination = placeForBinding(payload.binding);
+      if (binding == nullptr || extraction == nullptr || destination == 0 ||
+          extraction->kind != HirValueKind::PayloadExtraction ||
+          extraction->info.category != ValueCategory::Value ||
+          binding->info.type.kind == SemanticType::Reference ||
+          binding->info.type != extraction->info.type ||
+          !extraction->enumOwner || !extraction->enumVariant ||
+          !extraction->payloadIndex) {
+        valid = false;
+        continue;
+      }
+      MirInstruction extract{.kind = MirInstructionKind::Compute,
+                             .hirValue = extraction->id,
+                             .operation = MirOperation::PayloadExtract,
+                             .enumOwner = extraction->enumOwner,
+                             .enumVariant = extraction->enumVariant,
+                             .payloadIndex = extraction->payloadIndex,
+                             .info = extraction->info};
+      extract.operands.push_back({.kind = MirOperandKind::Move,
+                                  .place = consumed.place,
+                                  .type = consumed.type});
+      extract.result = resultFor(*extraction);
+      if (consumed.obligation != 0 && index + 1 == arm.payloadBindings.size()) {
+        appendLifecycle(extract, {.kind = MirLifecycleEventKind::TransferOut,
+                                  .source = consumed.obligation});
+      }
+      (void)appendInstruction(std::move(extract));
+      emittedValues.insert(extraction->id);
+      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                                .hirStatement = statement.id,
+                                .destination = destination,
+                                .operands = {valueOperand(payload.value)},
+                                .info = {.type = binding->info.type,
+                                         .category = ValueCategory::Place,
+                                         .access = binding->info.access,
+                                         .traits = binding->info.traits}};
+      if (binding->info.traits.drop == DropKind::Lexical) {
+        const MirDropObligationId obligation =
+            dropObligationForBinding(payload.binding);
+        if (obligation != 0) {
+          appendLifecycle(initialize,
+                          {.kind = MirLifecycleEventKind::Initialize,
+                           .target = obligation});
+        }
+      }
+      (void)appendInstruction(std::move(initialize));
+      registerDrop(payload.binding, destination);
+    }
+  }
+
   void lowerSwitch(const HirStatement &statement) {
     const std::vector<Scope> subjectScopes = scopes;
     const std::vector<TemporaryDrop> subjectTemporaryDrops = temporaryDrops;
     MirOperand subject;
-    if (statement.value) {
+    std::optional<ConsumedSwitchSubject> consumed;
+    if (statement.binding) {
+      if (!statement.value) {
+        valid = false;
+        return;
+      }
+      consumed = initializeConsumedSwitchSubject(statement);
+      if (!consumed) {
+        valid = false;
+        return;
+      }
+      subject = {.kind = MirOperandKind::BorrowRead,
+                 .place = consumed->place,
+                 .type = consumed->type};
+    } else if (statement.value) {
       const HirValue *sourceValue = findValue(*statement.value);
       const MirPlaceId sourcePlace = placeForValue(*statement.value);
       if (sourceValue != nullptr && sourcePlace != 0 &&
@@ -12208,10 +12369,13 @@ private:
       }
     }
     endFullExpressionLoans(subjectScopes);
-    if (statement.value)
+    if (statement.value && !consumed)
       payloadSwitchSubjects[*statement.value] = subject;
     emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
                        statement.id);
+    if (terminated()) {
+      return;
+    }
     const MirBlockId exitBlock = appendBlock();
     std::vector<MirBlockId> armBlocks;
     armBlocks.reserve(statement.switchArms.size());
@@ -12257,6 +12421,9 @@ private:
         bindingLoans;
     const auto switchTransferEndpoints = callTransferredLoanEndpoints;
     std::vector<Scope> exitScopes = switchScopes;
+    if (consumed) {
+      forgetConsumedSwitchSubject(exitScopes, consumed->place);
+    }
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         switchBindingLoans;
     normalizeSemanticLoanState(statement.endedLoans, exitScopes,
@@ -12290,7 +12457,12 @@ private:
       bindingLoans = switchBindingLoans;
       terminate({.kind = MirTerminatorKind::Unreachable,
                  .hirStatement = statement.id});
-    } else if (unmatchedBlock != exitBlock) {
+    } else if (unmatchedBlock != exitBlock || consumed) {
+      // A semantically valid consumed payload switch is exhaustive or has a
+      // `default` arm, so it never reaches this unmatched edge.
+      if (consumed) {
+        valid = false;
+      }
       current = unmatchedBlock;
       scopes = switchScopes;
       temporaryDrops = switchTemporaryDrops;
@@ -12309,11 +12481,21 @@ private:
       temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
       callTransferredLoanEndpoints = switchTransferEndpoints;
+      if (consumed) {
+        forgetConsumedSwitchSubject(scopes, consumed->place);
+      }
       scopes.push_back({});
       endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
                        statement.id);
+      if (consumed) {
+        retireConsumedSwitchSubject(statement, statement.switchArms[armIndex],
+                                    *consumed);
+      }
       for (const HirSwitchArm::PayloadBinding &payload :
            statement.switchArms[armIndex].payloadBindings) {
+        if (consumed) {
+          break;
+        }
         const HirBinding *binding = findBinding(payload.binding);
         const MirPlaceId destination = placeForBinding(payload.binding);
         if (binding == nullptr || destination == 0 || payload.value == 0) {

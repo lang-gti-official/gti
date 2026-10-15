@@ -1197,7 +1197,8 @@ variants, ordered field types, and per-field active-cleanup facts.
 `PayloadConstruct` exact-checks that table, transfers every active class
 operand once, and initializes one enum value
 obligation; `PayloadExtract` and switches observe an active enum place without
-copying the enum. Program v52 serializes ordered type and `uint64_t` value arguments on every
+copying the enum, or, for a consuming switch, move fields out of its hidden
+subject binding with one final `TransferOut`. Program v52 serializes ordered type and `uint64_t` value arguments on every
 concrete function row. HIR-to-MIR lowering and the detached lowered verifier
 exact-compare both vectors, so a nondeducible value-only function or method
 cannot collapse into another instance or delegate identity recovery to native
@@ -2407,9 +2408,29 @@ operand obligation into the selected alternative and arms one enum obligation;
 normal and failure cleanup therefore drop only the active alternative exactly
 once. Whole-value move construction and the adjacent Move -> Replace -> Drop
 assignment schedule transfer that obligation without copying or duplicating
-active state. A switch or extraction read-borrows an owning enum place. Extracted
-fields remain immutable copies, so move-only fields admit tag-only matching but
-not a payload binding; this is not yet a consuming/borrowed projection model.
+active state. A switch or extraction over a named place read-borrows the owning
+enum place, and its extracted fields are immutable copies, so move-only fields
+admit tag-only matching or a borrowed binding there.
+
+A consuming switch first initializes its hidden subject binding from the
+subject value, reparenting the subject's temporary obligation into the
+binding's obligation, and registers that binding with the enclosing scope's
+failure cleanup, so a failure while the subject's other temporaries end drops
+it once. The `Switch` terminator then read-borrows the binding. Every arm retires it at entry, after its
+entry-ended loans and before its first statement, and no scope drops it
+again. A binding arm emits one `PayloadExtract` per field whose operand is a
+`Move` of the subject binding place, each followed by its binding's
+`Initialize`; the final extraction alone carries `TransferOut` of the
+subject's obligation, so the drained enum is released without a second drop
+of moved fields. Any other arm emits an ordinary binding `Drop` of the
+subject. Program verification requires each consuming extraction to read a
+projection-free binding of the exact enum type, to be entered only through the
+matching variant edge of a switch over that same place, and to be preceded
+only by `EndBorrow`, the arm's earlier extractions, and their binding
+initializations. The arm's extractions cover every field of the variant
+exactly once, no extraction follows the transfer, and the transfer appears
+exactly when the subject owns a drop obligation; lifecycle flow then proves
+the obligation is retired once on every path.
 The bounded direct callable schedule uses those same obligations for argument
 preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture

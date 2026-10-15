@@ -126,6 +126,10 @@ struct HirBinding {
   const Parameter *parameter = nullptr;
   const Token *payloadPattern = nullptr;
   const StructuredBindingDecl *structuredSource = nullptr;
+  // The hidden owner of a consumed payload-enum switch subject. It holds the
+  // enum from the end of the subject's full expression to the selected arm's
+  // entry, where the arm's by-value bindings take its fields or it is dropped.
+  const SwitchStmt *switchSubject = nullptr;
   BindingInfo info;
   std::optional<HirDropObligationId> dropObligation;
 };

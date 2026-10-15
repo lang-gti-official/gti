@@ -4470,9 +4470,13 @@ private:
   void analyzePayloadConstruction(const Call &call,
                                   const EnumeratorRecord &enumerator);
 
+  // `consumingSubject` is true when the switch consumes its subject (a
+  // prvalue or an explicit std::move); by-value bindings then move their
+  // fields out instead of copying them.
   [[nodiscard]] std::optional<ResolvedPayloadPatternInfo>
   analyzePayloadSwitchPattern(const ExprPtr &expression,
-                              const SemanticType &subjectType);
+                              const SemanticType &subjectType,
+                              bool consumingSubject);
 
   [[nodiscard]] std::optional<Symbol>
   resolveExpressionSymbol(const ExprPtr &expression) const;

@@ -1307,6 +1307,309 @@ int main() {
          "the formatter preserves borrowed patterns and remains idempotent");
 }
 
+// The consuming extractions of one function body, grouped by arm block.
+struct ConsumingArm {
+  std::vector<std::size_t> extractions;
+  std::size_t transfers = 0;
+};
+
+std::vector<ConsumingArm> consumingArms(const lang::MirBody &body) {
+  std::vector<ConsumingArm> arms;
+  for (const lang::MirBlock &block : body.blocks) {
+    ConsumingArm arm;
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const lang::MirInstruction &instruction = block.instructions[index];
+      if (instruction.operation != lang::MirOperation::PayloadExtract ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != lang::MirOperandKind::Move)
+        continue;
+      arm.extractions.push_back(index);
+      arm.transfers += std::count_if(
+          instruction.lifecycle.begin(), instruction.lifecycle.end(),
+          [](const lang::MirLifecycleEvent &event) {
+            return event.kind == lang::MirLifecycleEventKind::TransferOut;
+          });
+    }
+    if (!arm.extractions.empty())
+      arms.push_back(std::move(arm));
+  }
+  return arms;
+}
+
+// Applies `mutate` to the first block holding at least `extractions` consuming
+// extractions of the body that has them, then reports whether verification
+// still accepts the program.
+template <typename Mutation>
+bool consumingMutationRejected(const lang::FrontendResult &result,
+                               std::size_t extractions, Mutation mutate) {
+  lang::MirProgram forged = result.mir;
+  bool changed = false;
+  for (const auto &function : forged.functionInstances()) {
+    auto &body = const_cast<lang::MirBody &>(function.body);
+    for (auto &block : body.blocks) {
+      std::vector<lang::MirInstruction *> moves;
+      for (auto &instruction : block.instructions)
+        if (instruction.operation == lang::MirOperation::PayloadExtract &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == lang::MirOperandKind::Move)
+          moves.push_back(&instruction);
+      if (changed || moves.size() < extractions)
+        continue;
+      changed = mutate(body, block, moves);
+    }
+  }
+  return changed && !lang::verifyMirProgram(forged).valid();
+}
+
+void testConsumingPayloadPatterns() {
+  const std::string prefix = R"(
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+)";
+  const auto temporary =
+      analyzeWithPrelude("consuming-temporary.gti", prefix + R"(
+int32_t total(data value) {
+  switch (std::move(value)) {
+  case data::some(item):
+    return item.read();
+  case data::pair(left, right):
+    return left.read() + right.read();
+  case data::mixed(item, code):
+    return item.read() * code;
+  case data::empty:
+    return 0;
+  }
+}
+int main() {
+  switch (make(3)) {
+  case data::some(item):
+    return total(data::pair(resource(1), resource(2))) - item.read();
+  default:
+    return 1;
+  }
+}
+)");
+  if (!temporary.canGenerateCode()) {
+    printDiagnostics(temporary);
+  }
+  expect(temporary.canGenerateCode() &&
+             lang::verifyMirProgram(temporary.mir).valid(),
+         "a prvalue or explicitly moved subject moves move-only payloads into "
+         "by-value bindings through verified MIR");
+  bool exactSchedule = temporary.canGenerateCode();
+  std::size_t armCount = 0;
+  std::size_t drops = 0;
+  for (const auto &function : temporary.mir.functionInstances()) {
+    for (const ConsumingArm &arm : consumingArms(function.body)) {
+      ++armCount;
+      exactSchedule = exactSchedule && arm.transfers == 1;
+    }
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Drop &&
+            instruction.info.type.kind == lang::SemanticType::Enum)
+          ++drops;
+  }
+  expect(exactSchedule && armCount == 4 && drops >= 2,
+         "each binding arm moves its fields out once and retires the subject "
+         "with one transfer; tag-only and default arms drop the subject");
+
+  if (temporary.canGenerateCode()) {
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.back()->lifecycle.clear();
+                 return true;
+               }),
+           "a consuming arm without its subject transfer must fail "
+           "verification");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.front()->payloadIndex = moves.back()->payloadIndex;
+                 return true;
+               }),
+           "a consuming arm must take every field exactly once");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 std::swap(moves.front()->lifecycle, moves.back()->lifecycle);
+                 return true;
+               }),
+           "no field may move out of a subject whose obligation already "
+           "transferred");
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.front()->enumVariant = *moves.front()->enumVariant == 0
+                                                  ? std::size_t{1}
+                                                  : std::size_t{0};
+                 return true;
+               }),
+           "a consuming extraction must read the variant its arm edge "
+           "selected");
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &body, lang::MirBlock &block,
+                  std::vector<lang::MirInstruction *> &) {
+                 for (auto &predecessor : body.blocks)
+                   if (predecessor.terminator.kind ==
+                       lang::MirTerminatorKind::Switch)
+                     for (auto &target : predecessor.terminator.switchTargets)
+                       if (target.target == block.id)
+                         predecessor.terminator.target = block.id;
+                 return true;
+               }),
+           "a consuming extraction must not be reachable from the default "
+           "edge");
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.back()->operands.front().kind =
+                     lang::MirOperandKind::Copy;
+                 return true;
+               }),
+           "a copied extraction cannot carry the subject transfer");
+  }
+
+  const auto movedLocal =
+      analyzeWithPrelude("consuming-moved-local.gti", prefix + R"(
+int main() {
+  data value = make(1);
+  switch (std::move(value)) {
+  case data::some(item):
+    return item.read() - 1;
+  default:
+    return 2;
+  }
+}
+)");
+  if (!movedLocal.canGenerateCode()) {
+    printDiagnostics(movedLocal);
+  }
+  expect(movedLocal.canGenerateCode() &&
+             lang::verifyMirProgram(movedLocal.mir).valid(),
+         "std::move of a named owner consumes it into the match");
+
+  const auto reused =
+      analyzeWithPrelude("consuming-reused-local.gti", prefix + R"(
+int main() {
+  data value = make(1);
+  switch (std::move(value)) {
+  case data::some:
+    break;
+  default:
+    break;
+  }
+  switch (value) {
+  case data::some:
+    return 1;
+  default:
+    return 0;
+  }
+}
+)");
+  expect(hasCode(reused, "GTI-S2018") && hasMessage(reused, "moved"),
+         "the moved switch subject stays moved on every path, including "
+         "tag-only arms");
+
+  const auto borrowed =
+      analyzeWithPrelude("consuming-borrowed-binding.gti", prefix + R"(
+int main() {
+  switch (make(1)) {
+  case data::some(auto& item):
+    return item.read();
+  default:
+    return 0;
+  }
+}
+)");
+  expect(hasCode(borrowed, "GTI-S2067") &&
+             hasMessage(borrowed, "stable enum place") &&
+             hasMessage(borrowed, "consumes its subject") &&
+             hasHint(borrowed, "by value"),
+         "a consumed subject cannot supply a borrowed payload binding");
+
+  const auto movedBorrow =
+      analyzeWithPrelude("consuming-moved-borrow.gti", prefix + R"(
+int main() {
+  mut data value = make(1);
+  switch (std::move(value)) {
+  case data::some(mut auto& item):
+    return item.read();
+  default:
+    return 0;
+  }
+}
+)");
+  expect(hasCode(movedBorrow, "GTI-S2067") &&
+             hasMessage(movedBorrow, "consumes its subject"),
+         "an explicitly moved subject cannot supply a mutable payload borrow");
+
+  const auto observed =
+      analyzeWithPrelude("observed-move-only-binding.gti", prefix + R"(
+int main() {
+  data value = make(1);
+  switch (value) {
+  case data::some(item):
+    return item.read();
+  default:
+    return 0;
+  }
+}
+)");
+  expect(hasCode(observed, "GTI-S2067") &&
+             hasMessage(observed, "non-consuming match binding") &&
+             hasHint(observed, "consumed enum"),
+         "a named subject is observed, so a move-only binding stays rejected "
+         "with a hint to consume the enum");
+
+  const auto generic = analyzeWithPrelude("consuming-generic.gti", R"(
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class state<T> { empty, engaged(T value) };
+T unwrap<T>(state<T> source, T fallback) {
+  switch (std::move(source)) {
+  case state<T>::engaged(value):
+    return value;
+  case state<T>::empty:
+    return fallback;
+  }
+}
+int main() {
+  resource taken =
+      unwrap<resource>(state<resource>::engaged(resource()), resource());
+  return unwrap<int32_t>(state<int32_t>::empty, 0);
+}
+)");
+  if (!generic.canGenerateCode()) {
+    printDiagnostics(generic);
+  }
+  expect(generic.canGenerateCode() &&
+             lang::verifyMirProgram(generic.mir).valid(),
+         "concrete generic instances consume owning and passive payloads");
+}
+
 } // namespace
 
 int main() {
@@ -1317,6 +1620,7 @@ int main() {
   testClassPayloadEnums();
   testOrdinaryEnumsAndFormatting();
   testBorrowedPayloadPatterns();
+  testConsumingPayloadPatterns();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

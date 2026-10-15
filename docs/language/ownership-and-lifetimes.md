@@ -1611,7 +1611,11 @@ and finite recursion through concrete class cleanup; a failing destructor does
 not skip remaining sibling cleanup. Borrowed payload patterns introduce
 arm-scoped shared (`auto&`) or exclusive (`mut auto&`) loans into stable enum
 storage. Their conflict root is conservatively the whole enum, and a checked
-receiver-derived return retains its original owner dependency.
+receiver-derived return retains its original owner dependency. A switch over
+a consumed enum, a prvalue or an explicit `std::move`, instead owns the enum
+until the selected arm's entry: by-value bindings take its fields by move and
+release the drained enum without a second drop, while any other arm drops it
+before its first statement.
 Concrete generic callable instances and owning wrappers retain the same
 obligations, including enum elements in storage-backed collections and inline
 optional storage. No ownership rule follows merely from a generic argument's
