@@ -5002,8 +5002,10 @@ int main() {
 // arm's Initialize activates directly. A call arm, plain or on its Invoke
 // success edge, and a copied place publish into that temporary as a
 // construction arm does; the call borrows it, read-only or mutably, and its
-// Drop ends it. A removed, conditional, duplicated or retargeted activation,
-// and an arm result that activates the obligation itself, are refused.
+// Drop ends it. So does an arm moving out of a nested cleanup-free join, which
+// also ends the nested join's storage. A removed, conditional, duplicated or
+// retargeted activation, an arm result that activates the obligation itself,
+// and a nested join's storage with an obligation of its own are refused.
 void testCleanupFreeJoinReceiver() {
   const auto frontend =
       analyzeWithStandardLibrary("cpp-mir-cleanup-free-join-receiver.gti", R"(
@@ -5037,10 +5039,14 @@ int read_raising(bool left, int a, int b, int divisor) {
 int swap_members(bool left, Maker a, Maker b) {
   return (left ? std::move(a).make() : b.peek()).swap(0);
 }
+int read_nested(bool left, bool inner, int a, int b) {
+  return (left ? fresh(a) : (inner ? fresh(b) : Pod(a))).read();
+}
 int main() {
   return read_calls(true, 1, 2) + swap_copies(false, Pod(3), Pod(4)) +
          read_raising(true, 5, 6, 1) +
-         swap_members(false, Maker(7), Maker(8)) - 18;
+         swap_members(false, Maker(7), Maker(8)) +
+         read_nested(false, true, 9, 10) - 28;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -5052,8 +5058,10 @@ int main() {
   std::size_t bodies = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     // Each arm's Initialize activates the join temporary's own obligation;
-    // the published value is a call result or a copy with none of its own.
+    // the published value is a call result, a copy or the move out of a
+    // nested join, with none of its own.
     std::vector<lang::MirInstructionId> arms;
+    const lang::MirPlace *nestedJoin = nullptr;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
         const auto *slot =
@@ -5082,8 +5090,13 @@ int main() {
                 lang::MirLifecycleEventKind::Initialize &&
             drop != nullptr && drop->place == slot->id && producer != nullptr &&
             (producer->kind == lang::MirInstructionKind::Call ||
-             producer->kind == lang::MirInstructionKind::Load))
+             producer->kind == lang::MirInstructionKind::Load ||
+             producer->kind == lang::MirInstructionKind::Move)) {
           arms.push_back(instruction.id);
+          if (producer->kind == lang::MirInstructionKind::Move)
+            nestedJoin =
+                function.body.findPlace(producer->operands.front().place);
+        }
       }
     if (arms.size() != 2)
       continue;
@@ -5137,9 +5150,31 @@ int main() {
                    std::to_string(mutation));
       }
     }
+    if (nestedJoin != nullptr) {
+      // The nested join's storage gains an obligation of its own, so the
+      // arm's move no longer empties representation-only storage.
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      lang::MirDropObligation forged = body->dropObligations.front();
+      forged.id = 0;
+      for (const auto &drop : body->dropObligations)
+        forged.id = std::max(forged.id, drop.id);
+      ++forged.id;
+      forged.place = nestedJoin->id;
+      forged.dropType.type = nestedJoin->type;
+      body->dropObligations.push_back(forged);
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a nested join storage obligation that nothing activates fails "
+             "MIR verification");
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(!rejected.analyze(address).ready() ||
+                 !supportsSelectedBodyText(malformed, map, function.id),
+             "a nested join whose storage has an obligation cannot enter "
+             "backend emission as a cleanup-free arm");
+    }
   }
-  expect(bodies == 4, "the call, copy, raising and member-call receivers "
-                      "were exercised: " +
+  expect(bodies == 5, "the call, copy, raising, member-call and nested "
+                      "receivers were exercised: " +
                           std::to_string(bodies));
 
   // Both arms publish into the temporary the call borrows; nothing
@@ -5188,6 +5223,49 @@ int main() {
            name + " publishes both arms into the borrowed join temporary, "
                   "which its Drop ends");
   }
+  // The nested arm, whose block follows the call's, moves the nested join's
+  // object into the borrowed temporary and ends the nested storage on the
+  // next line.
+  const std::string nested = bodyText("read_nested");
+  const std::size_t call =
+      nested.find(".get().::__gti_program::Pod::__gti_fn_");
+  const std::size_t receiverStart =
+      call == std::string::npos ? call : nested.rfind("__gti_mir_p_", call);
+  const std::string receiver =
+      receiverStart == std::string::npos
+          ? std::string()
+          : nested.substr(receiverStart, call - receiverStart);
+  const std::size_t moved =
+      receiver.empty()
+          ? std::string::npos
+          : nested.find(receiver + ".construct(std::move(__gti_mir_p_");
+  const std::size_t innerStart =
+      moved == std::string::npos
+          ? moved
+          : moved + receiver.size() +
+                std::string(".construct(std::move(").size();
+  const std::size_t innerEnd = innerStart == std::string::npos
+                                   ? innerStart
+                                   : nested.find('.', innerStart);
+  const std::string inner =
+      innerEnd == std::string::npos
+          ? std::string()
+          : nested.substr(innerStart, innerEnd - innerStart);
+  const std::size_t lineEnd =
+      moved == std::string::npos ? moved : nested.find('\n', moved);
+  const std::size_t retire =
+      inner.empty() ? std::string::npos
+                    : nested.find(inner + ".destroy(); // end moved join "
+                                          "representation\n",
+                                  lineEnd);
+  expect(!inner.empty() && inner != receiver &&
+             nested.find(receiver + ".construct_from(") != std::string::npos &&
+             nested.find(receiver + ".destroy();", call) != std::string::npos &&
+             retire != std::string::npos &&
+             nested.find_first_not_of(' ', lineEnd + 1) == retire,
+         "read_nested publishes both arms into the borrowed join temporary, "
+         "which its Drop ends, and ends the nested join's storage right after "
+         "moving out of it");
 }
 
 // A construction consuming a cleanup-free Expected<Class, E> argument may
@@ -6122,6 +6200,80 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testNestedCleanupFreeJoinMove() {
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-nested-cleanup-free-join.gti", R"(
+struct plain_value {
+  int32_t number;
+  plain_value(int32_t number) : number(number) {}
+};
+
+plain_value make_plain(int32_t number) { return plain_value(number); }
+
+int32_t bound(bool left, int32_t one) {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    plain_value t =
+        left ? make_plain(i) : (i > one ? make_plain(one) : plain_value(i));
+    total += t.number;
+  }
+  return total;
+}
+
+int32_t viewed(bool left, int32_t one) {
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1)
+    total += (left ? (i > one ? make_plain(one) : plain_value(i))
+                   : make_plain(i)).number;
+  return total;
+}
+
+int main() { return bound(false, 1) + viewed(true, 1) - 4; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the nested cleanup-free join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  const std::string &text = artifact.contents;
+  // Each loop evaluates its conditional again. The outer arm that moves out
+  // of the nested join, and the staged move out of the viewed outer join,
+  // each end the emptied join's storage on the next line, so no iteration
+  // constructs an engaged representation.
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  std::size_t retirements = 0;
+  bool movedFirst = true;
+  for (std::size_t at = text.find(retire); at != std::string::npos;
+       at = text.find(retire, at + 1)) {
+    ++retirements;
+    const std::size_t lineStart = text.rfind('\n', at) + 1;
+    const std::size_t slotStart = text.find("__gti_mir_p_", lineStart);
+    const std::string slot =
+        slotStart < at ? text.substr(slotStart, at - slotStart) : std::string();
+    const std::size_t previousEnd = lineStart - 1;
+    const std::size_t previousStart = text.rfind('\n', previousEnd - 1) + 1;
+    const std::string previous =
+        text.substr(previousStart, previousEnd - previousStart);
+    const std::string moved = ".construct(std::move(" + slot + ".get()));";
+    movedFirst =
+        movedFirst && !slot.empty() && previous.size() > moved.size() &&
+        previous.compare(previous.size() - moved.size(), moved.size(), moved) ==
+            0;
+  }
+  expect(retirements == 3 && movedFirst,
+         "both nested joins and the viewed outer join should end their "
+         "storage right after the move that empties it");
+  // The bound outer join ends its storage at the binding, as before.
+  expect(text.find(".destroy(); // end passive conditional representation\n") !=
+             std::string::npos,
+         "the bound outer join should end its storage at the binding");
+}
+
 // Each arm of a cleanup-free conditional may evaluate its inputs before the
 // call producing its result: an overflow-checked argument, a call that can
 // fail, or a `?` operand. The branch then targets the start of that region,
@@ -6660,6 +6812,7 @@ constexpr NamedTest kTests[] = {
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
     {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
+    {"testNestedCleanupFreeJoinMove", testNestedCleanupFreeJoinMove},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",
