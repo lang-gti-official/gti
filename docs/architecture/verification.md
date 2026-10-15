@@ -1,5 +1,53 @@
 # Compiler Verification
 
+## Move-only payload enums without cleanup (0.440.3)
+
+`sum_type_pipeline` adds `testCleanupFreeMoveOnlyPayloads`. A payload enum
+whose alternative holds a move-only class without a destructor is cleanup-free
+and move-only in verified MIR. Observing switches over a named local and a
+parameter, and the consuming switch's hidden owner, read-borrow their places,
+and no MIR operand copies the enum. Two program-verifier mutations restore a
+copy. One rebuilds the schedule an observing switch had before this change: a
+`Load` copying the named place under the subject's read event, a switch over
+that copy, and re-derived effect summaries. The other turns a switch's
+borrowed subject into a `Copy` operand. With the new payload-enum rule disabled
+both forgeries verify; with it both fail with "move-only payload enum is
+copied". The emitted C++ moves both staged by-value arguments into their calls
+and switches on the observed parameter in place.
+
+`move_only_payload_transport_runtime` compiles its fixture in C++20/C++23 at
+O0/O3 and under ASan/UBSan. Phase 0 runs these shapes:
+
+- It passes the cleanup-free enum by value to free functions, a `mut` method, a
+  constructor that stores it in a field, a lambda and a generic relay.
+- It returns a binding from a consuming arm, which is the reported program,
+  also through a declared local, and returns the enum from a function that can
+  fail.
+- It observes a named local, a parameter and a field in place.
+- It moves the enum through a fixed array, a `std::vector` and a loop, and its
+  payload class through `std::experimental::optional`.
+
+Each token prints its id when constructed and its id plus 1000 when consumed.
+The same shapes over an owning enum print construction and destruction, and
+every payload is destroyed exactly once. Phases 1 and 2 fail with `GTI-R0002`
+inside a consuming arm reached through a by-value argument, for the
+cleanup-free and the owning enum, and release each live owner once. Main
+`9400ad48` fails the fixture in the native compiler.
+
+A differential `--emit-cpp` against an exact build of main `9400ad48`, with
+one `GTI_STDLIB_PATH` for both compilers, covered 1733 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
+fixture's text changed; every existing program emits identical C++. Two
+same-name module probes under `probe-i04-bad-module-mapping` reported a status
+change only because the harness's output file name exceeded 255 bytes; rerun
+by hand, both compilers emit identical text for them.
+
+Two shapes remain outside this slice. An observing switch over an element of
+a fixed array of such an enum stops with `GTI-B0001`, as a borrowed binding on
+an element of any passive payload enum already does on main. Success
+extraction from `expected<T, E>` for such a `T` is still a native error for
+`?` and `GTI-B0001` for `std::move(r).value()`.
+
 ## Consuming payload-enum matches (0.438.0)
 
 `sum_type_pipeline` adds `testConsumingPayloadPatterns`. Prvalue and
@@ -5343,7 +5391,7 @@ not a substitute for the combined production suite:
 | Construction, replacement and partial cleanup | `mir_backend_owned_lifecycle`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `optional_compiler_contract`, `optional_runtime`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
 | Borrow/reference composition | `compiler_ownership`, `borrowing_composition_pipeline`, `ordered_borrow_composition_runtime`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
 | Eligible container/value-wrapper consistency | `optional_runtime`, `vector_construction_only_runtime`, `generic_clone_runtime`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
-| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, exact transport and partial cleanup. |
+| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, `move_only_payload_transport_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, move-only transport without cleanup, exact transport and partial cleanup. |
 
 The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
 after a full Release/Ninja rebuild on macOS arm64 (AppleClang 21, LLVM 22.1.8,

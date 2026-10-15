@@ -46994,6 +46994,10 @@ private:
             terminator.value->kind == MirOperandKind::Value
                 ? unexpectedDefinition(facts.body, terminator.value->value)
                 : nullptr;
+        const MirValue *returned =
+            terminator.value->kind == MirOperandKind::Value
+                ? facts.body.findValue(terminator.value->value)
+                : nullptr;
         if (unexpectedValue != nullptr) {
           // The unexpected wrapper converts into the expected-typed
           // result here; the construction call is copied from the
@@ -47003,6 +47007,12 @@ private:
                  << '(';
           emitUnexpectedOperand(facts, unexpectedValue->operands.front());
           output << ')';
+        } else if (returned != nullptr &&
+                   returned->info.type == facts.body.returnType &&
+                   consumedPlainMoveOnlyValue(facts.body, *returned)) {
+          // Returning the plain local already moves it, and keeps it
+          // eligible for elision.
+          output << "__gti_mir_v_" << returned->id;
         } else {
           emitReturnOperand(facts, *terminator.value);
         }

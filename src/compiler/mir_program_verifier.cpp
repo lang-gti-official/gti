@@ -6233,9 +6233,11 @@ verifyMirPayloadEnums(const MirProgram &program) {
   // even when it needs no cleanup: a switch observing a named place
   // read-borrows it, and every transfer moves.
   const auto copiesMoveOnlyEnum = [&](const MirOperand &operand) {
-    const MirPayloadEnum *copied = operand.kind == MirOperandKind::Copy
-                                       ? program.findPayloadEnum(operand.type)
-                                       : nullptr;
+    const MirPayloadEnum *copied =
+        operand.kind == MirOperandKind::Copy &&
+                operand.type.kind == SemanticType::Enum
+            ? program.findPayloadEnum(operand.type)
+            : nullptr;
     return copied != nullptr && !copied->traits.copyable;
   };
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
