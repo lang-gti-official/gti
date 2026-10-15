@@ -119,6 +119,21 @@ int reassigned(bool left, int one, int two) {
   return kept.read() * 100 + a.read() + b.read();
 }
 
+// The join assigned back into one of the moved locals, and both arms
+// moving the same local.
+int self_assigned(bool left, int one, int two) {
+  mut Pod a{one};
+  Pod b{two};
+  a = left ? std::move(a) : std::move(b);
+  return a.read();
+}
+
+int same_local(bool left, int one) {
+  Pod a{one};
+  Pod kept = left ? std::move(a) : std::move(a);
+  return kept.read();
+}
+
 // A moved value holding a view, read through a member call.
 int labelled(bool left, std::string_view one, std::string_view two,
              int weight) {
@@ -190,6 +205,8 @@ int run(bool left, int base) {
   total += reassigned(left, base + 21, base + 22) * 11;
   total += looped(left, base + 23) * 12;
   total += labelled(left, "abc", "hello", base + 24) * 13;
+  total += self_assigned(left, base + 25, base + 26) * 14;
+  total += same_local(left, base + 27) * 15;
   std::println(total);
   total = 0;
   total += bound_raising(left, base + 31, base + 32, 1);
