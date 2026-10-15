@@ -9719,6 +9719,137 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
   return {};
 }
 
+// The CFG edges a terminator names, failure edges included.
+template <typename Visit>
+void forEachTerminatorEdge(const MirTerminator &terminator,
+                           const Visit &visit) {
+  visit(terminator.target);
+  visit(terminator.elseTarget);
+  for (const MirSwitchTarget &target : terminator.switchTargets)
+    visit(target.target);
+}
+
+// One arm of a class-valued conditional runs from its successor `start` of
+// the branch to its `entry`: the block producing the arm value, or a nested
+// join's own branch. Before the entry, the arm may evaluate its inputs, such
+// as an overflow-checked argument, a call that can fail, a `?` operand, or
+// scalar control flow among them. That region is proved exactly. The branch
+// enters it once and nothing else enters it or the entry. Each of its blocks
+// is ordinary code dominated by `start`, and each ordinary edge leaving one
+// reaches the entry or stays inside. An Invoke's failure edge leaves for its
+// own failure record's cleanup, and a `Return` leaves the body, both before
+// the arm publishes anything, so neither reaches the join.
+[[nodiscard]] bool exactConditionalArmRegion(const MirBody &body,
+                                             const MirDominanceInfo &dominance,
+                                             const MirBlock &branch,
+                                             MirBlockId start, MirBlockId entry,
+                                             MirBlockId join) {
+  std::vector<MirBlockId> region;
+  std::unordered_set<MirBlockId> inRegion;
+  if (start != entry) {
+    region.push_back(start);
+    inRegion.insert(start);
+  }
+  bool reachesEntry = start == entry;
+  for (std::size_t next = 0; next < region.size(); ++next) {
+    const MirBlock *block = body.findBlock(region[next]);
+    if (block == nullptr || block->id == branch.id || block->id == join ||
+        block->failureParameter != 0 || block->activeFailure != 0 ||
+        !dominance.dominates(start, block->id))
+      return false;
+    const MirTerminator &terminator = block->terminator;
+    std::vector<MirBlockId> successors;
+    switch (terminator.kind) {
+    case MirTerminatorKind::Goto:
+      successors = {terminator.target};
+      break;
+    case MirTerminatorKind::Branch:
+      successors = {terminator.target, terminator.elseTarget};
+      break;
+    case MirTerminatorKind::Switch:
+      successors.push_back(terminator.target);
+      for (const MirSwitchTarget &target : terminator.switchTargets)
+        successors.push_back(target.target);
+      break;
+    case MirTerminatorKind::Invoke: {
+      const MirBlock *failure = body.findBlock(terminator.elseTarget);
+      if (terminator.failureRecord == 0 || failure == nullptr ||
+          failure->failureParameter != terminator.failureRecord)
+        return false;
+      successors = {terminator.target};
+      break;
+    }
+    case MirTerminatorKind::Return:
+      // A propagated `?` residual returns before the arm publishes.
+      break;
+    default:
+      return false;
+    }
+    for (const MirBlockId successor : successors) {
+      if (successor == entry)
+        reachesEntry = true;
+      else if (inRegion.insert(successor).second)
+        region.push_back(successor);
+    }
+  }
+  if (!reachesEntry)
+    return false;
+  std::size_t branchEdges = 0;
+  bool exactEntries = true;
+  for (const MirBlock &candidate : body.blocks) {
+    forEachTerminatorEdge(candidate.terminator, [&](MirBlockId successor) {
+      if (successor == start) {
+        exactEntries &= candidate.id == branch.id;
+        ++branchEdges;
+      } else if (successor == entry || inRegion.contains(successor)) {
+        exactEntries &= inRegion.contains(candidate.id);
+      }
+    });
+  }
+  return exactEntries && branchEdges == 1;
+}
+
+// The branch of a conditional whose arms evaluate inputs before their
+// entries is the nearest common dominator of the two entries. Its two
+// successors start the arms' regions, each proved exactly.
+[[nodiscard]] const MirBlock *
+conditionalArmRegionBranch(const MirBody &body, const MirBlockId (&entries)[2],
+                           MirBlockId join) {
+  const BodyDominance dominance(body);
+  if (!dominance || dominance->dominates(entries[0], entries[1]) ||
+      dominance->dominates(entries[1], entries[0]))
+    return nullptr;
+  // Each dominator of the first entry, with its child on the path down.
+  std::unordered_map<MirBlockId, MirBlockId> firstPath;
+  for (MirBlockId child = entries[0], parent = 0;
+       (parent = dominance->immediateDominator(child)) != 0; child = parent)
+    firstPath.emplace(parent, child);
+  MirBlockId starts[2] = {0, 0};
+  const MirBlock *branch = nullptr;
+  for (MirBlockId child = entries[1], parent = 0;
+       (parent = dominance->immediateDominator(child)) != 0; child = parent) {
+    if (const auto found = firstPath.find(parent); found != firstPath.end()) {
+      branch = body.findBlock(parent);
+      starts[0] = found->second;
+      starts[1] = child;
+      break;
+    }
+  }
+  if (branch == nullptr ||
+      branch->terminator.kind != MirTerminatorKind::Branch ||
+      starts[0] == starts[1] ||
+      !((branch->terminator.target == starts[0] &&
+         branch->terminator.elseTarget == starts[1]) ||
+        (branch->terminator.target == starts[1] &&
+         branch->terminator.elseTarget == starts[0])))
+    return nullptr;
+  for (std::size_t index = 0; index < 2; ++index)
+    if (!exactConditionalArmRegion(body, *dominance, *branch, starts[index],
+                                   entries[index], join))
+      return nullptr;
+  return branch;
+}
+
 // The two arms and the exact diamond of a class-valued conditional sharing
 // one temporary slot, independent of how the joined value is consumed.
 [[nodiscard]] ConditionalClassBindingJoin
@@ -9795,6 +9926,11 @@ conditionalClassJoinArms(const MirProgram &program, const MirBody &body,
       branch = &candidate;
     }
   }
+  // Without an exact diamond, each arm of a cleanup-free join may first
+  // evaluate its inputs. An owning join whose arms do so keeps the ordinary
+  // owned-temporary publication it already has.
+  if (branch == nullptr && result.slotDrop == nullptr)
+    branch = conditionalArmRegionBranch(body, entries, joinId);
   const MirBlock *join = body.findBlock(joinId);
   if (branch == nullptr || join == nullptr) {
     return {};
