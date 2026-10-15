@@ -8450,6 +8450,18 @@ selection identity, the optimized compiler rebuild and `sum_type_pipeline`,
 `cleanup_bound_borrow` pass. These are prerequisite/regression checks, not
 reference-payload runtime acceptance; nonempty publication remains closed.
 
+A shared payload-projection proof now selects the sealed variant and field,
+rebases nested field/alternative paths, and retains every possible external
+origin from the independently reconstructed carrier fact. Stored references
+may only narrow access to their resolved extraction result; their external
+referent is never moved. Missing borrowed-subobject alternatives remain
+unknown, whereas an entirely dependency-free child's alternatives may be
+conservatively recovered from its complete typed inventory. Extraction result
+annotations are checked against this projection, not used as its premise.
+The focused nested-enum fixture and forged tag/path/dependency mutations cover
+this prerequisite; reference-bearing publication still requires the selected
+loan, handoff and liveness proofs described below.
+
 Conditional parameter-entry preparation now expands every abstract stored
 reference path into its exact parameter-relative external place and keeps all
 typed alternative guards. The declaration entry loan itself remains the
@@ -8459,6 +8471,15 @@ normalizer only after the ordinary local-child escape check. These paths still
 have no source-admission claim: nonempty MIR entry/constructor/call transport,
 all-parent escape proof, selected publication and their negative gates must be
 connected before that admission opens.
+
+An edit review rejected removing the selected-origin `protectsStorage` check:
+the bit's absence alone does not establish an external owner's lifetime. The
+guard remains in place. Abstract parameter reference fields legitimately do
+not protect their carrier's storage, so the next proof must distinguish those
+checked external dependencies from unproven or foreign storage using the exact
+entry loan, formal identity and typed guarded field path. Positive parameter
+ancestry and missing/substituted parent/path/foreign-storage negatives are
+required before revisiting that predicate; this is not permission to bypass it.
 
 The MIR bridge now retains the selected extraction's exact SSA value and
 physical carrier place separately from its possible external owner places.
