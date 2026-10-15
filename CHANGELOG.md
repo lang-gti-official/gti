@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.442.2 — Portable floating-point parsing
+
+- Restore runtime builds on Apple SDKs and other standard libraries that lack
+  floating-point `from_chars`. A private, pinned parser supports binary32 and
+  binary64 input without requiring an additional library from installed users.
+  Counted input, decimal and hexadecimal formats, exact consumed positions,
+  allocation-free conversion, and unchanged output on error retain the existing
+  public parsing contract.
+
 ## 0.442.1 — Conditional and lambda class results
 
 - Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
