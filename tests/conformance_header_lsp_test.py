@@ -10,7 +10,7 @@ from lsp_smoke_test import LspSession, lsp_position
 
 def main():
     with tempfile.TemporaryDirectory(prefix="gti-conformance-header-") as directory:
-        root = Path(directory)
+        root = Path(directory).resolve()
         concept = root / "measure.gti"
         concept.write_text("concept measurable<T> { int measure(T& item); "
                            "bool is_empty(T& item); };\n")
