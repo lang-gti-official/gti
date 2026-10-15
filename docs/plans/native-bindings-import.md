@@ -159,6 +159,9 @@ methods, overloads) lands without touching the reader. Two passes:
 
 1. Record classification. Named passive unions now import with `[[c_abi]] union`,
    preserving overlapping field layout and ordinary unsafe member access.
+   The reader publishes complete named inline record definitions before their
+   containing records; stable IDs are reserved earlier for pointer recursion.
+   Anonymous promoted members degrade the entire containing record explicitly.
    A complete record whose every field maps to the
    GTI `[[c_abi]]` field surface binds as a record; any other record —
    incomplete, bitfield-bearing, or with an inexpressible field —

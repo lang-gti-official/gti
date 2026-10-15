@@ -1,8 +1,7 @@
 #ifndef GTI_EXAMPLE_EVENTS_H
 #define GTI_EXAMPLE_EVENTS_H
 #include <stdint.h>
-typedef struct Position { float x; float y; } Position;
-typedef union EventData { uint64_t number; Position position; uint8_t bytes[16]; } EventData;
+typedef union EventData { uint64_t number; struct Position { float x; float y; } position; uint8_t bytes[16]; } EventData;
 typedef struct Event { uint32_t kind; EventData data; } Event;
 typedef union UserData { void *pointer; uint64_t number; } UserData;
 typedef union NestedData { EventData data[2]; double real; } NestedData;
