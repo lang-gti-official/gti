@@ -26,9 +26,11 @@ enum class optional_state<T> {
 /// A move-only owner of an optional `T`, defined entirely in GTI source.
 ///
 /// Empty construction does not allocate. Moving transfers engagement and the
-/// contained value; GTI then treats the source binding as moved. Access to an
-/// empty value panics after normal cleanup. Copy construction and both
-/// assignment forms are absent; use `clone()` when `T` supports duplication.
+/// contained value; GTI then treats the source binding as moved. Move
+/// assignment destroys the current value, if any, before taking the source's.
+/// Access to an empty value panics after normal cleanup. Copy construction
+/// and copy assignment are absent; use `clone()` when `T` supports
+/// duplication.
 class optional<std::move_constructible T> {
   mut detail::optional_state<T> state = detail::optional_state<T>::empty;
 

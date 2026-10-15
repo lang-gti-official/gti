@@ -490,6 +490,7 @@ The current implemented foundation includes:
   a private payload enum with no compiler-private storage. It has the same
   surface as `std::optional`, plus:
   - a consuming `T value() &&` that moves the value out;
+  - move assignment, which destroys the current value, if any, first;
   - `implicit optional(std::experimental::nullopt_t)` and the
     `std::experimental::nullopt` value;
   - a `std::tryable` block, so `?` on an optional moves its value out, or

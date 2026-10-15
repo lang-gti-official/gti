@@ -2,10 +2,10 @@
 """std::experimental::optional moves its payload without copies.
 
 The fixture traces a move-only payload in every mode: `?` and the consuming
-`value() &&` move the value out exactly once, `reset` and `emplace` end and
-start one lifetime each, a failed `?` destroys only the values already taken,
-and an empty access panics after cleaning up the enclosing scope. Example 162
-runs as documented.
+`value() &&` move the value out exactly once, `reset`, `emplace` and move
+assignment end and start one lifetime each, a failed `?` destroys only the
+values already taken, and an empty access panics after cleaning up the
+enclosing scope. Example 162 runs as documented.
 """
 
 import pathlib
@@ -18,6 +18,7 @@ from unique_class_allocation_runtime_test import run
 CASES = [
     (0, 0, [1, 2, -2, -1, 3, 3, -3, 0, 4, 4, -4, 5, 5, 5, -5]),
     (1, 70, [6, -6]),
+    (2, 0, [7, 8, -7, 8, -8, 0, 9, 9, -9]),
 ]
 
 
