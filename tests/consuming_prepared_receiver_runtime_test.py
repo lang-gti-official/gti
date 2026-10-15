@@ -52,6 +52,8 @@ def prepared_receiver_cases(name="consuming_prepared_receiver"):
          "90\n89\n-90\n-89\n", "", "90\n-90\n"),
         ("called", "std::move(factory)(1 / divisor)", "92\n", "-92\n", ""),
         ("lambda", "std::move(source).add(1 / divisor)", "94\n", "-94\n", ""),
+        ("left", "left ? std::move(a).add(1 / divisor)", "96\n-96\n", "", ""),
+        ("right", "left ? std::move(a).add(1 / divisor)", "100\n-100\n", "", ""),
     ]
 
     def after(count, failed=""):

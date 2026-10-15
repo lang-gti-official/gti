@@ -6458,10 +6458,10 @@ failure cleanup. A later argument that can fail after the receiver was
 prepared is covered for a bound, a returned (`mut` source), a field-read, an
 `expected`, a discarded and a replacing result, after an owning argument, in a
 constructor field's receiver and moved argument, in a loop, a generic body, a
-consuming `operator()` and a lambda. Each failure leaves the member unrun,
-destroys an already prepared owning argument once, keeps a replaced binding's
-old value for failure cleanup and unwinds the caller's live results in reverse
-order.
+consuming `operator()`, a lambda and either arm of a conditional. Each failure
+leaves the member unrun, destroys an already prepared owning argument once,
+keeps a replaced binding's old value for failure cleanup and unwinds the
+caller's live results in reverse order.
 `testPreparedConsumingReceiverReturn` in the emitter text suite refuses
 removed, duplicated or unactivated receiver handoffs and a non-consuming
 capability, which MIR verification also rejects.
