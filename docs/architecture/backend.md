@@ -312,13 +312,15 @@ stages it as a prepared parameter on a mutable temporary: the receiver's
 the callee, exactly like an owning argument's. The receiver proof names the
 prepared slot as the consumed object, whatever the access of the moved-from
 binding, and the call spells the moved source in its place as it does for a
-staged by-value argument. Result proofs that count prepared argument transfers
-count this handoff too where their schedule admits it: the returned-result
-slot, an `Expected<Class, E>` result constructed in the binding that consumes
-it, and a checked call's conditional temporary read through field views.
-Forwarding a cleanup-free result unchanged to the Return, as direct placement
-into the caller's storage does, does not admit it; such a call keeps its staged
-result slot. Only a successful result activates the replacement stage, so
+staged by-value argument. The value-rooted result slot of a discarded,
+replacing or field-read result already counts every prepared input. Other
+result proofs that count prepared argument transfers count this handoff too
+where their schedule admits it: the returned-result slot, an
+`Expected<Class, E>` result constructed in the binding that consumes it, and a
+checked call's conditional temporary read through field views. Forwarding a
+cleanup-free result unchanged to the Return, as direct placement into the
+caller's storage does, does not admit it; such a call keeps its staged result
+slot. Only a successful result activates the replacement stage, so
 receiver failure cannot overwrite the old destination, and failed replacement
 cleanup destroys the unpublished result without committing it.
 
