@@ -25,7 +25,7 @@ body, satisfied through `for concept` blocks outside the type.
      typename value_type;
      typename residual_type;
      bool has_value(T& value);
-     value_type take_value(T value);
+     [[borrowed_from(value)]] value_type take_value(T value);
      residual_type take_residual(T value);
    };
    ```
@@ -75,7 +75,7 @@ body, satisfied through `for concept` blocks outside the type.
 - **Moving `expected` onto the protocol now.** Its borrowed form
   `expected<T&, E>` would need a block operation that returns a reference
   derived from a by-value parameter. That needs a signature-level origin
-  contract, which blocks cannot declare yet. Blocks also cannot yet match
+  contract, now supplied by `borrowed_from` on protocol operations. Blocks still cannot match
   built-in type constructors. Moving the borrowed form alone would split one
   type across two rules.
 
@@ -84,7 +84,8 @@ body, satisfied through `for concept` blocks outside the type.
 - `expected` and `std::tryable` are two rules for one operator until the
   migration's prerequisites exist:
   - patterns over built-in type constructors;
-  - signature-level borrow-origin contracts for block operations.
+  - full borrowed alternative storage and extraction (signature-level
+    borrow-origin contracts for block operations are now available).
 
   The two rules agree on evaluation order, single evaluation, consumption of
   temporaries and explicit moves, and cleanup order. They differ for a named
@@ -116,3 +117,15 @@ names, propagates like a class. No rule is specific to `?`:
 An enum declares no constructors, so a residual returned from a function
 whose return type is a payload enum has that enum type, which is how a
 `result<T, E>`-style enum returns its own failure.
+
+## Borrowed protocol results (2026-10-15)
+
+The original owned-result restriction is revised: protocol signatures may
+declare the existing `borrowed_from(parameter)` contract, and `take_value`
+uses it when its associated result is a reference. A consumed carrier with
+one exact stored dependency may relay its external owner. The implementation
+must not return the carrier's own storage or substitute another origin. HIR
+retains the selected call contract; MIR verifies the same call and preserves
+the result loan across the success edge. The residual remains owned. General
+variant-conditional dependencies are separate required work, not an implicit
+promise made by permitting this protocol contract.

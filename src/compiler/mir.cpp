@@ -639,7 +639,8 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                  (instruction.kind == MirInstructionKind::Call ||
                   instruction.kind == MirInstructionKind::Construct ||
                   (instruction.kind == MirInstructionKind::Compute &&
-                   instruction.operation == MirOperation::PayloadConstruct) ||
+                   instruction.operation == MirOperation::PayloadConstruct &&
+                   instruction.info.type.kind == SemanticType::Enum) ||
                   (place.root == MirPlaceRootKind::Temporary &&
                    (instruction.kind == MirInstructionKind::Move ||
                     instruction.kind == MirInstructionKind::Load) &&
@@ -10015,12 +10016,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !producer->lambdaTarget && !producer->bodyTarget &&
           !producer->callableInvocation &&
           producer->intrinsic == IntrinsicKind::None;
-      // A payload enum's alternative is its ordinary construction.
       const bool payloadConstruction =
-          producer != nullptr &&
+          producer != nullptr && referent.kind == SemanticType::Enum &&
           producer->kind == MirInstructionKind::Compute &&
           producer->operation == MirOperation::PayloadConstruct &&
-          referent.kind == SemanticType::Enum;
+          producer->enumOwner == referent.enumId && producer->enumVariant &&
+          !producer->constructorTarget && !producer->functionTarget &&
+          !producer->lambdaTarget;
       if (place == nullptr || source == nullptr || producer == nullptr ||
           loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||

@@ -335,7 +335,7 @@ workflow determine task scope and integration.
 | `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0; library-only instance reuse in 0.420.0; library-only instance bodies omitted from editor HIR in 0.421.0; trusted prefix preamble in 0.423.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Editor snapshots reuse validated library-only concrete instance analyses, no longer lower library-only instance bodies, and resume from a preamble of the standard-library prefix analysed once per include graph (089 per-edit 470 to about 80 ms; exit measure met). Remaining: the adoption copy (about 17 ms per edit). See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-11` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
-| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. Next: promote it to `std::optional` once surface, failure behaviour and performance match, retiring the compiler-private optional storage. Performance is the larger gap: at `-O2` it is 1.6 times slower in a tight `int` loop and 1.13 times in an allocating `string` loop, because of payload-enum construction and layout ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)); then patterns over built-in type constructors and signature-level borrow-origin contracts, so `expected` can move onto the same protocol; and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
+| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements now remove the former 1.6-times scalar / 1.13-times string gap as the current macOS description; exact-head paired macOS evidence shows no observed material regression, while the final GCC/Linux result remains outstanding ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. Further goals include patterns over built-in type constructors and signature-level borrow-origin contracts, so `expected` can move onto the same protocol; and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
@@ -8069,6 +8069,15 @@ consumer, and release refreshes remain outstanding for the full campaign.
   capture, excluded transport/storage profiles and stable-layout work remain
   bounded separately by ADR 014 and the current language contract; do not
   reopen generic declaration acceptance.
+- **Structural composition update (2026-10-15):** the composition campaign
+  extends actual alternative fields to finite nested enums, fixed arrays,
+  and existing result values (both success and error alternatives), preserving
+  source-defined owner wrappers.
+  Focused tests cover consuming extraction, replacement, partial construction,
+  nested destructor failure and emergency cleanup under C++20/23 and sanitizers.
+  Final combined integration remains pending the performance and borrowed-payload
+  slices. Arrays of owning enum elements, direct enum result alternatives and
+  direct lexical closure fields remain separate transport/representation goals.
 - **State/role:** bounded profiles delivered; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
@@ -8242,6 +8251,93 @@ consumer, and release refreshes remain outstanding for the full campaign.
   partial-initialization/drop state, move/borrow and positive/negative tests,
   deterministic layout facts, and O0/O3 runtime parity. The passive first slice
   already has exact construction, exhaustive diagnostics, and runtime parity.
+
+#### Conditional payload dependency sets (2026-10-15 implementation goal)
+
+The borrowed-payload slice is being developed with the owned-composition and
+layout work. Its motivating client is a source-defined result whose success
+stores a checked reference and whose failure owns an error; unrelated sum/view
+types must use exactly the same rules. Accepting reference payload syntax alone
+does not establish this support.
+
+- A dependency set distinguishes **complete and empty** from absent/unknown
+  evidence. Error and unit alternatives do not acquire a fabricated owner.
+  Unknown evidence must never be interpreted as the empty set.
+  Keep real loans origin-bearing; the complete set is a separate value/binding
+  fact that may contain zero, one, or several conditional loan dependencies.
+  Existing unconditional multi-field dependencies remain complete sets, not a
+  forced single-origin representation. Empty evidence identifies the exact
+  constructor alternative and proves every payload field dependency-free.
+- A dependency identifies its source place, access, escape boundary, loan
+  endpoint and transfer/drop behavior. Its destination path includes the
+  exact alternative-qualified payload field identity. Abstract parameter
+  paths describe conditional dependencies, not unconditional live fields.
+- Construction proves the selected alternative's complete set. Movement
+  preserves it; replacement ends the old active dependencies before publishing
+  the new set. A control-flow join unions the conditional alternatives without
+  discarding a possible dependency or inventing a common origin.
+  Nested conditions retain their complete typed alternative/field path.
+  Unknown tags retain every possibly active obligation; only dominating tag
+  evidence may select one alternative. No general Boolean solver is required.
+- Matching first proves the exact active tag. Extracting a reference payload
+  relays the external referent, while borrowing an owned payload protects enum
+  storage. Consuming a carrier must not consume the external referent or end a
+  loan transferred into the result.
+- Returning an empty alternative needs no owner contract. A potentially
+  borrowed return still needs exact caller-owned origins for every possible
+  borrowed alternative. Protocol result-origin contracts and propagation carry
+  those same facts; the backend must not infer them from layout or API names.
+
+Current prerequisite work adds protocol operation `borrowed_from` contracts,
+explicit mutable associated reference types, reference-result propagation and
+stable payload field identities. Payload storage admission remains unchanged
+until the conditional-set proof is complete. Required gates include zero-owner
+error/unit construction and return, borrowed success with owned errors,
+mutable exclusivity, replacement and failure cleanup, and malformed MIR that
+removes a dependency or substitutes an origin, tag, access or expired source.
+The runnable example and C++20/23 O0/O1/O2/O3 native matrix must demonstrate the
+usable wrapper, not only metadata formation.
+
+Prerequisite checkpoint evidence: optimized macOS `protocol_concepts` passes
+the shared/mutable generic result-origin cases and malformed forwarding-chain
+checks. The shared/mutable class-wrapper cases in `tryable_propagation` pass
+their semantic/HIR/MIR checks, including guard destruction and mutable alias
+negatives. Ordinary passive enum temporary observers and direct enum temporary
+propagation now pass the focused semantic/HIR/MIR and representation tests;
+malformed loan, materialization, access and lifetime mutations remain rejected.
+The complete-set query distinguishes present-empty metadata from absence,
+including instance overlays and rebasing. Its concrete type-inventory query
+rejects unresolved children; symbolic generic path enumeration remains a
+separate contract and never supplies completeness evidence.
+
+The prerequisite checkpoint carries complete sets through semantics/HIR/MIR and emits
+exact empty evidence for dependency-free payload constructors and unit
+alternatives. MIR recomputes the selected alternative's field traits and
+rejects absent evidence, wrong enum/tag/path, duplicate alternatives and
+invented dependencies. Optimized focused protocol, propagation, generic-enum
+backend and cleanup-bound tests pass. Exact local bindings (written types and
+`auto`), copies, explicit/implicit moves and branch unions now preserve empty
+sets. MIR reconstructs that flow with the existing forward solver and rejects
+omitted/substituted join alternatives and invented proofs after unknown inputs
+or mutable calls. Incoming loop facts remain unknown until the general
+conditional loop contract is implemented; first-iteration facts are not reused
+for backedges. No loan endpoint or availability check is replaced by this
+value-fact analysis. Nonempty conditional construction/transport and
+declaration-owned result summaries remain incomplete; guards on unsupported
+loan/call records fail closed and reference-bearing payload admission stays
+closed.
+
+Example 164's original shared and mutable class-wrapper paths now compile and
+run at O2 with the expected output. General constructor-staging fixes admit
+text views across conditional arguments and exact transferred mutable-reference
+prefixes before owned fields; malformed identity/access/lifecycle evidence
+remains rejected. The focused native matrix passes all nine modes:
+C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 164
+and the existing cleanup traces. A named passive enum operand exposed a branch-dominance
+lowering failure in an earlier probe and still needs a dedicated follow-up.
+The user requested expedited delivery of verified prerequisites and waived the
+full suite; that does not mark the complete borrowed-enum goal finished or
+authorize unverified reference-bearing payloads.
 
 ### L-ERR-01: Error Propagation Operator
 

@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Class results of callable invocations (0.442.1)
+## Class results of callable invocations (0.443.1)
 
 - **Defect.** A lambda call returning a class without a default constructor
   reported `GTI-B0001` unless its result initialized a variable directly:

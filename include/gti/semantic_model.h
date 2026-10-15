@@ -46,6 +46,25 @@ using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
 using SemanticLoanPlaceProjection = PlaceProjection;
 using SemanticLoanPlace = PlaceKey;
 
+// One exact tag proposition for a typed enum subobject. A path of these
+// propositions is a conjunction along nested active alternatives; it does not
+// refer to a runtime load of an inactive payload or an arbitrary Boolean fact.
+struct BorrowDependencyCondition {
+  std::vector<SymbolId> subobject;
+  SemanticType enumeration = SemanticType::Unknown;
+  std::size_t variant = 0;
+
+  friend bool operator==(const BorrowDependencyCondition &,
+                         const BorrowDependencyCondition &) = default;
+};
+
+struct BorrowAlternativePath {
+  std::vector<BorrowDependencyCondition> conditions;
+
+  friend bool operator==(const BorrowAlternativePath &,
+                         const BorrowAlternativePath &) = default;
+};
+
 // One field of a composed borrowed value protects its own independent owner.
 // The first dependency remains in the scalar loan fields for the ordinary
 // one-owner reference path; these records contain the additional dependencies.
@@ -57,9 +76,21 @@ struct SemanticLoanDependency {
   // The exact capability reborrowed to create this dependency, if any.
   // Composed carriers can retain independently borrowed parents.
   SemanticLoanId parent = 0;
+  std::vector<BorrowDependencyCondition> conditions;
 
   friend bool operator==(const SemanticLoanDependency &,
                          const SemanticLoanDependency &) = default;
+};
+
+// Presence certifies a complete dependency set for the attached producer.
+// Empty dependencies are meaningful only with that producer's exact typed
+// alternative evidence (or a nonconditional dependency-free layout).
+struct SemanticBorrowDependencySet {
+  std::vector<SemanticLoanDependency> dependencies;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+
+  friend bool operator==(const SemanticBorrowDependencySet &,
+                         const SemanticBorrowDependencySet &) = default;
 };
 
 struct SemanticLoanInfo {
@@ -664,6 +695,8 @@ struct BorrowedFieldOrigin {
   std::size_t parameter = 0;
   std::vector<SymbolId> sourceFields;
   AccessMode access = AccessMode::ReadOnly;
+  std::vector<BorrowDependencyCondition> resultConditions;
+  std::vector<BorrowDependencyCondition> sourceConditions;
 
   friend bool operator==(const BorrowedFieldOrigin &,
                          const BorrowedFieldOrigin &) = default;
@@ -978,6 +1011,9 @@ struct EnumeratorInfo {
   bool explicitValue = false;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  // Stable source declaration identities, distinct across alternatives.
+  // Borrow paths use these identities rather than inventing class fields.
+  std::vector<SymbolId> payloadSymbols;
 };
 
 struct EnumTypeInfo {
@@ -2040,6 +2076,10 @@ public:
   [[nodiscard]] const BindingInfo *findPayloadBinding(const Token &name) const;
 
   [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const;
+  // Null means no complete set has been established. A present empty set
+  // is affirmative evidence of no dependencies and shadows an inherited set.
+  [[nodiscard]] const SemanticBorrowDependencySet *
+  findBorrowDependencySet(const Expr &expression) const;
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findBorrowDependencies(const Expr &expression) const;
 
@@ -2315,6 +2355,7 @@ public:
 
 private:
   friend class SemanticVisitor;
+  friend struct SemanticModelTestAccess;
   std::vector<ForeignStorageInfo> foreignStorage_;
 
   struct PendingCallableForwarding {
@@ -2467,6 +2508,8 @@ private:
   void
   recordBorrowDependencies(const Expr &expression,
                            std::vector<SemanticLoanDependency> dependencies);
+  void recordBorrowDependencySet(const Expr &expression,
+                                 SemanticBorrowDependencySet dependencies);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 
@@ -2698,7 +2741,7 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
-  std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
+  std::unordered_map<const Expr *, SemanticBorrowDependencySet>
       expressionBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>

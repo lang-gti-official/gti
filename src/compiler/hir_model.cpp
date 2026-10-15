@@ -189,6 +189,26 @@ HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
   HirProgramPlanVerificationResult result;
+  for (const HirEnum &enumeration : program.enumDeclarations()) {
+    if (!enumeration.payload)
+      continue;
+    const auto *source = semantics.findEnumType(enumeration.declaration);
+    bool exact = source != nullptr && source->payload &&
+                 source->enumerators.size() == enumeration.enumerators.size();
+    std::unordered_set<SymbolId> fields;
+    for (std::size_t variant = 0;
+         exact && variant < enumeration.enumerators.size(); ++variant) {
+      const auto &row = enumeration.enumerators[variant];
+      exact =
+          row.payloadSymbols == source->enumerators[variant].payloadSymbols &&
+          row.payloadSymbols.size() == row.payloadTypes.size();
+      for (const auto field : row.payloadSymbols)
+        exact = exact && field != 0 && fields.insert(field).second;
+    }
+    if (!exact)
+      result.errors.emplace_back(
+          "payload enum lost its exact variant field declaration identities");
+  }
   std::unordered_map<SymbolId, const SymbolRecord *> instanceSymbols;
   for (const SymbolRecord &symbol : program.instanceSymbols()) {
     if (symbol.id == 0 ||
@@ -1033,6 +1053,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                    (consumes ? movesPlace(call.operands.front())
                              : call.operands.front() == plan.movedPlace);
       }
+      if (consumes && operand->info.type.kind == SemanticType::Enum &&
+          operand->info.traits.drop == DropKind::Trivial &&
+          operand->info.traits.copyable &&
+          !operand->info.traits.containsBorrowedState)
+        kind = HirCallInputKind::Value;
       return call.kind == HirValueKind::Call && call.source == nullptr &&
              call.intrinsic == IntrinsicKind::None && target != nullptr &&
              (step == nullptr || target->declaration == step->function) &&
@@ -1040,7 +1065,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              !call.callPlan->receiver && call.callPlan->arguments.size() == 1 &&
              call.callPlan->arguments.front().value == call.operands.front() &&
              call.callPlan->arguments.front().kind == kind &&
-             (step == nullptr || call.info.type == step->returnType) &&
+             (step == nullptr ||
+              (call.info.type ==
+                   (step->returnType.kind == SemanticType::Reference
+                        ? step->returnType.arguments.front()
+                        : step->returnType) &&
+               call.borrowOrigin == step->borrowOrigin &&
+               call.borrowArgument == step->borrowArgument &&
+               call.borrowAccess == step->borrowAccess &&
+               call.borrowFields == step->borrowFields)) &&
              call.fullExpression == value.fullExpression;
     };
     const HirConstructorInstance *construction =
@@ -1075,7 +1108,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         plan.consumesOperand !=
             (operand->info.category == ValueCategory::Value) ||
         (plan.movedPlace != 0 && !movedTransport) ||
-        value.info.category != ValueCategory::Value ||
+        value.info.category != output->info.category ||
         !selectedCall(*test, selected ? &selected->test : nullptr, false) ||
         test->info.type != SemanticType::Bool ||
         !selectedCall(*output, selected ? &selected->output : nullptr, true) ||

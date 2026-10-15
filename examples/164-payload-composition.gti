@@ -1,0 +1,42 @@
+// Payload enums compose by value, including other enums and fixed arrays.
+// Each concrete layout must be finite. Owning payloads move and are cleaned
+// up exactly once; indirection is needed for a recursive storage edge.
+#include <std/experimental/optional>
+#include <std/string>
+
+enum Message<T> { empty, item(T value) };
+
+std::experimental::optional<Message<std::string>> receive(bool available) {
+  if (!available) {
+    return std::experimental::optional<Message<std::string>>();
+  }
+  return std::experimental::optional<Message<std::string>>(
+      Message<std::string>::item(std::string("ready")));
+}
+
+std::experimental::optional<int> inspect(bool available) {
+  // This source-defined optional itself owns an enum, which owns a string.
+  Message<std::string> message = ?receive(available);
+  switch (std::move(message)) {
+  case Message<std::string>::empty:
+    return std::experimental::optional<int>();
+  case Message<std::string>::item(text):
+    std::println(text.view());
+    return std::experimental::optional<int>(1);
+  }
+}
+
+int main() {
+  auto ready = inspect(true);
+  auto missing = inspect(false);
+  if (!ready || missing) { return 1; }
+
+  auto coordinates = Message<int[2]>::item({20, 22});
+  switch (coordinates) {
+  case Message<int[2]>::empty: return 2;
+  case Message<int[2]>::item(auto& values):
+    std::println(values[0] + values[1]);
+    break;
+  }
+  return 0;
+}
