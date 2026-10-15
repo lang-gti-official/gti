@@ -1899,9 +1899,18 @@ private:
     const Parameter *payload = nullptr;
   };
 
+  struct StoredReferenceCondition {
+    // Path from the carrier to the enum subobject whose alternative guards
+    // this dependency. Nested alternatives form a conjunction, not a flat tag.
+    std::vector<StoredField> subobject;
+    SemanticType enumeration = SemanticType::Unknown;
+    std::size_t variant = 0;
+  };
+
   struct StoredReferencePath {
     std::vector<StoredField> fields;
     SemanticType reference = SemanticType::Unknown;
+    std::vector<StoredReferenceCondition> conditions;
   };
 
   struct StoredReferenceBinding {
@@ -1920,8 +1929,19 @@ private:
   [[nodiscard]] std::vector<SymbolId>
   storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
-  // Enumerate every independently checked dependency in declaration order.
-  // An empty result means either no reference or an unsupported carrier shape.
+  // A present inventory enumerates every independently checked dependency in
+  // declaration order. Present-empty is dependency-free; absent is unsupported
+  // or unresolved and must never be used to establish empty-set evidence.
+  [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
+  storedReferenceInventory(const SemanticType &type) const;
+
+  enum class StoredReferenceQuery { SymbolicPaths, CompleteInventory };
+  [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
+  collectStoredReferencePaths(const SemanticType &type,
+                              StoredReferenceQuery query) const;
+
+  // Compatibility query for paths that require a nonempty inventory. New
+  // complete-set producers must use storedReferenceInventory instead.
   [[nodiscard]] std::vector<StoredReferencePath>
   storedReferencePaths(const SemanticType &type) const;
 

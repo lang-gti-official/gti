@@ -9714,10 +9714,10 @@ private:
         value->info.category != ValueCategory::Place)
       (void)initializeValueLifecycle(instruction, *value);
     if (instruction.operation == MirOperation::Closure &&
-        !value->borrowDependencies.empty()) {
+        value->borrowDependencies && !value->borrowDependencies->empty()) {
       const auto *target = program.findLambda(*instruction.lambdaTarget);
       std::vector<MirLoanDependency> dependencies;
-      for (const auto &dependency : value->borrowDependencies) {
+      for (const auto &dependency : *value->borrowDependencies) {
         const auto capture = target == nullptr ? 0 : [&] {
           for (std::size_t index = 0; index < target->captures.size(); ++index)
             if (!dependency.designatedFields.empty() &&

@@ -257,6 +257,8 @@ struct IndexedMirBody {
   std::optional<std::unordered_map<
       MirValueId, std::pair<const MirInstruction *, std::size_t>>>
       directTemporaryArguments;
+  const MirProgram *passiveTemporaryProgram = nullptr;
+  std::unordered_map<MirPlaceId, bool> passiveTemporaryPlaces;
   // For a recognizer that publishes values into places, the values grouped
   // by the id of each place they target, in body order, as computed under
   // `program`.
@@ -6840,9 +6842,9 @@ directTemporaryReceiver(const MirBody &body, const MirInstruction &call) {
          directTemporaryReceiver(body, *call).stage == &stage;
 }
 
-[[nodiscard]] DirectTemporaryBorrow
-directTemporaryArgument(const MirBody &body, const MirInstruction &call,
-                        std::size_t index) {
+[[nodiscard]] const MirInstruction *
+temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
+                       std::size_t index) {
   if (call.kind != MirInstructionKind::Call || call.callSite == 0 ||
       !call.functionTarget || call.constructorTarget || call.lambdaTarget ||
       call.bodyTarget || call.callableInvocation ||
@@ -6853,8 +6855,7 @@ directTemporaryArgument(const MirBody &body, const MirInstruction &call,
   if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
       operand.type.kind != SemanticType::Reference ||
       operand.type.referenceAccess != AccessMode::ReadOnly ||
-      operand.type.arguments.size() != 1 ||
-      operand.type.arguments.front().kind != SemanticType::Class) {
+      operand.type.arguments.size() != 1) {
     return {};
   }
   const MirValue *stageValue = body.findValue(operand.value);
@@ -6884,8 +6885,250 @@ directTemporaryArgument(const MirBody &body, const MirInstruction &call,
       loan->producedBy != stage->callSite) {
     return {};
   }
+  return stage;
+}
+
+[[nodiscard]] DirectTemporaryBorrow
+directTemporaryArgument(const MirBody &body, const MirInstruction &call,
+                        std::size_t index) {
+  const auto *stage = temporaryArgumentStage(body, call, index);
+  if (!stage || stage->info.type.arguments.front().kind != SemanticType::Class)
+    return {};
   return directTemporaryBorrow(body, call, *stage,
-                               operand.type.arguments.front());
+                               stage->info.type.arguments.front());
+}
+
+// A passive compute already publishes one native SSA object. Its exact MIR
+// temporary place may view that object during a checked read-only argument
+// loan; it must not acquire a second lifetime_slot or suppress the SSA object.
+// Subsequent by-value stages copy that same passive value. Owning/borrowed
+// carriers retain the separate explicit-slot representation above.
+[[nodiscard]] bool passiveSsaTemporaryPlaceImpl(const MirProgram &program,
+                                                const MirBody &body,
+                                                const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value || !place.projections.empty() ||
+      place.type.kind != SemanticType::Enum ||
+      place.access != AccessMode::Mutable || !place.sourceValue ||
+      place.initiallyAvailable)
+    return false;
+  const auto materialization =
+      findMirTemporaryMaterialization(body, place, place.sourceValue);
+  const auto *enumeration = program.findPayloadEnum(place.type);
+  if (!materialization || !enumeration || enumeration->requiresActiveCleanup ||
+      enumeration->traits != place.traits ||
+      place.traits.ownership != OwnershipKind::Value ||
+      place.traits.drop != DropKind::Trivial || !place.traits.copyable ||
+      !place.traits.movable || place.traits.containsBorrowedState)
+    return false;
+  const auto &producer = *materialization.producer;
+  const auto &value = *materialization.value;
+  if (value.id != place.value || value.info.type != place.type ||
+      value.info.traits != place.traits ||
+      producer.kind != MirInstructionKind::Compute ||
+      producer.operation != MirOperation::PayloadConstruct ||
+      producer.info != value.info || producer.enumOwner != place.type.enumId ||
+      !producer.enumVariant ||
+      *producer.enumVariant >= enumeration->variants.size() ||
+      producer.destination || producer.receiver || producer.loan ||
+      producer.ownership || !producer.definedFailure.empty() ||
+      !producer.localFailureSites.empty() || producer.successResultDrop ||
+      producer.successResultDestination || producer.lifecycle.size() != 1)
+    return false;
+  const MirDropObligation *drop = nullptr;
+  for (const auto &candidate : body.dropObligations) {
+    if (candidate.place != place.id && candidate.value != place.sourceValue)
+      continue;
+    if (drop || candidate.kind != MirDropObligationKind::Value ||
+        candidate.place != place.id || candidate.value != place.sourceValue ||
+        candidate.generatedValue || !candidate.hirObligation ||
+        !candidate.hirFullExpression || !candidate.fullExpression ||
+        candidate.initiallyActive ||
+        candidate.dropType != MirDropType{.type = place.type})
+      return false;
+    drop = &candidate;
+  }
+  if (!drop ||
+      producer.lifecycle.front() !=
+          MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                            .target = drop->id} ||
+      std::count_if(body.fullExpressions.begin(), body.fullExpressions.end(),
+                    [&](const auto &expression) {
+                      return expression.id == drop->fullExpression &&
+                             expression.hirExpression ==
+                                 drop->hirFullExpression;
+                    }) != 1)
+    return false;
+  const auto passiveValueStage = [&](const MirValueUse &use) {
+    const auto *stage = use.kind == MirValueUseKind::InstructionOperand
+                            ? findInstruction(body, use.instruction)
+                            : nullptr;
+    if (!stage || stage->kind != MirInstructionKind::CallInput ||
+        stage->callInputKind != HirCallInputKind::Value ||
+        stage->callInputRole != MirCallInputRole::Argument || !stage->result ||
+        use.operandIndex != 0 || stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::Value ||
+        stage->info.type != place.type || stage->info.traits != place.traits ||
+        stage->loan || stage->destination || stage->receiver ||
+        stage->preparedParameterDrop || !stage->lifecycle.empty())
+      return false;
+    const auto &uses = body.usesOf(*stage->result);
+    const auto *call =
+        uses.size() == 1 &&
+                uses.front().kind == MirValueUseKind::InstructionOperand
+            ? findInstruction(body, uses.front().instruction)
+            : nullptr;
+    const auto *target =
+        call && call->functionTarget
+            ? program.findFunctionInstance(*call->functionTarget)
+            : nullptr;
+    return target && call->kind == MirInstructionKind::Call &&
+           call->callSite == stage->callSite &&
+           uses.front().operandIndex == stage->callInputIndex &&
+           stage->callInputIndex < target->parameterTypes.size() &&
+           target->parameterTypes[stage->callInputIndex] == place.type &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           target->linkage == LanguageLinkage::Gti &&
+           target->returnBorrowOrigin == BorrowOriginKind::None;
+  };
+  // Only exact passive by-value stages may additionally use the SSA identity.
+  // An address publication, second place, or other consumer needs its own
+  // representation proof.
+  for (const auto &use : body.usesOf(value.id)) {
+    if (use.kind == MirValueUseKind::PlaceRoot && use.place == place.id)
+      continue;
+    if (!passiveValueStage(use))
+      return false;
+  }
+  std::vector<MirLoanId> loans;
+  std::size_t drops = 0;
+  const auto touches = [&](const MirOperand &operand) {
+    return operand.place == place.id;
+  };
+  for (const auto &block : body.blocks) {
+    const auto &term = block.terminator;
+    if ((term.value && touches(*term.value)) ||
+        std::any_of(term.targetArguments.begin(), term.targetArguments.end(),
+                    touches) ||
+        std::any_of(term.elseArguments.begin(), term.elseArguments.end(),
+                    touches) ||
+        std::any_of(term.switchTargets.begin(), term.switchTargets.end(),
+                    [&](const auto &edge) {
+                      return std::any_of(edge.arguments.begin(),
+                                         edge.arguments.end(), touches);
+                    }))
+      return false;
+    for (const auto &instruction : block.instructions) {
+      if (instruction.receiver && touches(*instruction.receiver))
+        return false;
+      if (instruction.destination == place.id) {
+        if (instruction.kind != MirInstructionKind::Drop ||
+            instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+            instruction.lifecycle.front().source != drop->id ||
+            instruction.lifecycle.front().target != 0)
+          return false;
+        ++drops;
+      }
+      for (const auto &operand : instruction.operands) {
+        if (operand.place != place.id)
+          continue;
+        // Trivial passive relocation needs no second lifetime slot. The
+        // verifier still ends source availability for Move and requires any
+        // earlier observation loan to have ended before this operation.
+        if (instruction.kind == MirInstructionKind::Move ||
+            instruction.kind == MirInstructionKind::Load) {
+          if (operand.kind != (instruction.kind == MirInstructionKind::Move
+                                   ? MirOperandKind::Move
+                                   : MirOperandKind::Copy) ||
+              instruction.operands.size() != 1 || !instruction.result ||
+              instruction.destination || instruction.receiver ||
+              instruction.loan || instruction.ownership ||
+              !instruction.lifecycle.empty() ||
+              !instruction.definedFailure.empty() ||
+              !instruction.localFailureSites.empty() ||
+              instruction.info.type != place.type ||
+              instruction.info.traits != place.traits ||
+              operand.type != place.type)
+            return false;
+          const auto &uses = body.usesOf(*instruction.result);
+          if (uses.size() != 1 || !passiveValueStage(uses.front()))
+            return false;
+          continue;
+        }
+        if (instruction.kind != MirInstructionKind::CallInput ||
+            instruction.callInputKind !=
+                HirCallInputKind::ReadTemporaryBorrow ||
+            instruction.hirValue != place.sourceValue || !instruction.result)
+          return false;
+        const auto &uses = body.usesOf(*instruction.result);
+        if (uses.size() != 1 ||
+            uses.front().kind != MirValueUseKind::InstructionOperand)
+          return false;
+        const auto *call = findInstruction(body, uses.front().instruction);
+        if (!call ||
+            temporaryArgumentStage(body, *call, uses.front().operandIndex) !=
+                &instruction)
+          return false;
+        const auto *target =
+            program.findFunctionInstance(*call->functionTarget);
+        const auto &loan = *body.findLoan(*instruction.loan);
+        if (!target || target->definitionKind != MirDefinitionKind::Source ||
+            target->linkage != LanguageLinkage::Gti ||
+            target->overloadedOperator ||
+            target->returnBorrowOrigin != BorrowOriginKind::None ||
+            call->info.type.kind == SemanticType::Reference ||
+            call->info.traits.containsBorrowedState ||
+            instruction.callInputIndex >= target->parameterTypes.size() ||
+            target->parameterTypes[instruction.callInputIndex] !=
+                instruction.info.type ||
+            loan.storedDependency || loan.lifecycleBound || loan.twoPhase ||
+            !loan.additionalDependencies.empty() ||
+            !loan.designatedFields.empty() ||
+            std::find(loans.begin(), loans.end(), loan.id) != loans.end())
+          return false;
+        loans.push_back(loan.id);
+      }
+    }
+  }
+  if (loans.empty() || !drops)
+    return false;
+  for (const auto &loan : body.loans)
+    if (loan.protectsSource(place.id) &&
+        std::find(loans.begin(), loans.end(), loan.id) == loans.end())
+      return false;
+  for (const auto id : loans)
+    if (std::none_of(
+            body.blocks.begin(), body.blocks.end(), [&](const auto &block) {
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const auto &instruction) {
+                    return instruction.kind == MirInstructionKind::EndBorrow &&
+                           instruction.loan == id;
+                  });
+            }))
+      return false;
+  return true;
+}
+
+[[nodiscard]] bool passiveSsaTemporaryPlace(const MirProgram &program,
+                                            const MirBody &body,
+                                            const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value ||
+      place.type.kind != SemanticType::Enum)
+    return false;
+  auto *index = indexedMirBody(body);
+  if (!index)
+    return passiveSsaTemporaryPlaceImpl(program, body, place);
+  if (index->passiveTemporaryProgram != &program) {
+    index->passiveTemporaryProgram = &program;
+    index->passiveTemporaryPlaces.clear();
+  }
+  if (const auto found = index->passiveTemporaryPlaces.find(place.id);
+      found != index->passiveTemporaryPlaces.end())
+    return found->second;
+  const bool valid = passiveSsaTemporaryPlaceImpl(program, body, place);
+  index->passiveTemporaryPlaces.emplace(place.id, valid);
+  return valid;
 }
 
 [[nodiscard]] DirectTemporaryBorrow
@@ -34085,7 +34328,8 @@ public:
           expectedScalarExtractionPlace(facts.body, place.value) == &place) {
         continue;
       }
-      if (expectedSsaViewPlace(facts.body, place)) {
+      if (expectedSsaViewPlace(facts.body, place) ||
+          passiveSsaTemporaryPlace(program, facts.body, place)) {
         continue;
       }
       // A pure root record spells nothing.
@@ -47143,7 +47387,8 @@ private:
       output << "__gti_mir_v_" << place.value;
       return;
     }
-    if (expectedSsaViewPlace(facts.body, place) &&
+    if ((expectedSsaViewPlace(facts.body, place) ||
+         passiveSsaTemporaryPlace(program, facts.body, place)) &&
         !slotPlace(facts.body, place)) {
       emitOperand({.kind = MirOperandKind::Value,
                    .value = place.value,
@@ -54820,6 +55065,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 directTemporaryArgument(body, instruction, index);
             if (temporary && temporary.stage->loan == loan.id) {
               ++matches;
+            } else if (const auto *stage =
+                           temporaryArgumentStage(body, instruction, index);
+                       stage && stage->loan == loan.id &&
+                       passiveSsaTemporaryPlace(program_, body, *loanSource)) {
+              ++matches;
             }
           }
         }
@@ -55765,9 +56015,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // exact lvalue view consumed by a following copy or move.
       continue;
     }
-    if (expectedSsaViewPlace(body, place)) {
-      // The Expected lives in its SSA carrier; this place is only the exact
-      // read receiver used by value()/error().
+    if (expectedSsaViewPlace(body, place) ||
+        passiveSsaTemporaryPlace(program_, body, place)) {
+      // The value lives in its SSA carrier; this place is only its exact
+      // checked read view, not a second native object.
       continue;
     }
     if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&

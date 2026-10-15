@@ -6405,18 +6405,13 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
   if (info == nullptr || info->category != ValueCategory::Value ||
-      info->type.kind != SemanticType::Class) {
+      (info->type.kind != SemanticType::Class &&
+       info->type.kind != SemanticType::Enum)) {
     return result;
   }
   result.type = info->type;
   if (isExplicitMoveReceiver(expression)) {
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
-    return result;
-  }
-  const ClassInfo *record = classInfo(info->type);
-  if (record == nullptr ||
-      (record->kind != ClassKind::Class && record->kind != ClassKind::Struct)) {
-    result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
     return result;
   }
   if (info->traits.containsBorrowedState) {
@@ -6427,6 +6422,39 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  if (info->type.kind == SemanticType::Enum) {
+    // A passive payload construction already owns its full-expression value.
+    // The call can observe it, but cannot retain it or borrow mutable access.
+    // This family intentionally excludes owning enum values and factories:
+    // those need their own exact materialization/cleanup proof.
+    const auto enumeration = enumTypeFor(info->type);
+    const auto *call = exprAs<Call>(producer);
+    const auto *construction =
+        call == nullptr ? nullptr
+                        : semanticModel.findPayloadConstruction(*call);
+    if (enumeration && enumeration->payload &&
+        !containsOpenTypeParameter(info->type) &&
+        info->traits.ownership == OwnershipKind::Value &&
+        info->traits.drop == DropKind::Trivial && info->traits.copyable &&
+        info->traits.movable && construction != nullptr &&
+        construction->type == info->type &&
+        construction->owner == info->type.enumId &&
+        construction->variantIndex < enumeration->enumerators.size() &&
+        construction->declaration ==
+            enumeration->enumerators[construction->variantIndex].declaration) {
+      result.eligible = true;
+      result.failure = FreshTemporaryValueFailure::None;
+    } else {
+      result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    }
+    return result;
+  }
+  const ClassInfo *record = classInfo(info->type);
+  if (record == nullptr ||
+      (record->kind != ClassKind::Class && record->kind != ClassKind::Struct)) {
+    result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
     return result;
   }
   if (const ResolvedConstructionInfo *construction =

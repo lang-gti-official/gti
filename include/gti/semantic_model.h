@@ -2030,6 +2030,10 @@ public:
   [[nodiscard]] const BindingInfo *findPayloadBinding(const Token &name) const;
 
   [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const;
+  // Null means no complete set has been established. A present empty vector
+  // is affirmative evidence of no dependencies and shadows an inherited set.
+  [[nodiscard]] const std::vector<SemanticLoanDependency> *
+  findBorrowDependencySet(const Expr &expression) const;
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findBorrowDependencies(const Expr &expression) const;
 
@@ -2305,6 +2309,7 @@ public:
 
 private:
   friend class SemanticVisitor;
+  friend struct SemanticModelTestAccess;
 
   struct PendingCallableForwarding {
     const FunctionDecl *source = nullptr;

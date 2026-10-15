@@ -2684,9 +2684,10 @@ private:
         pending.push_back(loan.id);
     }
     for (const auto &value : body.values)
-      for (const auto &dependency : value.borrowDependencies)
-        if (dependency.parent != 0)
-          pending.push_back(dependency.parent);
+      if (value.borrowDependencies)
+        for (const auto &dependency : *value.borrowDependencies)
+          if (dependency.parent != 0)
+            pending.push_back(dependency.parent);
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -3928,7 +3929,12 @@ private:
             parameter.referenceAccess != AccessMode::ReadOnly ||
             parameter.arguments.size() != 1 ||
             parameter.arguments.front() != input->info.type ||
-            input->info.type.kind != SemanticType::Class ||
+            (input->info.type.kind != SemanticType::Class &&
+             !(input->info.type.kind == SemanticType::Enum &&
+               input->kind == HirValueKind::PayloadConstruction &&
+               input->info.traits.ownership == OwnershipKind::Value &&
+               input->info.traits.drop == DropKind::Trivial &&
+               input->info.traits.copyable && input->info.traits.movable)) ||
             input->info.category != ValueCategory::Value ||
             input->info.traits.containsBorrowedState) {
           return std::nullopt;
@@ -5985,10 +5991,13 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
-    for (const auto &dependency : model.findBorrowDependencies(*raw)) {
-      auto lowered = dependency;
-      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
-      value.borrowDependencies.push_back(std::move(lowered));
+    if (const auto *complete = model.findBorrowDependencySet(*raw)) {
+      value.borrowDependencies.emplace();
+      for (const auto &dependency : *complete) {
+        auto lowered = dependency;
+        lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+        value.borrowDependencies->push_back(std::move(lowered));
+      }
     }
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&
