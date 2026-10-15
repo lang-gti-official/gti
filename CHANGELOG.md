@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.439.6 — Returning stored string view fields
+## 0.439.7 — Returning stored string view fields
 
 - Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
   missing its escaping loan") when a method or function returns a
@@ -23,6 +23,23 @@ for what minor and patch releases mean.
   destroy that object while the view is still in use.
 - A stored view may also be one branch of a function whose other branch
   returns a view tied to its receiver, in the same way a string literal can.
+
+## 0.439.6 — Borrowed arguments before a conditional whose test can fail
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call passes a local by reference and
+  a later argument is a conditional whose test calls a function that can
+  fail, such as `use(plain, has(argv, "split") ? 0 : 2)` or
+  `User user{plain, has(argv, "split") ? 0 : 2};`. The same fix covers a
+  test that is a method call (including a `mut` method on another local),
+  that reads the borrowed local itself, or that compares a returned
+  `std::string_view`; a call in one arm, as in `argc > 1 ? count(argv) : 0`;
+  a `mut` reference argument; a borrowed method receiver; and a local lambda
+  as the called function. If the test or arm fails, each live local is
+  destroyed once, as before.
+- A conditional argument whose arms select a `std::string_view`, such as
+  `describe(plain, argc > 1 ? "yes" : "no")`, also no longer stops with this
+  error after a local passed by reference.
 
 ## 0.439.5 — Consuming method calls with a later argument that can fail
 
