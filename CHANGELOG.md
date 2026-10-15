@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.3 — Returning stored string view fields
+## 0.440.4 — Returning stored string view fields
 
 - Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
   missing its escaping loan") when a method or function returns a
@@ -23,6 +23,18 @@ for what minor and patch releases mean.
   destroy that object while the view is still in use.
 - A stored view may also be one branch of a function whose other branch
   returns a view tied to its receiver, in the same way a string literal can.
+
+## 0.440.3 — Conditional results with checked arm arguments
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:` evaluates an input that
+  can fail before producing a class result without a destructor, such as
+  `Pod kept = left ? fresh(base + 29) : fresh(base + 30);`, where each `+`
+  is overflow-checked. Arguments computed by calls that can fail, `?`
+  operands, and nested conditionals or `&&`/`||` inside an argument work the
+  same way, whether the result is bound, returned, assigned, passed on, read
+  through a field or used to initialize a field. A failing input ends its
+  arm before the call, with the usual cleanup.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
