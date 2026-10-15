@@ -3667,6 +3667,51 @@ private:
       return;
     }
     lowered.semanticLoan = loan.semanticLoan;
+    if (loan.referenceSelection) {
+      const auto &selection = *loan.referenceSelection;
+      const auto *value = findValue(selection.value);
+      const auto found = loweredValues.find(selection.value);
+      const auto *resolved = found == loweredValues.end()
+                                 ? nullptr
+                                 : output.findValue(found->second);
+      const auto *block = resolved == nullptr
+                              ? nullptr
+                              : output.findBlock(resolved->definitionBlock);
+      const MirInstruction *producer = nullptr;
+      if (block != nullptr)
+        for (const auto &instruction : block->instructions)
+          if (instruction.id == resolved->definition)
+            producer = &instruction;
+      if (value == nullptr || resolved == nullptr || producer == nullptr ||
+          value->kind != HirValueKind::PayloadExtraction ||
+          value->operands.size() != 1 ||
+          value->operands.front() != selection.carrier ||
+          producer->kind != MirInstructionKind::Compute ||
+          producer->operation != MirOperation::PayloadExtract ||
+          producer->hirValue != selection.value ||
+          producer->result != resolved->id || producer->operands.size() != 1 ||
+          output.findPlace(producer->operands.front().place) == nullptr ||
+          !producer->payloadExtractionKind ||
+          !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
+        valid = false;
+        return;
+      }
+      MirReferenceSelection selected{.value = resolved->id,
+                                     .carrier =
+                                         producer->operands.front().place,
+                                     .fields = selection.fields,
+                                     .conditions = selection.conditions,
+                                     .reference = selection.reference};
+      if (lowered.referenceSelection &&
+          *lowered.referenceSelection != selected) {
+        valid = false;
+        return;
+      }
+      lowered.referenceSelection = std::move(selected);
+    } else if (lowered.referenceSelection) {
+      valid = false;
+      return;
+    }
     if (loan.storedDependency != 0) {
       const auto dependency = semanticLoans.find(loan.storedDependency);
       if (dependency == semanticLoans.end() ||
@@ -12656,12 +12701,27 @@ private:
       const HirBinding *binding = findBinding(payload.binding);
       const HirValue *extraction = findValue(payload.value);
       const MirPlaceId destination = placeForBinding(payload.binding);
+      const bool referenceTransfer =
+          extraction != nullptr && extraction->payloadExtractionKind ==
+                                       PayloadExtractionKind::TransferReference;
+      const bool exactBinding =
+          binding != nullptr && extraction != nullptr &&
+          (referenceTransfer
+               ? binding->info.type.kind == SemanticType::Reference &&
+                     binding->info.type.arguments.size() == 1 &&
+                     binding->info.type.arguments.front() ==
+                         extraction->info.type &&
+                     extraction->info.category == ValueCategory::Place &&
+                     binding->info.type.referenceAccess ==
+                         extraction->info.access
+               : binding->info.type.kind != SemanticType::Reference &&
+                     binding->info.type == extraction->info.type &&
+                     extraction->info.category == ValueCategory::Value &&
+                     extraction->payloadExtractionKind ==
+                         PayloadExtractionKind::MoveValue);
       if (binding == nullptr || extraction == nullptr || destination == 0 ||
           extraction->kind != HirValueKind::PayloadExtraction ||
-          extraction->info.category != ValueCategory::Value ||
-          binding->info.type.kind == SemanticType::Reference ||
-          binding->info.type != extraction->info.type ||
-          !extraction->enumOwner || !extraction->enumVariant ||
+          !exactBinding || !extraction->enumOwner || !extraction->enumVariant ||
           !extraction->payloadIndex) {
         valid = false;
         continue;
@@ -12685,14 +12745,17 @@ private:
       }
       (void)appendInstruction(std::move(extract));
       emittedValues.insert(extraction->id);
-      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
-                                .hirStatement = statement.id,
-                                .destination = destination,
-                                .operands = {valueOperand(payload.value)},
-                                .info = {.type = binding->info.type,
-                                         .category = ValueCategory::Place,
-                                         .access = binding->info.access,
-                                         .traits = binding->info.traits}};
+      MirInstruction initialize{
+          .kind = MirInstructionKind::Initialize,
+          .hirStatement = statement.id,
+          .destination = destination,
+          .operands = {referenceTransfer
+                           ? referenceOperand(payload.value, payload.binding)
+                           : valueOperand(payload.value)},
+          .info = {.type = binding->info.type,
+                   .category = ValueCategory::Place,
+                   .access = binding->info.access,
+                   .traits = binding->info.traits}};
       if (binding->info.traits.drop == DropKind::Lexical) {
         const MirDropObligationId obligation =
             dropObligationForBinding(payload.binding);
