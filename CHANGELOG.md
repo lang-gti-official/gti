@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.2 — Conditional class results from moved inputs
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when an arm of `?:`, or an operand of `&&`
+  or `||`, produces a class result that needs cleanup from a call that
+  consumes a value moved into it, and the result is then bound, returned,
+  assigned, passed on or read through a field. The moved value may be a
+  by-value argument, such as `Quiet t = c ? make(std::move(a)) :
+  make(std::move(b));`, or the receiver of a consuming (`&&`) method, such as
+  `return c ? std::move(a).make() : std::move(b).make();` or
+  `c ? std::move(p).loud().id : 0`. This covers class arguments with and
+  without cleanup, constructors, methods that can fail, arms that mix such
+  calls with ordinary ones, and nested conditionals. Only the arm that runs
+  consumes its input, and its result is destroyed exactly once.
+
 ## 0.439.1 — Virtual method calls in constructor member initializers
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

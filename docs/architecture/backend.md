@@ -323,8 +323,10 @@ staged by-value argument. The value-rooted result slot of a discarded,
 replacing or field-read result already counts every prepared input. Other
 result proofs that count prepared argument transfers count this handoff too
 where their schedule admits it: the returned-result slot, an
-`Expected<Class, E>` result constructed in the binding that consumes it, and a
-checked call's conditional temporary read through field views. Forwarding a
+`Expected<Class, E>` result constructed in the binding that consumes it, and
+the conditional temporary of a result made in a conditional arm or
+short-circuit operand, whether a failure-free or checked call constructs it
+there for field views or publishes it into a conditional join. Forwarding a
 cleanup-free result unchanged to the Return, as direct placement into the
 caller's storage does, does not admit it; such a call keeps its staged result
 slot. Only a successful result activates the replacement stage, so
@@ -911,7 +913,16 @@ the consuming `Initialize` that reparents the obligation into a field. A
 temporary that MIR later drops keeps that drop.
 An owning arm may also move out of a nested owning join, or move a named
 local whose obligation MIR first moves into the arm value; the arm's
-`Initialize` reparents that obligation into the join's. When the join's single
+`Initialize` reparents that obligation into the join's. A call or construction
+arm activates its result's own obligation, at the producer when it is
+failure-free and on its Invoke success edge otherwise, and the arm's
+`Initialize` reparents that obligation into the join's. A producer that
+consumes prepared inputs (moved by-value arguments, or a cleanup-free receiver
+moved out of a place) also transfers each one out at the call, as in
+`Quiet t = c ? std::move(a).make() : make(std::move(b));`. The publication
+proof admits exactly one unconditional `TransferOut` per prepared input beside
+that activation, the schedule `exactPreparedInputTransfers` proves; any other
+producer event rejects the arm. When the join's single
 move is read only through field views, or consumed by one assignment whose
 `Replace` takes the join's obligation, the moved value denotes the join
 temporary. Views read `temporary.get().field`, the assignment move-assigns from
@@ -1596,6 +1607,9 @@ Inside a short-circuit operand or a conditional arm, the producer, a call or a
 construction, instead constructs the result in a conditional temporary that
 holds the result's own obligation. A failure-free producer does so at its
 destination; a transformed one arms the temporary on its Invoke success edge.
+Either may also transfer out the prepared inputs it consumes, as the moved
+receiver in `c ? std::move(p).loud().id : 0` is; the proof admits exactly
+those transfers beside the result's activation.
 When the result is read only through field views, that temporary is its
 storage: the views spell `temporary.get().field`, the result declares no local,
 and MIR's conditional Drop destroys the temporary exactly once if its operand
