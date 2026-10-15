@@ -34,6 +34,16 @@ for what minor and patch releases mean.
   runs it exactly once, also when a later part of the expression fails, inside
   a `?:` arm or `&&`/`||` operand, or in a member initializer.
 
+## 0.440.5 — Conditional moves of locals without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` move a local whose
+  class has no destructor, as in
+  `Pod t = c ? std::move(a) : std::move(b);`. Binding, returning, reading a
+  field of, calling a method on, assigning and passing on the result all
+  work now, in functions that can fail too, as do by-value parameters and an
+  arm that moves a local beside one that constructs, copies or calls.
+
 ## 0.440.4 — Member calls on conditional values without cleanup
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

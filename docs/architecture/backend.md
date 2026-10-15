@@ -920,11 +920,17 @@ passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
 (`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. A nested join is proved on its own, and the
-nested arm's region starts at that inner join's branch block. A passive arm may
-also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
-with overflow-checked additions, a call that can fail, a `?` operand, or scalar
-control flow inside an argument. Without an exact diamond, the branch is the
+events stay outside this form. An arm may also move a whole named local out,
+as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
+obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
+ownership event that takes the local's key to `Moved`, and the local keeps its
+passive binding drop. That drop ends the moved-from shell after the join on
+the path that moved it, and the live object on the other. A nested join is
+proved on its own, and the nested arm's region starts at that inner join's
+branch block. A passive arm may also evaluate its inputs before that entry, as
+in `c ? f(a + 1) : f(b + 2)` with overflow-checked additions, a call that can
+fail, a `?` operand, or scalar control flow inside an argument. Without an
+exact diamond, the branch is the
 nearest common dominator of the two arm entries, and its two successors start
 the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
 (`exactConditionalArmRegion`): the branch enters it once and nothing else
@@ -950,11 +956,12 @@ has no use. Each arm's `Initialize` activates the temporary's obligation
 directly, because a cleanup-free arm result has none of its own. A
 construction arm already constructed the temporary at that `Initialize`.
 `classValueDestinationSlot` also names the temporary for a call arm with no
-lifecycle event beyond its prepared input transfers, and for a copied place,
-when the `Initialize` follows the producer directly or opens its Invoke
-success block. Each constructs the temporary directly, a call that can fail
-only on success, and the receiver borrows it as `directTemporaryReceiver`
-borrows a fresh result's slot. A nested-join arm and a moved named local are
+lifecycle event beyond its prepared input transfers, for a copied place, and
+for a whole named local moved out by the same ownership and passive-drop facts
+as the arm above, when the `Initialize` follows the producer directly or opens
+its Invoke success block. Each constructs the temporary directly, a call that
+can fail only on success, and the receiver borrows it as
+`directTemporaryReceiver` borrows a fresh result's slot. A nested-join arm is
 not admitted in this form.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
