@@ -6559,6 +6559,23 @@ arms' checked arguments inside the arms as well.
 `testCheckedConditionalArmInputs` in the emitter text suite admits the bound,
 returned and `?` forms and refuses a failure edge or the other arm's edge
 forged into an arm, which MIR verification also rejects.
+`conditional_cleanup_free_receiver_runtime` runs the same eight
+configurations over a cleanup-free class value that a conditional joins and a
+member call then uses as its receiver: read-only, `mut` and consuming
+members. Each shape runs through both arms, in plain and failure-form bodies.
+The arms are ordinary calls, member calls borrowing their receiver read-only
+or mutably or consuming it, calls consuming a moved argument, copies of a
+place, constructions, and mixtures of these. The arm callee or the member
+call may fail. The shapes also cover a class with a class field, a generic
+class, a loop, and inputs with cleanup of their own. A failing arm callee
+leaves no joined value, a failing member call fails while borrowing it, and
+cleanup destroys only what was constructed before the failure.
+`testCleanupFreeJoinReceiver` in the emitter text suite checks that both arms
+publish into the borrowed temporary and that its Drop ends it. It refuses a
+removed, conditional, duplicated or retargeted activation, and an arm result
+that activates the obligation itself, all of which MIR verification also
+rejects. A differential `--emit-cpp` of every source under `tests/fixtures`
+and `examples` at O0 and O3 changed only the new fixture.
 The existing source-destructor runtime matrix also passes (259 executions).
 `polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
