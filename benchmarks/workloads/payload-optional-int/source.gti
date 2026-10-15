@@ -1,0 +1,20 @@
+#include <std/experimental/optional>
+#include <std/string>
+
+std::experimental::optional<int32_t> lookup(int32_t index) {
+  if (index % 4 == 0)
+    return std::experimental::optional<int32_t>();
+  return std::experimental::optional<int32_t>(index);
+}
+
+int main() {
+  mut uint64_t total = uint64_t(0);
+  for (mut int32_t i = 0; i < 200000000; i += 1) {
+    auto result = lookup(i);
+    if (result.has_value())
+      total += uint64_t(result.value());
+  }
+  if (total != uint64_t(15000000000000000)) return 1;
+  std::println("GTI-BENCH-1 digest:00354a6ba7a18000 work-units:200000000");
+  return 0;
+}

@@ -74,6 +74,22 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+Payload alternatives construct in place from their already selected MIR
+operands. The native enum's in-place alternative constructor avoids temporary
+alternative and whole-enum transfers. List initialization preserves operand
+evaluation order. An owning fresh alternative followed immediately by its
+constructor-field `Initialize` may use the final field storage directly: the
+existing publication proof establishes the observation-free empty field shell,
+unique result consumer, result activation, field rollback obligation and exact
+`Reparent`. Adjacency excludes intervening failures or observations. Non-adjacent
+and returned/moved inputs retain their original staged publication. MIR cleanup
+and lifetime events are not removed or rescheduled by this representation choice.
+
+A switch over a payload-enum place observes that place's discriminant even
+when all payloads are passive. It does not first copy the complete enum. Arm
+bindings independently retain their selected copy, borrow or consuming-transfer
+semantics; an ordinary integral enum still uses the scalar switch path.
+
 A staged call receiver can cross the existing scalar conditional-argument
 control flow when its exact origin remains unchanged. The receiver place may be
 a bare local, the exact full-expression slot, or a binding-rooted path of field
@@ -2454,13 +2470,13 @@ initializer shortcut. The representation snapshot copies the exact MIR enum
 traits, enum-wide active-cleanup bit, dense variants, field types, and
 per-field cleanup facts. Admission exact-compares every row with MIR.
 `PayloadConstruct` consumes only operands carrying the matching `TransferOut`
-events, constructs the selected `std::variant` alternative in an enum lifetime
+events, constructs the selected tagged-carrier alternative in an enum lifetime
 slot, and publishes that slot only through the matching enum lifecycle event.
 Whole-enum move and tag-only switch observation use the exact MIR places and
 obligations. The exact adjacent Move -> Replace -> Drop schedule also admits
 whole-enum move assignment: native assignment replaces the destination's
 active alternative, then MIR destroys only the moved-from staging shell.
-Generated C++ names and `std::variant` are representation choices; neither
+Generated C++ names and native tagged storage are representation choices; neither
 selects ownership behavior or identifies a source enum. Owning enum
 call/return is admitted only through an exact verified-MIR transport shape.
 Named and fresh arguments are moved from their one lifetime slot into the
@@ -2502,6 +2518,33 @@ Recursive enum cleanup emits distinct local sequence names at each depth:
 an inner sequence's initializer must read the outer record/unwinding state,
 not a shadowing, not-yet-initialized local. Both ordinary and secondary failure
 reports are checked by the composition runtime matrix.
+
+Payload enum rows use backend-private `payload_variant`: a recursive native
+union and compact active tag, with direct tag-dispatched native retirement.
+Constrained-default special members preserve trivial copy/move/assignment and
+destruction for passive members, including inert byte transport. Ordinary
+integer enums are unchanged. Payload enums are accessed through
+`payload_get<Index>` selected from the sealed variant inventory, under the
+existing MIR active-tag proof. This is not a public layout/ABI guarantee or
+a source-visible unchecked access operation. It removes standard-library
+visitor-table dispatch from retirement without changing which GTI cleanup
+obligations run. Native copy/move/assignment availability follows the member
+representations; it cannot admit an operation absent from GTI's sealed traits.
+
+The carrier starts with only its private empty alternative active. Construction
+starts the selected union-member lifetime, then publishes its tag; an exception
+before publication leaves no complete alternative to destroy. Recursive empty
+union tails contain no resource. Native moves retain a valid moved-from member
+until MIR's scheduled shell retirement. Cross-alternative assignment retires
+the old member before constructing and publishing the replacement; same-tag
+assignment retains its member lifetime, and self-assignment is inert. A failed
+cross-alternative native construction leaves a private vacant tag, which can
+only be retired or reconstructed, not exposed as a GTI value. GTI defined
+failure remains governed by MIR's explicit success/rollback edges, not native
+exceptions. Independent emitted-carrier tests cover empty/unit alternatives,
+equal payload types at different indices, alignment, nested carriers/arrays,
+native construction/move/assignment failures and exact retirement counts;
+source runtime tests retain failure-cleanup and sanitizer coverage.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
