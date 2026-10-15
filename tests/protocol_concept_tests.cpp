@@ -463,6 +463,162 @@ int main() { return 0; }
 )gti",
            "GTI-S2123", "overlaps another");
 
+  // `expected`, a raw pointer and a fixed-length array are patterns like a
+  // class template. A pointer pattern keeps its access, and an array
+  // pattern its length, so `T*`, `const T*`, `T[3]` and `T[4]` are four
+  // patterns.
+  const std::string builtin = R"gti(
+concept sized<T> {
+  typename count_type;
+  count_type count(T& value);
+};
+concept counted<T> {
+  int count(T value);
+};
+for <T, E> concept sized<expected<T, E>> {
+  using count_type = bool;
+  bool count(expected<T, E>& value) { return value.has_value(); }
+};
+for <T> concept counted<T*> {
+  int count(T* value) { return value == nullptr ? 0 : 1; }
+};
+for <T> concept counted<const T*> {
+  int count(const T* value) { return 2; }
+};
+for <T> concept counted<T[3]> {
+  int count(T value[3]) { return 3; }
+};
+for <T> concept counted<T[4]> {
+  int count(T value[4]) { return 4; }
+};
+)gti";
+  accepted(builtin + R"gti(
+sized<T>::count_type measured<T>(T& value) requires sized<T> {
+  return sized<T>::count(value);
+}
+int total<T>(T value) requires counted<T> {
+  return counted<T>::count(std::move(value));
+}
+int main() {
+  expected<int, bool> held = 3;
+  sized<expected<int, bool>>::count_type present = measured(held);
+  mut int number = 4;
+  int fixed = 5;
+  int three[3] = {1, 2, 3};
+  int four[4] = {1, 2, 3, 4};
+  return (present ? 0 : 1) + total(&number) + total(&fixed) +
+         counted<int[3]>::count(three) + total(four) - 10;
+}
+)gti",
+           "blocks over expected, pointers and arrays should serve their "
+           "instances");
+  rejected(builtin + R"gti(
+for concept counted<int*> {
+  int count(int* value) { return 9; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "overlaps another");
+  rejected(builtin + R"gti(
+int main() {
+  int five[5] = {1, 2, 3, 4, 5};
+  return counted<int[5]>::count(five);
+}
+)gti",
+           "GTI-S2123", "No conformance block 'for concept counted<");
+  rejected(R"gti(
+concept counted<T> {
+  int count(T value);
+};
+for <T> concept counted<T**> {
+  int count(T** value) { return 0; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "'expected<T, E>' or 'T*'");
+  // No package owns a built-in type, so only the concept's package declares
+  // a block over one.
+  rejected(R"gti(
+for <T, E> concept std::tryable<expected<T, E>> {
+  using value_type = T;
+  using residual_type = expected<T, E>;
+  bool has_value(expected<T, E>& value) { return value.has_value(); }
+  T take_value(expected<T, E> value) { return std::move(value).value(); }
+  expected<T, E> take_residual(expected<T, E> value) { return value; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "owns neither the concept nor the type");
+
+  // A block function has the concept operation's interface: it declares no
+  // defaults, so concrete and generic calls accept the same arguments.
+  const std::string probe = R"gti(
+concept probe<T> {
+  int read(T& value, int scale);
+};
+class Cell {
+public:
+  int value;
+  Cell(int amount) : value(amount) {}
+};
+)gti";
+  rejected(probe + R"gti(
+for concept probe<Cell> {
+  int read(Cell& value, int scale = 2) { return value.value * scale; }
+};
+int main() {
+  Cell cell{1};
+  return probe<Cell>::read(cell) - 2;
+}
+)gti",
+           "GTI-S2123", "cannot declare a default argument");
+  reportedOnce(probe + R"gti(
+for concept probe<Cell> {
+  int read(Cell& value, int scale = 2) { return value.value * scale; }
+};
+int main() { return 0; }
+)gti",
+               "GTI-S2123", "Cell& value, int ", "scale");
+  // `C<X>::name` selects the block as `requires C<X>` does, constraints
+  // included.
+  const std::string constrained = R"gti(
+concept collection<T> {
+  typename element_type;
+  int size(T& value);
+};
+class Box<T> {
+public:
+  T item;
+  Box(T value) : item(value) {}
+};
+for <std::integral T> concept collection<Box<T>> {
+  using element_type = T;
+  int size(Box<T>& value) { return 1; }
+};
+)gti";
+  accepted(constrained + R"gti(
+int main() {
+  collection<Box<int>>::element_type value = 3;
+  return value - 3;
+}
+)gti",
+           "an associated type of a satisfied block should resolve");
+  rejected(constrained + R"gti(
+int main() {
+  collection<Box<double>>::element_type value = 3.0;
+  return 0;
+}
+)gti",
+           "GTI-S2029", "does not satisfy");
+  rejected(constrained + R"gti(
+int main() {
+  double half = 1.5;
+  Box<double> box{half};
+  return collection<Box<double>>::size(box);
+}
+)gti",
+           "GTI-S2029", "does not satisfy");
+
   // A constraint a block's pattern fails names the block's own parameter.
   // The block validates its pattern; each operation restates the block's
   // application as its requirement without validating it again, so the
@@ -956,6 +1112,28 @@ for <T> concept adds_to<Tally<T>, Tally<T>> {
 )gti";
   expect(lang::Formatter().format(formattedPair) == formattedPair,
          "formatted concepts with several parameters should be stable");
+  const std::string formattedBuiltin =
+      R"gti(for <T, E> concept sized<expected<T, E>> {
+  using count_type = bool;
+  bool count(expected<T, E>& value) {
+    return value.has_value();
+  }
+};
+
+for <T> concept counted<const T*> {
+  int count(const T* value) {
+    return 2;
+  }
+};
+
+for <T> concept counted<T[3]> {
+  int count(T value[3]) {
+    return 3;
+  }
+};
+)gti";
+  expect(lang::Formatter().format(formattedBuiltin) == formattedBuiltin,
+         "formatted blocks over built-in types should be stable");
   expect(lang::Formatter().format(
              "class Crate<T>{public:int count;};\n"
              "for<T>concept measurable<Crate<T>>{using unit_type=int;"

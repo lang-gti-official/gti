@@ -5,7 +5,8 @@ The fixture traces a concrete and a generic conformance block in every mode:
 calls through a requirement in generic code, block functions calling each
 other, associated types used for locals and results, and operations that take
 ownership of an owning operand, which is released exactly once when the
-operation returns or fails. Examples 157 and 158 run as documented. A
+operation returns or fails, and blocks over `expected`, pointers and a
+fixed-length array. Examples 157 and 158 run as documented. A
 two-package workspace checks package coherence: a package may supply a block
 for a concept it owns or one of whose argument types it owns, and not for a
 dependency's concept and types together.
@@ -23,6 +24,7 @@ from unique_class_allocation_runtime_test import run
 CASES = [
     (0, 0, [1, 101, 101, -1, 1, 2, 10, -2, 20, -101], None),
     (1, 70, [3, -3], ("ordinary", "scale")),
+    (2, 0, [4, 1, -4, 2, 0, 1, 2, 3], None),
 ]
 
 SITES["protocol_concepts.gti"] = {
@@ -63,6 +65,11 @@ for concept local<Square> {
   using item = int;
   int get(Square& value) { return value.side; }
 };
+// This package owns the concept, so it may cover a built-in type.
+for <T, E> concept local<expected<T, E>> {
+  using item = int;
+  int get(expected<T, E>& value) { return value.has_value() ? 1 : 0; }
+};
 // This package owns one of the argument types.
 for concept fits<Square, Circle> {
   bool holds(Circle& space, Square& item) {
@@ -73,8 +80,9 @@ int main() {
   Circle circle{3};
   Square square{4};
   int fitted = fits<Square, Circle>::holds(circle, square) ? 0 : 100;
+  expected<int, bool> held = 2;
   return shaped<Circle>::size(circle) + local<Square>::get(square) - 7 +
-         fitted;
+         fitted + local<expected<int, bool>>::get(held) - 1;
 }
 """
 
@@ -85,6 +93,11 @@ for concept shaped<Square> {
 };
 for concept fits<Square, Square> {
   bool holds(Square& space, Square& item) { return true; }
+};
+// No package owns a built-in type.
+for <T, E> concept shaped<expected<T, E>> {
+  using size_type = int;
+  int size(expected<T, E>& value) { return 1; }
 };
 int main() { return 0; }
 """
@@ -114,8 +127,8 @@ def coherence(compiler, directory):
     rejected = subprocess.run([str(compiler), "check"], cwd=app,
                               capture_output=True, text=True, timeout=600)
     assert rejected.returncode != 0 and "GTI-S2123" in rejected.stderr and \
-        "owns neither the concept nor the type" in rejected.stderr and \
-        "owns neither the concept nor any of the argument types" in \
+        rejected.stderr.count("owns neither the concept nor the type.") == 2 \
+        and "owns neither the concept nor any of the argument types" in \
         rejected.stderr, rejected.stderr
     print("protocol concepts: package coherence passed", flush=True)
 

@@ -707,14 +707,17 @@ adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
 ### Conformance blocks
 
 The block applies the concept to one pattern per concept parameter. Each
-pattern is either a concrete type, or one class or enum template applied to
-block type parameters, in any order, such as `Box<T>`, `Pair<K, V>` or an
-enum `result<T, E>`. A bare
+pattern is either a concrete type, or one class or enum template, `expected`,
+pointer or fixed-length array type applied to block type parameters, in any
+order, such as `Box<T>`, `Pair<K, V>`, an enum `result<T, E>`,
+`expected<T, E>`, `T*` or `T[3]`. A pointer pattern keeps its access and an
+array pattern its length, so `T*`, `const T*`, `T[3]` and `T[4]` are four
+different patterns; an array length cannot be a block parameter. A bare
 parameter, such as `T` on its own, and a nested pattern, such as
-`Box<Box<T>>`, are not patterns. Every block parameter appears in some
-pattern. A parameter may appear more than once, within one pattern or across
-several, and then every occurrence must bind the same type: `Tally<T>,
-Tally<T>` matches two tallies of the same kind only.
+`Box<Box<T>>` or `T**`, are not patterns. Every block parameter appears in
+some pattern. A parameter may appear more than once, within one pattern or
+across several, and then every occurrence must bind the same type:
+`Tally<T>, Tally<T>` matches two tallies of the same kind only.
 
 The block defines every associated type with one `using`, and every
 operation with one function. Each function has exactly the concept's
@@ -723,7 +726,9 @@ types for the associated types. A block defines nothing else.
 
 A block function is an ordinary function definition. The block's parameters
 apply to it, and it cannot declare its own generic parameters or a requires
-clause. Inside the block:
+clause. Like the operation it defines, it declares no default arguments, so
+a call accepts the same arguments whether it names a concrete type or goes
+through a requirement. Inside the block:
 - the block's associated types are transparent, whether written as
   `unit_type` or as `measurable<Crate<T>>::unit_type`;
 - each operation requires the block's own application;
@@ -735,11 +740,16 @@ Selection is exact:
 - concrete arguments match at most one block of a concept, and two blocks
   that some arguments could both match are rejected as overlapping;
 - there is no specialization or ranking between blocks;
-- the block's type-parameter constraints must hold for the bound types.
+- the block's type-parameter constraints must hold for the bound types,
+  for `requires C<X>` and equally for a concrete `C<X>::name` or
+  `C<X>::operation(...)`.
 
 The declaring package must own the concept or the top-level nominal type of
 at least one pattern, as for
 [exact class specializations](../decisions/020-exact-qualified-class-specializations.md).
+No package owns `expected`, a pointer, an array or another built-in type, so
+a block whose patterns are all built-in types belongs in the concept's
+package.
 Because no pattern is a bare parameter, overlapping blocks in two different
 packages would require each package to depend on the other, which package
 dependencies rule out.
