@@ -1616,8 +1616,10 @@ nested call can participate in an ordinary constructor full expression.
 
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
-An admitted GTI call or ordinary `Construct` publishes once into the slot, and
-the load spells through its verified field chain. The constructor form also
+An admitted GTI call or ordinary `Construct` publishes once into the slot, as
+does a failure-free `Move` of a whole object out of a place, as in
+`std::move(a).x`, which constructs the slot from its source, and the load
+spells through its verified field chain. The constructor form also
 requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
@@ -1625,12 +1627,18 @@ non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
-slot. The result may come from a call, as in `make_tracked(7).number`, or from
-an ordinary `Construct`, as in `tracked(7).number`. A failure-free constructor
+slot. The result may come from a call, as in `make_tracked(7).number`, from
+an ordinary `Construct`, as in `tracked(7).number`, or from a `Move` out of an
+available place, as in `std::move(a).number` on a local or by-value parameter.
+A failure-free constructor
 constructs the slot in place and arms the result's obligation with its own
 `Initialize`. A raising one places the object at the slot's construction
-address and arms the obligation on its Invoke success edge. Either way the
-construction's only other uses must be field views. Views cover nested fields
+address and arms the obligation on its Invoke success edge. A `Move` with no
+failure of its own move-constructs the slot from its source; its one lifecycle
+event transfers the source's obligation to the result (or arms it when the
+source had none), and the source's later Drop ends only the moved-from shell.
+Either way the
+construction's or move's only other uses must be field views. Views cover nested fields
 and a field lent to one member call as in `make_named().text.size()`, in
 function bodies as well as field defaults, member initializers and base
 argument preparations, whose carrier holds the slot. A view is a pure field
@@ -1643,10 +1651,13 @@ result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
-Inside a short-circuit operand or a conditional arm, the producer, a call or a
-construction, instead constructs the result in a conditional temporary that
+Inside a short-circuit operand or a conditional arm, the producer, a call, a
+construction or a `Move` out of a place (as in `c ? std::move(a).number : 0`),
+instead constructs the result in a conditional temporary that
 holds the result's own obligation. A failure-free producer does so at its
-destination; a transformed one arms the temporary on its Invoke success edge.
+destination; a transformed one arms the temporary on its Invoke success edge;
+a `Move` names the temporary as its destination and arms it with its one
+lifecycle event.
 Either may also transfer out the prepared inputs it consumes, as the moved
 receiver in `c ? std::move(p).loud().id : 0` is; the proof admits exactly
 those transfers beside the result's activation.

@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.5 — Reading a field of a moved local
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR") when a field is read straight off a local or by-value parameter moved
+  with `std::move`, as in `return std::move(a).x;`, `(std::move(a)).x` or
+  `int v = std::move(a).x;`, including for a field of a generic class. The
+  move leaves `a` moved-from and the field is read from the moved value, which
+  is destroyed at the end of the full expression; a class with a destructor
+  runs it exactly once, also when a later part of the expression fails, inside
+  a `?:` arm or `&&`/`||` operand, or in a member initializer.
+
 ## 0.440.3 — Conditional results with checked arm arguments
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
