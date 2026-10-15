@@ -7601,7 +7601,10 @@ unnumber it, and make the post-merge drop unconditional.
 with and without destructors, nested operators and a loop condition, and
 defined failure in the borrowing callee, a later argument, the producer, and
 after the merge with the temporary engaged or skipped, under C++20/C++23
-O0/O1/O3, no-elide and ASan/UBSan. The LSP smoke gate
+O0/O1/O3, no-elide and ASan/UBSan. `testConstexprConditionalTemporaries`
+runs argument and receiver borrows of such slots, one destructor-bearing,
+through exactly four staged MIR executions with exact results; a wrong
+assertion fails as `GTI-S2079`, not as an unsupported read. The LSP smoke gate
 proves `GTI-S2017` publication/clearing and exact borrowed versus by-value
 signature selection.
 

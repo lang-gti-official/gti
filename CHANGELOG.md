@@ -21,6 +21,10 @@ for what minor and patch releases mean.
   once at the end of the full expression when its operand ran, and never
   when the operand was skipped, also when the call, a later argument or the
   rest of the expression fails.
+- Compile-time evaluation (`constexpr`, `static_assert`) now runs a method
+  called on such a temporary, as in `ok && make(1).positive()`, which
+  failed with `GTI-S2057` ("reads a binding that is not constexpr"). The
+  temporary's class may also have a destructor there.
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 

@@ -646,6 +646,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprConditionalTemporaries",
+      "suite": "constexpr"
+    },
+    {
       "name": "testConstexprLibrary",
       "suite": "constexpr"
     },

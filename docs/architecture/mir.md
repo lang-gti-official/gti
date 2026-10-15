@@ -129,7 +129,14 @@ frames may initialize receiver fields. After those writes, a constructor body
 or mutable method may edit a mutable field under the ordinary loan rules.
 Materialized result receivers read the exact MIR `Value` root; their passive
 storage is retired at the represented move/drop, not reconstructed as a binding
-or kept alive independently of full-expression cleanup.
+or kept alive independently of full-expression cleanup. A temporary produced
+only in a conditional arm or a `&&`/`||` operand lives instead in its
+CFG-promoted hidden `Temporary` slot. Its producer, as the shared
+materialization query resolves it, publishes the result into that slot when it
+completes, whether MIR retargeted the producer there or arms the slot's
+obligation on its `Invoke` success edge. Argument and receiver borrows of the
+slot therefore read the produced value, and the post-merge drop retires only a
+slot that its operand produced.
 Entry string-view dependencies are backed by immutable constant bytes.
 Checked read-only and mutable reference parameters, automatic bindings, and
 returned projections use verified MIR loans. An executor-local location retains
