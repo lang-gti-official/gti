@@ -16,6 +16,7 @@ if __name__ == "__main__":
         "generic_closure_field_composition": root / "fixtures/generic_closure_field_composition.gti",
         "generic_closure_local_copy": root / "fixtures/generic_closure_local_copy.gti",
         "generic_closure_formal_reuse": root / "fixtures/generic_closure_formal_reuse.gti",
+        "generic_closure_field_move": root / "fixtures/generic_closure_field_move.gti",
         "nested_callable_results": root / "fixtures/nested_callable_results.gti",
         "loop_closure_reconstruction": root / "fixtures/loop_closure_reconstruction.gti",
         "nested_callable_reproducer": root / "coverage/reproducers/f14-nested-callable-invocation.gti",
@@ -25,6 +26,10 @@ if __name__ == "__main__":
     division = next(index for index, line in enumerate(reuse.read_text().splitlines(), 1)
                     if "offset.amount / divisor" in line)
     reuse_output = "8\n6\n8\n6\n204\n203\n8\n44\n"
+    moved = sources["generic_closure_field_move"]
+    moved_division = next(index for index, line in enumerate(moved.read_text().splitlines(), 1)
+                          if "offset.amount / divisor" in line)
+    moved_output = "8\n7\n44\n33\n9\n8\n204\n203\n8\n6\n46\n45\n19\n"
     cases = {
         "generic_closure_field_copy": [
             ((), (0, "10\n13\n14\n99\n8\n7\n16\n8\n13\n14\n8\n9\n", ""))],
@@ -41,6 +46,11 @@ if __name__ == "__main__":
             ((), (0, reuse_output + "8\n", "")),
             (("fail",), (70, reuse_output,
                          f"{reuse.name}:{division}: runtime error[GTI-R0002]: "
+                         "division_by_zero in integer_division\n"))],
+        "generic_closure_field_move": [
+            ((), (0, moved_output + "44\n", "")),
+            (("fail",), (70, moved_output,
+                         f"{moved.name}:{moved_division}: runtime error[GTI-R0002]: "
                          "division_by_zero in integer_division\n"))],
         "nested_callable_reproducer": [((), (0, "12\n", ""))],
         "higher_order_lambdas": [((), (0, "5 12 5 42 33\n", ""))],

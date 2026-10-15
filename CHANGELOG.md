@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.435.1 — Consuming methods on classes without destructors
+## 0.435.2 — Consuming methods on classes without destructors
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a consuming (`&&`) method is called on a
@@ -30,6 +30,21 @@ for what minor and patch releases mean.
   field in a constructor's member-initializer list. A field read inside `?:`,
   such as `ok ? std::move(maker).show().id : 0`, fails the same way when the
   method cannot fail, as it does when the value is passed as an argument.
+
+## 0.435.1 — Constructors that move a lambda parameter into a field
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class moves a lambda
+  parameter into a field and the constructor can fail afterwards, for example
+  `Keeper(F f) : callback(std::move(f)), seen(0) { this.seen = call(this.callback); }`,
+  or with a later member initializer that can fail, such as
+  `seen(call(...))`. Lambdas capturing numbers and lambdas capturing structs
+  both failed; copying the lambda (`callback(f)`) already worked.
+- The same fix covers moving an enum value with a payload into a field in a
+  constructor whose body can fail.
+- A lambda field that is moved after another member initializer that can
+  fail, or a lambda capturing a struct that cannot be copied, is still
+  rejected with `GTI-B0001`.
 
 ## 0.435.0 — Protocol concepts over several types
 
