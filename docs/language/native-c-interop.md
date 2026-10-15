@@ -113,6 +113,14 @@ startup action, GTI ownership or destruction. The definition must be provided
 by the linked native library. Both functions and variables share one exact
 program-global native-symbol namespace and the same `link_name` rules.
 
+Whole-record replacement in foreign storage also requires every embedded field
+in the assigned aggregate to be mutable, recursively through records and fixed
+arrays. This extends the field access policy to externally owned storage, where
+GTI has no authority to replace read-only subobjects. It does not change ADR 013:
+field `mut` still does not alter the record representation, and a local snapshot
+retains ordinary GTI whole-object assignment even when it has read-only fields.
+Pointer pointees are separate objects and are not inspected by this rule.
+
 Reading or writing foreign storage requires lexical `unsafe`, including reads
 of const objects. The caller establishes native validity, initialization,
 lifetime, access and synchronization. Constness prohibits writes but does not

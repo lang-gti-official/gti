@@ -7569,6 +7569,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
     if (!bindingRoot && !symbolRoot) {
       continue;
     }
+    if (symbolRoot && place.foreignStorage &&
+        program.findForeignStorage(place.symbol) != nullptr) {
+      // External reads in a GTI initializer do not acquire an owned startup
+      // step.
+      continue;
+    }
     std::optional<ProgramInitializationStepId> identity;
     bool exact = true;
     const auto requireIdentity = [&](ProgramInitializationStepId candidate) {
@@ -11436,6 +11442,7 @@ verifyMirProgramContracts(const MirProgram &program) {
     case SemanticType::Double:
       return true;
     case SemanticType::Void:
+    case SemanticType::CString:
       return pointee;
     case SemanticType::NativeFunction:
       return type.hasNativeFunctionShape();
@@ -11453,6 +11460,30 @@ verifyMirProgramContracts(const MirProgram &program) {
     default:
       return false;
     }
+  };
+  const auto writableForeignValue =
+      [&](const auto &self, const SemanticType &type,
+          std::unordered_set<HirClassInstanceId> &visiting) -> bool {
+    if (type.kind == SemanticType::Array)
+      return type.arguments.size() == 1 &&
+             self(self, type.arguments.front(), visiting);
+    if (type.kind != SemanticType::Class)
+      return true;
+    for (const auto &instance : program.classInstances()) {
+      if (instance.type != type)
+        continue;
+      if (!instance.cAbiRecord || !visiting.insert(instance.id).second)
+        return false;
+      const bool writable =
+          std::all_of(instance.declaredFields.begin(),
+                      instance.declaredFields.end(), [&](const auto &field) {
+                        return field.access == AccessMode::Mutable &&
+                               self(self, field.type, visiting);
+                      });
+      visiting.erase(instance.id);
+      return writable;
+    }
+    return false;
   };
   std::unordered_set<SymbolId> foreignSymbols;
   std::unordered_set<std::string> foreignNames;
@@ -11498,6 +11529,31 @@ verifyMirProgramContracts(const MirProgram &program) {
       if (place.foreignStorage != (storage != nullptr))
         foreignError(
             "MIR place has missing or forged foreign storage identity");
+      if (storage != nullptr && place.access == AccessMode::Mutable) {
+        SemanticType projectedType = storage->type;
+        for (const auto &projection : place.projections) {
+          if (projection.kind == MirProjectionKind::Field) {
+            const MirClassFieldInfo *field = nullptr;
+            for (const auto &instance : program.classInstances()) {
+              if (instance.type != projectedType)
+                continue;
+              for (const auto &candidate : instance.declaredFields)
+                if (candidate.symbol == projection.field)
+                  field = &candidate;
+            }
+            if (field == nullptr || field->access != AccessMode::Mutable) {
+              foreignError(
+                  "foreign storage projection grants forbidden mutable access");
+              break;
+            }
+            projectedType = field->type;
+          } else if (projection.kind == MirProjectionKind::Index &&
+                     projectedType.kind == SemanticType::Array &&
+                     projectedType.arguments.size() == 1) {
+            projectedType = projectedType.arguments.front();
+          }
+        }
+      }
       if (storage != nullptr &&
           (!place.initiallyAvailable || place.binding != 0 ||
            (place.projections.empty() && place.type != storage->type) ||
@@ -11536,8 +11592,16 @@ verifyMirProgramContracts(const MirProgram &program) {
                         });
         if ((foreignDestination || foreignRead) && !instruction.rawMemoryAccess)
           foreignError("foreign storage access lacks unknown-memory effects");
+        if (foreignRead && instruction.kind == MirInstructionKind::Load &&
+            instruction.unsafeOperation == UnsafeOperationKind::None)
+          foreignError("foreign storage load lacks an unsafe operation");
         if (foreignDestination) {
           const auto *place = body.findPlace(*instruction.destination);
+          std::unordered_set<HirClassInstanceId> visiting;
+          if (!writableForeignValue(writableForeignValue, place->type,
+                                    visiting))
+            foreignError(
+                "foreign storage write would replace read-only record fields");
           if (place->access != AccessMode::Mutable ||
               (instruction.kind != MirInstructionKind::Assign &&
                instruction.kind != MirInstructionKind::Modify))
@@ -14937,6 +15001,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       checkProgramType(type);
     }
   };
+  for (const auto &storage : program.foreignStorageDeclarations())
+    checkProgramType(storage.type);
   for (const auto &function : program.functionInstances()) {
     checkProgramType(function.returnType);
     checkTypes(function.typeArguments);

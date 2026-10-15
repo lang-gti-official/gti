@@ -4664,11 +4664,7 @@ auto SemanticVisitor::Impl::validateForeignStorageBorrow(
   const SymbolId root = place.rootIdentity != 0 ? place.rootIdentity
                         : place.root != nullptr ? toolingSymbolFor(*place.root)
                                                 : 0;
-  if (semanticModel.findForeignStorage(root) == nullptr ||
-      std::any_of(place.projections.begin(), place.projections.end(),
-                  [](const PlaceProjection &projection) {
-                    return projection.kind == PlaceProjectionKind::Dereference;
-                  })) {
+  if (semanticModel.findForeignStorage(root) == nullptr) {
     return true;
   }
   report(
@@ -4779,11 +4775,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
            .argument = index});
     }
   }
-  if (receiver && semanticModel.findForeignStorage(receiver->root) != nullptr &&
-      std::none_of(receiver->projections.begin(), receiver->projections.end(),
-                   [](const PlaceProjection &projection) {
-                     return projection.kind == PlaceProjectionKind::Dereference;
-                   })) {
+  if (receiver && semanticModel.findForeignStorage(receiver->root) != nullptr) {
     report(location,
            "Foreign storage cannot provide a checked method receiver; use an "
            "explicit raw-to-checked operation with a valid owner witness.",
@@ -5042,11 +5034,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields)
     -> SemanticLoanId {
   if (semanticModel.findForeignStorage(place.root) != nullptr &&
-      origin != nullptr &&
-      std::none_of(place.projections.begin(), place.projections.end(),
-                   [](const PlaceProjection &projection) {
-                     return projection.kind == PlaceProjectionKind::Dereference;
-                   })) {
+      origin != nullptr) {
     report(expressionToken(*origin),
            "Foreign storage has no GTI owner lifetime for a checked reference; "
            "use "

@@ -5027,7 +5027,8 @@ private:
 
   [[nodiscard]] bool isOwnershipAssignment(const SemanticType &target,
                                            const SemanticType &value,
-                                           const ExprPtr &expression) const;
+                                           const ExprPtr &expression,
+                                           const SemanticPlace &destination);
 
   [[nodiscard]] static bool isAssignable(SemanticType target,
                                          SemanticType value,

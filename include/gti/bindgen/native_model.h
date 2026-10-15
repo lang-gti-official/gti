@@ -172,8 +172,7 @@ struct NativeDeclaration {
   // Typedef: the aliased type.
   NativeTypeId aliased = 0;
   // Variable: exact storage facts, independent of import policy. Redeclarations
-  // share one identity; isDefinition records whether any declaration defines
-  // it.
+  // share one identity; full and tentative definitions are tracked separately.
   NativeLinkage linkage = NativeLinkage::Invalid;
   NativeTlsKind tlsKind = NativeTlsKind::None;
   bool isDefinition = false;

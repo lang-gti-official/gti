@@ -4721,9 +4721,6 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
 auto SemanticVisitor::Impl::validateReferenceReturn(
     const SemanticType &reference, const SemanticType &valueType,
     const ExprPtr &value) -> void {
-  if (!validateForeignStorageBorrow(value)) {
-    return;
-  }
   if (reference.arguments.size() != 1) {
     return;
   }
@@ -4752,6 +4749,9 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     return;
   }
   if (analyzeRawReferenceReturn(value)) {
+    return;
+  }
+  if (!validateForeignStorageBorrow(value)) {
     return;
   }
   if (isBorrowedCarrierReference(reference)) {

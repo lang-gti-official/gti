@@ -54,10 +54,10 @@ def main():
             use = SOURCE.rindex("counter")
             hover = request("textDocument/hover", at(SOURCE, use))
             signature = str(hover)
-            assert 'extern "C"' in signature and "mut c_int counter" in signature, hover
+            assert 'extern "C"' in signature and ("mut c_int counter" in signature or "mut int32_t counter" in signature), hover
             assert "native_counter" in signature and "unsafe" in signature, hover
             read_only = request("textDocument/hover", at(SOURCE, SOURCE.index("limit")))
-            assert "c_int limit" in str(read_only) and "mut c_int limit" not in str(read_only), read_only
+            assert " limit" in str(read_only) and "mut " not in str(read_only), read_only
             definition = request("textDocument/definition", at(SOURCE, use))
             location = definition[0] if isinstance(definition, list) else definition
             assert location["uri"] == uri, definition

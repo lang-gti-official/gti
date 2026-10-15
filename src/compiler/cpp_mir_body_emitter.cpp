@@ -3633,10 +3633,62 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
   return {};
 }
 
+[[nodiscard]] const MirClassInstance *
+passiveCAbiRecordInstance(const MirProgram &program, const SemanticType &type);
+
+[[nodiscard]] bool foreignAggregateWritable(const MirProgram &program,
+                                            const SemanticType &type) {
+  if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+    return foreignAggregateWritable(program, type.arguments.front());
+  if (type.kind != SemanticType::Class)
+    return true;
+  const MirClassInstance *record = passiveCAbiRecordInstance(program, type);
+  return record != nullptr &&
+         std::all_of(record->declaredFields.begin(),
+                     record->declaredFields.end(),
+                     [&](const MirClassFieldInfo &field) {
+                       return field.access == AccessMode::Mutable &&
+                              foreignAggregateWritable(program, field.type);
+                     });
+}
+
+// Foreign C objects share the passive record representation but never acquire
+// a GTI lifetime slot. Prove their field chain from the copied native layout;
+// the ordinary adjacent copy fusion can then spell the exact load/store pair.
+[[nodiscard]] bool foreignCAbiRecordPlace(const MirProgram &program,
+                                          const MirPlace &place,
+                                          bool *unionProjection = nullptr) {
+  const ForeignStorageInfo *storage = program.findForeignStorage(place.symbol);
+  if (place.root != MirPlaceRootKind::Symbol || !place.foreignStorage ||
+      place.capture != 0 || storage == nullptr) {
+    return false;
+  }
+  SemanticType type = storage->type;
+  for (const MirPlaceProjection &projection : place.projections) {
+    const MirClassInstance *record = passiveCAbiRecordInstance(program, type);
+    if (projection.kind != MirProjectionKind::Field || record == nullptr) {
+      return false;
+    }
+    if (unionProjection != nullptr && record->kind == ClassKind::Union)
+      *unionProjection = true;
+    const auto field = std::find_if(
+        record->cAbiLayout->fields.begin(), record->cAbiLayout->fields.end(),
+        [&](const auto &candidate) {
+          return candidate.field == projection.field;
+        });
+    if (field == record->cAbiLayout->fields.end()) {
+      return false;
+    }
+    type = field->type;
+  }
+  return type == place.type &&
+         passiveCAbiRecordInstance(program, type) != nullptr;
+}
+
 // A class copy used only by the immediately following assignment has no MIR
 // lifetime of its own: no place or drop obligation owns the loaded SSA value,
-// and the discarded assignment result is metadata only. Fuse this exact bare
-// binding shape into `destination = source`; materializing an intermediate C++
+// and the discarded assignment result is metadata only. Fuse the exact
+// place pair into `destination = source`; materializing an intermediate C++
 // object would invent construction and destruction that MIR does not contain.
 [[nodiscard]] ClassCopyAssignmentFusion
 classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
@@ -3680,9 +3732,11 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
   if (copied == nullptr || copied->definition != load->id ||
       copied->info.type != load->info.type || source == nullptr ||
       (source->root != MirPlaceRootKind::Binding &&
-       !exactPassiveClassField(program, body, *source, false)) ||
+       !exactPassiveClassField(program, body, *source, false) &&
+       !foreignCAbiRecordPlace(program, *source)) ||
       (!source->projections.empty() &&
-       !exactPassiveClassField(program, body, *source, false)) ||
+       !exactPassiveClassField(program, body, *source, false) &&
+       !foreignCAbiRecordPlace(program, *source)) ||
       source->type != load->info.type || !source->traits.copyable ||
       load->operands.front().type != source->type || uses.size() != 1 ||
       uses.front().kind != MirValueUseKind::InstructionOperand ||
@@ -3702,6 +3756,19 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
                                destination->root == MirPlaceRootKind::Binding &&
                                destination->projections.empty() &&
                                destination->access == AccessMode::Mutable;
+  bool foreignUnionProjection = false;
+  const bool foreignDestination =
+      destination != nullptr &&
+      foreignCAbiRecordPlace(program, *destination, &foreignUnionProjection) &&
+      foreignAggregateWritable(program, destination->type) &&
+      destination->access == AccessMode::Mutable &&
+      assignment->rawMemoryAccess &&
+      (assignment->unsafeOperation == UnsafeOperationKind::ForeignStorage ||
+       (foreignUnionProjection &&
+        assignment->unsafeOperation == UnsafeOperationKind::UnionMember)) &&
+      !assignment->replacementPair && !assignment->replacementCleanup &&
+      !assignment->loan && !assignment->preparedParameterDrop &&
+      !assignment->successResultDrop && !assignment->successResultDestination;
   const auto *copiedClass =
       passiveGeneratedDestructorClass(program, source->type);
   const bool receiverDestination =
@@ -3737,9 +3804,10 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       assignmentResult->info.type != source->type ||
       destination->type != source->type || !destination->traits.copyable ||
       !destination->traits.copyAssignable ||
-      (!bareDestination && !checkedDestination && !receiverDestination) ||
+      (!bareDestination && !checkedDestination && !receiverDestination &&
+       !foreignDestination) ||
       (replacedExpected && !nativeExpected && !bareDestination) ||
-      ((bareDestination || receiverDestination) &&
+      ((bareDestination || receiverDestination || foreignDestination) &&
        (!assignment->localFailureSites.empty() ||
         !assignment->definedFailure.empty())) ||
       (receiverDestination &&

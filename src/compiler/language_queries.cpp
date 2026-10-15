@@ -971,7 +971,14 @@ public:
       break;
     }
     case SemanticOccurrenceKind::Expression:
-      result.signature = types.print(occurrence->type);
+      if (semantics.findForeignStorage(occurrence->symbol) != nullptr) {
+        result.signature = signatures.binding(*occurrence);
+        result.notes.emplace_back(
+            "Foreign storage: reads and writes require unsafe; address "
+            "formation does not certify lifetime or initialization.");
+      } else {
+        result.signature = types.print(occurrence->type);
+      }
       break;
     }
     if (result.signature.empty() || result.signature == "unknown") {

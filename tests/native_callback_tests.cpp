@@ -328,8 +328,8 @@ int main() { unsafe { return invoke(obtain_transform(), 7); } }
   }
 
   for (const std::string declaration : {
-           "int32_t foreign_counter;",
-           "const int32_t foreign_limit;",
+           "mut int32_t foreign_counter;",
+           "int32_t foreign_limit;",
            "Transform foreign_transform;",
        }) {
     const lang::FrontendResult imported =
