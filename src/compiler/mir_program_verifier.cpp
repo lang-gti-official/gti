@@ -10810,6 +10810,213 @@ using CompleteBorrowCallSummaryLookup =
     std::function<const FunctionBorrowDependencySummary *(
         HirFunctionInstanceId)>;
 
+[[nodiscard]] bool
+completeBorrowSetHasTypedShape(const MirProgram &program,
+                               const SemanticType &type,
+                               const MirBorrowDependencySet &set) {
+  const bool reference =
+      type.kind == SemanticType::Reference && type.arguments.size() == 1;
+  const auto references =
+      reference ? std::optional{std::vector<MirStoredCarrierReference>{
+                      {.reference = type}}}
+                : findStoredCarrierReferenceInventory(program, type);
+  const auto alternatives =
+      reference ? std::optional{std::vector<BorrowAlternativePath>{}}
+                : findStoredCarrierAlternativeInventory(program, type);
+  if (!references || !alternatives ||
+      (alternatives->empty() != set.possibleAlternatives.empty()))
+    return false;
+  const auto contains = [](const auto &all, const auto &required) {
+    return std::all_of(required.begin(), required.end(), [&](const auto &item) {
+      return std::find(all.begin(), all.end(), item) != all.end();
+    });
+  };
+  const auto possible = [&](const auto &conditions) {
+    return conditions.empty() ||
+           std::any_of(set.possibleAlternatives.begin(),
+                       set.possibleAlternatives.end(), [&](const auto &path) {
+                         return contains(path.conditions, conditions);
+                       });
+  };
+  for (std::size_t index = 0; index < set.possibleAlternatives.size();
+       ++index) {
+    const auto &path = set.possibleAlternatives[index];
+    if (std::find(alternatives->begin(), alternatives->end(), path) ==
+            alternatives->end() ||
+        std::find(set.possibleAlternatives.begin(),
+                  set.possibleAlternatives.begin() + index,
+                  path) != set.possibleAlternatives.begin() + index)
+      return false;
+  }
+  // Every potentially active borrowed enum subobject needs some exact
+  // alternative. Dependency-free children may omit their tags: projection
+  // conservatively reconstructs all of their typed alternatives instead.
+  for (const auto &path : *alternatives) {
+    if (path.conditions.empty())
+      return false;
+    const auto ancestors =
+        std::span(path.conditions).first(path.conditions.size() - 1);
+    if (!possible(ancestors))
+      continue;
+    const auto &selected = path.conditions.back();
+    if (!selected.subobject.empty() &&
+        std::none_of(
+            references->begin(), references->end(), [&](const auto &reference) {
+              return reference.fields.size() >= selected.subobject.size() &&
+                     std::equal(selected.subobject.begin(),
+                                selected.subobject.end(),
+                                reference.fields.begin());
+            }))
+      continue;
+    if (std::none_of(
+            set.possibleAlternatives.begin(), set.possibleAlternatives.end(),
+            [&](const auto &candidate) {
+              if (candidate.conditions.size() != path.conditions.size())
+                return false;
+              const auto &last = candidate.conditions.back();
+              return last.subobject == selected.subobject &&
+                     last.enumeration == selected.enumeration &&
+                     contains(candidate.conditions, ancestors);
+            }))
+      return false;
+  }
+  const auto matches = [](const MirLoanDependency &dependency,
+                          const MirStoredCarrierReference &path) {
+    return dependency.designatedFields == path.fields &&
+           dependency.conditions == path.conditions &&
+           path.reference.kind == SemanticType::Reference &&
+           path.reference.arguments.size() == 1 &&
+           dependency.access == path.reference.referenceAccess;
+  };
+  for (const auto &dependency : set.dependencies)
+    if (dependency.source == 0 || !possible(dependency.conditions) ||
+        std::none_of(
+            references->begin(), references->end(),
+            [&](const auto &path) { return matches(dependency, path); }))
+      return false;
+  for (const auto &path : *references)
+    if (possible(path.conditions) &&
+        std::none_of(
+            set.dependencies.begin(), set.dependencies.end(),
+            [&](const auto &dependency) { return matches(dependency, path); }))
+      return false;
+  return true;
+}
+
+// Project the exact selected payload's complete dependency set. The source
+// must come from independent executable flow; attached extraction annotations
+// are never an origin. Tag dominance and reference transfer/liveness remain
+// separate proofs owned by the operation and selected-loan verifiers.
+[[nodiscard]] CompleteBorrowFact
+projectCompleteBorrowPayloadSet(const MirProgram &program,
+                                const MirInstruction &extract,
+                                const MirBorrowDependencySet &source) {
+  if (extract.kind != MirInstructionKind::Compute ||
+      extract.operation != MirOperation::PayloadExtract ||
+      extract.operands.size() != 1 || !extract.enumVariant ||
+      !extract.payloadIndex || !extract.payloadExtractionKind)
+    return std::nullopt;
+  const auto &carrierType = extract.operands.front().type;
+  const auto *enumeration = program.findPayloadEnum(carrierType);
+  if (!enumeration || extract.enumOwner != enumeration->declaration ||
+      *extract.enumVariant >= enumeration->variants.size() ||
+      !completeBorrowSetHasTypedShape(program, carrierType, source))
+    return std::nullopt;
+  const auto &variant = enumeration->variants[*extract.enumVariant];
+  if (variant.payloadTypes.size() != variant.payloadSymbols.size() ||
+      *extract.payloadIndex >= variant.payloadTypes.size())
+    return std::nullopt;
+  const auto field = variant.payloadSymbols[*extract.payloadIndex];
+  const auto &fieldType = variant.payloadTypes[*extract.payloadIndex];
+  const BorrowDependencyCondition outer{.enumeration = carrierType,
+                                        .variant = *extract.enumVariant};
+  if (field == 0 ||
+      std::none_of(source.possibleAlternatives.begin(),
+                   source.possibleAlternatives.end(), [&](const auto &path) {
+                     return std::find(path.conditions.begin(),
+                                      path.conditions.end(),
+                                      outer) != path.conditions.end();
+                   }))
+    return std::nullopt;
+  const bool referenceField = fieldType.kind == SemanticType::Reference;
+  if ((referenceField &&
+       !isStoredReferenceExtraction(*extract.payloadExtractionKind)) ||
+      (!referenceField &&
+       *extract.payloadExtractionKind != PayloadExtractionKind::CopyValue &&
+       *extract.payloadExtractionKind != PayloadExtractionKind::MoveValue))
+    return std::nullopt;
+  SemanticType resultType = fieldType;
+  if (referenceField) {
+    if (fieldType.arguments.size() != 1 ||
+        extract.info.type != fieldType.arguments.front() ||
+        extract.info.category != ValueCategory::Place ||
+        (extract.info.access == AccessMode::Mutable &&
+         fieldType.referenceAccess != AccessMode::Mutable))
+      return std::nullopt;
+    resultType =
+        SemanticType::referenceTo(extract.info.type, extract.info.access);
+  } else if (extract.info.type != fieldType ||
+             extract.info.category != ValueCategory::Value) {
+    return std::nullopt;
+  }
+  MirBorrowDependencySet result;
+  const auto rebase = [&](const auto &conditions)
+      -> std::optional<std::vector<BorrowDependencyCondition>> {
+    std::vector<BorrowDependencyCondition> projected;
+    bool selected = false;
+    for (auto condition : conditions) {
+      if (condition == outer) {
+        selected = true;
+        continue;
+      }
+      if (condition.subobject.empty() || condition.subobject.front() != field)
+        return std::nullopt;
+      condition.subobject.erase(condition.subobject.begin());
+      projected.push_back(std::move(condition));
+    }
+    return selected ? std::optional{std::move(projected)} : std::nullopt;
+  };
+  for (auto dependency : source.dependencies) {
+    if (dependency.designatedFields.empty() ||
+        dependency.designatedFields.front() != field)
+      continue;
+    auto conditions = rebase(dependency.conditions);
+    if (!conditions)
+      return std::nullopt;
+    dependency.designatedFields.erase(dependency.designatedFields.begin());
+    dependency.conditions = std::move(*conditions);
+    if (referenceField)
+      dependency.access = resultType.referenceAccess;
+    result.dependencies.push_back(std::move(dependency));
+  }
+  for (const auto &alternative : source.possibleAlternatives) {
+    auto conditions = rebase(alternative.conditions);
+    if (!conditions || conditions->empty())
+      continue;
+    BorrowAlternativePath path{.conditions = std::move(*conditions)};
+    if (std::find(result.possibleAlternatives.begin(),
+                  result.possibleAlternatives.end(),
+                  path) == result.possibleAlternatives.end())
+      result.possibleAlternatives.push_back(std::move(path));
+  }
+  const auto inventory =
+      referenceField ? std::optional{std::vector<MirStoredCarrierReference>{
+                           {.reference = fieldType}}}
+                     : findStoredCarrierReferenceInventory(program, fieldType);
+  if (!inventory)
+    return std::nullopt;
+  if (inventory->empty() && result.possibleAlternatives.empty()) {
+    auto alternatives =
+        findStoredCarrierAlternativeInventory(program, fieldType);
+    if (!alternatives)
+      return std::nullopt;
+    result.possibleAlternatives = std::move(*alternatives);
+  }
+  return completeBorrowSetHasTypedShape(program, resultType, result)
+             ? std::optional{std::move(result)}
+             : std::nullopt;
+}
+
 [[nodiscard]] bool dependencyFreePayloadAlternative(const MirProgram &program,
                                                     const SemanticType &type,
                                                     std::size_t variant) {
@@ -10993,6 +11200,20 @@ struct CompleteBorrowFlow {
                ? fromPlace(state, operand.place)
                : std::nullopt;
   };
+  const auto extractionSource = [&](const State &state,
+                                    const MirInstruction &instruction) -> Fact {
+    if (instruction.operands.size() != 1)
+      return std::nullopt;
+    const auto &operand = instruction.operands.front();
+    if (operand.kind == MirOperandKind::BorrowRead ||
+        operand.kind == MirOperandKind::BorrowWrite)
+      return fromPlace(state, operand.place);
+    if (operand.kind == MirOperandKind::Loan) {
+      const auto *loan = body.findLoan(operand.loan);
+      return loan ? fromPlace(state, loan->source) : Fact{};
+    }
+    return fromOperand(state, operand);
+  };
   const auto invalidate = [&](State &state, MirPlaceId id) {
     if (!id || id > identities.size())
       return;
@@ -11029,6 +11250,11 @@ struct CompleteBorrowFlow {
       // A declaration summary can demand this flow before the ordinary
       // value-annotation verifier. Establish the typed producer independently.
       result = constructedCompleteBorrowFact(program, instruction);
+    } else if (instruction.kind == MirInstructionKind::Compute &&
+               instruction.operation == MirOperation::PayloadExtract) {
+      if (const auto carrier = extractionSource(state, instruction))
+        result =
+            projectCompleteBorrowPayloadSet(program, instruction, *carrier);
     } else if (instruction.kind == MirInstructionKind::Call &&
                instruction.dispatch == CallDispatch::Static &&
                instruction.intrinsic == IntrinsicKind::None &&
@@ -11294,17 +11520,8 @@ struct CompleteBorrowFlow {
           instruction.kind == MirInstructionKind::Compute &&
           instruction.operation == MirOperation::PayloadExtract &&
           instruction.operands.size() == 1) {
-        const auto &operand = instruction.operands.front();
-        Fact carrier = fromOperand(state, operand);
-        if (operand.kind == MirOperandKind::BorrowRead ||
-            operand.kind == MirOperandKind::BorrowWrite)
-          carrier = fromPlace(state, operand.place);
-        else if (operand.kind == MirOperandKind::Loan) {
-          const auto *loan = body.findLoan(operand.loan);
-          carrier = loan ? fromPlace(state, loan->source) : Fact{};
-        }
         observations.payloadSelectionSources[*instruction.result - 1] =
-            std::move(carrier);
+            extractionSource(state, instruction);
       }
       execute(state, instruction);
       const auto *value =
