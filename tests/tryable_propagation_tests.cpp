@@ -346,9 +346,12 @@ int main() {
                        {.enumeration = value->info.type, .variant = 1}}}}};
           changed = true;
         }
-    expect(
-        changed && !lang::verifyMirProgram(malformed).valid(),
-        "MIR cannot invent an empty-set proof for unknown or mutated storage");
+    expect(changed,
+           "unknown-storage mutation must select a transport in: " + source);
+    expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+           "MIR cannot invent an empty-set proof for unknown or mutated "
+           "storage in: " +
+               source);
   }
   accepted(passiveEnum + R"gti(
 Token repeated(int count) {

@@ -6954,7 +6954,17 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
     }
     drop = &candidate;
   }
-  if (drop == nullptr) {
+  // The checked argument observes the producer's newly materialized object,
+  // not pre-existing storage. Its retirement must remain attached to the
+  // exact full expression even when a passive enum uses an SSA carrier.
+  if (drop == nullptr || slot->initiallyAvailable ||
+      drop->fullExpression == 0 || drop->hirFullExpression == 0 ||
+      std::count_if(body.fullExpressions.begin(), body.fullExpressions.end(),
+                    [&](const auto &expression) {
+                      return expression.id == drop->fullExpression &&
+                             expression.hirExpression ==
+                                 drop->hirFullExpression;
+                    }) != 1) {
     return {};
   }
   const bool activatesDirectly =
@@ -7106,7 +7116,7 @@ temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
 directTemporaryArgument(const MirBody &body, const MirInstruction &call,
                         std::size_t index) {
   const auto *stage = temporaryArgumentStage(body, call, index);
-  if (!stage || stage->info.type.arguments.front().kind != SemanticType::Class)
+  if (!stage)
     return {};
   return directTemporaryBorrow(body, call, *stage,
                                stage->info.type.arguments.front());

@@ -10668,6 +10668,12 @@ verifyBorrowDependencySetTransport(const MirBody &body, std::size_t owner) {
     std::vector<Fact> values;
     std::vector<Fact> places;
   };
+  std::vector<const MirInstruction *> definitions(body.values.size());
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.result && *instruction.result != 0 &&
+          *instruction.result <= definitions.size())
+        definitions[*instruction.result - 1] = &instruction;
   const auto join = [](Fact &target, const Fact &incoming) {
     if (!target)
       return false;
@@ -10838,13 +10844,57 @@ verifyBorrowDependencySetTransport(const MirBody &body, std::size_t owner) {
         invalidate(state, operand.place);
     if (instruction.kind == MirInstructionKind::Call ||
         instruction.kind == MirInstructionKind::Construct) {
+      const auto invalidateUnknown = [&] {
+        for (auto &fact : state.values)
+          fact.reset();
+        for (auto &fact : state.places)
+          fact.reset();
+      };
       const auto invalidateMutable = [&](const MirOperand &operand) {
-        if (operand.kind == MirOperandKind::BorrowWrite)
-          invalidate(state, operand.place);
-        if (operand.kind == MirOperandKind::Loan)
-          if (const auto *loan = body.findLoan(operand.loan);
-              loan && loan->access == AccessMode::Mutable)
+        const MirOperand *source = &operand;
+        bool mutableStage = false;
+        if (operand.kind == MirOperandKind::Value) {
+          const auto *stage =
+              operand.value && operand.value <= definitions.size()
+                  ? definitions[operand.value - 1]
+                  : nullptr;
+          const bool mutableReference =
+              operand.type.kind == SemanticType::Reference &&
+              operand.type.referenceAccess == AccessMode::Mutable;
+          mutableStage =
+              stage && stage->kind == MirInstructionKind::CallInput &&
+              stage->callInputKind == HirCallInputKind::MutableBorrow;
+          if (!mutableStage && !mutableReference)
+            return;
+          // Invocation operands are normally the SSA results of checked
+          // ordered inputs, not direct BorrowWrite/Loan operands. Resolve that
+          // exact stage before invalidating the physical carrier it exposes.
+          // Unknown mutable provenance must kill facts, never preserve them.
+          if (!mutableStage || stage->result != operand.value ||
+              stage->callSite != instruction.callSite ||
+              stage->info.type != operand.type || stage->operands.size() != 1) {
+            invalidateUnknown();
+            return;
+          }
+          source = &stage->operands.front();
+        }
+        if (source->kind == MirOperandKind::BorrowWrite) {
+          if (source->place && source->place <= identities.size())
+            invalidate(state, source->place);
+          else
+            invalidateUnknown();
+          return;
+        }
+        if (source->kind == MirOperandKind::Loan) {
+          const auto *loan = body.findLoan(source->loan);
+          if (loan && loan->access == AccessMode::Mutable && loan->source &&
+              loan->source <= identities.size()) {
             invalidate(state, loan->source);
+            return;
+          }
+        }
+        if (mutableStage)
+          invalidateUnknown();
       };
       for (const auto &operand : instruction.operands)
         invalidateMutable(operand);
