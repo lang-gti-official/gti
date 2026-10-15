@@ -9,6 +9,25 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.4 — Consuming calls on moved generic classes
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a consuming (`&&`) method is called on a
+  generic class value moved out of a local or parameter, such as
+  `int t = std::move(m).probe();`. It happened when the class declares a
+  default constructor, does not delete its copy constructor, and is
+  instantiated with a type that needs cleanup. Examples are `maybe<Tracked>`
+  with an owning payload-enum field `mut state<T> slot;` or a plain
+  `mut T item;` field, where `Tracked` has a destructor.
+- The fix covers methods that leave the fields in place and methods that move
+  a field out first, such as
+  `T value() && { switch (std::move(this.slot)) { ... } }`. It also covers
+  results that are returned, wrapped in `expected`, or stored by a member
+  initializer. The moved value is destroyed once, at the end of the full
+  expression that consumed it.
+- Classes that delete their copy constructor, such as
+  `std::experimental::optional`, were not affected.
+
 ## 0.439.3 — Conformance block types are checked once
 
 - A problem in a conformance block's pattern is reported once, at the
