@@ -33,6 +33,30 @@ for what minor and patch releases mean.
 - Example 161 moves owned strings out of messages and takes a value out of a
   source-defined optional.
 
+## 0.437.1 — Consuming methods on classes without destructors
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a consuming (`&&`) method is called on a
+  value moved out of a variable whose class has no destructor and no fields
+  that need one, such as `Tracked take(Maker maker) { return
+  std::move(maker).make(); }` for a class holding only an `int`. Returning the
+  result directly, initializing an `expected` variable with it, or reading its
+  field inside `?:` when the method can fail always failed. Discarding the
+  result with `[[discard]]`, assigning it to an existing variable or reading
+  its field, as in `std::move(maker).show().id`, failed unless the variable
+  was declared `mut`. This covers parameters, locals, generic classes, lambdas
+  and consuming `operator()`.
+  Each result is destroyed exactly once, and a failing destructor that runs
+  after the call destroys a returned result before the failure propagates.
+- A consuming call on such a value still stops with this error when a later
+  argument of the same call can fail, such as
+  `std::move(maker).make_with(1 / divisor)`, or when its result initializes a
+  field in a constructor's member-initializer list. Inside `?:` it also fails
+  when the class result initializes a variable or is returned, such as
+  `Tracked t = ok ? std::move(a).make() : std::move(b).make();`, or when a
+  field of the result is read and the method cannot fail; the same calls
+  fail when the value is passed as an argument instead.
+
 ## 0.437.0 — Borrowed results through callbacks
 
 - A lambda can return a read-only reference that borrows exactly one of its
