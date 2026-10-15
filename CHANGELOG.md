@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.434.1 — Returning the result of a consuming method
+## 0.434.2 — Returning the result of a consuming method
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
   generating a representation") when a function returns the result of a
@@ -32,6 +32,20 @@ for what minor and patch releases mean.
     `kept(source.make())`, fails the same way when the method cannot fail
   - when its receiver is moved out of a variable inside a conditional
     expression, such as `left ? std::move(a).release() : std::move(b).release()`
+
+## 0.434.1 — Constructors that reuse a copied parameter
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class copies a lambda
+  parameter into a field and its constructor body can fail, for example
+  `Keeper(F f) : callback(f), seen(0) { F spare = f; this.seen = call(std::move(spare)); }`,
+  and the lambda captures a struct. Lambdas capturing numbers or nothing
+  already worked; using both kinds of lambda with one class also failed.
+- Fix the native C++ compile failure (`no member named 'get'` in the saved
+  backend log) when a constructor copies a parameter into a field and then
+  passes the same parameter by value again, such as
+  `Stamp(Offset offset) : origin(offset), total(amount(offset)) {}` or
+  `call(f)` in the body of a constructor that also copied `f` into a field.
 
 ## 0.434.0 — Protocol concepts and conformance blocks
 

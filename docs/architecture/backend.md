@@ -2663,7 +2663,19 @@ closure object then replays the GTI copy exactly, and destroying it runs no
 source code. A closure has no native default state or assignment, so the field
 is copy-constructed in the member-initializer list and the body aliases the
 formal instead of copying it again. A class capture leaves a lexical drop on
-the formal; it stays in MIR and emits as a trivial drop. Every closure instance
+the formal; it stays in MIR and emits as a trivial drop. The body may use the
+formal again, as in `F spare = f;` or `call(f)`, and MIR can record that later
+read as another bare place of the formal's binding. The copy proof therefore
+names the formal by its binding: every bare place of it, for a class formal as
+for a closure, spells the one alias, and none declares a lifetime slot that
+nothing constructs. When the body can fail, the caller ends the native object
+after the failure, so the failure-form constructor accounts for every lexical
+field. A closure field has no native empty state, but the record-published
+copy constructs it in the member-initializer list and the copy proof has
+established that ending it runs no source code. A struct-capturing closure
+field is therefore retained as a passive shell, wherever it sits in the field
+order, exactly as a trivially dropped closure field needs no rollback. Every
+closure instance
 of a class shares one native constructor template, so a record-published
 closure copy keeps its sibling fields body-staged, as the owned-parameter form
 does. All instances then have one member-initializer list, and their bodies
