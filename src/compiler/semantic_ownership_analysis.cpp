@@ -1546,8 +1546,15 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
                      : std::optional<std::vector<StoredReferencePath>>{
                            std::move(paths)};
     }
-    if (owner == nullptr || owner->kind == ClassKind::Union ||
-        owner->cAbiRecord || owner->cOpaqueHandle ||
+    // A validated native layout is a complete, passive field inventory. Raw
+    // pointers and native callbacks do not carry checked GTI loans. Traverse
+    // those fields normally; neither an unvalidated record nor an ordinary
+    // union establishes the same completeness guarantee.
+    const bool validatedNativeRecord =
+        owner != nullptr && owner->cAbiRecord && owner->cAbiLayout.has_value();
+    if (owner == nullptr ||
+        (owner->kind == ClassKind::Union && !validatedNativeRecord) ||
+        (owner->cAbiRecord && !validatedNativeRecord) || owner->cOpaqueHandle ||
         // A synchronization guard carries capability-produced exclusive
         // access in addition to its declared shared resource reference.
         // Nested field maps currently preserve the latter, not the former.
