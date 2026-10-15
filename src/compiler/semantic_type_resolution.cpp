@@ -4680,6 +4680,28 @@ auto SemanticVisitor::Impl::validateStoredBorrowReturn(
   if (valueType == SemanticType::Unknown) {
     return;
   }
+  const auto inventory = storedReferenceInventory(returnType);
+  const bool conditionalResult =
+      inventory &&
+      std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); });
+  if (conditionalResult) {
+    if (valueType != returnType)
+      return;
+    if (rejectEscapingLocalChildLoan(value, "a conditional borrowed return"))
+      return;
+    const auto complete = completeBorrowDependencySet(value);
+    const auto *function =
+        currentLambdaReturn ? nullptr : currentFunctionInfo();
+    if (complete && function &&
+        normalizedCompleteReturnBorrow(*function, *complete))
+      return;
+    report(expressionToken(value),
+           "A borrowed return requires a complete dependency set preserving "
+           "every caller-owned origin, access mode and active alternative.",
+           "GTI-S2045");
+    return;
+  }
   if (isFallibleBorrowType(returnType)) {
     if (valueType.kind == SemanticType::Unexpected) {
       return;

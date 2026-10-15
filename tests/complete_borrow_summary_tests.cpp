@@ -125,6 +125,66 @@ int main() { auto value = choose(true); return 0; }
     }
   }
 
+  const auto nested = analyze(token + R"gti(
+enum Envelope { wrap(Token item), empty };
+Token unwrap(Envelope input) {
+  switch (input) {
+  case Envelope::wrap(value): return value;
+  case Envelope::empty: return Token::empty;
+  }
+}
+int main() { auto value = unwrap(Envelope::wrap(Token::item(7))); return 0; }
+)gti");
+  if (nested.canGenerateCode()) {
+    const auto id = functionId(nested, "unwrap");
+    auto projected = nested.mir;
+    auto &body = lang::MirProgramTestAccess::functions(projected)[id - 1].body;
+    lang::MirValueId selected = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.operation == lang::MirOperation::PayloadExtract &&
+            instruction.result &&
+            instruction.info.type.kind == lang::SemanticType::Enum) {
+          selected = *instruction.result;
+          lang::MirBorrowDependencySet complete;
+          const auto *enumeration =
+              projected.findPayloadEnum(instruction.info.type);
+          if (enumeration)
+            for (std::size_t variant = 0;
+                 variant < enumeration->variants.size(); ++variant)
+              complete.possibleAlternatives.push_back(
+                  {.conditions = {{.enumeration = instruction.info.type,
+                                   .variant = variant}}});
+          body.values[selected - 1].borrowDependencies = std::move(complete);
+        }
+    expect(selected != 0, "nested payload fixture must select a child enum");
+    expect(lang::verifyMirProgram(projected).valid(),
+           "selected nested payload facts follow exact carrier flow");
+    if (selected != 0)
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = projected;
+        auto &set = *lang::MirProgramTestAccess::functions(malformed)[id - 1]
+                         .body.values[selected - 1]
+                         .borrowDependencies;
+        if (mutation == 0)
+          set.possibleAlternatives.pop_back();
+        if (mutation == 1)
+          set.possibleAlternatives.front().conditions.front().enumeration =
+              lang::SemanticType::Int32;
+        if (mutation == 2)
+          set.possibleAlternatives.front().conditions.front().variant = 1000;
+        if (mutation == 3)
+          set.possibleAlternatives.front().conditions.front().subobject = {1};
+        if (mutation == 4)
+          set.possibleAlternatives.back() = set.possibleAlternatives.front();
+        if (mutation == 5)
+          set.dependencies.push_back({});
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "selected payload proof rejects missing/substituted facts: " +
+                   std::to_string(mutation));
+      }
+  }
+
   const auto single = analyze(token + leaf + "int main() { return 0; }");
   if (single.canGenerateCode()) {
     auto conservative = single.mir;
@@ -226,5 +286,54 @@ int main() { auto first = integer(); auto second = boolean(); return 0; }
           "one concrete instance cannot substitute another's typed contract");
     }
   }
+  // Retention is an optimization, not another language acceptance limit.
+  // More distinct queries than the cache retains must still permit a later
+  // query for the first concrete instance to rebuild the same exact summary.
+  std::string evicted = token + R"gti(
+Token factory<uint64_t N>() { return Token::item(int(N)); }
+Token before() { return factory<0>(); }
+)gti";
+  for (unsigned index = 1; index != 72; ++index)
+    evicted += "Token item" + std::to_string(index) + "() { return factory<" +
+               std::to_string(index) + ">(); }\n";
+  evicted +=
+      "Token after() { return factory<0>(); }\n"
+      "int main() { auto first = before(); auto last = after(); return 0; }";
+  const auto cache = analyze(evicted);
+  if (cache.canGenerateCode()) {
+    const auto *before =
+        cache.mir.findFunctionInstance(functionId(cache, "before"));
+    const auto *after =
+        cache.mir.findFunctionInstance(functionId(cache, "after"));
+    expect(before && after && before->completeReturnBorrow &&
+               before->completeReturnBorrow == after->completeReturnBorrow,
+           "eviction and requery preserve exact result contracts");
+  }
+  const auto chain = [&](unsigned depth) {
+    return token + R"gti(
+Token bounded<uint64_t N>() {
+  if constexpr (N == 0) { return Token::empty; }
+  else { return bounded<N - 1>(); }
+}
+int main() { auto value = bounded<)gti" +
+           std::to_string(depth) + ">(); return 0; }";
+  };
+  const auto finite = analyze(chain(40));
+  expect(finite.canGenerateCode(),
+         "finite result-summary chain beyond the old private depth32 succeeds");
+  const auto exhausted = lang::Frontend().analyze(
+      root / "tests" / "complete-borrow-resource.gti", chain(66),
+      {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  expect(!exhausted.canGenerateCode() &&
+             std::any_of(
+                 exhausted.diagnostics.begin(), exhausted.diagnostics.end(),
+                 [](const auto &diagnostic) {
+                   return diagnostic.code == "GTI-S2105" &&
+                          diagnostic.primary.end > diagnostic.primary.start &&
+                          !diagnostic.primary.source.empty() &&
+                          !diagnostic.related.empty() &&
+                          !diagnostic.hints.empty() && diagnostic.fixes.empty();
+                 }),
+         "resource exhaustion reports the established located diagnostic");
   return failures ? 1 : 0;
 }
