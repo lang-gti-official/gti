@@ -1,5 +1,29 @@
 # Compiler Verification
 
+## Copied constructor formals reused in fallible bodies (0.434.1)
+
+`generic_callable_transport_runtime` adds `generic_closure_formal_reuse.gti`.
+Generic class constructors copy their closure parameter into a field and then
+use it again in a body that can fail. They copy it into a local that moves into
+a call, pass it to a call beside a call on the field, or copy it after a scalar
+field. Struct- and number-capturing closures share each class, and the struct
+capture gives the field, formal and local lexical drops. A struct parameter
+copied into a field is also passed on by value, from a member initializer and
+from a body that can overflow. A closure that divides by zero inside the
+constructor body takes the failure edge after the field copy is published and
+must exit with status 70 and the division diagnostic. Every result is checked
+in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. In
+`cpp_mir_body_emitter_text`, `testCopiedFormalReusedInConstructorBody`
+requires production emission to keep a failure-form constructor for both
+closure instances. Each must publish the field copy in its member-initializer
+list and read every later copy of the formal from one alias of the native
+parameter, never as a lifetime slot. A struct capture must make the local a
+lexical slot destroyed on every edge, and a number capture a
+representation-only one. A class formal passed on again must read its alias
+the same way. Against the 0.434.0 emitter the emission itself fails with
+`GTI-B0001`, and it still fails when only the failure-form admission is added
+without the binding-wide alias.
+
 ## Closure locals constructed by their producers (0.432.3)
 
 `generic_callable_transport_runtime` adds `generic_closure_local_copy.gti`.
