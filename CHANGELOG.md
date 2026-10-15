@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.437.2 — Consuming calls on plain classes in member initializers
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a constructor's member initializer
+  stores the result of a consuming (`&&`) method called on a value moved out
+  of a variable whose class has no destructor and no fields that need one,
+  such as `Taker(Source source) : kept(std::move(source).take()) {}` for a
+  `Source` holding only an `int`, whether or not the method can fail.
+  0.436.1 fixed the other receivers. A call to a `virtual` method whose
+  result needs cleanup still stops with this error in a member initializer.
+
 ## 0.437.1 — Consuming methods on classes without destructors
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

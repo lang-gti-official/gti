@@ -17020,10 +17020,11 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       value == nullptr ? nullptr
                        : uniqueValueDrop(body, valueId, value->info.type);
   // A source member call's receiver is either its exact borrow or, for a
-  // consuming (`&&`) member, its exact materialized receiver. Neither is a
-  // transfer at Call: the receiver keeps its own obligation, whose
-  // full-expression Drop MIR schedules after the field Initialize, so a
-  // failure there already rolls the published field back.
+  // consuming (`&&`) member, its exact materialized receiver. A receiver that
+  // owns cleanup is not transferred at Call: it keeps its own obligation,
+  // whose full-expression Drop MIR schedules after the field Initialize, so a
+  // failure there already rolls the published field back. A cleanup-free
+  // receiver moved out of a binding is a prepared input instead (below).
   const auto consumingReceiver = [&]() {
     return producer != nullptr && functionTarget != nullptr &&
            exactMemberConsumingReceiver(program, body, *producer,
@@ -17058,6 +17059,10 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   // the field value. These are input handoffs, not publication of the result:
   // that remains exclusively on the Invoke success edge. Reuse the same exact
   // staging proof for named arguments and fresh owning results in either case.
+  // A consuming member's cleanup-free receiver moved out of a binding is one
+  // more such input: its prepared parameter transfers to the callee.
+  const MirInstruction *preparedReceiver =
+      commonProducer ? preparedReceiverStage(body, *producer) : nullptr;
   const bool preparedInputTransfers =
       commonProducer &&
       std::all_of(
@@ -17071,6 +17076,9 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
             // obligation to the callee; its slot proof keeps the result
             // through the producer's success edge and retires it here.
             if (ownedOperandTransfer(body, *producer, event))
+              return true;
+            if (preparedReceiver != nullptr &&
+                event.source == *preparedReceiver->preparedParameterDrop)
               return true;
             return std::count_if(
                        producer->operands.begin(), producer->operands.end(),
@@ -17160,7 +17168,8 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       functionTarget->definitionKind == MirDefinitionKind::Source &&
       functionTarget->linkage == LanguageLinkage::Gti && valueDrop != nullptr &&
       plainCallActivates(body, *producer, valueDrop->id) &&
-      exactPreparedInputTransfers(body, *producer);
+      exactPreparedInputTransfers(body, *producer,
+                                  PreparedReceiverInput::Admitted);
   const MirClassInstance *defaultOwner =
       value == nullptr ? nullptr
                        : uniqueClassInstanceForType(program, value->info.type);
