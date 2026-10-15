@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.4 — Nested conditional results in loops
+## 0.440.5 — Nested conditional results in loops
 
 - Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
   constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
@@ -19,6 +19,16 @@ for what minor and patch releases mean.
   arm worked the first time and stopped the program the next time it ran.
   The nested conditional may sit in either arm or both, nest further, and be
   bound, read through a field, passed on, assigned or returned.
+
+## 0.440.4 — Member calls on conditional values without cleanup
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called directly on a `?:`
+  whose arms produce a class without a destructor, such as
+  `(c ? make(1) : make(2)).read()` or `(c ? a : b).bump()`. This covers
+  read-only, `mut` and consuming (`&&`) methods, arms that call functions or
+  methods (including ones that can fail or that consume a moved value), arms
+  that copy a variable or construct the class, and mixtures of these.
 
 ## 0.440.3 — Conditional results with checked arm arguments
 
