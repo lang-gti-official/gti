@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.5 — Returning stored string view fields
+
+- Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
+  missing its escaping loan") when a method or function returns a
+  `std::string_view` or `c_string` field, as in
+  `std::string_view read() { return this.name; }`. The same fix covers an
+  implicit field (`return name;`), a nested field (`return this.label.text;`),
+  a fixed-array element, a field read through a parameter, and a generic
+  holder such as `Box<std::string_view>`.
+- A view field can only hold an ownerless view, so the returned view is
+  independent of the object it was read from. The caller may mutate, move or
+  destroy that object while the view is still in use.
+- A stored view may also be one branch of a function whose other branch
+  returns a view tied to its receiver, in the same way a string literal can.
+
 ## 0.439.4 — Consuming calls on moved generic classes
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
