@@ -1,7 +1,8 @@
 # ADR 028: Protocol Concepts And Conformance Blocks
 
-Status: Accepted (2026-10-14). Phase 1 is implemented; later phases are listed
-under Consequences.
+Status: Accepted (2026-10-14). Phase 1 is implemented, and concepts with
+several parameters followed in 0.435.0 (see the revision below). Later phases
+are listed under Consequences.
 
 ## Context
 
@@ -97,7 +98,7 @@ client.
   with a body, because its atomic facts cannot express a block. A trailing
   `requires` clause does.
 - Phase 1 boundaries:
-  - one concept parameter;
+  - one concept parameter (lifted by the 2026-10-15 revision);
   - type parameters only, without value parameters or packs;
   - patterns over class templates or concrete types, not `expected`, fixed
     arrays or pointers;
@@ -108,3 +109,24 @@ client.
   member-name protocols (collection hooks, iterator value types) onto
   protocol concepts where coherent.
 - Violations are reported as `GTI-S2123`.
+
+## Revision: several parameters (2026-10-15)
+
+A concept with a body may take several type parameters, such as
+`concept adds_to<Left, Right> { typename sum_type; ... };`. Decisions 3 and 4
+generalize as follows:
+
+- A block gives one pattern per parameter. Each is a concrete type or one
+  class template applied to block parameters. A bare parameter is not a
+  pattern, so there are no blanket blocks. Every block parameter appears
+  somewhere. A parameter may repeat, and its occurrences must bind the same
+  type.
+- Two blocks overlap when their patterns unify position by position. They are
+  then rejected, so selection stays exact without ranking.
+- The declaring package must own the concept or the top-level nominal type
+  of at least one pattern. Without bare parameters, overlapping blocks in two
+  packages would need each package to depend on the other, so this keeps the
+  single-parameter rule's guarantee. Rust's orphan rule needs its ordering
+  clause only because it admits blanket implementations.
+- Generic code requires the exact application, arguments in order, as a
+  conjunct.
