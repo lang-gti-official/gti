@@ -4380,6 +4380,119 @@ int main() { Tracked kept = take(Maker(1)); return kept.read() - 1; }
   }
 }
 
+// A failure-free call in a conditional arm that consumes a prepared input
+// (a moved cleanup-free receiver or by-value argument) transfers it out beside
+// its own result Initialize. The result is still published into the
+// conditional temporary that a binding, a Return or a field read consumes.
+// Only exactly one unconditional transfer per prepared input and one result
+// activation are admitted.
+void testConditionalPreparedInputResult() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-conditional-prepared-input-result.gti", R"(
+class Tracked {
+  mut int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { this.id = 0; }
+  int read() { return this.id; }
+};
+class Viewed {
+public:
+  mut int id;
+  Viewed(int value) : id(value) {}
+  ~Viewed() { this.id = 0; }
+};
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  int get() { return this.base; }
+  Tracked make() && { return Tracked(this.base); }
+  Viewed view() && { return Viewed(this.base); }
+};
+Tracked build(Maker maker) { return Tracked(maker.get()); }
+Viewed show(Maker maker) { return Viewed(maker.get()); }
+int bound(bool left, Maker a, Maker b) {
+  Tracked kept = left ? std::move(a).make() : build(std::move(b));
+  return kept.read();
+}
+Tracked returned(bool left, Maker a, Maker b) {
+  return left ? build(std::move(a)) : std::move(b).make();
+}
+int viewed(bool left, Maker a, Maker b) {
+  return left ? std::move(a).view().id : show(std::move(b)).id;
+}
+int main() {
+  Tracked kept = returned(true, Maker(2), Maker(3));
+  return bound(false, Maker(1), Maker(4)) + kept.read() +
+         viewed(true, Maker(5), Maker(6)) - 11;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "conditional results of calls consuming moved inputs verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  std::size_t bodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // Each arm's call transfers its prepared input and activates its result.
+    std::vector<lang::MirInstructionId> calls;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.lifecycle.size() == 2 &&
+            instruction.lifecycle[0].kind ==
+                lang::MirLifecycleEventKind::TransferOut &&
+            instruction.lifecycle[1].kind ==
+                lang::MirLifecycleEventKind::Initialize)
+          calls.push_back(instruction.id);
+    if (calls.size() != 2)
+      continue;
+    ++bodies;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyze(address).ready() &&
+               emitter.supportsBodyText(address),
+           "a conditional result accounts for its call's prepared input");
+    for (const lang::MirInstructionId call : calls) {
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id != call)
+              continue;
+            const auto transfer = instruction.lifecycle[0];
+            const auto activation = instruction.lifecycle[1];
+            if (mutation == 0)
+              instruction.lifecycle = {activation};
+            else if (mutation == 1)
+              instruction.lifecycle.push_back(transfer);
+            else if (mutation == 2)
+              instruction.lifecycle[0].conditional = true;
+            else
+              instruction.lifecycle.push_back(activation);
+          }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a forged conditional prepared input transfer fails MIR "
+               "verification " +
+                   std::to_string(mutation));
+        const lang::CppMirBodyEmitter rejected(malformed, map);
+        expect(!rejected.analyze(address).ready() ||
+                   !rejected.supportsBodyText(address),
+               "a forged conditional prepared input transfer cannot enter "
+               "backend emission " +
+                   std::to_string(mutation));
+      }
+    }
+  }
+  expect(bodies == 3, "the bound, returned and field-read conditionals were "
+                      "exercised: " +
+                          std::to_string(bodies));
+}
+
 // Once a later argument can fail, the same prepared receiver occupies its
 // slot from the stage: the call consumes that slot, and the failure edge
 // destroys it once. Removed, duplicated or ordinary failure-edge Drops must not
@@ -5798,6 +5911,7 @@ constexpr NamedTest kTests[] = {
      testPreparedConsumingReceiverReturn},
     {"testPreparedConsumingReceiverLaterFailure",
      testPreparedConsumingReceiverLaterFailure},
+    {"testConditionalPreparedInputResult", testConditionalPreparedInputResult},
     {"testExpectedTemporaryObservationSlot",
      testExpectedTemporaryObservationSlot},
     {"testOwningTemporaryFieldView", testOwningTemporaryFieldView},
