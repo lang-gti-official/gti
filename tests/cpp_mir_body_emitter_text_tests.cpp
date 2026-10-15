@@ -6394,12 +6394,27 @@ int main() {
 // value, and an owning result read through a field view, therefore publish
 // into the slot a source call's result uses rather than a default-constructed
 // C++ local. An owning result read inside a short-circuit operand constructs
-// in that operand's conditional temporary. An invocation without callable
+// in that operand's conditional temporary, and a result returned directly
+// after a moved parameter's cleanup still constructs in the caller's
+// placement storage, with no slot of its own. An invocation without callable
 // propagation or without its exact lambda target cannot enter backend
 // emission.
 void testCallableClassResultSlots() {
   const auto frontend =
       analyzeWithStandardLibrary("cpp-mir-callable-class-result-slots.gti", R"(
+#include <std/utility>
+class Ticket {
+public:
+  Ticket(int32_t input) : identity(input) {}
+  Ticket(Ticket&& other) = default;
+  int32_t get() { return this.identity; }
+private:
+  int32_t identity;
+};
+Ticket finish(Ticket input) {
+  auto action = [](Ticket value) -> Ticket { return std::move(value); };
+  return action(std::move(input));
+}
 struct Plain {
   int id;
   Plain(int raw) : id(raw) {}
@@ -6418,7 +6433,8 @@ int main() {
   auto read = [](int raw) -> Plain { return Plain(raw); };
   auto pass = [](int raw) -> Plain { return Plain(raw); };
   auto owned = [](int raw) -> Res { return Res(raw); };
-  return read(1).id + take(pass(2)) + owned(3).id + operand(false) - 7;
+  return read(1).id + take(pass(2)) + owned(3).id + operand(false) +
+         finish(Ticket(4)).get() - 11;
 }
 )");
   expect(frontend.canGenerateCode(), "callable class results verify");
@@ -6467,10 +6483,14 @@ int main() {
              count(".get().id") >= 2,
          "the field-read result lives in a representation-only SSA slot and "
          "each field read views its slot");
-  expect(count(".construction_address(), __gti_mir_failure_record);") == 3 &&
-             count(".mark_constructed();") >= 3,
+  // The three invocations, plus the transformed call of `finish`.
+  const std::size_t addressed =
+      count(".construction_address(), __gti_mir_failure_record);");
+  expect(addressed == invocations.size() + 1 &&
+             count(".mark_constructed();") >= addressed,
          "each invocation constructs its result at its slot's address and "
-         "publishes it only on success");
+         "publishes it only on success: " +
+             std::to_string(addressed));
   expect(count("::__gti_program::Plain __gti_mir_v_") == 0 &&
              count("::__gti_program::Res __gti_mir_v_") == 0,
          "no class result is a default-constructed C++ local");
@@ -6486,11 +6506,21 @@ int main() {
            "a forged lambda class result cannot enter backend emission: " +
                what);
   };
-  // The short-circuit operand's result lives in its conditional temporary.
-  const auto operand = std::find_if(
-      frontend.mir.functionInstances().begin(),
-      frontend.mir.functionInstances().end(),
-      [&](const lang::MirFunctionInstance &function) {
+  const auto bodyText = [&](const lang::MirFunctionInstance &function) {
+    const lang::MirBodyAddress functionAddress{
+        .kind = lang::MirBodyKind::Function, .owner = function.id};
+    return function.mayRaiseDefinedFailure
+               ? emitter
+                     .emitFailureBodyText(functionAddress,
+                                          "callable-class-result-v0", 1)
+                     .text
+               : emitter
+                     .emitBodyText(functionAddress, "callable-class-result-v0",
+                                   1)
+                     .text;
+  };
+  const auto invokesClassLambda =
+      [](const lang::MirFunctionInstance &function) {
         return function.entryKind == lang::ProgramEntryKind::None &&
                std::any_of(
                    function.body.blocks.begin(), function.body.blocks.end(),
@@ -6505,6 +6535,35 @@ int main() {
                                       lang::SemanticType::Class;
                          });
                    });
+      };
+  // The directly returned result constructs in the caller's storage.
+  const auto finish = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return invokesClassLambda(function) &&
+               function.returnType.kind == lang::SemanticType::Class;
+      });
+  expect(finish != frontend.mir.functionInstances().end() &&
+             supportsSelectedBodyText(frontend.mir, map, finish->id),
+         "a directly returned lambda class result enters emission");
+  if (finish != frontend.mir.functionInstances().end() &&
+      supportsSelectedBodyText(frontend.mir, map, finish->id)) {
+    const std::string finishText = bodyText(*finish);
+    expect(finishText.find("__gti_mir_out_result, __gti_mir_failure_record)") !=
+                   std::string::npos &&
+               finishText.find(", true> __gti_mir_v_") == std::string::npos &&
+               finishText.find(".mark_constructed();") == std::string::npos,
+           "a directly returned lambda class result publishes into the "
+           "caller's placement storage without a slot of its own");
+  }
+  // The short-circuit operand's result lives in its conditional temporary.
+  const auto operand = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &function) {
+        return invokesClassLambda(function) &&
+               function.returnType.kind != lang::SemanticType::Class;
       });
   expect(operand != frontend.mir.functionInstances().end() &&
              supportsSelectedBodyText(frontend.mir, map, operand->id),
@@ -6512,17 +6571,7 @@ int main() {
          "emission");
   if (operand != frontend.mir.functionInstances().end() &&
       supportsSelectedBodyText(frontend.mir, map, operand->id)) {
-    const lang::MirBodyAddress operandAddress{
-        .kind = lang::MirBodyKind::Function, .owner = operand->id};
-    const std::string operandText =
-        operand->mayRaiseDefinedFailure
-            ? emitter
-                  .emitFailureBodyText(operandAddress,
-                                       "callable-class-result-v0", 1)
-                  .text
-            : emitter
-                  .emitBodyText(operandAddress, "callable-class-result-v0", 1)
-                  .text;
+    const std::string operandText = bodyText(*operand);
     expect(operandText.find(".construction_address(), "
                             "__gti_mir_failure_record);") !=
                    std::string::npos &&

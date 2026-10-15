@@ -22,7 +22,9 @@
   propagation, under each slot's unchanged consumer, activation and transfer
   proofs; the invocation writer constructs the selected slot, including the
   conditional temporary (`conditionalTemporaryViewedResult`) that the
-  vocabulary already admitted for a short-circuit operand. The uncalled
+  vocabulary already admitted for a short-circuit operand. A result that
+  `placementDirectReturnCall` constructs directly in the caller's placement
+  storage keeps that route and takes no slot. The uncalled
   lambda was probed in the plain convention because its fused chain had no
   consumer, and that body has no plain form: the plain `Ticket(Token)`
   constructor is outside the vocabulary. `closureChainAdmits` now reports the
@@ -42,14 +44,19 @@
   lambdas that construct `Ticket(Token(raw))` and a destructor-bearing
   equivalent, in `main` and in a helper. In `cpp_mir_body_emitter_text`,
   `testCallableClassResultSlots` requires each invocation to construct its
-  slot at its address with no default-constructed class local, and a
+  slot at its address with no default-constructed class local, a
   short-circuit operand's invocation to construct its conditional temporary
-  rather than an undeclared local. It refuses an invocation forged without
+  rather than an undeclared local, and a result returned directly after a
+  moved parameter's cleanup to construct in the caller's placement storage
+  without a slot of its own. It refuses an invocation forged without
   callable propagation or without its lambda target.
   `testUnconsumedFusedClosureSpellsNoBody` admits a function whose two
   lambdas are never consumed and emits no lambda body for it, while the same
   lambda invoked once still emits its body. Against the 0.440.2 emitter the
-  runtime fixture and both text tests fail.
+  runtime fixture and both text tests fail. A differential `--emit-cpp` run
+  over `tests/fixtures`, `tests/coverage` and `examples` against the same tree
+  with the 0.440.3 emitter changes only the new fixture, which no longer
+  fails.
 - **Out of scope.** Reading a nested field of a class call result, as in
   `build(1).inner.id`, and reading a field of a construction that takes a
   call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a
