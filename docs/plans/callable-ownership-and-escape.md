@@ -256,7 +256,7 @@ concrete semantics, which applies the existing conditional-arm compatibility
 rules before HIR; this does not add common-type inference.
 Reference or borrowed-state results require an ordinary owner-dependency
 summary naming a receiver or argument origin; a closure capture is not an
-implicit lifetime origin. L-CALL-04 (0.435.0) opened read-only reference
+implicit lifetime origin. L-CALL-04 (0.436.0) opened read-only reference
 results: a lambda infers its origin from its one read-only reference
 parameter, a generic relay names its origin with `borrowed_from`, and a
 signature carries the same inferred contract so `std::function_ref` and
@@ -802,7 +802,7 @@ constructor that binds a native reference member through a helper call admits
 only a helper with no failure edge (`select_value` in the erasure fixture uses
 wrapping arithmetic for that reason).
 
-## L-CALL-04: Signature-Level Origin Contracts For Borrowed Results (Shipped 0.435.0)
+## L-CALL-04: Signature-Level Origin Contracts For Borrowed Results (Shipped 0.436.0)
 
 A read-only reference result of a lambda, a generic callable relay, a GTI
 invocation pointer or a signature-erased view borrows exactly one read-only
@@ -814,7 +814,7 @@ return against its parameter. HIR and MIR carry the lambda's contract; the
 verifier checks lambda bodies with the function summary; the backend publishes
 lambda and thunk reference results through the shared `T **` channel and
 admits lambda-target reference calls. The `checked_callable_result_origin`
-fixture runs across the native matrix and example 158 demonstrates the shapes.
+fixture runs across the native matrix and example 159 demonstrates the shapes.
 Boundaries: mutable reference results, borrowed-state class results, origins
 through a receiver or a global for signatures, and ambiguous signatures are
 rejected with `GTI-S2017`/`GTI-S2093`.

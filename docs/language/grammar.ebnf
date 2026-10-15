@@ -204,9 +204,9 @@ concept-declaration    = "concept" IDENTIFIER
 concept-body           = "{" { concept-member } "}" ;
 concept-member         = "typename" IDENTIFIER ";"
                        | function-declaration ;
-(* A concept with a body takes one type parameter. A member function is a
-   prototype ending in ';' with no generic parameters, requires clause,
-   defaults, modifiers, attributes or receiver qualifier. *)
+(* A concept with a body takes one or more type parameters. A member
+   function is a prototype ending in ';' with no generic parameters, requires
+   clause, defaults, modifiers, attributes or receiver qualifier. *)
 
 conformance-declaration
                        = "for" [ generic-parameter-clause ] "concept"
@@ -214,9 +214,11 @@ conformance-declaration
                          "{" { conformance-member } "}" ";" ;
 conformance-member     = type-alias-declaration
                        | function-declaration ;
-(* A conformance block appears at namespace scope. Its pattern is one
-   concrete type or one class template applied to each block parameter
-   exactly once. It defines each associated type with a type alias and each
+(* A conformance block appears at namespace scope. It gives one pattern per
+   concept parameter: a concrete type, or one class template applied to block
+   parameters. Every block parameter appears in some pattern, and a repeated
+   parameter binds one type. It defines each associated type with a type
+   alias and each
    operation with a function body; the block's parameters and concept
    application apply to every function, which therefore declares no generic
    parameters or requires clause of its own. A projection
