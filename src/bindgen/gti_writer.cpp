@@ -4,7 +4,7 @@
 #include <limits>
 #include <sstream>
 
-// Deterministic GTI emission. Non-function bindings keep header declaration
+// Deterministic GTI emission. Type/constant bindings keep header declaration
 // order (C headers are already dependency-ordered); the extern "C" block
 // follows them; the skip report closes the file so nothing the tool could
 // not express disappears silently.
@@ -23,9 +23,11 @@ void writeItem(const BindingItem &item, std::string_view indent,
     return;
   case BindingItemKind::Record:
     out << indent << "[[c_abi]]\n"
-        << indent << "struct " << item.name << " {\n";
+        << indent << (item.recordIsUnion ? "union " : "struct ") << item.name
+        << " {\n";
     for (const BindingField &field : item.fields) {
-      out << indent << "  mut " << field.spelling << ";\n";
+      out << indent << "  " << (field.mutableField ? "mut " : "")
+          << field.spelling << ";\n";
     }
     out << indent << "};\n\n";
     return;
@@ -103,20 +105,26 @@ void writeItem(const BindingItem &item, std::string_view indent,
     out << ") -> " << item.resultSpelling << ";\n\n";
     return;
   }
+  case BindingItemKind::Variable:
   case BindingItemKind::Function:
   case BindingItemKind::Skipped:
     return;
   }
 }
 
-void writeFunction(const BindingItem &item, std::string_view indent,
-                   std::ostream &out) {
+void writeExternalDeclaration(const BindingItem &item, std::string_view indent,
+                              std::ostream &out) {
   out << indent << "  ";
   if (!item.arrayCountParameter.empty()) {
     out << "[[c_array(" << item.arrayCountParameter << ")]] ";
   }
   if (!item.linkName.empty()) {
     out << "[[link_name(\"" << item.linkName << "\")]] ";
+  }
+  if (item.kind == BindingItemKind::Variable) {
+    out << (item.mutableVariable ? "mut " : "") << item.aliasSpelling << ' '
+        << item.name << ";\n";
+    return;
   }
   out << item.resultSpelling << ' ' << item.name << '(';
   for (std::size_t index = 0; index < item.parameters.size(); ++index) {
@@ -143,19 +151,21 @@ std::string writeGtiBindings(const BindingPlan &plan,
     out << "namespace " << plan.options.namespaceName << " {\n\n";
   }
 
-  bool hasFunctions = false;
+  bool hasExternalDeclarations = false;
   for (const BindingItem &item : plan.items) {
-    if (item.kind == BindingItemKind::Function) {
-      hasFunctions = true;
+    if (item.kind == BindingItemKind::Function ||
+        item.kind == BindingItemKind::Variable) {
+      hasExternalDeclarations = true;
       continue;
     }
     writeItem(item, indent, out);
   }
-  if (hasFunctions) {
+  if (hasExternalDeclarations) {
     out << indent << "extern \"C\" {\n";
     for (const BindingItem &item : plan.items) {
-      if (item.kind == BindingItemKind::Function) {
-        writeFunction(item, indent, out);
+      if (item.kind == BindingItemKind::Function ||
+          item.kind == BindingItemKind::Variable) {
+        writeExternalDeclaration(item, indent, out);
       }
     }
     out << indent << "}\n";

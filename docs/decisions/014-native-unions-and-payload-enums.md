@@ -92,8 +92,10 @@ complete before emission; that state is not a source alternative and a future
 backend may choose a different representation.
 
 Native C interoperation remains separately opt-in through `[[c_abi]]` and the
-generated native header. A source union is not accepted in a C ABI signature in
-this decision.
+generated native header. The original non-ABI union boundary is broadened by the
+[2026-10-15 passive C ABI union revision](013-bounded-native-c-records.md#revision-passive-c-abi-unions-2026-10-15):
+explicit `[[c_abi]]` admits the checked native-record field set and C passage,
+while unannotated unions retain their original non-ABI identity.
 
 ## Consequences
 

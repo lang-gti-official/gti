@@ -29,6 +29,7 @@ enum class UnsafeOperationKind {
   UnionMember,
   PointerArithmetic,
   ForeignPointerCall,
+  ForeignStorage,
   DeclaredUnsafeCall,
   ObjectLifetime,
   DeclaredUnsafeConstruction,
@@ -1996,6 +1997,18 @@ public:
   embeddingPlan() const;
   [[nodiscard]] bool hasNativeFunctionConversions() const;
 
+  [[nodiscard]] const std::vector<ForeignStorageInfo> &
+  foreignStorageDeclarations() const {
+    return foreignStorage_;
+  }
+  [[nodiscard]] const ForeignStorageInfo *
+  findForeignStorage(SymbolId symbol) const {
+    const auto found = std::find_if(
+        foreignStorage_.begin(), foreignStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
+    return found == foreignStorage_.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] bool
   isProgramConstantSubstitution(const Expr &expression) const;
 
@@ -2343,6 +2356,7 @@ public:
 private:
   friend class SemanticVisitor;
   friend struct SemanticModelTestAccess;
+  std::vector<ForeignStorageInfo> foreignStorage_;
 
   struct PendingCallableForwarding {
     const FunctionDecl *source = nullptr;
@@ -2476,6 +2490,15 @@ private:
   void record(const ArrayExtentExpr &extent, CompileTimeValue value);
 
   void record(const VariableDecl &declaration, BindingInfo info);
+  void recordForeignStorage(ForeignStorageInfo info) {
+    const auto found = std::find_if(
+        foreignStorage_.begin(), foreignStorage_.end(),
+        [&](const auto &storage) { return storage.symbol == info.symbol; });
+    if (found == foreignStorage_.end())
+      foreignStorage_.push_back(std::move(info));
+    else
+      *found = std::move(info);
+  }
 
   void record(const Parameter &parameter, BindingInfo info);
 

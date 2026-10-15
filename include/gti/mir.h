@@ -287,6 +287,7 @@ struct MirPlace {
   SemanticTypeTraits traits{};
   HirValueId sourceValue = 0;
   std::optional<PlaceKey> key;
+  bool foreignStorage = false;
   bool initiallyAvailable = false;
 
   friend bool operator==(const MirPlace &, const MirPlace &) = default;
@@ -1777,6 +1778,18 @@ struct MirPayloadEnum {
 
 class MirProgram {
 public:
+  [[nodiscard]] const std::vector<ForeignStorageInfo> &
+  foreignStorageDeclarations() const {
+    return foreignStorage_;
+  }
+  [[nodiscard]] const ForeignStorageInfo *
+  findForeignStorage(SymbolId symbol) const {
+    const auto found = std::find_if(
+        foreignStorage_.begin(), foreignStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
+    return found == foreignStorage_.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] bool valid() const { return valid_; }
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
@@ -1945,6 +1958,7 @@ public:
   friend bool operator==(const MirProgram &, const MirProgram &) = default;
 
 private:
+  std::vector<ForeignStorageInfo> foreignStorage_;
   friend class MirLowerer;
   friend struct MirProgramTestAccess;
 

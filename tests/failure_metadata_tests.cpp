@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v105 ") &&
+      snapshot.starts_with("mir-v106 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -1746,6 +1746,81 @@ int main() { return checked(1); }
              edge->includeSpelling == "\"../shared.gti\"" &&
              edge->includeOccurrence == 0,
          "the source graph should retain exact non-path include-route facts");
+}
+
+void testModuleImplementationSourceIdentity() {
+  const auto fixtureRoot = std::filesystem::weakly_canonical(
+      std::filesystem::temp_directory_path() / "gti-module-source-identity");
+  const auto analyzeAt = [](const std::filesystem::path &root) {
+    const auto app = root / "app";
+    const auto library = root / "library";
+    const auto api = library / "api.gti";
+    const auto implementation = library / "private/body.gti";
+    const auto helper = library / "private/helpers.gti";
+    const std::string appIdentity = "path:" + app.string();
+    const std::string libraryIdentity = "path:" + library.string();
+    const std::vector<lang::PackageSourceRoot> packages{
+        {.identity = appIdentity,
+         .name = "app",
+         .packageRoot = app,
+         .sourceRoot = app,
+         .dependencies = {{.alias = "lib", .targetIdentity = libraryIdentity}}},
+        {.identity = libraryIdentity,
+         .name = "library",
+         .packageRoot = library,
+         .sourceRoot = library,
+         .modules = {{"factory", api}},
+         .moduleImplementations = {{"factory", {implementation}}}}};
+    const std::unordered_map<std::string, std::string> sources{
+        {api.string(), "export module factory; export class Widget { public: "
+                       "static int read(); };"},
+        {implementation.string(),
+         "import factory;\n#include \"helpers.gti\"\n"
+         "struct Local { int value; };\n"
+         "int Widget::read() { Local local{.value = helper()}; "
+         "return local.value; }"},
+        {helper.string(), "int helper() { return 7; }"}};
+    return lang::Frontend().analyze(
+        app / "main.gti",
+        "import lib.factory; int main() { return Widget::read(); }", {},
+        sources, {}, packages);
+  };
+  const auto original = analyzeAt(fixtureRoot);
+  const auto relocated = analyzeAt(fixtureRoot / "relocated");
+  expect(original.canGenerateCode() && relocated.canGenerateCode(),
+         "dependency module implementations and their private includes need "
+         "logical identities even without failure sites");
+  if (!original.canGenerateCode() || !relocated.canGenerateCode()) {
+    printDiagnostics(original);
+    printDiagnostics(relocated);
+    return;
+  }
+  const auto names = [](const auto &result) {
+    std::vector<std::string> values;
+    for (const auto &source : result.failureMetadata.sourceUnits())
+      values.push_back(source.logicalName);
+    std::sort(values.begin(), values.end());
+    return values;
+  };
+  expect(
+      names(original) == names(relocated),
+      "relocation must preserve dependency implementation source identities");
+  const auto &registrations = original.sourceGraph.moduleImplementations();
+  expect(registrations.size() == 1,
+         "source graph retains private implementation loading provenance");
+  if (registrations.size() == 1) {
+    const auto &registration = registrations.front();
+    const auto *identity =
+        original.failureMetadata.findSource(registration.implementationUnit);
+    expect(identity && identity->logicalName.starts_with("<external>/") &&
+               identity->logicalName.ends_with("/body.gti"),
+           "a private dependency implementation has a stable external name");
+    expect(!original.sourceGraph.isVisible(original.sourceGraph.entryUnit(),
+                                           registration.implementationUnit) &&
+               !original.sourceGraph.isVisible(registration.interfaceUnit,
+                                               registration.implementationUnit),
+           "implementation provenance must not grant source visibility");
+  }
 }
 
 void testCallerLocationAssignments() {
@@ -3813,6 +3888,8 @@ int main(int argc, char **argv) {
       testImplicitUniqueAllocationContracts();
     else if (name == "testCheckedCallPlacePreparation")
       testCheckedCallPlacePreparation();
+    else if (name == "testModuleImplementationSourceIdentity")
+      testModuleImplementationSourceIdentity();
     else {
       std::cerr << "unknown test: " << name << '\n';
       return 2;
@@ -3831,6 +3908,7 @@ int main(int argc, char **argv) {
   testEmptyDescriptorContract();
   testHostedProgramEntryMetadata();
   testExternalSourceRouteIdentity();
+  testModuleImplementationSourceIdentity();
   testMetadataAndSiteVerifierMutations();
   testCallerLocationAssignments();
   testCheckedIntegerOperationVerifierContracts();

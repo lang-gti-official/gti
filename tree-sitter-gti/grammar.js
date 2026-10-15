@@ -99,6 +99,7 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.extern_c_variable_declaration, $.extern_c_function_prototype],
     [$._base_type, $.numeric_conversion],
     [$.generic_function, $.user_type],
     [$.generic_function, $.primary_expression],
@@ -257,8 +258,17 @@ module.exports = grammar({
         "extern",
         field("language", alias('"C"', $.string_literal)),
         "{",
-        repeat(field("declaration", $.extern_c_function_prototype)),
+        repeat(field("declaration", choice($.extern_c_function_prototype, $.extern_c_variable_declaration))),
         "}",
+      ),
+
+    extern_c_variable_declaration: ($) =>
+      seq(
+        optional(field("attribute", $.native_link_name_attribute)),
+        optional(field("mutable", "mut")),
+        field("type", $.type),
+        field("name", $.identifier),
+        ";",
       ),
 
     extern_c_function_prototype: ($) =>

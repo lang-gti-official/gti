@@ -62,6 +62,13 @@ cppFunctionHasFailureResultChannel(const LoweredProgram &program,
                                                   CppStandard standard,
                                                   const SemanticType &type);
 
+// Qualify the value object, not a native pointer's pointee. Reference
+// signatures, loan carriers and failure-result channels must use the same
+// qualification.
+[[nodiscard]] std::string
+cppAccessQualifiedTypeSpelling(const SemanticType &type, AccessMode access,
+                               std::string spelling);
+
 // Foreign declarations and native-layout fields retain their actual pointer
 // ABI. Ordinary GTI values use inert integer-address carriers instead.
 [[nodiscard]] std::string cppNativeTypeSpelling(const LoweredProgram &program,
@@ -158,6 +165,10 @@ cppConcreteMemberFunctionSpelling(const LoweredProgram &program,
 // internal-linkage static storage: the `__gti_static_<symbol>_<name>` holder
 // and its `::value` member for namespace-scope statics wrapped in an
 // initialization guard.
+// Private C++ declaration name; the object-file symbol remains the checked
+// native name supplied by the foreign-storage descriptor.
+[[nodiscard]] std::string cppForeignStorageSpelling(SymbolId symbol);
+
 [[nodiscard]] std::string cppStaticStorageBaseSpelling(SymbolId symbol,
                                                        std::string_view name);
 [[nodiscard]] std::string cppStaticStorageValueSpelling(SymbolId symbol,

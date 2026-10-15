@@ -25,6 +25,43 @@ for what minor and patch releases mean.
   loans and complete interprocedural dependency transport are still in progress.
 - Examples 164 and 165 demonstrate composition and borrowed results.
 
+## 0.442.0 — Native interoperability and compiler correctness
+
+- Declare externally owned C scalar, pointer, callback and passive record objects
+  in `extern "C"` blocks, with `mut` for mutable objects and `link_name` for a
+  different native symbol. Reads and writes require `unsafe`; inert raw addresses
+  preserve their native identity without adding GTI initialization or cleanup.
+- Import these objects through bindgen with object constness, callback aliases,
+  nested record/union layouts and renamed symbols preserved. Generated native
+  headers and editor queries cover the same declarations. Unsupported TLS,
+  volatile, address-space and array-object forms receive explicit import results.
+- Admit passive `[[c_abi]] union` layouts, nested native records and named C union
+  imports, preserving explicit unsafe member access and compiler-owned layout
+  checks.
+
+- Generated C++ identifiers remain the same when a project or its standard
+  library moves to another directory. Distinct source units retain distinct
+  nominal identities, including external files with the same basename.
+- Conformance block header errors are reported once, independently of the
+  number of operations. An indirectly included concept retains its declaration
+  location and direct-include suggestion even when the block has no operations.
+- Reject constructor initializers that store a dynamic `std::string_view` or
+  `c_string` by value without retaining its owner, including generic holders
+  and forwarded constructor arguments. Literal-backed constructor inputs remain
+  valid. The diagnostic identifies the initializer and suggests owned text or
+  an explicit checked reference instead of allowing dangling storage.
+- Preserve both the view object's lifetime and its external character owner's
+  lifetime when a field stores a checked text-view reference. JSON decoding uses
+  these checked references without copying the input or its member index.
+- Verify missing, forged, mutable and prematurely retired owner dependencies;
+  preserve exactly-once resource cleanup when a constructor also owns fields.
+- Preserve named shared references through stored adapters and nested accessor
+  calls. Emit `c_string&` with pointer-object constness consistently through
+  reference fields, retained loans and return channels.
+- Support conditional temporary receivers whose constructors accept records
+  by value, including native unions. Preserve prepared-input transfer and
+  exactly-once cleanup on successful and failing construction.
+
 ## 0.441.0 — `?` on payload enums
 
 - `?` works directly on a payload enum that has a `std::tryable` block, such

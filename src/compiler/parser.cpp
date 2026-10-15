@@ -377,20 +377,24 @@ private:
             peekAt(1).kind == TokenKind::LEFT_BRACKET) {
           declaration = bracketAttributedDeclaration(LanguageLinkage::C);
         } else if (!isTypedDeclaration()) {
-          throw error(peek(), "An extern \"C\" block may contain only function "
-                              "declarations.");
+          throw error(
+              peek(),
+              "An extern \"C\" block may contain only function or variable "
+              "declarations.");
         } else {
           declaration = typedDeclaration(true, std::nullopt, false, false, true,
                                          LanguageLinkage::C);
         }
         stampExtent(declaration, declarationStart);
         const auto *function = stmtAs<FunctionDecl>(declaration.get());
-        if (function == nullptr) {
-          throw error(declarationStart,
-                      "An extern \"C\" block may contain only function "
-                      "declarations.");
+        if (function == nullptr &&
+            stmtAs<VariableDecl>(declaration.get()) == nullptr) {
+          throw error(
+              declarationStart,
+              "An extern \"C\" block may contain only function or variable "
+              "declarations.");
         }
-        if (function->body() || function->isPure()) {
+        if (function != nullptr && (function->body() || function->isPure())) {
           throw error(function->name(),
                       "An extern \"C\" function must be a bodyless "
                       "declaration ending in ';'.");
@@ -1316,9 +1320,10 @@ private:
       throw error(nativeCArray->attribute,
                   "[[c_array(...)]] must annotate a function declaration.");
     }
-    if (nativeLinkName) {
+    if (nativeLinkName && linkage != LanguageLinkage::C) {
       throw error(nativeLinkName->attribute,
-                  "[[link_name(...)]] must annotate a function declaration.");
+                  "[[link_name(...)]] must annotate a native function or "
+                  "foreign variable declaration.");
     }
     if (unsafeKeyword) {
       throw error(*unsafeKeyword,
@@ -1336,7 +1341,8 @@ private:
     parseArrayDeclaratorSuffix(type);
     return variableDeclaration(
         mutability, std::move(type), name, std::move(staticKeyword),
-        std::move(constexprKeyword), std::move(mutKeyword));
+        std::move(constexprKeyword), std::move(mutKeyword), linkage,
+        std::move(nativeLinkName));
   }
 
   StmtPtr functionDeclaration(
@@ -2013,13 +2019,20 @@ private:
     return parameters;
   }
 
-  StmtPtr
-  variableDeclaration(Mutability mutability, TypeRef type, Token name,
-                      std::optional<Token> staticKeyword = std::nullopt,
-                      std::optional<Token> constexprKeyword = std::nullopt,
-                      std::optional<Token> mutKeyword = std::nullopt) {
+  StmtPtr variableDeclaration(
+      Mutability mutability, TypeRef type, Token name,
+      std::optional<Token> staticKeyword = std::nullopt,
+      std::optional<Token> constexprKeyword = std::nullopt,
+      std::optional<Token> mutKeyword = std::nullopt,
+      LanguageLinkage linkage = LanguageLinkage::Gti,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt) {
     const bool hadCompletion = consumedCompletion;
     ExprPtr initializer;
+    if (linkage == LanguageLinkage::C &&
+        (check(TokenKind::EQUAL) || check(TokenKind::LEFT_BRACE))) {
+      throw error(peek(),
+                  "A foreign variable declaration cannot have an initializer.");
+    }
     if (match({TokenKind::EQUAL})) {
       initializer = initializerExpression();
     } else if (match({TokenKind::LEFT_BRACE})) {
@@ -2034,7 +2047,8 @@ private:
     return std::make_shared<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer),
         std::move(staticKeyword), false, std::move(constexprKeyword), false,
-        false, std::move(mutKeyword));
+        false, std::move(mutKeyword), false, linkage,
+        std::move(nativeLinkName));
   }
 
   StmtPtr mutableFieldGroupDeclaration(Token keyword) {

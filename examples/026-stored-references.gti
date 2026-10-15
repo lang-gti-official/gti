@@ -1,3 +1,5 @@
+#include <std/string>
+
 struct SingleSentinel {};
 
 class BorrowingIterator<T> {
@@ -27,6 +29,20 @@ public:
   SingleSentinel end() { return SingleSentinel(); }
 };
 
+// A dynamic text view stored by value would lose its owner dependency.
+// Borrow its binding instead: both the binding and its character owner must
+// remain alive and unchanged until the reader's last use.
+struct TextReader {
+  std::string_view& text;
+  TextReader(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+
+std::size_t read_text_length(std::string_view input) {
+  TextReader reader{input};
+  return reader.size();
+}
+
 int main() {
   SingleRange<int> range = SingleRange<int>(7);
   mut BorrowingIterator<int> iterator = range.begin();
@@ -36,5 +52,7 @@ int main() {
   ++moved;
   mut int total = 0;
   for (int& item : range) { total += item; }
+  std::string text{"checked"};
+  if (read_text_length(text.view()) != std::size_t(7)) { return 1; }
   return value + total - 14;
 }

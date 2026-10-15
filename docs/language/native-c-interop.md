@@ -25,8 +25,9 @@ supports fixed-width and target-correct C scalar values, passive `[[c_abi]]` rec
 `c_string` values, and annotated native pointer-plus-count returns behind
 lexical `unsafe`. It also supports named exact native callback types and
 same-thread adapters for eligible GTI free functions, plus the exact registered
-worker and once-initializer adapters owned by `<std/cthread>`. It does not
-expose native variables, variadic calls, C++ linkage, annotated ownership
+worker and once-initializer adapters owned by `<std/cthread>`. Ordinary foreign
+variables are available under the external-storage contract below. It does not
+expose variadic calls, C++ linkage, annotated ownership
 transfer, general foreign-thread GTI callback entry, or a stable binary ABI for
 ordinary GTI-defined types.
 
@@ -91,11 +92,68 @@ primitives; native header emission preserves exact primitive identity or a
 genuine target-native fixed-width typedef alias. Long double and target-specific
 extended scalar formats are not admitted by this vocabulary.
 
+## Foreign Variables
+
+A namespace-scope `extern "C"` block can declare storage defined by native code:
+
+```gti
+using Operation = (c_int) -> c_int;
+extern "C" {
+  mut c_int counter;
+  c_int limit;
+  mut Operation operation;
+  [[link_name("native_epoch")]] mut c_int epoch;
+}
+```
+
+`mut` permits writes to the foreign object; an immutable declaration describes
+an object declared const in C. Pointer pointee access remains independent of
+object constness. These are declarations, with no initializer, allocation,
+startup action, GTI ownership or destruction. The definition must be provided
+by the linked native library. Both functions and variables share one exact
+program-global native-symbol namespace and the same `link_name` rules.
+
+Whole-record replacement in foreign storage also requires every embedded field
+in the assigned aggregate to be mutable, recursively through records and fixed
+arrays. This extends the field access policy to externally owned storage, where
+GTI has no authority to replace read-only subobjects. It does not change ADR 013:
+field `mut` still does not alter the record representation, and a local snapshot
+retains ordinary GTI whole-object assignment even when it has read-only fields.
+Pointer pointees are separate objects and are not inspected by this rule.
+
+Reading or writing foreign storage requires lexical `unsafe`, including reads
+of const objects. The caller establishes native validity, initialization,
+lifetime, access and synchronization. Constness prohibits writes but does not
+prove value stability or thread confinement. Native calls can change writable
+objects; optimization preserves unknown-memory effects at foreign loads/stores.
+Taking an inert raw address, such as `&counter`, performs no foreign load and
+requires no unsafe block. Evaluating a pointer or index used to form a more
+complex address retains its own access obligations.
+
+Foreign storage cannot implicitly supply a checked reference, including a local
+reference, reference argument, retained borrow or reference return. Use an
+explicit raw-to-checked operation with a valid owner witness when a wrapper can
+establish that contract. Merely declaring a foreign object never invents such
+a witness.
+
+The admitted object types are C ABI scalars, raw pointers, named native function
+pointers, and passive C ABI records. Top-level fixed-array objects, volatile and
+thread-local storage require additional general semantics and are not admitted.
+The importer reports unsupported storage explicitly, preserves object/pointee
+qualifiers, and emits an external declaration even when it reads a C definition.
+Accessor macros such as `errno` still need a native adapter.
+
+The [native variable bindings example](../../examples/native-variable-bindings/README.md)
+imports and links writable/const scalars, pointer objects, replaceable callback
+objects, a passive record and a renamed symbol. Its tests verify generated
+C17/C++20/C++23 headers and native execution across optimization levels.
+
 ## Declaration Contract
 
 The language string must decode to exactly `"C"`. An `extern "C"` block may
 appear at namespace scope, including inside a GTI namespace, and may contain
-only bodyless free-function declarations ending in `;`. A declaration cannot
+bodyless free-function declarations and foreign-variable declarations ending
+in `;`. A function declaration cannot
 be a definition, method, operator, generic, overload, runtime binding, or use
 `static`, `virtual`, `override`, a mutable receiver, or a writable return.
 
@@ -127,7 +185,7 @@ Native bridge headers and embedding exports keep their selected external names.
 The link name must be one portable ASCII C identifier;
 the current contract does not admit arbitrary object-format spellings. GTI
 does not mangle the selected symbol or prefix it with the containing GTI
-namespace. `link_name` is valid only on a bodyless `extern "C"` function, may
+namespace. `link_name` is valid on a bodyless `extern "C"` function or foreign variable, may
 occur at most once, and may be stacked with `[[c_array(count)]]`. C symbols are
 program-global: the same selected symbol cannot be redeclared, overloaded, or
 introduced by a second namespace. A C-linkage
@@ -229,7 +287,7 @@ paths, and explicit definitions have their native meaning before declaration
 import. The host target is used by default; an explicit supported 64-bit
 target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
-passive records become `[[c_abi]]` structs, incomplete or inexpressible
+passive records become `[[c_abi]]` structs or unions, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
 enums become aliases to their native-compatible C integer family plus exact
 `constexpr` constants, a bare anonymous enum contributes those constants alone, function-pointer
@@ -599,7 +657,7 @@ extern "C" {
 }
 ```
 
-The opt-in applies only to a non-generic `struct` with at least one public
+The opt-in applies only to a non-generic `struct` or `union` with at least one public
 instance field. It cannot declare bases, access sections, static fields,
 methods, constructors, a destructor, or copy/move policies. It also cannot be
 combined with the transfer/share capability attributes. A native record is a
@@ -631,13 +689,27 @@ through an array element — are rejected; pointers provide linked/opaque edges.
 Fields remain in source order. Starting at offset zero, semantics rounds each
 field offset up to that field's ABI alignment, advances by its size, records
 the maximum field alignment as the record ABI alignment, and rounds final size
-up to that alignment. Every operation is checked in the compiler's unsigned
+up to that alignment. A `[[c_abi]] union` instead places every field at offset
+zero, takes the maximum field size and alignment, then rounds that size up to
+the alignment. Unions and structs may nest by value or through positive fixed
+arrays. Every operation is checked in the compiler's unsigned
 64-bit layout domain. `sizeof(NativePoint)` and `alignof(NativePoint)` consume
 these frontend facts just like the existing scalar and fixed-array queries.
 `GTI-S2064` owns invalid native-record declarations and non-array fields;
 `GTI-S2069` owns a fixed-array field with a non-concrete or zero extent;
 `GTI-S2070` owns an inadmissible array element type. `GTI-S2063` continues to
 own an unsupported standalone layout query.
+
+A native union is untagged storage. Every member read or write retains the
+ordinary union requirement for lexical `unsafe`; the caller must establish
+which alternative is initialized and must not read an inactive alternative.
+Copying or passing the complete union transports the initialized alternative
+without adding a tag, allocation, ownership or cleanup state. A native factory
+can supply the first valid value. A surrounding C tag is application policy,
+not a compiler-recognized type. Ordinary unions without `[[c_abi]]` remain
+outside C signatures. Named union fields import through `gti bindgen`; anonymous
+promoted fields, bit-fields, packed/over-aligned records and flexible arrays
+remain unsupported. See the runnable [native union binding example](../../examples/native-union-bindings/README.md).
 
 A field cannot have a GTI initializer. A C ABI record is representation only:
 default construction policy belongs in an ordinary safe GTI wrapper or in a
@@ -652,7 +724,7 @@ definition. `mut` controls source write access to the field and has no
 representation effect.
 
 The semantic model owns size, ABI alignment, and every field offset. HIR and
-MIR retain that metadata. Generated C++ uses a passive struct and compile-time
+MIR retain that metadata. Generated C++ uses a passive struct or union and compile-time
 standard-layout, trivially-copyable, `sizeof`, `alignof`, and `offsetof`
 assertions to audit the native compiler. Native C++ layout never substitutes
 for the frontend calculation.

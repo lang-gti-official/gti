@@ -274,7 +274,14 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v105 valid=" << program.valid() << '\n';
+    output << "mir-v106 valid=" << program.valid() << '\n';
+    for (const auto &storage : program.foreignStorageDeclarations()) {
+      output << "foreign-storage symbol=" << storage.symbol
+             << " external=" << std::quoted(storage.externalSymbol)
+             << " access=" << number(storage.access) << " type=";
+      type(storage.type);
+      output << '\n';
+    }
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -799,7 +806,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v86\n";
+    output << "mir-body-v87\n";
     body(value, 0);
   }
 
@@ -1381,6 +1388,7 @@ private:
     } else {
       output << '-';
     }
+    output << " foreign-storage=" << value.foreignStorage;
     output << " initially-available=" << value.initiallyAvailable << '\n';
   }
 

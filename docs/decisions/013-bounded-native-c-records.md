@@ -6,7 +6,8 @@ Scope revision (2026-10-11): later C-scalar, recursive-pointer and exact native
 callback slices broaden the original field/passage allowlist without changing
 passive layout or ownership. Foreign-header import is now implemented through
 libclang; it emits ordinary declarations, not a second native type system.
-Unions and native ownership transfer remain distinct boundaries.
+Native ownership transfer remains a distinct boundary. The 2026-10-15
+revision below admits passive C ABI unions through the existing union contract.
 
 ## Context
 
@@ -137,7 +138,7 @@ decision.
   a record is still only an address.
 - Recursive pointer/out-parameter passage, exact callbacks and bounded
   foreign-header import are delivered separate slices. Annotated ownership
-  transfer, retained userdata, flexible arrays, C ABI unions, bit-fields,
+  transfer, retained userdata, flexible arrays, bit-fields,
   packing, varargs and direct C++ ABI remain separate capabilities.
 - C++ libraries are supported through a generated-header C adapter: ordinary
   C++ classes and RAII stay behind `extern "C"`, and exceptions must be caught
@@ -162,3 +163,19 @@ decision.
 - **Add callbacks and ownership transfer in the same phase.** Rejected because
   they require independent callable lifetime, failure containment,
   initialization, nullability, retention, and cleanup contracts.
+
+## Revision: passive C ABI unions (2026-10-15)
+
+The original struct-only boundary is superseded for passive named unions.
+`[[c_abi]] union` uses the same admitted field set, ownership exclusions and
+native passage as a C ABI struct, with all offsets zero and maximum member
+size rounded to maximum alignment. This unlocks event payloads and native
+userdata representations without an opaque wrapper around every union.
+
+The general rule is structural and applies equally to unrelated user-written
+unions and imported declarations. Existing union member operations retain
+unsafe active-member obligations; complete-value copies preserve representation.
+The compiler owns layout, HIR/MIR retain it and native C/C++ assertions audit
+it. No hidden tag or allocation is introduced. Importer degradation remains
+appropriate for bit-fields, packing, explicit alignment and anonymous promoted
+fields until their corresponding place/layout semantics are implemented.
