@@ -1162,8 +1162,10 @@ private:
     bool complete = false;
   };
   struct CompleteReturnQueryState {
-    std::unordered_map<InstanceAnalysisKey, std::shared_ptr<CompleteReturnQuery>,
-                       InstanceAnalysisKeyHash> entries;
+    std::unordered_map<InstanceAnalysisKey,
+                       std::shared_ptr<CompleteReturnQuery>,
+                       InstanceAnalysisKeyHash>
+        entries;
     std::unordered_set<InstanceAnalysisKey, InstanceAnalysisKeyHash> discovered;
     std::size_t depth = 0;
     // Retention is independent of the compilation resource policy: completed
@@ -1806,6 +1808,12 @@ private:
                 bool structural = false) const;
 
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
+  // Normalize one already checked return expression before end-of-body
+  // summary publication. Failure is unknown/invalid, never an empty proof.
+  // The caller still enforces ordinary child-loan escape and availability.
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteReturnBorrow(const FunctionInfo &function,
+                                 const SemanticBorrowDependencySet &complete);
   std::optional<FunctionBorrowDependencySummary> completeFunctionReturnBorrow(
       const CallableCandidate &function,
       const std::vector<SemanticType> &typeArguments,

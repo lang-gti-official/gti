@@ -8361,6 +8361,18 @@ cover forwarding the complete entry inventory and reject substituted formal
 types/bindings, unavailable entry storage and omitted alternatives. Nonempty
 conditional entry loans remain a subsequent proof step.
 
+The next internal scaffold shares a pure per-return normalization query with
+source escape checking. It resolves each complete dependency against the
+result's typed field/alternative inventory and the exact formal or receiver,
+preserving source and result conditions, access and every possible origin.
+Traversing a stored reference denotes its external referent; a by-value owned
+shell does not become caller-owned storage. Explicit origin contracts and local
+cleanup-bound capabilities remain restrictions. This hook runs before finalized
+function-summary publication, so return validation need not depend on an
+unfinished summary of its own body. Nonempty publication is still closed until
+independent MIR normalization, call substitution and combined source/loan
+regression evidence are complete; scaffold implementation is not admission.
+
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
 distinction, forged contracts and O0/O3 optimization. This is a prerequisite,
