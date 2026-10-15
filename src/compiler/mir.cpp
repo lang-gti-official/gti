@@ -10654,6 +10654,39 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   std::unordered_set<SemanticLoanId> semanticLoans;
   for (std::size_t index = 0; index < body.loans.size(); ++index) {
     const MirLoan &loan = body.loans[index];
+    if (loan.referenceSelection) {
+      const auto &selection = *loan.referenceSelection;
+      const auto *selected = body.findValue(selection.value);
+      const auto *block = selected == nullptr
+                              ? nullptr
+                              : body.findBlock(selected->definitionBlock);
+      const MirInstruction *producer = nullptr;
+      if (block != nullptr)
+        for (const auto &instruction : block->instructions)
+          if (instruction.id == selected->definition)
+            producer = &instruction;
+      if (selected == nullptr || producer == nullptr ||
+          !validPlace(selection.carrier) || selection.fields.empty() ||
+          selection.conditions.empty() ||
+          selection.reference.kind != SemanticType::Reference ||
+          selection.reference.arguments.size() != 1 || producer->tombstone ||
+          producer->kind != MirInstructionKind::Compute ||
+          producer->operation != MirOperation::PayloadExtract ||
+          producer->result != selected->id ||
+          producer->info != selected->info || producer->operands.size() != 1 ||
+          producer->operands.front().place != selection.carrier ||
+          !producer->payloadExtractionKind ||
+          !isStoredReferenceExtraction(*producer->payloadExtractionKind) ||
+          selected->info.category != ValueCategory::Place ||
+          selected->info.type != selection.reference.arguments.front() ||
+          (loan.access == AccessMode::Mutable &&
+           (selection.reference.referenceAccess != AccessMode::Mutable ||
+            selected->info.access != AccessMode::Mutable))) {
+        return failure(body, owner,
+                       "loan " + std::to_string(loan.id) +
+                           " has no exact stored-reference selection producer");
+      }
+    }
     if (loan.id != index + 1 || !validPlace(loan.source) ||
         std::any_of(loan.additionalDependencies.begin(),
                     loan.additionalDependencies.end(),

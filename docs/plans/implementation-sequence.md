@@ -8372,6 +8372,18 @@ all-origin access checks and producer/entry seeding remain required. Optimized
 C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
 claimed for it.
 
+The MIR bridge now retains the selected extraction's exact SSA value and
+physical carrier place separately from its possible external owner places.
+Lowering requires the unique current-body producer and the structural stored
+reference extraction mode; malformed selections cannot turn an ordinary
+storage borrow into reference transfer. This identity scaffold still does not
+admit reference payloads. The next proof compares its projected complete owner
+set with executable carrier flow at the extraction point, verifies every
+owner's access/liveness, and preserves the cached address after shell retirement.
+Same-referent aliases retain the original selection plus their checked parent.
+Projected aliases additionally require an exact typed runtime projection applied
+to every possible owner; no projection is admitted by choosing the first owner.
+
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The
