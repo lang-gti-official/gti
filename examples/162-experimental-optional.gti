@@ -1,0 +1,42 @@
+// std::experimental::optional is defined entirely in GTI source, over a
+// payload enum, and joins prefix `?` through its `std::tryable` block: `?`
+// moves the value out, or returns an empty optional from the enclosing
+// function. Move-only payloads work, because nothing is copied.
+#include <std/experimental/optional>
+#include <std/memory>
+#include <std/string>
+
+// A move-only account record.
+class Account {
+public:
+  std::string owner;
+  std::unique_ptr<int> balance;
+  Account(std::string name, int amount)
+      : owner(std::move(name)), balance(std::make_unique<int>(amount)) {}
+};
+
+std::experimental::optional<Account> find(int id) {
+  if (id == 1) {
+    return std::experimental::optional<Account>(Account(std::string("ada"), 40));
+  }
+  if (id == 2) {
+    return std::experimental::optional<Account>(Account(std::string("lin"), 2));
+  }
+  std::experimental::optional<Account> missing = std::experimental::nullopt;
+  return missing;
+}
+
+// Both accounts must exist; `?` returns an empty optional otherwise.
+std::experimental::optional<int> combined(int first, int second) {
+  Account left = ?find(first);
+  Account right = ?find(second);
+  return std::experimental::optional<int>(*left.balance + *right.balance);
+}
+
+int main() {
+  std::experimental::optional<int> total = combined(1, 2);
+  std::experimental::optional<int> unknown = combined(1, 3);
+  std::println(std::to_string(total.value()));
+  std::println(unknown.has_value() ? "found" : "missing");
+  return 0;
+}

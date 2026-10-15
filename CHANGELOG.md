@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.0 — A source-defined optional
+
+- `<std/experimental/optional>` adds `std::experimental::optional<T>`, written
+  entirely in GTI over a payload enum with no compiler-private storage. It
+  has the same surface as `std::optional`, plus:
+  - a consuming `T value() &&` that moves the value out;
+  - `std::experimental::nullopt`;
+  - an implicit conversion from `nullopt_t`.
+- `?` works on it through a `std::tryable` block. It moves the value out,
+  move-only payloads included, or returns an empty optional:
+  `Account left = ?find(1);`.
+- An empty access panics rather than raising `empty_owner_access`, which is
+  one of the differences to settle before it replaces `std::optional`.
+- Example 162 demonstrates it.
+- A conformance block's own type parameters are now named in diagnostics,
+  instead of "type parameter".
+
 ## 0.436.0 — `?` for any type through `std::tryable`
 
 - Prefix `?` now works on any type with a `std::tryable` conformance block,
