@@ -225,12 +225,19 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           failure.constraintName
               ? semantic_spelling::pathSpelling(*failure.constraintName)
               : std::string("the concept");
+      std::string arguments;
+      for (const SemanticType &argument : failure.conformanceArguments) {
+        arguments += (arguments.empty() ? "" : ", ") + typeSpelling(argument);
+      }
+      if (failure.conformanceArguments.empty()) {
+        arguments = typeSpelling(failure.argument);
+      }
       diagnostic.hints.push_back(
-          "Concept '" + name +
-          "' has a body, so a type satisfies it only through a matching "
-          "'for concept " +
-          name + "<...>' block; none matches '" +
-          typeSpelling(failure.argument) + "'.");
+          "Concept '" + name + "' has a body, so " +
+          (failure.conformanceArguments.size() > 1 ? "types satisfy"
+                                                   : "a type satisfies") +
+          " it only through a matching 'for concept " + name +
+          "<...>' block; none matches '" + arguments + "'.");
     }
     diagnostics.emplace_back(std::move(diagnostic));
   };
