@@ -1172,6 +1172,9 @@ private:
     std::size_t declarationOrder = 0;
     SemanticLoanId retainedLoan = 0;
     std::vector<SemanticLoanId> storageLoans;
+    // Conditional dependency facts follow value flow. Existing valueState and
+    // loan flow remain the authority for availability and liveness.
+    std::optional<SemanticBorrowDependencySet> completeBorrowSet;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     std::string qualifiedName;
@@ -1942,6 +1945,14 @@ private:
   // complete-set producers must use storedReferenceInventory instead.
   [[nodiscard]] std::vector<StoredReferencePath>
   storedReferencePaths(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBorrowDependencySet(const ExprPtr &expression) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  joinedBorrowDependencySets(
+      const std::optional<SemanticBorrowDependencySet> &left,
+      const std::optional<SemanticBorrowDependencySet> &right) const;
+  void invalidateBorrowDependencySet(const SemanticPlace &place);
 
   // A concrete carrier may wrap its one direct reference in ordinary nominal
   // fields. The complete declaration path is the dependency identity; an

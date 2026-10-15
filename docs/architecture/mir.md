@@ -333,9 +333,19 @@ from a complete producer-attached set, including a proven empty set. An empty
 payload construction names its exact concrete enum alternative; MIR checks
 every active field's dependency-free traits against the sealed type tables.
 Typed nested alternative paths accompany the set, independently of the real
-origin-bearing loans. This schema increment establishes empty constructor
-evidence only: conditional nonempty transfer, joins and result-summary proofs
-remain the borrowed-payload implementation goal, not admitted semantics.
+origin-bearing loans. Dependency-free complete sets also follow exact local
+initialization, copy, explicit/implicit move, value stages and branch joins.
+The existing forward-dataflow solver independently reconstructs that transport
+from constructor instructions and physical carrier storage; it does not use
+an attached claim as its premise. A join preserves every possible alternative;
+an unknown predecessor, moved source or mutable call cannot manufacture empty
+evidence. Existing availability/lifecycle/loan checks remain authoritative.
+The semantic loop visitor conservatively forgets incoming exact-alternative
+facts, rather than treating its single visit as a proof for every iteration;
+a dominating construction inside the loop can establish fresh evidence.
+Conditional nonempty loans, loop-carried conditional dependency contracts and
+declaration-owned result-summary proofs remain implementation goals. This
+infrastructure does not admit reference-bearing enum payloads yet.
 
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. Restoration is explicitly unsafe and retains its

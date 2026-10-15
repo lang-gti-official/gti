@@ -7277,6 +7277,7 @@ auto SemanticVisitor::Impl::setProjectedValueState(const SemanticPlace &place,
   if (place.root == nullptr || (place.projections.empty() && !place.receiver)) {
     return;
   }
+  invalidateBorrowDependencySet(place);
   if (state != ValueState::Available)
     invalidateRawPointerOrigins(place);
   auto found = std::find_if(place.root->projectedValueStates.begin(),
@@ -7306,6 +7307,7 @@ auto SemanticVisitor::Impl::reinitializePlace(const SemanticPlace &place)
   if (place.root == nullptr) {
     return;
   }
+  invalidateBorrowDependencySet(place);
   if (place.projections.empty()) {
     place.root->projectedValueStates.clear();
     return;
@@ -7558,6 +7560,13 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
             leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan
                 ? leftSymbol->second.retainedLoan
                 : baseSymbol.retainedLoan;
+        target->second.completeBorrowSet = joinedBorrowDependencySets(
+            leftSymbol->second.valueState == ValueState::Available
+                ? leftSymbol->second.completeBorrowSet
+                : std::nullopt,
+            rightSymbol->second.valueState == ValueState::Available
+                ? rightSymbol->second.completeBorrowSet
+                : std::nullopt);
       }
     }
   }

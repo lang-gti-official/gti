@@ -8310,23 +8310,34 @@ including instance overlays and rebasing. Its concrete type-inventory query
 rejects unresolved children; symbolic generic path enumeration remains a
 separate contract and never supplies completeness evidence.
 
-The next checkpoint carries complete sets through semantics/HIR/MIR and emits
+The prerequisite checkpoint carries complete sets through semantics/HIR/MIR and emits
 exact empty evidence for dependency-free payload constructors and unit
 alternatives. MIR recomputes the selected alternative's field traits and
 rejects absent evidence, wrong enum/tag/path, duplicate alternatives and
 invented dependencies. Optimized focused protocol, propagation, generic-enum
-backend and cleanup-bound tests pass. Nonempty conditional construction,
-binding/flow transfer and declaration-owned result summaries are not yet
-implemented; guards on those unsupported loan/call records fail closed.
+backend and cleanup-bound tests pass. Exact local bindings (written types and
+`auto`), copies, explicit/implicit moves and branch unions now preserve empty
+sets. MIR reconstructs that flow with the existing forward solver and rejects
+omitted/substituted join alternatives and invented proofs after unknown inputs
+or mutable calls. Incoming loop facts remain unknown until the general
+conditional loop contract is implemented; first-iteration facts are not reused
+for backedges. No loan endpoint or availability check is replaced by this
+value-fact analysis. Nonempty conditional construction/transport and
+declaration-owned result summaries remain incomplete; guards on unsupported
+loan/call records fail closed and reference-bearing payload admission stays
+closed.
 
-Native acceptance is **not yet passing**: example 164's shared-reference
-wrapper now compiles/runs after a general constructor argument-staging fix
-for a text view across a conditional expression. The mutable-reference
-`edit` function still exposes a representation decline. A named passive enum operand also exposed a
-branch-dominance lowering failure in an earlier probe. These remain acceptance
-gates, and the example has not yet passed its native matrix. This is an honest
-WIP recovery checkpoint, not permission to admit reference-bearing payloads or
-to integrate the slice.
+Example 164's original shared and mutable class-wrapper paths now compile and
+run at O2 with the expected output. General constructor-staging fixes admit
+text views across conditional arguments and exact transferred mutable-reference
+prefixes before owned fields; malformed identity/access/lifecycle evidence
+remains rejected. The focused native matrix passes all nine modes:
+C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 164
+and the existing cleanup traces. A named passive enum operand exposed a branch-dominance
+lowering failure in an earlier probe and still needs a dedicated follow-up.
+The user requested expedited delivery of verified prerequisites and waived the
+full suite; that does not mark the complete borrowed-enum goal finished or
+authorize unverified reference-bearing payloads.
 
 ### L-ERR-01: Error Propagation Operator
 
