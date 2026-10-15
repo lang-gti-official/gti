@@ -2101,16 +2101,30 @@ auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
 
     // The entry authority is caller-owned. A local cleanup-bound capability
     // cannot escape merely because its underlying place has that same root.
-    std::unordered_set<SemanticLoanId> seen;
-    for (auto id = dependency.parent; id != 0;) {
-      if (!seen.insert(id).second)
+    std::unordered_set<SemanticLoanId> visiting;
+    std::unordered_set<SemanticLoanId> checked;
+    std::vector<std::pair<SemanticLoanId, bool>> pending{
+        {dependency.parent, false}};
+    while (!pending.empty()) {
+      const auto [id, completed] = pending.back();
+      pending.pop_back();
+      if (id == 0 || checked.contains(id))
+        continue;
+      if (completed) {
+        visiting.erase(id);
+        checked.insert(id);
+        continue;
+      }
+      if (!visiting.insert(id).second)
         return std::nullopt;
       const auto *loan = semanticModel.findLoan(id);
       if (!loan || (loan->lifecycleBound && !loan->entry))
         return std::nullopt;
-      if (loan->entry)
-        break;
-      id = loan->parent;
+      pending.emplace_back(id, true);
+      pending.emplace_back(loan->parent, false);
+      pending.emplace_back(loan->storedDependency, false);
+      for (const auto &additional : loan->additionalDependencies)
+        pending.emplace_back(additional.parent, false);
     }
     if (function.explicitReturnBorrowOrigin) {
       if (normalized.origin != function.returnBorrowOrigin)
