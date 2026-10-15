@@ -8342,6 +8342,16 @@ publish result facts only on their successful edge. Synthetic early returns
 from propagation currently make the summary unknown until their selected
 residual operation's complete result contract can be instantiated.
 
+This checkpoint is work in progress. Prerequisite queries now share the existing
+64-level/16,384-distinct-instance resource policy with HIR discovery, with the
+established resource diagnostic instead of silently returning unknown. Exact
+active cycles remain unknown. A separate 64-result retention cache evicts only
+completed entries; eviction must cause recomputation, never different
+acceptance. Dedicated depth/eviction and existing generic-discovery tests pass
+with the optimized compiler. The memoized MIR observation path and coordinated
+schema pass the relinked focused summary target; the combined entry-fact
+checkpoint still needs its own rebuild and validation.
+
 Dependency-free by-value payload-enum parameters now seed a complete set with
 every concrete alternative. Semantics derives it from the strict type inventory;
 MIR independently reconstructs it from exact formal bindings, types, available
@@ -8351,12 +8361,17 @@ cover forwarding the complete entry inventory and reject substituted formal
 types/bindings, unavailable entry storage and omitted alternatives. Nonempty
 conditional entry loans remain a subsequent proof step.
 
-This checkpoint is work in progress. Before enabling nonempty contracts, replace
-the provisional per-query depth/entry limits with the existing generic-instance
-resource policy: cycles remain unknown, exhaustion reports the established
-resource diagnostic, and eviction of completed cache entries must only cause
-recomputation, never different acceptance. Recheck the memoized MIR observation
-path and the coordinated schema revision with all affected targets relinked.
+The next internal scaffold shares a pure per-return normalization query with
+source escape checking. It resolves each complete dependency against the
+result's typed field/alternative inventory and the exact formal or receiver,
+preserving source and result conditions, access and every possible origin.
+Traversing a stored reference denotes its external referent; a by-value owned
+shell does not become caller-owned storage. Explicit origin contracts and local
+cleanup-bound capabilities remain restrictions. This hook runs before finalized
+function-summary publication, so return validation need not depend on an
+unfinished summary of its own body. Nonempty publication is still closed until
+independent MIR normalization, call substitution and combined source/loan
+regression evidence are complete; scaffold implementation is not admission.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
@@ -8451,9 +8466,42 @@ consuming extraction keeps an exact owning shell's fact until its final
 `TransferOut`; ordinary whole-value moves still invalidate facts immediately.
 Tag dominance, unique field consumption and final shell retirement remain
 separate mandatory lifecycle proofs. Reordered, duplicate and missing exact
-retirement mutations accompany this seam. Syntax checks establish only that
-the scaffold compiles; focused semantic/MIR tests and reference-payload runtime
-evidence remain pending for this checkpoint.
+retirement mutations accompany this seam. After integration with the MIR
+selection identity, the optimized compiler rebuild and `sum_type_pipeline`,
+`complete_borrow_summaries`, `tryable_propagation`, `protocol_concepts`, and
+`cleanup_bound_borrow` pass. These are prerequisite/regression checks, not
+reference-payload runtime acceptance; nonempty publication remains closed.
+
+A shared payload-projection proof now selects the sealed variant and field,
+rebases nested field/alternative paths, and retains every possible external
+origin from the independently reconstructed carrier fact. Stored references
+may only narrow access to their resolved extraction result; their external
+referent is never moved. Missing borrowed-subobject alternatives remain
+unknown, whereas an entirely dependency-free child's alternatives may be
+conservatively recovered from its complete typed inventory. Extraction result
+annotations are checked against this projection, not used as its premise.
+The focused nested-enum fixture and forged tag/path/dependency mutations cover
+this prerequisite; reference-bearing publication still requires the selected
+loan, handoff and liveness proofs described below.
+
+Conditional parameter-entry preparation now expands every abstract stored
+reference path into its exact parameter-relative external place and keeps all
+typed alternative guards. The declaration entry loan itself remains the
+existing grouped authority; the complete set does not create a second liveness
+model. Conditional return checking uses the shared declaration-relative
+normalizer only after the ordinary local-child escape check. These paths still
+have no source-admission claim: nonempty MIR entry/constructor/call transport,
+all-parent escape proof, selected publication and their negative gates must be
+connected before that admission opens.
+
+An edit review rejected removing the selected-origin `protectsStorage` check:
+the bit's absence alone does not establish an external owner's lifetime. The
+guard remains in place. Abstract parameter reference fields legitimately do
+not protect their carrier's storage, so the next proof must distinguish those
+checked external dependencies from unproven or foreign storage using the exact
+entry loan, formal identity and typed guarded field path. Positive parameter
+ancestry and missing/substituted parent/path/foreign-storage negatives are
+required before revisiting that predicate; this is not permission to bypass it.
 
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
