@@ -1,0 +1,185 @@
+#include <std/string>
+#include <std/vector>
+
+// A cleanup-free class result produced in each arm of a conditional
+// expression after the arm evaluates inputs that can fail: an
+// overflow-checked argument, a call that can fail, a `?` operand, or scalar
+// control flow among them. The joined result is bound, returned, assigned, passed on,
+// read through a field or used to initialize a field. Only the arm that runs
+// evaluates its inputs, and a failing input ends the arm before its call.
+//
+// Pod has no destructor. Tracked prints its negated id when destroyed, so
+// failure cleanup shows what was constructed before the failure.
+class Pod {
+public:
+  int x;
+  Pod(int v) : x(v) {}
+  int read() { return this.x; }
+};
+
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(-this.id); }
+};
+
+Pod fresh(int id) { return Pod(id); }
+
+// A callee that can fail.
+Pod split(int value, int divisor) { return Pod(value / divisor); }
+
+int quotient(int value, int divisor) { return value / divisor; }
+
+int consume(Pod input) { return input.read(); }
+
+enum class input_error { negative };
+
+expected<int, input_error> checked(int value) {
+  if (value < 0) {
+    return unexpected(input_error::negative);
+  }
+  return value;
+}
+
+// A field initialized from the join.
+class Box {
+public:
+  Pod inner;
+  Box(bool left, int base) : inner(left ? fresh(base + 1) : fresh(base + 2)) {}
+};
+
+int bound(bool left, int base) {
+  Pod kept = left ? fresh(base + 29) : fresh(base + 30);
+  return kept.read();
+}
+
+int constructed(bool left, int base) {
+  Pod kept = left ? Pod(base + 3) : Pod(base + 4);
+  return kept.read();
+}
+
+// Only one arm evaluates a checked input.
+int one_sided(bool left, int base) {
+  Pod kept = left ? fresh(base + 5) : fresh(6);
+  return kept.read();
+}
+
+Pod returned(bool left, int base) {
+  return left ? fresh(base + 7) : fresh(base + 8);
+}
+
+int field_read(bool left, int base) {
+  return (left ? fresh(base + 9) : fresh(base + 10)).x;
+}
+
+int passed(bool left, int base) {
+  return consume(left ? fresh(base + 11) : fresh(base + 12));
+}
+
+int assigned(bool left, int base) {
+  mut Pod kept{base};
+  kept = left ? fresh(base + 13) : fresh(base + 14);
+  return kept.read();
+}
+
+// One arm copies a named place.
+int copied(bool left, int base) {
+  Pod other = fresh(base + 15);
+  Pod kept = left ? other : fresh(base + 16);
+  return kept.read();
+}
+
+// A callee that can fail, and a call computing the argument that can fail.
+int raising_callee(bool left, int base, int divisor) {
+  Pod kept = left ? split(base + 17, divisor) : split(base + 18, divisor);
+  return kept.read();
+}
+
+Pod raising_argument(bool left, int base, int divisor) {
+  return left ? fresh(quotient(base + 19, divisor))
+              : fresh(quotient(base + 20, divisor));
+}
+
+// Scalar control flow inside an arm's input.
+int branching_input(bool left, int base) {
+  Pod kept = left ? fresh(base > 50 ? base + 21 : base - 21)
+                  : fresh(base >= 0 && base < 1000 ? base + 22 : 0);
+  return kept.read();
+}
+
+// A nested conditional whose condition is computed with a checked operation.
+int nested(bool left, int base) {
+  Pod kept = left ? (base + 23 > 50 ? fresh(base + 24) : fresh(base + 25))
+                  : fresh(base + 26);
+  return kept.read();
+}
+
+// A temporary with cleanup in an arm's input is destroyed with its arm.
+int temporary_input(bool left, int base) {
+  Pod kept = left ? fresh(Tracked(base + 27).id + 1) : fresh(base + 28);
+  return kept.read();
+}
+
+// A `?` operand in an arm returns its residual before the arm publishes.
+expected<int, input_error> propagated(bool left, int base) {
+  Pod kept = left ? fresh(?checked(base + 31)) : fresh(?checked(base - 32));
+  return kept.read();
+}
+
+// Each loop iteration publishes into the join's storage again.
+int looped(bool left, int base) {
+  mut int total = 0;
+  for (mut int i = 0; i < 3; i += 1) {
+    Pod kept = (i % 2 == 0) == left ? fresh(base + i) : fresh(base - i);
+    total += kept.read();
+  }
+  return total;
+}
+
+// Runs every shape through one arm; `base` keeps the two runs apart.
+void run(bool left, int base) {
+  std::println(bound(left, base));
+  std::println(constructed(left, base));
+  std::println(one_sided(left, base));
+  std::println(returned(left, base).read());
+  std::println(field_read(left, base));
+  std::println(passed(left, base));
+  std::println(assigned(left, base));
+  std::println(copied(left, base));
+  std::println(raising_callee(left, base, 1));
+  std::println(raising_argument(left, base, 1).read());
+  std::println(branching_input(left, base));
+  std::println(nested(left, base));
+  std::println(nested(left, base + 60));
+  std::println(temporary_input(left, base));
+  std::println(looped(left, base));
+  std::println(propagated(left, base).value());
+  std::println(propagated(left, base - 200).has_value() ? 1 : 0);
+  Box box = Box(left, base);
+  std::println(box.inner.x);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  run(true, 0);
+  run(false, 100);
+  // Failure cleanup. Scenario 1 overflows a checked argument in a bound
+  // arm, 2 fails the call computing a returned arm's argument, 3 fails a
+  // callee after its checked argument succeeded, and 4 overflows the
+  // condition of a nested arm. Cleanup destroys only what was constructed
+  // before the failure.
+  int scenario = argc - 1;
+  Tracked first{201};
+  int big = scenario == 1 ? 2147483647 : 0;
+  Pod kept = scenario == 1 ? fresh(big + 1) : fresh(big + 2);
+  std::println("kept");
+  Tracked second{202};
+  Pod value = raising_argument(scenario != 2, 0, scenario == 2 ? 0 : 1);
+  std::println("returned");
+  Tracked third{203};
+  int got = raising_callee(scenario == 3, 0, scenario == 3 ? 0 : 1);
+  std::println("called");
+  int deep = nested(scenario == 4, scenario == 4 ? 2147483640 : 0);
+  std::println("last");
+  return kept.read() + value.read() + got + deep - 65;
+}
