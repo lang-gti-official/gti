@@ -33,14 +33,15 @@ def generic_owner_receiver_cases(name="consuming_generic_owner_receiver"):
         1, -1, "probed", 2, -2, "finished", 3, -3, "tested",
         4, "taken", -4, "empty", 5, -5, "parameter", 6, -6, 7, -7, 8, -8,
         9, -9, 10, 11, -10, -11, 12, 13, -13, -12, 14, -14, 15, -15, 16, -16,
-        17, -17, "lazy", 18, -18, 19, -19, 20, 21, -21)
+        17, -17, "lazy", 18, -18, 19, -19, 20, -20, 21, -21, "closed",
+        22, 23, -23)
     # A failing call or receiver destructor destroys the receiver once and
     # then the unmoved spare owner. A receiver destructor that fails again
     # during failure cleanup ends the program at that secondary failure.
     expected = [
-        (0, shapes + trace("divided", -20), ""),
-        (70, shapes + trace(-20), primary(divide)),
-        (70, shapes + trace(-20), primary(fragile)),
+        (0, shapes + trace("divided", -22), ""),
+        (70, shapes + trace(-22), primary(divide)),
+        (70, shapes + trace(-22), primary(fragile)),
         (70, shapes, double),
     ]
     return {fixture.stem: [(tuple(["case"] * index), result)

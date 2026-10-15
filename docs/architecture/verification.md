@@ -6479,7 +6479,8 @@ default, or a plain payload field whose default constructor is constrained
 away. Consuming members drop the receiver whole or move the payload out. Their
 results are discarded, bound, returned directly, wrapped in `expected`, stored
 by a member initializer, and selected in conditional arms, a loop and a generic
-caller. Each receiver is destroyed once, at the end of the full expression that
+caller, and a lambda body and a destructor body consume owners of their own.
+Each receiver is destroyed once, at the end of the full expression that
 consumed it. A failing consuming call and a failing payload destructor each
 destroy the receiver once before the unmoved bindings, and a payload destructor
 that fails again during that cleanup reports the secondary failure.
