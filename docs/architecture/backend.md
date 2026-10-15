@@ -3733,8 +3733,11 @@ the consumer moves from the slot and retires its passive representation.
 Unused passive constructor tags retain their exact
 lexical cleanup without preventing other fields' verified initialization.
 
-A borrowed bare-local call input may remain representation-erased across a
-conditional scalar or text-view argument. Its stage must dominate the unique
+A borrowed call input may remain representation-erased across a conditional
+scalar or text-view argument when it names a bare local, a binding-rooted path
+of field selections and reference dereferences, the exact full-expression slot
+of a temporary, or a field view inside an owned result's slot. Its stage must
+dominate the unique
 consuming call, and every normal path through the acyclic argument region must
 reach that call. Scalar and text-view computations, loads, input stages and
 expression temporaries may intervene. A nested function or method call may run
@@ -3760,6 +3763,20 @@ moved or copied into its exact prepared argument slot. The outer and nested
 calls share one prepared-slot proof: the slot's activation, its sole
 TransferOut to the consuming call, and a Drop of the slot on every failure edge
 between preparation and that call. No prepared slot is the borrowed place.
+A nested call's receiver or read-only reference argument may also be a class
+object created in the region, such as `make(2)` in
+`use(make(1), skip || make(2).ready())`. A function or constructor call
+materializes it in its own full-expression slot: the value-rooted lifetime
+slot or, in a conditional arm or `&&`/`||` operand, the CFG-promoted hidden
+slot. The direct-temporary proof that spells such a borrow owns the slot's
+activation, the stage borrowing it, and its drop at the end of the full
+expression, after the outer call and conditional when the operand may be
+skipped. The producer keeps its MIR position and its own Invoke failure edge
+unless it cannot fail. Its only lifecycle effect is that slot's activation,
+its inputs are those of a nested call without owning arguments, and its
+receiver, if any, is read-borrowed. An argument borrow's call-argument loan
+may end inside the region, but the borrowed input's own loan may not. No such
+slot is the borrowed place.
 Whether the receiver is a method object or a local lambda does not change
 this proof. Other user-call shapes, other owning transfers, raw memory, loans,
 and arbitrary stores remain outside this proof. Thus the deferred local
