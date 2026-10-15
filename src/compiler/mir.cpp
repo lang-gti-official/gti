@@ -638,6 +638,8 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                  instruction.hirValue == sourceValue &&
                  (instruction.kind == MirInstructionKind::Call ||
                   instruction.kind == MirInstructionKind::Construct ||
+                  (instruction.kind == MirInstructionKind::Compute &&
+                   instruction.operation == MirOperation::PayloadConstruct) ||
                   (place.root == MirPlaceRootKind::Temporary &&
                    (instruction.kind == MirInstructionKind::Move ||
                     instruction.kind == MirInstructionKind::Load) &&
@@ -6803,8 +6805,11 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   if (directInitializationResult) {
     return true;
   }
+  // A result that arms an obligation on the success edge is published only
+  // there, whether it owns cleanup or is a passive value materialized in a
+  // temporary slot for a borrow, such as a cleanup-free payload enum.
   if (instruction.successResultDrop) {
-    return instruction.info.traits.drop == DropKind::Lexical;
+    return true;
   }
   // Expected<passive, E> crosses the transformed failure boundary through a
   // value out-parameter. It therefore has no semantic result drop to arm:
@@ -9968,7 +9973,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           input.info.type.kind != SemanticType::Reference ||
           input.info.type.referenceAccess != AccessMode::ReadOnly ||
           input.info.type.arguments.size() != 1 ||
-          input.info.type.arguments.front().kind != SemanticType::Class ||
+          (input.info.type.arguments.front().kind != SemanticType::Class &&
+           input.info.type.arguments.front().kind != SemanticType::Enum) ||
           input.info.category != ValueCategory::Value ||
           operand.kind != MirOperandKind::BorrowRead ||
           operand.type != input.info.type) {
@@ -9995,6 +10001,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !producer->lambdaTarget && !producer->bodyTarget &&
           !producer->callableInvocation &&
           producer->intrinsic == IntrinsicKind::None;
+      // A payload enum's alternative is its ordinary construction.
+      const bool payloadConstruction =
+          producer != nullptr &&
+          producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::PayloadConstruct &&
+          referent.kind == SemanticType::Enum;
       if (place == nullptr || source == nullptr || producer == nullptr ||
           loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||
@@ -10014,7 +10026,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->info.category != ValueCategory::Value ||
           producer->info.traits.containsBorrowedState ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
-          (!ordinaryConstruction && !ordinaryCall)) {
+          (!ordinaryConstruction && !ordinaryCall && !payloadConstruction)) {
         return false;
       }
 
@@ -10772,7 +10784,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           (source->root != MirPlaceRootKind::Value &&
            (!receiver || source->root != MirPlaceRootKind::Temporary)) ||
           !source->projections.empty() ||
-          source->type.kind != SemanticType::Class ||
+          (source->type.kind != SemanticType::Class &&
+           (receiver || source->type.kind != SemanticType::Enum)) ||
           source->access != AccessMode::Mutable ||
           source->traits.containsBorrowedState != receiver ||
           (!receiver && loan.storedDependency != 0)) {
