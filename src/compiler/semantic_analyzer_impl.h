@@ -1644,6 +1644,18 @@ private:
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
 
+  // The compatibility walker has no conversion rule: a value that an implicit
+  // constructor or conversion operator converts, for a declaration or a
+  // return, executes only through the staged verified-MIR profile.
+  [[nodiscard]] static ConstexprEvaluation
+  constexprConversionFailure(const Expr &converted) {
+    return constexprFailure(
+        expressionToken(converted),
+        ConstantEvaluationFailure::UnsupportedExpression,
+        "An implicitly converted value requires the verified MIR "
+        "constant-evaluation profile.");
+  }
+
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
           &target,

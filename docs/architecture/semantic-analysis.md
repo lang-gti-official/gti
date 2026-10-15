@@ -159,6 +159,11 @@ wraps in the `Move`. A borrowing path, an ineligible operand and an
 ambiguity select on the place exactly as the declaration does. The probe's
 diagnostics are discarded because the selection repeats any it reports.
 
+The legacy constexpr walker refuses a contextually converted declaration
+initializer, field initializer or returned value
+(`constexprConversionFailure`); the staged verified-MIR profile executes the
+selected call instead.
+
 Prefix `?` uses the same function for its residual. `selectResidualReturn`
 synthesizes a stand-in literal, located at `?` and recorded as a fresh
 `Value` of the residual type, runs `analyzeReturnConversion` on it, and moves

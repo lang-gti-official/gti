@@ -11590,6 +11590,10 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
           ConstantEvaluationFailure::UnsupportedExpression,
           "Every field of a constexpr aggregate must be initialized.");
     }
+    if (recordsDeclarationConversion(*initializerExpression)) {
+      restore();
+      return constexprConversionFailure(*initializerExpression);
+    }
     ConstexprEvaluation initializer =
         evaluateConstexprExpression(*initializerExpression, context);
     if (!initializer) {
@@ -12553,6 +12557,10 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
     ConstexprLocalValue value;
     if (binding->constant) {
       value = *binding->constant;
+    } else if (declaration->initializer() &&
+               recordsDeclarationConversion(*declaration->initializer())) {
+      return constexprStatementFailure(
+          constexprConversionFailure(*declaration->initializer()));
     } else if (declaration->initializer()) {
       ConstexprEvaluation initializer =
           evaluateConstexprExpression(declaration->initializer(), context);
@@ -12587,6 +12595,10 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
           constexprFailure(returnStatement->keyword(),
                            ConstantEvaluationFailure::UnsupportedExpression,
                            "A scalar constexpr function must return a value."));
+    }
+    if (recordsDeclarationConversion(*returnStatement->value())) {
+      return constexprStatementFailure(
+          constexprConversionFailure(*returnStatement->value()));
     }
     ConstexprEvaluation value =
         evaluateConstexprExpression(returnStatement->value(), context);

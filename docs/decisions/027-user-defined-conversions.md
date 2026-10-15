@@ -132,8 +132,9 @@ returned its residual through an implicit constructor (ADR 029).
    evaluates at compile time exactly where the declaration form does: the
    selected constructor or operator must itself be `constexpr`, and the
    staged verified-MIR evaluator executes it as the ordinary call it is. The
-   legacy AST evaluator has no conversion rule; it rejects a result whose
-   type differs from the declared one instead of converting it.
+   legacy AST evaluator has no conversion rule: it refuses an implicitly
+   converted value, a declaration's or a return's, rather than pass an
+   unconverted aggregate on, so the conversion keeps one execution rule.
 5. **Execution.** Semantics records the selection on the returned
    expression, in the same contextual construction or conversion record a
    declaration's initializer uses, and an implicit move as ADR 023's fact.
