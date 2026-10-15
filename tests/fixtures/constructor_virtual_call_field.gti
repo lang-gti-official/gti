@@ -1,0 +1,219 @@
+#include <std/string>
+#include <std/vector>
+
+// A virtual member call's owning result initializes a constructor field. A
+// virtual method returning an owning class is never proved failure-free, so
+// the call reaches its family through the transformed status ABI even when no
+// override can fail. The success edge publishes the result into the field; a
+// failing override publishes nothing, and a later initializer's failure rolls
+// the published field back.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// No member of this family fails.
+class Maker {
+public:
+  virtual Tracked make() { return Tracked(1); }
+};
+
+class Doubling : public Maker {
+public:
+  Tracked make() override { return Tracked(2); }
+};
+
+class Tripling : public Maker {
+public:
+  Tracked make() override { return Tracked(3); }
+};
+
+Tripling shared_maker{};
+
+// The base member cannot fail; its override can.
+class Source {
+public:
+  virtual Tracked split(int divisor) { return Tracked(3); }
+};
+
+class Dividing : public Source {
+  int base;
+public:
+  Dividing(int base) : base(base) {}
+  Tracked split(int divisor) override { return Tracked(this.base / divisor); }
+};
+
+class Halving : public Dividing {
+public:
+  Halving() : Dividing(0) {}
+  Tracked split(int divisor) override { return Tracked(30 / divisor); }
+};
+
+// An interface contract root, called through a mutable receiver.
+interface Factory {
+  Tracked build(int divisor) mut;
+};
+
+class Counting : public Factory {
+  mut int next;
+public:
+  Counting(int start) : next(start) {}
+  Tracked build(int divisor) mut override {
+    this.next += 1;
+    return Tracked(this.next / divisor);
+  }
+};
+
+// A consuming virtual member.
+class Box {
+  mut Tracked item;
+public:
+  Box(int value) : item(Tracked(value)) {}
+  virtual Tracked release() && { return std::move(this.item); }
+};
+
+// A cleanup-free receiver moved out of a variable is a prepared input that the
+// call transfers to the consuming virtual member.
+class Ticket {
+  int number;
+public:
+  Ticket(int number) : number(number) {}
+  virtual Tracked redeem() && { return Tracked(this.number); }
+};
+
+class Store<T> {
+  mut T item;
+public:
+  Store(T item) : item(std::move(item)) {}
+  virtual T take() && { return std::move(this.item); }
+};
+
+class Made {
+  mut Tracked kept;
+public:
+  Made(Maker& maker) : kept(maker.make()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Split {
+  mut Tracked kept;
+public:
+  Split(Source& source, int divisor) : kept(source.split(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
+// The selected member is itself an override; dispatch starts below the root.
+class Narrowed {
+  mut Tracked kept;
+public:
+  Narrowed(Dividing& source, int divisor) : kept(source.split(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
+class Built {
+  mut Tracked kept;
+public:
+  Built(mut Factory& factory, int divisor) : kept(factory.build(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
+class Taken {
+  mut Tracked kept;
+public:
+  Taken(Box box) : kept(std::move(box).release()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Fresh {
+  mut Tracked kept;
+public:
+  Fresh(int value) : kept(Box(value).release()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Redeemed {
+  mut Tracked kept;
+public:
+  Redeemed(Ticket ticket) : kept(std::move(ticket).redeem()) {}
+  int read() { return this.kept.read(); }
+};
+
+class Keeper<T> {
+  mut T kept;
+public:
+  Keeper(Store<T> store) : kept(std::move(store).take()) {}
+};
+
+// A declaration default runs as the selected constructor's initializer stage.
+class Defaulted {
+  mut Tracked kept = shared_maker.make();
+public:
+  Defaulted() {}
+  int read() { return this.kept.read(); }
+};
+
+// The second initializer can fail after the first virtual result was
+// published into its field.
+class Pair {
+  mut Tracked first;
+  mut Tracked second;
+public:
+  Pair(Maker& maker, Source& source, int divisor)
+      : first(maker.make()), second(source.split(divisor)) {}
+  int read() { return this.first.read() + this.second.read(); }
+};
+
+bool has(std::vector<std::string>& argv, std::string_view flag) {
+  for (std::string& item : argv) {
+    if (item == flag) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int build = has(argv, "build") ? 0 : 1;
+  int split_divisor = has(argv, "split") ? 0 : 2;
+  int later = has(argv, "later") ? 0 : 3;
+  mut int total = 0;
+  {
+    Maker maker{};
+    Made base{maker};
+    Doubling doubling{};
+    Made derived{doubling};
+    total += base.read() + derived.read();
+  }
+  {
+    mut Counting counting{4};
+    Built built{counting, build};
+    total += built.read();
+  }
+  {
+    Taken taken{Box(6)};
+    Fresh fresh{7};
+    Redeemed redeemed{Ticket(11)};
+    total += taken.read() + fresh.read() + redeemed.read();
+  }
+  {
+    Keeper<Tracked> keeper{Store<Tracked>(Tracked(8))};
+  }
+  {
+    Halving halving{};
+    Narrowed narrowed{halving, 3};
+    total += narrowed.read();
+  }
+  {
+    Defaulted defaulted{};
+    total += defaulted.read();
+  }
+  Dividing dividing{18};
+  Split split{dividing, split_divisor};
+  Maker maker{};
+  Pair pair{maker, dividing, later};
+  std::println("kept");
+  return total + split.read() + pair.read() - 61;
+}

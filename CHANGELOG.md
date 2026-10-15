@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.439.1 — Virtual method calls in constructor member initializers
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a constructor's member initializer
+  stores the result of a `virtual` method call and the result's class needs
+  cleanup, such as `Holder(Maker& maker) : kept(maker.make()) {}`. This covers
+  overrides selected through a base or interface reference, pure-virtual and
+  interface methods, `mut` and consuming (`&&`) virtual methods, generic
+  classes, and field defaults such as `Tracked kept = shared_maker.make();`.
+  If the selected override fails, the field is never initialized; if a later
+  member initializer fails, the field is destroyed before the failure
+  propagates.
+- Calling a non-consuming `virtual` method on a temporary, such as
+  `Tracked t = Maker().make();`, `kept(Maker().make())` or the field default
+  `Tracked kept = Maker().make();`, still stops with this error.
+
 ## 0.439.0 — A source-defined optional
 
 - `<std/experimental/optional>` adds `std::experimental::optional<T>`, written
