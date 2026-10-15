@@ -426,7 +426,16 @@ SignaturePrinter::binding(const SemanticOccurrence &occurrence) const {
   if (occurrence.mutableBinding && !typeCarriesMutability) {
     prefix += "mut ";
   }
-  return prefix + types.print(occurrence.type) + " " + occurrence.name;
+  std::string result =
+      prefix + types.print(occurrence.type) + " " + occurrence.name;
+  if (const auto *storage = semantics.findForeignStorage(occurrence.symbol)) {
+    result = "extern \"C\" { " +
+             (storage->externalSymbol != occurrence.name
+                  ? "[[link_name(\"" + storage->externalSymbol + "\")]] "
+                  : std::string()) +
+             result + "; }";
+  }
+  return result;
 }
 
 [[nodiscard]] std::string
@@ -858,6 +867,11 @@ public:
             "instance");
       } else {
         result.signature = signatures.binding(*occurrence);
+        if (semantics.findForeignStorage(occurrence->symbol) != nullptr) {
+          result.notes.emplace_back(
+              "Foreign storage: reads and writes require unsafe; address "
+              "formation does not certify lifetime or initialization.");
+        }
       }
       break;
     }
@@ -925,6 +939,18 @@ public:
       default:
         if (symbol->type != SemanticType::Unknown) {
           result.signature = types.print(symbol->type) + " " + symbol->name;
+          if (const auto *storage = semantics.findForeignStorage(symbol->id)) {
+            result.signature =
+                "extern \"C\" { " +
+                (storage->externalSymbol != symbol->name
+                     ? "[[link_name(\"" + storage->externalSymbol + "\")]] "
+                     : std::string()) +
+                (storage->access == AccessMode::Mutable ? "mut " : "") +
+                result.signature + "; }";
+            result.notes.emplace_back(
+                "Foreign storage: reads and writes require unsafe; address "
+                "formation does not certify lifetime or initialization.");
+          }
         }
         break;
       }

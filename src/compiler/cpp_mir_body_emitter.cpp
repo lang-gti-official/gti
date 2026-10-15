@@ -39136,9 +39136,21 @@ private:
       const MirPlace *source =
           facts.body.findPlace(instruction.operands.front().place);
       if (source != nullptr && source->root == MirPlaceRootKind::Symbol) {
-        output << "__gti_mir_v_" << *instruction.result << " = ";
-        emitPlaceExpression(facts, *source);
-        output << ";\n";
+        if (source->type.kind == SemanticType::RawPointer &&
+            program.findForeignStorage(source->symbol) != nullptr) {
+          // The external object is a native pointer slot, while an SSA raw
+          // address is the inert carrier. Copy slot bytes through the shared
+          // native-slot operation without evaluating the stored pointer.
+          output
+              << "::gti_internal::backend::raw_pointer_slot_copy(__gti_mir_v_"
+              << *instruction.result << ", ";
+          emitPlaceExpression(facts, *source);
+          output << ");\n";
+        } else {
+          output << "__gti_mir_v_" << *instruction.result << " = ";
+          emitPlaceExpression(facts, *source);
+          output << ";\n";
+        }
         return;
       }
       if (source != nullptr) {

@@ -50,8 +50,8 @@ struct BindingOptions {
   std::vector<BindingNamePattern> allow;
   // Matching declarations are never emitted; deny wins over allow.
   std::vector<BindingNamePattern> deny;
-  // C name to GTI source name. Functions retain their native symbol through
-  // `[[link_name("...")]]` when the two spellings differ.
+  // C name to GTI source name. Functions and variables retain their native
+  // symbol through `[[link_name("...")]]` when the two spellings differ.
   std::map<std::string, std::string> renames;
   // Functions whose result is borrowed array storage counted through an out
   // parameter.
@@ -77,6 +77,8 @@ enum class BindingItemKind {
   Constant,
   // One extern "C" declaration.
   Function,
+  // Declaration of externally owned C storage; no initializer or definition.
+  Variable,
   // Anything the bounded surface cannot express, with its reason.
   Skipped,
 };
@@ -95,6 +97,7 @@ struct BindingConstant {
 struct BindingField {
   std::string name;
   std::string spelling;
+  bool mutableField = true;
 };
 
 struct BindingItem {
@@ -105,7 +108,9 @@ struct BindingItem {
   std::vector<BindingField> fields;
   // Enum.
   std::vector<BindingConstant> constants;
-  // Alias, enum-compatible integer, or the GTI scalar type of a Constant.
+  // Variable binding mutability (independent of pointer pointee constness).
+  bool mutableVariable = false;
+  // Alias, enum-compatible integer, Constant type, or Variable object type.
   std::string aliasSpelling;
   // Callback / Function.
   std::string resultSpelling;
@@ -122,8 +127,8 @@ struct BindingItem {
   // Function: the validated `[[c_array(count)]]` count parameter, empty when
   // the function declares no array-return contract.
   std::string arrayCountParameter;
-  // Function: the exact C link symbol when `name` is a different GTI source
-  // spelling, empty when both names are identical.
+  // Function/Variable: the exact C link symbol when `name` is a different GTI
+  // source spelling, empty when both names are identical.
   std::string linkName;
   // Opaque degradation note or skip reason.
   std::string reason;

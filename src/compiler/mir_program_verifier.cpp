@@ -11420,6 +11420,60 @@ verifyMirProgramContracts(const MirProgram &program) {
         "library MIR retains hosted startup or process-lifetime callbacks");
   }
 
+  const auto validForeignType = [&](const auto &self, const SemanticType &type,
+                                    bool pointee = false) -> bool {
+    switch (type.kind) {
+    case SemanticType::Bool:
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+      return true;
+    case SemanticType::Void:
+      return pointee;
+    case SemanticType::NativeFunction:
+      return type.hasNativeFunctionShape();
+    case SemanticType::RawPointer:
+      return type.arguments.size() == 1 &&
+             self(self, type.arguments.front(), true);
+    case SemanticType::Class:
+      for (const auto &instance : program.classInstances())
+        if (instance.type == type)
+          return (pointee && instance.cOpaqueHandle) ||
+                 (instance.cAbiRecord && instance.cAbiLayout &&
+                  !instance.requiresActiveCleanup &&
+                  !instance.requiresActiveDropState);
+      return false;
+    default:
+      return false;
+    }
+  };
+  std::unordered_set<SymbolId> foreignSymbols;
+  std::unordered_set<std::string> foreignNames;
+  for (const auto &storage : program.foreignStorageDeclarations()) {
+    if (storage.symbol == 0 || storage.externalSymbol.empty() ||
+        !foreignSymbols.insert(storage.symbol).second ||
+        !foreignNames.insert(storage.externalSymbol).second ||
+        !validForeignType(validForeignType, storage.type))
+      result.errors.push_back(
+          {.message = "invalid or duplicate MIR foreign storage declaration"});
+    for (const auto &step : program.programInitializationPlan().steps)
+      if (step.symbol == storage.symbol)
+        result.errors.push_back(
+            {.message = "foreign storage has a GTI initialization obligation"});
+    for (const auto &function : program.functionInstances())
+      if (function.linkage == LanguageLinkage::C &&
+          function.externalSymbol == storage.externalSymbol)
+        result.errors.push_back(
+            {.message =
+                 "foreign storage symbol collides with a native function"});
+  }
   const FailureOriginAssignmentLookup failureOrigins(program.failureMetadata());
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     const auto verifyStorageType = [&](const SemanticType &type) {
@@ -11430,8 +11484,70 @@ verifyMirProgramContracts(const MirProgram &program) {
              .message = "compiler-owned storage payload retains borrowed state "
                         "without an owner-dependency contract"});
     };
-    for (const auto &place : body.places)
+    const auto foreignError = [&](std::string message) {
+      result.errors.push_back({.bodyKind = body.kind,
+                               .owner = owner,
+                               .message = std::move(message)});
+    };
+    for (const auto &place : body.places) {
       verifyStorageType(place.type);
+      const auto *storage =
+          place.root == MirPlaceRootKind::Symbol && place.capture == 0
+              ? program.findForeignStorage(place.symbol)
+              : nullptr;
+      if (place.foreignStorage != (storage != nullptr))
+        foreignError(
+            "MIR place has missing or forged foreign storage identity");
+      if (storage != nullptr &&
+          (!place.initiallyAvailable || place.binding != 0 ||
+           (place.projections.empty() && place.type != storage->type) ||
+           (storage->access == AccessMode::ReadOnly &&
+            place.access == AccessMode::Mutable)))
+        foreignError(
+            "MIR foreign storage place has invalid type, access, or lifetime");
+    }
+    const auto foreignPlace = [&](MirPlaceId id) {
+      const auto *place = body.findPlace(id);
+      return place != nullptr && place->foreignStorage;
+    };
+    for (const auto &loan : body.loans) {
+      if (foreignPlace(loan.source) ||
+          std::any_of(loan.additionalDependencies.begin(),
+                      loan.additionalDependencies.end(),
+                      [&](const auto &dependency) {
+                        return foreignPlace(dependency.source);
+                      }))
+        foreignError("foreign storage cannot supply a checked owner loan");
+    }
+    for (const auto &drop : body.dropObligations)
+      if (foreignPlace(drop.place))
+        foreignError("foreign storage cannot have a GTI drop obligation");
+    for (const auto &block : body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        const bool foreignDestination =
+            instruction.destination && foreignPlace(*instruction.destination);
+        const bool foreignRead =
+            std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(), [&](const auto &operand) {
+                          return operand.kind != MirOperandKind::Address &&
+                                 foreignPlace(operand.place);
+                        });
+        if ((foreignDestination || foreignRead) && !instruction.rawMemoryAccess)
+          foreignError("foreign storage access lacks unknown-memory effects");
+        if (foreignDestination) {
+          const auto *place = body.findPlace(*instruction.destination);
+          if (place->access != AccessMode::Mutable ||
+              (instruction.kind != MirInstructionKind::Assign &&
+               instruction.kind != MirInstructionKind::Modify))
+            foreignError(
+                "foreign storage has an invalid write or initialization");
+          if (instruction.unsafeOperation == UnsafeOperationKind::None)
+            foreignError("foreign storage write lacks an unsafe operation");
+        }
+      }
+    }
     for (const auto &value : body.values)
       verifyStorageType(value.info.type);
     verifyStorageType(body.returnType);
