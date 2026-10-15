@@ -155,7 +155,8 @@
     "155-conversion-operators.gti": 132,
     "156-borrowing-callbacks.gti": 68,
     "157-protocol-concepts.gti": 139,
-    "158-multi-parameter-concepts.gti": 135
+    "158-multi-parameter-concepts.gti": 135,
+    "159-consuming-matches.gti": 237
   },
-  "total": 17250
+  "total": 17487
 }
