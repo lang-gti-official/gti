@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.3 — Class results of lambda calls
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a lambda call returns a class without a
+  default constructor and the result is used other than to initialize a
+  variable: reading a field, as in `make(1).id`, passing it by value to a
+  function or constructor, as in `take(make(2))` or `Holder h{make(3)}`,
+  assigning it to an existing variable, discarding it, or using it in a
+  constructor's member initializer. This covers capturing lambdas, lambdas
+  called more than once and classes with a destructor, which is still run
+  exactly once, including when a later argument of the same call fails.
+- Fix the same error for a lambda that is never called when its body passes a
+  temporary that cannot be copied, or whose class has a destructor, by value
+  to a constructor, as in `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
+
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while
