@@ -9289,12 +9289,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  instruction.operands.size();
     case MirOperation::PayloadConstruct:
       return instruction.enumOwner && instruction.enumVariant &&
-             !instruction.payloadIndex &&
+             !instruction.payloadIndex && !instruction.payloadExtractionKind &&
              resultType.kind == SemanticType::Enum &&
              resultType.enumId == *instruction.enumOwner;
     case MirOperation::PayloadExtract:
       return instruction.enumOwner && instruction.enumVariant &&
-             instruction.payloadIndex && instruction.operands.size() == 1 &&
+             instruction.payloadIndex && instruction.payloadExtractionKind &&
+             instruction.operands.size() == 1 &&
              instruction.operands.front().type.kind == SemanticType::Enum &&
              instruction.operands.front().type.enumId == *instruction.enumOwner;
     default:
@@ -9304,6 +9305,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const auto validInstructionShape = [&](const MirInstruction &instruction) {
     if (instruction.tombstone) {
       return instruction == makeMirInstructionTombstone(instruction);
+    }
+    if (instruction.payloadExtractionKind &&
+        (instruction.kind != MirInstructionKind::Compute ||
+         instruction.operation != MirOperation::PayloadExtract)) {
+      return false;
     }
     if (instruction.destination &&
         (instruction.kind == MirInstructionKind::Assign ||

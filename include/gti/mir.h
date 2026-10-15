@@ -742,6 +742,7 @@ struct MirInstruction {
   std::optional<EnumConstant> enumValue;
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
+  std::optional<PayloadExtractionKind> payloadExtractionKind;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   // Concrete queried representation; only ObjectSize/ObjectAlignment may
   // carry this field. It is not a runtime argument or a borrow origin.

@@ -1048,11 +1048,43 @@ struct ResolvedPayloadConstructionInfo {
   std::vector<SemanticType> parameterTypes;
 };
 
+// The pattern selects ownership/borrowing semantics before HIR. A stored
+// reference designates an external object; extracting it must never move that
+// object or reinterpret the reference as borrowing the carrier's own storage.
+enum class PayloadExtractionKind {
+  CopyValue,
+  MoveValue,
+  BorrowValue,
+  CopyReference,
+  TransferReference,
+  ReborrowReference,
+};
+
+[[nodiscard]] constexpr bool
+isStoredReferenceExtraction(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::CopyReference ||
+         kind == PayloadExtractionKind::TransferReference ||
+         kind == PayloadExtractionKind::ReborrowReference;
+}
+
+[[nodiscard]] constexpr bool
+isConsumingPayloadExtraction(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::MoveValue ||
+         kind == PayloadExtractionKind::TransferReference;
+}
+
+[[nodiscard]] constexpr bool
+isReferencePayloadBinding(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::BorrowValue ||
+         isStoredReferenceExtraction(kind);
+}
+
 struct PayloadBindingInfo {
   const Token *name = nullptr;
   const Expr *source = nullptr;
   BindingInfo binding;
   std::size_t payloadIndex = 0;
+  PayloadExtractionKind extractionKind = PayloadExtractionKind::CopyValue;
 };
 
 struct ResolvedPayloadPatternInfo {

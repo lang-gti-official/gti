@@ -9704,21 +9704,22 @@ private:
       }
     }
 
-    MirInstruction instruction{.kind = MirInstructionKind::Compute,
-                               .hirValue = value->id,
-                               .operation = computeOperation(*value),
-                               .literal = value->literal,
-                               .enumOwner = value->enumOwner,
-                               .enumValue = value->enumValue,
-                               .enumVariant = value->enumVariant,
-                               .payloadIndex = value->payloadIndex,
-                               .intrinsic = value->intrinsic,
-                               .definedFailure = value->definedFailure,
-                               .functionTarget = value->functionTarget,
-                               .nativeCallbackAdapter =
-                                   value->nativeCallbackAdapter,
-                               .lambdaTarget = value->lambdaTarget,
-                               .info = value->info};
+    MirInstruction instruction{
+        .kind = MirInstructionKind::Compute,
+        .hirValue = value->id,
+        .operation = computeOperation(*value),
+        .literal = value->literal,
+        .enumOwner = value->enumOwner,
+        .enumValue = value->enumValue,
+        .enumVariant = value->enumVariant,
+        .payloadIndex = value->payloadIndex,
+        .payloadExtractionKind = value->payloadExtractionKind,
+        .intrinsic = value->intrinsic,
+        .definedFailure = value->definedFailure,
+        .functionTarget = value->functionTarget,
+        .nativeCallbackAdapter = value->nativeCallbackAdapter,
+        .lambdaTarget = value->lambdaTarget,
+        .info = value->info};
     if (instruction.operation == MirOperation::Literal) {
       instruction.literalProvenance.kind = MirLiteralProvenanceKind::Source;
     }
@@ -12671,6 +12672,8 @@ private:
                              .enumOwner = extraction->enumOwner,
                              .enumVariant = extraction->enumVariant,
                              .payloadIndex = extraction->payloadIndex,
+                             .payloadExtractionKind =
+                                 extraction->payloadExtractionKind,
                              .info = extraction->info};
       extract.operands.push_back({.kind = MirOperandKind::Move,
                                   .place = consumed.place,
