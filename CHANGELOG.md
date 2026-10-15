@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.443.0 — Conformance blocks for `expected`, pointers and arrays
+
+- A conformance block's pattern may apply `expected`, a raw pointer or a
+  fixed-length array to the block's parameters, as it applies a class or
+  enum template: `for <T, E> concept C<expected<T, E>>`,
+  `for <T> concept C<T*>`, `for <T> concept C<T[3]>`. `T*` and `const T*`,
+  and arrays of different lengths, are different patterns. No package owns
+  these types, so only the concept's package can declare such a block.
+- A conformance block's function can no longer declare default arguments.
+  The concept's operation has none, so a concrete call and a call through a
+  requirement accept the same arguments.
+- `C<X>::name` for a concrete `X` now checks the selected block's
+  constraints, as `requires C<X>` does: `collection<Box<double>>::element_type`
+  is rejected when the block requires `std::integral T`.
+
 ## 0.441.0 — `?` on payload enums
 
 - `?` works directly on a payload enum that has a `std::tryable` block, such

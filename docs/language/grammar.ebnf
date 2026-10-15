@@ -215,13 +215,14 @@ conformance-declaration
 conformance-member     = type-alias-declaration
                        | function-declaration ;
 (* A conformance block appears at namespace scope. It gives one pattern per
-   concept parameter: a concrete type, or one class template applied to block
+   concept parameter: a concrete type, or one class or enum template,
+   `expected`, pointer or fixed-length array type applied to block
    parameters. Every block parameter appears in some pattern, and a repeated
    parameter binds one type. It defines each associated type with a type
    alias and each
    operation with a function body; the block's parameters and concept
    application apply to every function, which therefore declares no generic
-   parameters or requires clause of its own. A projection
+   parameters, requires clause or default argument of its own. A projection
    `Concept<Type>::name` is a qualified type, and `Concept<Type>::operation`
    is a call target. *)
 
