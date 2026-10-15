@@ -179,6 +179,25 @@ constexpr Status constant() {
 int main() { return 0; }
 )gti",
            "GTI-S2086", "constexpr function");
+  rejected(types + R"gti(
+enum class Parse {
+  ok(int value),
+  failed(int code),
+};
+for concept std::tryable<Parse> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Parse& parse) { return true; }
+  int take_value(Parse parse) { return 1; }
+  Rejected take_residual(Parse parse) { return Rejected(1); }
+};
+Status enumerated() {
+  int value = ?Parse::ok(1);
+  return Status(value);
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2086", "class or struct operand");
   // Built-in expected keeps its own rule.
   rejected(types + R"gti(
 expected<int, int> load() { return 1; }

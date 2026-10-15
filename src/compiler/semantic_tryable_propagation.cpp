@@ -217,6 +217,16 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                              "named move-only operand explicitly.");
   }
 
+  // The propagation plan stages a class operand's temporary or place; other
+  // operand kinds, such as payload enums, are a later slice.
+  if (!containsOpenTypeParameter(operandType) &&
+      operandType.kind != SemanticType::Class) {
+    return reject("Error propagation through 'std::tryable' currently needs "
+                  "a class or struct operand, but received '" +
+                      operand + "'.",
+                  "Wrap the value in a class or struct and give that type "
+                  "the 'std::tryable' block.");
+  }
   const std::vector<SemanticType> arguments{operandType};
   if (containsOpenTypeParameter(operandType)) {
     // Each concrete instance resolves the block and checks the return.

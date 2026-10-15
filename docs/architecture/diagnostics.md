@@ -952,7 +952,8 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   - an enclosing callable without a declared return type, or a `void` one;
   - a return type that is neither the residual type nor constructible from it
     through exactly one `implicit` constructor;
-  - use in a constexpr function.
+  - use in a constexpr function;
+  - an operand that is not a class or struct, such as a payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has
   proved a defining include. Preserve the unresolved source-name span and
   message, add the verified include hints and zero-width edits. The same rule
