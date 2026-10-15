@@ -39,6 +39,12 @@ public:
   Tracked split(int divisor) override { return Tracked(this.base / divisor); }
 };
 
+class Halving : public Dividing {
+public:
+  Halving() : Dividing(0) {}
+  Tracked split(int divisor) override { return Tracked(30 / divisor); }
+};
+
 // An interface contract root, called through a mutable receiver.
 interface Factory {
   Tracked build(int divisor) mut;
@@ -80,6 +86,14 @@ class Split {
   mut Tracked kept;
 public:
   Split(Source& source, int divisor) : kept(source.split(divisor)) {}
+  int read() { return this.kept.read(); }
+};
+
+// The selected member is itself an override; dispatch starts below the root.
+class Narrowed {
+  mut Tracked kept;
+public:
+  Narrowed(Dividing& source, int divisor) : kept(source.split(divisor)) {}
   int read() { return this.kept.read(); }
 };
 
@@ -155,10 +169,15 @@ int main(int argc, std::vector<std::string> argv) {
   {
     Keeper<Tracked> keeper{Store<Tracked>(Tracked(8))};
   }
+  {
+    Halving halving{};
+    Narrowed narrowed{halving, 3};
+    total += narrowed.read();
+  }
   Dividing dividing{18};
   Split split{dividing, split_divisor};
   Maker maker{};
   Pair pair{maker, dividing, later};
   std::println("kept");
-  return total + split.read() + pair.read() - 37;
+  return total + split.read() + pair.read() - 47;
 }
