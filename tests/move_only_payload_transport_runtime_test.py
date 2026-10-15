@@ -17,9 +17,11 @@ released once.
 """
 
 import pathlib
+import subprocess
 import sys
 import tempfile
 
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 from shared_failure_cleanup_runtime_test import SITES, expected_report
 from unique_class_allocation_runtime_test import run
 
@@ -39,6 +41,13 @@ SITES["move_only_payload_transport.gti"] = {
 }
 
 
+def build(command, sanitized):
+    # GCC's sanitizer instrumentation of this whole-program translation unit
+    # can outlast an ordinary compile bound; see sanitizer_support.
+    return subprocess.run(command, capture_output=True, text=True,
+                          timeout=SANITIZED_BUILD_TIMEOUT if sanitized else 300)
+
+
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "move_only_payload_transport.gti"
@@ -50,7 +59,7 @@ def main():
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / f"move-only-payload-{name}"
             command = [str(compiler), str(source), *flags, "-o", str(binary), *native]
-            built = run(command)
+            built = build(command, sanitized=bool(native))
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for phase, code, trace, report in CASES:
                 result = run([str(binary), *(["phase"] * phase)])
