@@ -34,6 +34,21 @@ for what minor and patch releases mean.
   patterns over built-in types and origin contracts for its borrowed form
   ([ADR 029](docs/decisions/029-tryable-propagation.md)).
 
+## 0.435.1 — Constructors that move a lambda parameter into a field
+
+- Fix the internal compiler error `GTI-B0001` ("verified MIR body is outside
+  the complete C++ text vocabulary") when a generic class moves a lambda
+  parameter into a field and the constructor can fail afterwards, for example
+  `Keeper(F f) : callback(std::move(f)), seen(0) { this.seen = call(this.callback); }`,
+  or with a later member initializer that can fail, such as
+  `seen(call(...))`. Lambdas capturing numbers and lambdas capturing structs
+  both failed; copying the lambda (`callback(f)`) already worked.
+- The same fix covers moving an enum value with a payload into a field in a
+  constructor whose body can fail.
+- A lambda field that is moved after another member initializer that can
+  fail, or a lambda capturing a struct that cannot be copied, is still
+  rejected with `GTI-B0001`.
+
 ## 0.435.0 — Protocol concepts over several types
 
 - A concept with a body can now take several type parameters, so it can
