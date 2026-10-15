@@ -25,6 +25,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "payload_union",
       "payload_variant",
       "payload_get",
+      "mir_closed_enum_unreachable_v1",
       "payload_equal_v",
       "storage_",
       "tag_",
@@ -739,6 +740,18 @@ decltype(auto) payload_get(payload_variant<Values...> &&value) noexcept {
 template <std::size_t Index, typename... Values>
 decltype(auto) payload_get(const payload_variant<Values...> &&value) noexcept {
   return std::move(value.template get<Index>());
+}
+// Only the exact verified entry-boundary closed-domain proof may call this.
+// Ordinary MIR Unreachable and every source defined-failure path still abort
+// or propagate their original diagnostic; carrier shells are not this domain.
+[[noreturn]] inline void mir_closed_enum_unreachable_v1() noexcept {
+#if defined(__clang__) || defined(__GNUC__)
+  __builtin_unreachable();
+#elif defined(_MSC_VER)
+  __assume(false);
+#else
+  std::abort();
+#endif
 }
 // A union's implicit copy/move copies its object representation, rather than
 // evaluating its pointer member ([class.copy.ctor], [class.copy.assign]).
