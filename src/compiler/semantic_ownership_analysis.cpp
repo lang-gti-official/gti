@@ -1637,6 +1637,102 @@ auto SemanticVisitor::Impl::storedReferenceInventory(const SemanticType &type)
                                      StoredReferenceQuery::CompleteInventory);
 }
 
+auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
+    const SemanticType &type)
+    -> std::optional<std::vector<BorrowAlternativePath>> {
+  if (!storedReferenceInventory(type))
+    return std::nullopt;
+  std::vector<SemanticType> visiting;
+  const auto visit = [&](const auto &self, const SemanticType &current)
+      -> std::optional<std::vector<BorrowAlternativePath>> {
+    if (current.kind == SemanticType::Unknown ||
+        containsOpenTypeParameter(current))
+      return std::nullopt;
+    std::vector<BorrowAlternativePath> result;
+    if (current.kind == SemanticType::Reference)
+      return current.arguments.size() == 1 ? std::optional{std::move(result)}
+                                           : std::nullopt;
+    if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return std::nullopt;
+    visiting.push_back(current);
+    const auto appendChildren = [&](const SemanticType &child, SymbolId field,
+                                    const BorrowDependencyCondition *outer) {
+      if (!typeTraits(child).containsBorrowedState)
+        return true;
+      auto children = self(self, child);
+      if (!children || field == 0)
+        return false;
+      for (auto &path : *children) {
+        for (auto &condition : path.conditions)
+          condition.subobject.insert(condition.subobject.begin(), field);
+        if (outer != nullptr)
+          path.conditions.insert(path.conditions.begin(), *outer);
+        result.push_back(std::move(path));
+      }
+      return true;
+    };
+    bool complete = true;
+    if (current.kind == SemanticType::Enum) {
+      const auto enumeration = enumTypeFor(current);
+      complete = enumeration.has_value();
+      if (enumeration && enumeration->payload)
+        for (std::size_t index = 0; index < enumeration->enumerators.size();
+             ++index) {
+          const auto &variant = enumeration->enumerators[index];
+          const BorrowDependencyCondition outer{.enumeration = current,
+                                                .variant = index};
+          result.push_back({.conditions = {outer}});
+          if (variant.payloadTypes.size() != variant.payloadSymbols.size()) {
+            complete = false;
+            continue;
+          }
+          for (std::size_t field = 0; field < variant.payloadTypes.size();
+               ++field)
+            complete &= appendChildren(variant.payloadTypes[field],
+                                       variant.payloadSymbols[field], &outer);
+        }
+    } else if (typeTraits(current).containsBorrowedState) {
+      if (current.hasLambdaShape()) {
+        const auto *lambda = semanticModel.findLambda(current.lambdaId);
+        const auto captures = current.lambdaCaptureTypes();
+        complete = lambda != nullptr && lambda->declaration != nullptr &&
+                   lambda->declaration->captures().size() == captures.size();
+        if (complete)
+          for (std::size_t index = 0; index < captures.size(); ++index) {
+            const std::vector<StoredField> path{
+                &lambda->declaration->captures()[index]};
+            const auto fields = storedFieldSymbols(current, path);
+            complete &=
+                fields.size() == 1 &&
+                appendChildren(captures[index], fields.front(), nullptr);
+          }
+      } else if (const auto *owner = classInfo(current)) {
+        const auto substitution = classSubstitution(current);
+        for (const auto &field : owner->fields) {
+          if (field.declaration == nullptr)
+            continue;
+          const auto member =
+              owner->members.find(field.declaration->name().lexeme);
+          const std::vector<StoredField> path{field.declaration};
+          const auto fields = storedFieldSymbols(current, path);
+          if (member == owner->members.end() || fields.size() != 1) {
+            complete = false;
+            continue;
+          }
+          complete &= appendChildren(
+              substituteType(member->second.symbol.type, substitution),
+              fields.front(), nullptr);
+        }
+      } else {
+        complete = false;
+      }
+    }
+    visiting.pop_back();
+    return complete ? std::optional{std::move(result)} : std::nullopt;
+  };
+  return visit(visit, type);
+}
+
 auto SemanticVisitor::Impl::storedReferencePaths(const SemanticType &type) const
     -> std::vector<StoredReferencePath> {
   auto symbolic =

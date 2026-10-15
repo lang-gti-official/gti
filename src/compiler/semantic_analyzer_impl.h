@@ -1946,6 +1946,9 @@ private:
   [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
   storedReferenceInventory(const SemanticType &type) const;
 
+  [[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
+  storedBorrowAlternativeInventory(const SemanticType &type);
+
   enum class StoredReferenceQuery { SymbolicPaths, CompleteInventory };
   [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
   collectStoredReferencePaths(const SemanticType &type,
