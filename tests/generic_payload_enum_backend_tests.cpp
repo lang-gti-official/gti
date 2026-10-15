@@ -128,6 +128,25 @@ int main() {
   }
   expect(!lang::verifyLoweredProgram(badLowered).empty(),
          "sealed declarations reject a forged concrete enum identity");
+  for (const bool changeCleanup : {false, true}) {
+    auto changedCarrier = lowered;
+    for (auto &row :
+         lang::LoweredProgramTestAccess::declarations(changedCarrier)) {
+      if (auto *enumeration =
+              std::get_if<lang::LoweredEnumDeclaration>(&row.payload);
+          enumeration && enumeration->type == right.type) {
+        if (changeCleanup)
+          enumeration->requiresActiveCleanup =
+              !enumeration->requiresActiveCleanup;
+        else
+          enumeration->traits.copyable = !enumeration->traits.copyable;
+        break;
+      }
+    }
+    expect(!lang::verifyLoweredProgram(changedCarrier).empty(),
+           "tagged carrier selection cannot forge cleanup or native operation "
+           "availability independently of sealed MIR traits");
+  }
   auto rows =
       lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
   expect(rows.enums.size() == 2 && rows.enums[0].type != rows.enums[1].type,

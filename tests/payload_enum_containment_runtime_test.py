@@ -217,7 +217,7 @@ def main() -> int:
         enum_definition = generated.find("struct holder {")
         wrapper_definition = generated.find("class wrapper {")
         required = (
-            "std::variant<std::monostate",
+            "::gti_internal::backend::payload_variant<std::monostate",
             "std::move(__gti_mir_p_",
         )
         if (
@@ -241,7 +241,7 @@ def main() -> int:
         failure_cpp = emitted_failure.read_text(encoding="utf8")
         if (
             "mir_empty_state_v1<std::remove_cv_t<decltype(published)>>" not in failure_cpp
-            or "end transferred payload-enum field representation" not in failure_cpp
+            or "GTI MIR in-place payload-enum field reparent" not in failure_cpp
         ):
             sys.stderr.write(
                 "failure-form C++ lost the disengaged shell or exact field "

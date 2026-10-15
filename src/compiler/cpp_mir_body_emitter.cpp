@@ -130,7 +130,8 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
           *child.payloadVariant >= enumeration->variants.size())
         throw std::logic_error("MIR payload cleanup lost its field selection");
       const std::string alternative = std::to_string(*child.payloadVariant + 1);
-      std::string field = "std::get<" + alternative + ">(" + receiver +
+      std::string field = "::gti_internal::backend::payload_get<" +
+                          alternative + ">(" + receiver +
                           ".__gti_value).__gti_field_" +
                           std::to_string(*child.payloadField);
       if (cppRequiresBytePreservingTransport(program, child.type))
@@ -16744,6 +16745,7 @@ struct PayloadEnumConstructorFieldPublication {
   const MirPlace *field = nullptr;
   const MirDropObligation *valueDrop = nullptr;
   const MirDropObligation *fieldDrop = nullptr;
+  bool directConstruction = false;
 
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
@@ -16995,13 +16997,34 @@ payloadEnumConstructorFieldPublication(const MirProgram &program,
     return {};
   }
 
+  // A fresh alternative may be built in the final field rather than moved
+  // through a second native enum. Both instructions must be adjacent: no
+  // failure, observation or cleanup may see the field before its MIR Reparent.
+  // The checks above prove that its only previous native state is an empty
+  // constructor shell and that the result has exactly this one consumer.
+  bool directConstruction = false;
+  if (producer->kind == MirInstructionKind::Compute &&
+      producer->operation == MirOperation::PayloadConstruct &&
+      producer->localFailureSites.empty() && producer->definedFailure.empty()) {
+    const MirBlock *block = body.findBlock(value->definitionBlock);
+    if (block != nullptr) {
+      const auto position = std::find_if(
+          block->instructions.begin(), block->instructions.end(),
+          [&](const MirInstruction &item) { return item.id == producer->id; });
+      directConstruction = position != block->instructions.end() &&
+                           std::next(position) != block->instructions.end() &&
+                           &*std::next(position) == initialize;
+    }
+  }
+
   return {.value = value,
           .producer = producer,
           .initialize = initialize,
           .slot = slot,
           .field = field,
           .valueDrop = valueDrop,
-          .fieldDrop = fieldDrop};
+          .fieldDrop = fieldDrop,
+          .directConstruction = directConstruction};
 }
 
 // A source member call's receiver must be its correctly typed borrow, either
@@ -37134,7 +37157,8 @@ private:
     if (consuming) {
       output << "std::move(";
     }
-    output << "std::get<" << variant->index + 1 << ">(";
+    output << "::gti_internal::backend::payload_get<" << variant->index + 1
+           << ">(";
     if (consuming) {
       MirOperand observed = subject;
       observed.kind = MirOperandKind::BorrowRead;
@@ -37553,6 +37577,9 @@ private:
                 ? payloadEnumFreshReturnPublication(
                       program, representations, facts.body, *instruction.result)
                 : PayloadEnumFreshReturnPublication{};
+        const PayloadEnumConstructorFieldPublication field =
+            payloadEnumConstructorFieldPublication(program, facts.body,
+                                                   *instruction.result);
         const CppMirEnumRepresentation *enumRow = nullptr;
         for (const CppMirEnumRepresentation &row : representations.enums()) {
           if (instruction.enumOwner &&
@@ -37573,25 +37600,34 @@ private:
           throw std::logic_error(
               "verified owning payload construction lost its variant row");
         }
-        if (freshReturn.producer == &instruction) {
-          output << "::gti_internal::backend::construct_representation_at(__"
-                    "gti_mir_out_result, ";
+        if (field.directConstruction) {
+          const std::string target =
+              destinationSpelling(facts, field.field->id);
+          output << "std::destroy_at(std::addressof(" << target << "));\n";
+          writeIndent();
+          output << "::new (static_cast<void *>(std::addressof(" << target
+                 << "))) ";
+        } else if (freshReturn.producer == &instruction) {
+          output << "::new (static_cast<void *>(__gti_mir_out_result)) ";
         } else {
           output << "__gti_mir_p_"
                  << canonicalSlotPlaceId(facts.body, *destination)
-                 << ".construct(";
+                 << ".construct_from([&]() { return ";
         }
-        output << enumRow->spelling << '{' << enumRow->spelling
-               << "::" << variant->spelling << '{';
+        // List initialization retains GTI's left-to-right operand order. The
+        // result is a prvalue constructed directly in its final native slot.
+        output << enumRow->spelling << "{std::in_place_index<"
+               << variant->index + 1 << ">";
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
-          if (index != 0) {
-            output << ", ";
-          }
+          output << ", ";
           emitPayloadConstructOperand(facts, instruction,
                                       instruction.operands[index]);
         }
-        output << "}});\n";
+        output << "};";
+        if (!field.directConstruction && freshReturn.producer != &instruction)
+          output << " });";
+        output << '\n';
         retirePayloadOperandSlots(facts, instruction);
         for (const MirOperand &operand : instruction.operands) {
           const MirPlace *source =
@@ -37939,17 +37975,15 @@ private:
             "verified MIR payload operation lost its variant row");
       }
       if (instruction.operation == MirOperation::PayloadConstruct) {
-        output << enumRow->spelling << '{' << enumRow->spelling
-               << "::" << variant->spelling << '{';
+        output << enumRow->spelling << "{std::in_place_index<"
+               << variant->index + 1 << ">";
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
-          if (index != 0) {
-            output << ", ";
-          }
+          output << ", ";
           emitPayloadConstructOperand(facts, instruction,
                                       instruction.operands[index]);
         }
-        output << "}};\n";
+        output << "};\n";
         retirePayloadOperandSlots(facts, instruction);
         return;
       }
@@ -39996,6 +40030,11 @@ private:
                 program, facts.body, instruction.operands.front().value);
         if (publication.initialize == &instruction &&
             publication.field == slot && publication.slot != nullptr) {
+          if (publication.directConstruction) {
+            output << "// GTI MIR in-place payload-enum field reparent into p"
+                   << slot->id << "\n";
+            return;
+          }
           const std::string destination = destinationSpelling(facts, slot->id);
           output << "std::destroy_at(std::addressof(" << destination << "));\n";
           writeIndent();
@@ -62504,11 +62543,9 @@ initializerScheduleFromAnalysis(const MirProgram &program_,
           return result;
         }
         std::string spelled = enumRow->spelling;
-        spelled += '{';
-        spelled += enumRow->spelling;
-        spelled += "::";
-        spelled += variant->spelling;
-        spelled += '{';
+        spelled += "{std::in_place_index<";
+        spelled += std::to_string(variant->index + 1);
+        spelled += ">";
         for (std::size_t index = 0; index < instruction->operands.size();
              ++index) {
           const MirOperand &operand = instruction->operands[index];
@@ -62537,12 +62574,10 @@ initializerScheduleFromAnalysis(const MirProgram &program_,
               operand.type != variant->fieldTypes[index] || !exactOperandUse) {
             return result;
           }
-          if (index != 0) {
-            spelled += ", ";
-          }
+          spelled += ", ";
           spelled += source->second;
         }
-        spelled += "}}";
+        spelled += "}";
         spellings.emplace(*instruction->result, std::move(spelled));
         continue;
       }

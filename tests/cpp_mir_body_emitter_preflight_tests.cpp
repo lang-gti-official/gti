@@ -38,6 +38,45 @@ void testDischargedCompoundOperatorVocabulary() {
       "proved successful path exactly matches C++ semantics");
 }
 
+void testPassivePayloadTagObservation() {
+  const auto frontend = analyze("passive-payload-tag.gti", R"(
+enum State<T> { empty, value(T value) };
+bool present(State<int>& state) {
+  switch (state) {
+  case State<int>::empty: return false;
+  case State<int>::value: return true;
+  }
+}
+int main() {
+  auto state = State<int>::value(7);
+  return present(state) ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(), "passive tag observer should lower");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t observed = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      const auto &switching = block.terminator;
+      if (switching.kind != lang::MirTerminatorKind::Switch ||
+          !switching.value ||
+          !frontend.mir.findPayloadEnum(switching.value->type))
+        continue;
+      ++observed;
+      expect(switching.value->kind == lang::MirOperandKind::BorrowRead &&
+                 switching.value->place != 0,
+             "tag-only matching must observe the enum place, not copy it");
+      for (const auto &candidate : function.body.blocks)
+        for (const auto &instruction : candidate.instructions)
+          expect(instruction.kind != lang::MirInstructionKind::Load ||
+                     instruction.info.type != switching.value->type,
+                 "tag-only matching must not stage a whole-enum copy");
+    }
+  }
+  expect(observed == 1, "fixture must exercise one passive enum observer");
+}
+
 void testBoundedSecondaryFailureRecordStorage() {
   std::string source = R"gti(
 class Guard {
@@ -1018,6 +1057,23 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
                            std::string::npos,
                    "native enum publication must retain field rollback without "
                    "constructing or retiring a duplicate value representation");
+          } else if (!called) {
+            const auto direct =
+                text.text.find("::new (static_cast<void *>(std::addressof(" +
+                               fieldSpelling + "))) ");
+            expect(text.emitted() && retirement != std::string::npos &&
+                       direct != std::string::npos && retirement < direct &&
+                       text.text.find("// GTI MIR in-place payload-enum field "
+                                      "reparent into p" +
+                                      std::to_string(field->id)) !=
+                           std::string::npos &&
+                       sourceRetirement == std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct(") ==
+                           std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct_from(") ==
+                           std::string::npos,
+                   "a fresh adjacent alternative must construct directly in "
+                   "its empty field while retaining the MIR reparent");
           } else {
             expect(text.emitted() && retirement != std::string::npos &&
                        publication != std::string::npos &&
@@ -6278,6 +6334,7 @@ constexpr NamedTest kTests[] = {
      testFreshClassPayloadOperandStaging},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
+    {"testPassivePayloadTagObservation", testPassivePayloadTagObservation},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},

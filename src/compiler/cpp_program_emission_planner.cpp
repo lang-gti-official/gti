@@ -2184,13 +2184,25 @@ public:
       // this state exists only so a transformed failure-capable constructor
       // can default-create its observation-free native shell, publish fields
       // in verified MIR order, and destroy an unpublished shell safely.
-      output << "std::variant<std::monostate";
+      output << "::gti_internal::backend::payload_variant<std::monostate";
       for (std::size_t index = 0; index < enumeration.enumerators.size();
            ++index) {
         output << ", __gti_variant_"
                << enumeration.enumerators[index].variantIndex;
       }
       output << "> __gti_value;\n";
+      writeIndent();
+      // A user-provided empty-shell constructor initializes the tag without
+      // value-initializing inactive payload bytes. No source value can observe
+      // those bytes, and zeroing them needlessly couples scalar payload bits
+      // to the discriminant when native optimizers combine return paths.
+      output << name << "() noexcept {}\n";
+      writeIndent();
+      output << "template <std::size_t Index, typename... Args>\n";
+      writeIndent();
+      output << "explicit " << name
+             << "(std::in_place_index_t<Index> selected, Args &&...args)"
+                " : __gti_value(selected, std::forward<Args>(args)...) {}\n";
       writeIndent();
       output << "friend bool operator==(const " << name << " &, const " << name
              << " &) = default;\n";

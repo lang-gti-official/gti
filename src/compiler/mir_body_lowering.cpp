@@ -12553,18 +12553,15 @@ private:
       if (sourceValue != nullptr && sourcePlace != 0 &&
           sourceValue->info.category == ValueCategory::Place &&
           sourceValue->info.type.kind == SemanticType::Enum &&
-          (sourceValue->info.traits.drop == DropKind::Lexical ||
-           std::any_of(
-               statement.switchArms.begin(), statement.switchArms.end(),
-               [&](const HirSwitchArm &arm) {
-                 return std::any_of(
-                     arm.payloadBindings.begin(), arm.payloadBindings.end(),
-                     [&](const HirSwitchArm::PayloadBinding &payload) {
-                       const HirBinding *binding = findBinding(payload.binding);
-                       return binding != nullptr && binding->info.type.kind ==
-                                                        SemanticType::Reference;
-                     });
-               }))) {
+          std::any_of(program.enumDeclarations().begin(),
+                      program.enumDeclarations().end(),
+                      [&](const HirEnum &enumeration) {
+                        return enumeration.payload &&
+                               enumeration.type == sourceValue->info.type;
+                      })) {
+        // Matching observes the discriminant of a place; it does not copy
+        // the complete enum merely because its payload happens to be passive.
+        // Arm bindings still perform their independently selected copy/borrow.
         emitPlaceDependencies(*statement.value);
         subject = {.kind = MirOperandKind::BorrowRead,
                    .place = sourcePlace,
