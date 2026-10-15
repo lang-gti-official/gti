@@ -6565,16 +6565,19 @@ member call then uses as its receiver: read-only, `mut` and consuming
 members. Each shape runs through both arms, in plain and failure-form bodies.
 The arms are ordinary calls, member calls borrowing their receiver read-only
 or mutably or consuming it, calls consuming a moved argument, copies of a
-place, constructions, and mixtures of these. The arm callee or the member
-call may fail. The shapes also cover a class with a class field, a generic
-class, a loop, and inputs with cleanup of their own. A failing arm callee
-leaves no joined value, a failing member call fails while borrowing it, and
-cleanup destroys only what was constructed before the failure.
+place, constructions, nested conditionals, and mixtures of these. The arm
+callee or the member call may fail. The shapes also cover a class with a class
+field, a generic class, loops that evaluate a nested conditional again on
+every iteration, and inputs with cleanup of their own. A failing arm callee
+leaves no joined value, a failing member call fails while borrowing it, a
+failing callee in a nested arm on a loop's second iteration leaves none either,
+and cleanup destroys only what was constructed before the failure.
 `testCleanupFreeJoinReceiver` in the emitter text suite checks that both arms
-publish into the borrowed temporary and that its Drop ends it. It refuses a
-removed, conditional, duplicated or retargeted activation, and an arm result
-that activates the obligation itself, all of which MIR verification also
-rejects. A differential `--emit-cpp` of every source under `tests/fixtures`
+publish into the borrowed temporary and that its Drop ends it, and that a
+nested arm ends the nested join's storage right after moving out of it. It
+refuses a removed, conditional, duplicated or retargeted activation, an arm
+result that activates the obligation itself, and a nested join's storage with
+an obligation of its own, all of which MIR verification also rejects. A differential `--emit-cpp` of every source under `tests/fixtures`
 and `examples` at O0 and O3 changed only the new fixture.
 `conditional_cleanup_free_nested_join_runtime` runs the same eight
 configurations over loops that evaluate a cleanup-free conditional nested in

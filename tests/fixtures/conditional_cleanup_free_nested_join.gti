@@ -82,7 +82,8 @@ int nested_both(bool left, int two) {
 int nested_deep(bool left, int one, int two) {
   mut int total = 0;
   for (mut int i = 0; i < 4; i += 1) {
-    Pod t = left ? fresh(7) : (i > two ? fresh(i) : (i > one ? Pod(8) : fresh(9)));
+    Pod t = left ? fresh(7)
+                 : (i > two ? fresh(i) : (i > one ? Pod(8) : fresh(9)));
     total = total * 10 + t.x;
   }
   return total;
@@ -94,7 +95,8 @@ int consumers(bool left, int one, int two) {
   mut int i = 0;
   while (i < 3) {
     total = total * 10 + (left ? fresh(i) : (i > one ? fresh(two) : Pod(i))).x;
-    total = total * 10 + consume(left ? Pod(i) : (i > one ? Pod(two) : fresh(i)));
+    total = total * 10 +
+            consume(left ? Pod(i) : (i > one ? Pod(two) : fresh(i)));
     kept = left ? (i > one ? fresh(two) : Pod(i)) : fresh(i);
     total = total * 10 + kept.x;
     i += 1;

@@ -6572,7 +6572,23 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
     // the joined value as its receiver. A call, plain or on its Invoke
     // success edge, and a copy of a place then construct the temporary right
     // before that Initialize, as a construction arm does, and the
-    // temporary's Drop ends it.
+    // temporary's Drop ends it. So does the move out of a nested cleanup-free
+    // join, whose storage carries no obligation either; that move is the
+    // nested join's single move, and its writer ends the nested storage.
+    const MirPlace *movedJoin =
+        directMove ? body.findPlace(definition->operands.front().place)
+                   : nullptr;
+    const bool nestedPassiveJoin =
+        movedJoin != nullptr &&
+        movedJoin->root == MirPlaceRootKind::Temporary &&
+        movedJoin->temporary != 0 && movedJoin->projections.empty() &&
+        movedJoin->type == value->info.type && definition->lifecycle.empty() &&
+        definition->definedFailure.empty() &&
+        definition->localFailureSites.empty() &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &drop) {
+                       return drop.place == movedJoin->id;
+                     });
     const MirBlock *invoke = invokeProducerBlock(body, *definition);
     const MirBlock *success =
         invoke == nullptr ? nullptr : body.findBlock(invoke->terminator.target);
@@ -6585,8 +6601,9 @@ classPublicationOrigin(const MirBody &body, const MirValue &value) {
         activatedNext |=
             published->instructions[index - 1].id == definition->id &&
             published->instructions[index].id == initialize->id;
-    if ((directFunctionCall || directCopy) && activatedNext &&
-        initialize->lifecycle.size() == 1 && !definition->successResultDrop &&
+    if ((directFunctionCall || directCopy || nestedPassiveJoin) &&
+        activatedNext && initialize->lifecycle.size() == 1 &&
+        !definition->successResultDrop &&
         onlyPreparedInputTransfers(body, *definition) &&
         initialize->definedFailure.empty() &&
         initialize->localFailureSites.empty() &&
