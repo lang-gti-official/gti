@@ -2564,7 +2564,14 @@ typed enumerator case, and an empty `Unreachable` default block. The source
 must be an initialized entry reference parameter dereference or an exact
 immediate enum field of an ordinary read-only source-method receiver. Only
 inert full-expression/read metadata may precede it, and entry cannot have a
-backedge. Constructor/destructor bodies, local/value roots, consuming or mutable
+backedge. The receiver rule relies on verified call-boundary availability of
+the complete object, not merely the method's read-only declaration. Semantics
+rejects calls after a projected field move; MIR independently checks receiver
+operands against its solved projected-place availability. Constructor bodies
+begin after required fields are initialized, and destructor bodies precede
+automatic field retirement. The focused moved-enum-field/observer regression
+retains that invariant alongside the general projected-field ownership tests.
+Constructor/destructor bodies, local/value roots, consuming or mutable
 receivers, moved state, intervening effects and incomplete/substituted rows do
 not qualify. This distinction excludes the carrier's private empty/vacant
 shells; an exhaustive-case count alone is never sufficient. The proof emits
