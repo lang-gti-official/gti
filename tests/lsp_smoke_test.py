@@ -11307,6 +11307,7 @@ def main():
         elif sys.argv[2] == "owner-dependent-views":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-owner-view-") as root:
                 test_owner_dependent_span_tooling(sys.argv[1], pathlib.Path(root))
+                test_constructor_text_storage_tooling(sys.argv[1], pathlib.Path(root))
             print("GTI owner-dependent view LSP test passed")
         elif sys.argv[2] == "mutable-stored":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-mut-stored-") as root:
@@ -11461,6 +11462,7 @@ def main():
     test_expected_payload_range_tooling(sys.argv[1], root)
     test_mutable_stored_dependency_tooling(sys.argv[1], root)
     test_owner_dependent_span_tooling(sys.argv[1], root)
+    test_constructor_text_storage_tooling(sys.argv[1], root)
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
@@ -13195,6 +13197,54 @@ int main() {
             else:
                 assert any(item.get("code") == code
                            for item in published["diagnostics"]), published
+    finally:
+        session.close()
+
+
+def test_constructor_text_storage_tooling(executable, root):
+    source = '''#include <std/string>
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+};
+void store(std::string_view dynamic) { /*😀*/ Label label{dynamic}; }
+'''
+    path = root / "constructor-text-storage.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"relatedInformation": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                      "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                                  "version": 1, "text": source}}})
+        published = session.receive_until(lambda message:
+            message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 1)["params"]
+        diagnostic = next(item for item in published["diagnostics"]
+                          if item.get("code") == "GTI-S2045")
+        offset = source.index("dynamic};")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, offset),
+            "end": lsp_position(source, offset + len("dynamic")),
+        }, diagnostic
+        assert "stores it in a field" in diagnostic["message"], diagnostic
+        assert any("ownerless argument" in item["message"]
+                   for item in diagnostic.get("relatedInformation", [])), diagnostic
+        fixed = source.replace("label{dynamic}", 'label{"literal"}')
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 2},
+                                 "contentChanges": [{"text": fixed}]}})
+        corrected = session.receive_until(lambda message:
+            message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 2)["params"]
+        assert not has_error_diagnostics(corrected), corrected
     finally:
         session.close()
 

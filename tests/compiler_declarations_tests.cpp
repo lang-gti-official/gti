@@ -3,6 +3,114 @@
 
 namespace {
 
+void testConstructorTextStorageContracts() {
+  const std::string declarations = R"gti(
+#include <std/string>
+#include <std/utility>
+#include <std/memory>
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view input = "default") : text((input)) {}
+};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+struct CLabel {
+  c_string text;
+  CLabel(c_string input) : text(input) {}
+};
+struct Borrowed {
+  std::string_view& text;
+  Borrowed(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+)gti";
+  const auto analyze = [&](const std::string &source) {
+    return lang::Frontend().analyze(
+        "constructor-text-storage.gti", declarations + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const auto valid = analyze(R"gti(
+constexpr Label constant = Label("constant");
+static_assert(constant.text.size() == std::size_t(8));
+std::size_t inspect(std::string_view input) {
+  Borrowed borrowed{input};
+  return borrowed.size();
+}
+int main() {
+  Label literal{"literal"};
+  Label defaulted{};
+  std::string_view independent = "independent";
+  Label local{independent};
+  Borrowed static_reference{independent};
+  if (static_reference.size() != std::size_t(11)) { return 1; }
+  Box<std::string_view> generic{"generic"};
+  std::pair<std::string_view, int32_t> pair{"pair", 1};
+  CLabel empty{nullptr};
+  std::string owner = std::string("owned");
+  std::string_view view = owner.view();
+  Borrowed borrowed{view};
+  return int(borrowed.size() + inspect(view)) - 10;
+}
+)gti");
+  if (!valid.canGenerateCode())
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(valid.canGenerateCode(),
+         "ownerless constructor fields and checked view references stay valid");
+
+  const std::vector<std::string> invalid{
+      "int main() { mut std::string owner = std::string(\"abc\"); "
+      "Label saved{owner.view()}; owner.clear(); return "
+      "int(saved.text.size()); }",
+      "Label escape() { std::string owner = std::string(\"abc\"); "
+      "return Label(owner.view()); }",
+      "void opaque(std::string_view input) { Label saved{input}; }",
+      "void generic(std::string_view input) { Box<std::string_view> "
+      "saved{input}; }",
+      "void pair(std::string_view input) { std::pair<std::string_view, "
+      "int32_t> saved{input, 1}; }",
+      "void ctext(c_string input) { CLabel saved{input}; }",
+      "int main() { std::string owner = std::string(\"abc\"); CLabel "
+      "saved{owner.c_string()}; return 0; }",
+      "void allocated(std::string_view input) { auto saved = "
+      "std::make_unique<Label>(input); }",
+      "struct Computed { std::string_view text; Computed(std::string& owner) : "
+      "text(owner.view()) {} };",
+  };
+  for (const auto &source : invalid) {
+    const auto result = analyze(source);
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2045") &&
+               (hasDiagnostic(result.diagnostics, "stores") ||
+                hasDiagnostic(result.diagnostics, "stored")),
+           "constructor field storage cannot erase a dynamic text owner: " +
+               source);
+    expect(!hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
+           "invalid text storage is diagnosed before executable lowering");
+  }
+  const auto conditional = analyze(
+      "struct Relay { std::string_view text; Relay(std::string_view input) "
+      ": text((true ? input : \"\")) {} };");
+  expect(!conditional.canGenerateCode() &&
+             hasDiagnosticCode(conditional.diagnostics, "GTI-S2051"),
+         "a conditional cannot erase an operand's dynamic text dependency");
+  const auto diagnostic =
+      analyze("void caller(std::string_view input) { Label saved{input}; }");
+  const auto found =
+      std::find_if(diagnostic.diagnostics.begin(), diagnostic.diagnostics.end(),
+                   [](const auto &entry) {
+                     return entry.code == "GTI-S2045" &&
+                            entry.message.find("passed to a constructor") !=
+                                std::string::npos;
+                   });
+  expect(found != diagnostic.diagnostics.end() && !found->related.empty() &&
+             !found->hints.empty() && found->fixes.empty(),
+         "stored view rejection relates the initializer and offers no unsafe "
+         "automatic ownership rewrite");
+}
+
 void testContainerScaffoldSurfaces() {
   const std::string source = R"(
 #include <std/array>
@@ -12244,6 +12352,8 @@ constexpr NamedTest kTests[] = {
      testDependentRequiresArgumentAdmission},
     {"testStructuralClassConstraints", testStructuralClassConstraints},
     {"testFunctionContracts", testFunctionContracts},
+    {"testConstructorTextStorageContracts",
+     testConstructorTextStorageContracts},
     {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},
     {"testMovedLoopLocalRedeclarations", testMovedLoopLocalRedeclarations},
     {"testInferredVoidGenericArguments", testInferredVoidGenericArguments},
