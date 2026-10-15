@@ -215,11 +215,13 @@ for concept std::tryable<Parse> {
     }
   }
 };
-Status enumerated() {
-  int value = ?Parse::ok(1);
+Parse parse(int text) { return Parse::ok(text); }
+Status enumerated(int text) {
+  Parse held = parse(text);
+  int value = ?Parse::ok(1) + ?parse(text) + ?held + ?std::move(held);
   return Status(value);
 }
-int main() { return enumerated().code - 1; }
+int main() { return enumerated(2).code - 7; }
 )gti";
   accepted(enumProtocol, "a payload enum can implement propagation directly");
   const std::string passiveEnum = R"gti(
@@ -500,6 +502,68 @@ int main() {
     }
   }
 
+  // An enum template conforms through one block, and its residual may be
+  // the enum itself.
+  accepted(R"gti(
+#include <std/panic>
+enum class Result<T, E> {
+  ok(T value),
+  failed(E error),
+};
+for <std::copyable T, std::copyable E> concept std::tryable<Result<T, E>> {
+  using value_type = T;
+  using residual_type = Result<T, E>;
+  bool has_value(Result<T, E>& result) {
+    switch (result) {
+    case Result<T, E>::ok:
+      return true;
+    case Result<T, E>::failed:
+      return false;
+    }
+  }
+  T take_value(Result<T, E> result) {
+    switch (result) {
+    case Result<T, E>::ok(value):
+      return value;
+    case Result<T, E>::failed(error):
+      std::panic("take_value on a failed result");
+    }
+  }
+  Result<T, E> take_residual(Result<T, E> result) { return result; }
+};
+Result<int, int> twice(int value) {
+  int half = ?Result<int, int>::ok(value);
+  return Result<int, int>::ok(half * 2);
+}
+int main() {
+  switch (twice(2)) {
+  case Result<int, int>::ok(value):
+    return value - 4;
+  case Result<int, int>::failed(error):
+    return 1;
+  }
+}
+)gti",
+           "an enum template's block should serve '?' on its instances");
+  rejected(types + R"gti(
+enum class Code {
+  ok,
+  failed,
+};
+for concept std::tryable<Code> {
+  using value_type = void;
+  using residual_type = Rejected;
+  bool has_value(Code& code) { return code == Code::ok; }
+  void take_value(Code code) {}
+  Rejected take_residual(Code code) { return Rejected(1); }
+};
+Status coded() {
+  ?Code::failed;
+  return Status(0);
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2086", "class, struct or payload-enum operand");
   // Built-in expected keeps its own rule.
   rejected(types + R"gti(
 expected<int, int> load() { return 1; }

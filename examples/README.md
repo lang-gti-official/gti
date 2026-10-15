@@ -60,6 +60,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Propagate an empty optional with `?`, moving a move-only value out | [162: experimental optional](162-experimental-optional.gti) |
 | Compose enum, array and owning payloads in source-defined wrappers | [163: payload composition](163-payload-composition.gti) |
 | Consume a fallible view while retaining its external success borrow | [164: borrowed payload results](164-borrowed-payload-results.gti) |
+| Propagate a failed `result<T, E>` enum with `?`, moving owned strings out | [163: payload-enum propagation](163-payload-enum-propagation.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -230,6 +231,7 @@ is a teaching helper, not a production server.
 | `162-experimental-optional.gti` | the source-defined `std::experimental::optional` holding a move-only record, `?` moving it out or returning an empty optional, and `std::experimental::nullopt` |
 | `163-payload-composition.gti` | a source-defined optional containing another owning payload enum, consuming nested patterns, and a fixed-array payload |
 | `164-borrowed-payload-results.gti` | a source-defined result with an owning string error and a reference success; `borrowed_from` relays the external owner when `?` consumes the wrapper |
+| `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

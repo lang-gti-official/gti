@@ -707,8 +707,9 @@ adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
 ### Conformance blocks
 
 The block applies the concept to one pattern per concept parameter. Each
-pattern is either a concrete type, or one class template applied to block
-type parameters, in any order, such as `Box<T>` or `Pair<K, V>`. A bare
+pattern is either a concrete type, or one class or enum template applied to
+block type parameters, in any order, such as `Box<T>`, `Pair<K, V>` or an
+enum `result<T, E>`. A bare
 parameter, such as `T` on its own, and a nested pattern, such as
 `Box<Box<T>>`, are not patterns. Every block parameter appears in some
 pattern. A parameter may appear more than once, within one pattern or across
