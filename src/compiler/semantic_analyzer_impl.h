@@ -1962,6 +1962,10 @@ private:
   [[nodiscard]] std::vector<SymbolId>
   storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
+  [[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
+  storedConditionSymbols(const SemanticType &type,
+                         std::span<const StoredReferenceCondition> conditions);
+
   // A present inventory enumerates every independently checked dependency in
   // declaration order. Present-empty is dependency-free; absent is unsupported
   // or unresolved and must never be used to establish empty-set evidence.
@@ -1980,6 +1984,10 @@ private:
 
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBorrowDependencySet(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  payloadBorrowDependencySet(const Call &call,
+                             const EnumeratorRecord &enumerator);
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   joinedBorrowDependencySets(
       const std::optional<SemanticBorrowDependencySet> &left,
@@ -2237,7 +2245,8 @@ private:
       const Expr *origin, SemanticLoanPlace place, SymbolId owner,
       bool receiverOrigin, AccessMode access, bool protectsStorage,
       SemanticLoanId parent = 0, bool entry = false,
-      std::vector<SymbolId> designatedFields = {});
+      std::vector<SymbolId> designatedFields = {},
+      std::vector<BorrowDependencyCondition> conditions = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
   SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
