@@ -3063,6 +3063,88 @@ auto SemanticVisitor::Impl::analyzeDeclarationConversion(
   return declaredType;
 }
 
+auto SemanticVisitor::Impl::analyzeReturnConversion(
+    const ExprPtr &expr, const SemanticType &returnType,
+    const SemanticType &valueType) -> bool {
+  // The caller handles references, text views, borrow-carrying targets and
+  // void; the selection below excludes every other target a declaration
+  // excludes.
+  if (!expr || returnType == SemanticType::Unknown ||
+      valueType == SemanticType::Unknown ||
+      returnType.kind == SemanticType::Reference ||
+      typeTraits(returnType).containsBorrowedState) {
+    return false;
+  }
+  const bool construction =
+      declarationConstructionApplies(expr, returnType, valueType);
+  const bool conversion =
+      declarationConversionApplies(expr, returnType, valueType);
+  if (!construction && !conversion) {
+    return false;
+  }
+  // ADR 023 moves an eligible operand only into a conversion that consumes
+  // it: an implicit constructor taking it by value, or a consuming implicit
+  // operator. The moved operand then selects as `R result = std::move(value);`
+  // would. A borrowing path, an ineligible operand, and an ambiguity use the
+  // place exactly as `R result = value;` does.
+  const Token site = expressionToken(expr);
+  const std::size_t probeDiagnostics = diagnostics.size();
+  const std::vector<const ConstructorInfo *> constructors =
+      construction ? conversionConstructorCandidates(*expr, expr, valueType,
+                                                     returnType, site, true)
+                   : std::vector<const ConstructorInfo *>{};
+  // The selection below repeats any rejection the probe reports.
+  diagnostics.erase(diagnostics.begin() +
+                        static_cast<std::ptrdiff_t>(probeDiagnostics),
+                    diagnostics.end());
+  const std::vector<CallableCandidate> operators =
+      conversion ? conversionOperatorCandidates(valueType, returnType, true)
+                 : std::vector<CallableCandidate>{};
+  const bool consumes =
+      constructors.empty() != operators.empty() &&
+      (std::any_of(constructors.begin(), constructors.end(),
+                   [](const ConstructorInfo *constructor) {
+                     return constructor != nullptr &&
+                            !constructor->parameterTypes.empty() &&
+                            constructor->parameterTypes.front().kind !=
+                                SemanticType::Reference;
+                   }) ||
+       std::any_of(operators.begin(), operators.end(),
+                   [](const CallableCandidate &candidate) {
+                     return candidate.receiverMutability ==
+                            ReceiverMutability::Consuming;
+                   }));
+  std::optional<ExpressionInfo> place;
+  if (consumes) {
+    switch (moveReturnedOwner(expr, valueType)) {
+    case ImplicitReturnMoveStatus::Invalid:
+      return true;
+    case ImplicitReturnMoveStatus::Moved:
+      // Selection sees the moved value an explicit std::move would produce.
+      // The operand keeps its own place record, which HIR wraps in the Move.
+      if (const ExpressionInfo *info = semanticModel.findExpression(*expr)) {
+        place = *info;
+        ExpressionInfo moved = *info;
+        moved.category = ValueCategory::Value;
+        moved.access = AccessMode::ReadOnly;
+        semanticModel.record(*expr, std::move(moved));
+      }
+      break;
+    case ImplicitReturnMoveStatus::NotEligible:
+      break;
+    }
+  }
+  const SemanticType converted =
+      conversion ? analyzeDeclarationConversion(expr, returnType, valueType,
+                                                construction)
+                 : analyzeDeclarationConstruction(expr, returnType, valueType);
+  if (place) {
+    semanticModel.record(*expr, std::move(*place));
+  }
+  return recordsDeclarationConversion(*expr) ||
+         converted == SemanticType::Unknown;
+}
+
 auto SemanticVisitor::Impl::contextualConstructionRawFields(
     const Expr &initializer, const SemanticType &type)
     -> std::vector<ProjectedRawPointerOrigins> {
@@ -8366,9 +8448,13 @@ auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
   if (!query || !function || function->id != query->function ||
       lambdaDepth != 0)
     return;
-  collectRawResultFields(rawPointerFields(expression.get()),
-                         function->bodyDeclaration()->parameters(),
-                         function->parameterTypes, false);
+  // A converted return publishes its selected conversion's result.
+  collectRawResultFields(
+      expression && recordsDeclarationConversion(*expression)
+          ? contextualConstructionRawFields(*expression, currentReturnType)
+          : rawPointerFields(expression.get()),
+      function->bodyDeclaration()->parameters(), function->parameterTypes,
+      false);
 }
 
 auto SemanticVisitor::Impl::recordRawConstructorResult(

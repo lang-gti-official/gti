@@ -114,6 +114,143 @@ int main() {
            "their block",
            {"__gti_conformance_"});
 
+  // The residual returns as an ordinary `return residual;` of a fresh value
+  // would: through an implicit conversion operator of the residual, to a
+  // class or a scalar return type, or an implicit constructor with a trailing
+  // default, under ADR 027's one shared selection.
+  accepted(R"gti(
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+  implicit operator int() { return -this.code; }
+};
+class Attempt {
+public:
+  int code;
+  Attempt(int failure) : code(failure) {}
+  Attempt(Attempt& other) = delete;
+  Attempt(Attempt&& other) = default;
+};
+for concept std::tryable<Attempt> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Attempt& attempt) { return attempt.code == 0; }
+  int take_value(Attempt attempt) { return 1; }
+  Rejected take_residual(Attempt attempt) { return Rejected(attempt.code); }
+};
+struct Outcome {
+  int code;
+  Outcome(int value) : code(value) {}
+};
+struct Ledger {
+  int code;
+  int bias;
+  implicit Ledger(Rejected rejected, int extra = 100)
+      : code(rejected.code), bias(extra) {}
+};
+class Lease {
+public:
+  int code;
+  Lease(int value) : code(value) {}
+  Lease(Lease& other) = delete;
+  Lease(Lease&& other) = default;
+  implicit operator Outcome() && { return Outcome(this.code * 10); }
+};
+class Claim {
+public:
+  int code;
+  Claim(int failure) : code(failure) {}
+  Claim(Claim& other) = delete;
+  Claim(Claim&& other) = default;
+};
+for concept std::tryable<Claim> {
+  using value_type = int;
+  using residual_type = Lease;
+  bool has_value(Claim& claim) { return claim.code == 0; }
+  int take_value(Claim claim) { return 2; }
+  Lease take_residual(Claim claim) { return Lease(claim.code); }
+};
+int scalar(int failure) {
+  int value = ?Attempt(failure);
+  return value;
+}
+Ledger defaulted(int failure) {
+  int value = ?Attempt(failure);
+  return Ledger(Rejected(value), 0);
+}
+Outcome consumed(int failure) {
+  int value = ?Claim(failure);
+  return Outcome(value);
+}
+int main() {
+  return scalar(0) + defaulted(3).bias + consumed(4).code;
+}
+)gti",
+           "a residual must return through an implicit operator or a "
+           "defaulted implicit constructor",
+           {"__gti_operator_conversion"});
+  rejected(R"gti(
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+  operator int() { return -this.code; }
+};
+class Attempt {
+public:
+  int code;
+  Attempt(int failure) : code(failure) {}
+  Attempt(Attempt& other) = delete;
+  Attempt(Attempt&& other) = default;
+};
+for concept std::tryable<Attempt> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Attempt& attempt) { return attempt.code == 0; }
+  int take_value(Attempt attempt) { return 1; }
+  Rejected take_residual(Attempt attempt) { return Rejected(attempt.code); }
+};
+int scalar(int failure) {
+  int value = ?Attempt(failure);
+  return value;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2086", "'implicit operator int32_t()' in 'Rejected'");
+  rejected(R"gti(
+struct Outcome {
+  int code;
+  Outcome(int value) : code(value) {}
+  implicit Outcome(Rejected rejected) : code(rejected.code) {}
+};
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+  implicit operator Outcome() { return Outcome(this.code); }
+};
+class Attempt {
+public:
+  int code;
+  Attempt(int failure) : code(failure) {}
+  Attempt(Attempt& other) = delete;
+  Attempt(Attempt&& other) = default;
+};
+for concept std::tryable<Attempt> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Attempt& attempt) { return attempt.code == 0; }
+  int take_value(Attempt attempt) { return 1; }
+  Rejected take_residual(Attempt attempt) { return Rejected(attempt.code); }
+};
+Outcome ambiguous(int failure) {
+  int value = ?Attempt(failure);
+  return Outcome(value);
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2122",
+           "Initialization of 'Outcome' from 'Rejected' is "
+           "ambiguous");
+
   rejected(types + R"gti(
 struct Plain {
   int value;

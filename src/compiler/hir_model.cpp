@@ -874,6 +874,34 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   target->owner > program.classInstances().size()
               ? nullptr
               : &program.classInstances()[target->owner - 1];
+      // Concrete reanalysis owns generic argument substitution: a generic
+      // body's base record is still the primary's C<T>. Retain its exact
+      // constructor identity and check the concrete instance it selected.
+      const bool genericRecord =
+          construction != nullptr &&
+          (containsUnresolvedGeneric(construction->constructedType) ||
+           std::any_of(construction->parameterTypes.begin(),
+                       construction->parameterTypes.end(),
+                       [](const SemanticType &type) {
+                         return containsUnresolvedGeneric(type);
+                       }));
+      const bool exactOwner =
+          owner != nullptr && construction != nullptr &&
+          (genericRecord ? owner->type.kind == SemanticType::Class &&
+                               owner->type.classId ==
+                                   construction->constructedType.classId &&
+                               !containsUnresolvedGeneric(owner->type)
+                         : owner->type == construction->constructedType);
+      const bool exactParameters =
+          value != nullptr && construction != nullptr && target != nullptr &&
+          (genericRecord
+               ? value->parameterTypes == target->parameterTypes &&
+                     std::none_of(value->parameterTypes.begin(),
+                                  value->parameterTypes.end(),
+                                  [](const SemanticType &type) {
+                                    return containsUnresolvedGeneric(type);
+                                  })
+               : value->parameterTypes == construction->parameterTypes);
       if (value == nullptr || construction == nullptr || target == nullptr ||
           owner == nullptr || !listed.insert(entry.value).second ||
           value->kind != HirValueKind::DirectInitializer ||
@@ -884,13 +912,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           construction->kind != ConstructorKind::Ordinary ||
           construction->borrowOrigin != BorrowOriginKind::None ||
           !construction->borrowFields.empty() ||
-          target->declaration != construction->constructor ||
-          owner->type != construction->constructedType ||
+          target->declaration != construction->constructor || !exactOwner ||
           value->info != ExpressionInfo{.type = owner->type,
                                         .category = ValueCategory::Value,
                                         .access = AccessMode::ReadOnly,
                                         .traits = owner->traits} ||
-          value->parameterTypes != construction->parameterTypes ||
+          !exactParameters ||
           value->operands.size() != value->parameterTypes.size() ||
           value->operands.size() != 1 + construction->defaultArguments.size() ||
           value->defaultArguments.size() !=
@@ -1035,9 +1062,22 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             ? program.findConstructorInstance(
                   *residualReturn->constructorTarget)
             : nullptr;
-    const bool constructsReturn = selected != nullptr
-                                      ? selected->returnConstruction.has_value()
-                                      : plan.residualReturn != 0;
+    // The residual is the return value itself, its implicit construction
+    // (residual first, then the selected defaults), or the receiver of its
+    // implicit conversion operator's call.
+    const bool constructsReturn =
+        selected != nullptr
+            ? selected->returnConstruction.has_value()
+            : residualReturn != nullptr &&
+                  residualReturn->kind == HirValueKind::DirectInitializer;
+    const bool convertsReturn =
+        selected != nullptr ? selected->returnConversion.has_value()
+                            : residualReturn != nullptr &&
+                                  residualReturn->kind == HirValueKind::Call;
+    const HirFunctionInstance *conversion =
+        residualReturn != nullptr && residualReturn->functionTarget
+            ? program.findFunctionInstance(*residualReturn->functionTarget)
+            : nullptr;
     const bool returnsResidual =
         constructsReturn
             ? residualReturn != nullptr &&
@@ -1047,12 +1087,33 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   (selected == nullptr ||
                    construction->declaration ==
                        selected->returnConstruction->constructor) &&
-                  residualReturn->operands ==
-                      std::vector<HirValueId>{residual->id} &&
+                  !residualReturn->operands.empty() &&
+                  residualReturn->operands.front() == residual->id &&
+                  residualReturn->operands.size() ==
+                      1 + residualReturn->defaultArguments.size() &&
+                  std::equal(residualReturn->defaultArguments.begin(),
+                             residualReturn->defaultArguments.end(),
+                             residualReturn->operands.begin() + 1) &&
                   residualReturn->fullExpression == value.fullExpression &&
                   residualReturn->callPlan &&
                   !residualReturn->callPlan->receiver &&
-                  residualReturn->callPlan->arguments.size() == 1
+                  residualReturn->callPlan->arguments.size() ==
+                      residualReturn->operands.size()
+        : convertsReturn
+            ? residualReturn != nullptr &&
+                  residualReturn->kind == HirValueKind::Call &&
+                  residualReturn->source == nullptr && conversion != nullptr &&
+                  (selected == nullptr ||
+                   conversion->declaration ==
+                       selected->returnConversion->function) &&
+                  residualReturn->operands ==
+                      std::vector<HirValueId>{residual->id} &&
+                  residualReturn->receiver == residual->id &&
+                  residualReturn->fullExpression == value.fullExpression &&
+                  residualReturn->callPlan &&
+                  residualReturn->callPlan->receiver &&
+                  residualReturn->callPlan->receiver->value == residual->id &&
+                  residualReturn->callPlan->arguments.empty()
             : plan.residualReturn == 0;
     if ((selected != nullptr &&
          (plan.consumesOperand != selected->consumesOperand ||

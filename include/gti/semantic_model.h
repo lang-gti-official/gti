@@ -1301,26 +1301,6 @@ struct ExpectedCombinatorInfo {
   LambdaId lambda = 0;
 };
 
-// Prefix `?` through the standard `std::tryable` protocol concept, for an
-// operand other than built-in `expected`. The operand is evaluated once and
-// transported like a by-value argument; `test`, `output` and `residual` are
-// ordinary calls of the selected conformance block's has_value, take_value
-// and take_residual functions. The residual initializes the enclosing
-// callable's return type through `returnConstruction`, or is that type itself.
-struct ResolvedTryablePropagationInfo {
-  SemanticType operandType = SemanticType::Unknown;
-  SemanticType resultType = SemanticType::Unknown;
-  SemanticType residualType = SemanticType::Unknown;
-  SemanticType returnType = SemanticType::Unknown;
-  // A temporary or `std::move(place)` operand is consumed; a named place is
-  // borrowed by the test and copied into the consuming call.
-  bool consumesOperand = false;
-  ResolvedCallInfo test;
-  ResolvedCallInfo output;
-  ResolvedCallInfo residual;
-  std::optional<ResolvedConstructionInfo> returnConstruction;
-};
-
 // A concept with a body, as an associated type projection of it prints:
 // `Concept<Arguments>::name`.
 struct ProtocolConceptSpelling {
@@ -1421,6 +1401,30 @@ struct ResolvedOperatorInfo {
   // assignment receivers have no standalone AST occurrence, so downstream
   // lowering must not reconstruct these facts from a declaration symbol.
   ExpressionInfo receiverInfo;
+};
+
+// Prefix `?` through the standard `std::tryable` protocol concept, for an
+// operand other than built-in `expected`. The operand is evaluated once and
+// transported like a by-value argument; `test`, `output` and `residual` are
+// ordinary calls of the selected conformance block's has_value, take_value
+// and take_residual functions. The residual returns as `return residual;`
+// would: it is the enclosing callable's return type itself, or initializes it
+// through the implicit constructor (`returnConstruction`) or implicit
+// conversion operator (`returnConversion`) that ADR 027's shared selection
+// chose for a fresh residual.
+struct ResolvedTryablePropagationInfo {
+  SemanticType operandType = SemanticType::Unknown;
+  SemanticType resultType = SemanticType::Unknown;
+  SemanticType residualType = SemanticType::Unknown;
+  SemanticType returnType = SemanticType::Unknown;
+  // A temporary or `std::move(place)` operand is consumed; a named place is
+  // borrowed by the test and copied into the consuming call.
+  bool consumesOperand = false;
+  ResolvedCallInfo test;
+  ResolvedCallInfo output;
+  ResolvedCallInfo residual;
+  std::optional<ResolvedConstructionInfo> returnConstruction;
+  std::optional<ResolvedOperatorInfo> returnConversion;
 };
 
 // The receiver of the conversion operator an explicit conversion selected:

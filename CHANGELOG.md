@@ -9,6 +9,31 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.440.0 — Implicit conversions in return statements
+
+- `return value;` now converts a value of another type to the function's,
+  method's or lambda's declared owned return type exactly as the declaration
+  `R result = value;` would: through one `implicit` constructor of `R` or one
+  `implicit operator R()` of the value's class, with the same single shared
+  selection, ambiguity error (`GTI-S2122`) and no conversion chains. A
+  function returning `std::experimental::optional<T>` can therefore write
+  `return std::experimental::nullopt;`. Explicit-only constructors and
+  operators still convert only when written, and calls, assignment and brace
+  construction keep exact types.
+- A returned whole local or by-value parameter of a move-only type moves into
+  a conversion that takes it by value (an `implicit` constructor with an owned
+  parameter, or a consuming `&&` operator) without `std::move`. A conversion
+  that only borrows it leaves it in place until the function's cleanup, and a
+  named place that cannot move is copied, as in a declaration.
+- Prefix `?` through `std::tryable` returns its residual as an ordinary
+  `return residual;` would, so a residual can now also convert through an
+  `implicit` conversion operator, or an `implicit` constructor with defaulted
+  trailing parameters.
+- Fix an internal compiler error ("contextual construction HIR value differs
+  from its semantic construction") when a generic function's declaration
+  constructs its declared class from an initializer of another type, such as
+  `Box<T> b = std::move(value);`.
+
 ## 0.439.2 — Conditional class results from moved inputs
 
 - Fix the internal compiler error (`GTI-B0001`, "backend failed while

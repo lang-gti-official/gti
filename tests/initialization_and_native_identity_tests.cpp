@@ -2,9 +2,11 @@
 #include "gti/frontend.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
+#include <vector>
 
 int main() {
   int failures = 0;
@@ -121,16 +123,227 @@ public:
   int read() { return this.degrees; }
 };
 )gti";
-  // Calls, returns and assignment keep exact types.
+  // Calls and assignment keep exact types.
   rejected(celsius + "void take(Celsius value) {}\n"
                      "int main() { take(21); return 0; }\n",
-           "GTI-S2003");
-  rejected(celsius + "Celsius make() { return 21; }\n"
-                     "int main() { return make().read(); }\n",
            "GTI-S2003");
   rejected(celsius + "int main() { mut Celsius value{1}; value = 5; "
                      "return value.read(); }\n",
            "GTI-S2003");
+
+  // A return constructs its owned result from a value of another type exactly
+  // as the declaration `R result = value;` would. The construction is the
+  // function's returned value, and its operand is the returned expression:
+  // one implicit Move of a whole move-only local or by-value parameter when
+  // the constructor takes it by value (ADR 023), the value itself otherwise.
+  // Each instance of the named function reports whether its operand moved.
+  // These sources move explicitly too, so they include the prelude.
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto analyzeWithPrelude = [&](const std::string &source) {
+    return lang::Frontend().analyze(root / "tests" / "implicit-returns.gti",
+                                    source, {root / "stdlib" / "prelude.gti"},
+                                    {}, {root / "stdlib"});
+  };
+  {
+    auto returned = analyzeWithPrelude(R"gti(
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+struct Owner {
+  int value = 0;
+  Owner(int initial) : value(initial) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+struct Holder {
+  Owner owner;
+  implicit Holder(Owner value) : owner(std::move(value)) {}
+};
+struct Peek {
+  int seen;
+  implicit Peek(Owner& source) : seen(source.value) {}
+};
+struct Sum {
+  int total;
+  implicit Sum(int first, int bias = 1) : total(first + bias) {}
+};
+struct Box<T> {
+  T value;
+  implicit Box(T initial) : value(std::move(initial)) {}
+};
+Celsius literal() { return 21; }
+Holder local() {
+  Owner owner{1};
+  return owner;
+}
+Holder parameter(Owner owner) { return owner; }
+Holder grouped() {
+  Owner owner{2};
+  return (owner);
+}
+Holder temporary() { return Owner(3); }
+Peek borrowed() {
+  Owner owner{4};
+  return owner;
+}
+Sum defaulted(int value) { return value; }
+Box<T> boxed<T>(T value) { return value; }
+int main() {
+  auto lambda = [](int raw) -> Holder {
+    Owner owner{raw};
+    return owner;
+  };
+  Holder made = lambda(5);
+  Box<Owner> moved = boxed(Owner(6));
+  Box<int> copied = boxed(int(7));
+  return literal().read() + local().owner.value +
+         parameter(Owner(8)).owner.value + grouped().owner.value +
+         temporary().owner.value + borrowed().seen + defaulted(9).total +
+         made.owner.value + moved.value.value + copied.value;
+}
+)gti");
+    expect(returned.canGenerateCode(),
+           "returns must construct through implicit constructors");
+    if (!returned.canGenerateCode())
+      for (const auto &d : returned.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+    const auto moves = [&](const std::string &name) {
+      std::vector<bool> result;
+      for (const lang::StmtPtr &declaration : returned.program.declarations()) {
+        const auto *function =
+            dynamic_cast<const lang::FunctionDecl *>(declaration.get());
+        if (function == nullptr || function->name().lexeme != name ||
+            function->body() == nullptr)
+          continue;
+        const lang::ReturnStmt *statement = nullptr;
+        for (const lang::StmtPtr &candidate : function->body()->statements())
+          if (const auto *found =
+                  dynamic_cast<const lang::ReturnStmt *>(candidate.get()))
+            statement = found;
+        const lang::FunctionInfo *info =
+            returned.semantics.findFunction(*function);
+        if (statement == nullptr || !statement->value() || info == nullptr)
+          continue;
+        for (const lang::HirFunctionInstance &instance :
+             returned.hir.functionInstances()) {
+          if (instance.declaration != info->id)
+            continue;
+          for (const lang::HirStatement &hir : instance.body.statements) {
+            if (hir.kind != lang::HirStatementKind::Return ||
+                hir.source != statement || !hir.value)
+              continue;
+            const lang::HirValue *construction =
+                instance.body.findValue(*hir.value);
+            const lang::HirValue *operand =
+                construction != nullptr &&
+                        construction->kind ==
+                            lang::HirValueKind::DirectInitializer &&
+                        construction->constructorTarget &&
+                        !construction->operands.empty() &&
+                        instance.body.initializerValueForSource(
+                            *statement->value()) == construction
+                    ? instance.body.findValue(construction->operands.front())
+                    : nullptr;
+            if (operand != nullptr &&
+                operand->source == statement->value().get())
+              result.push_back(operand->kind == lang::HirValueKind::Move);
+          }
+        }
+      }
+      return result;
+    };
+    expect(moves("literal") == std::vector<bool>{false} &&
+               moves("local") == std::vector<bool>{true} &&
+               moves("parameter") == std::vector<bool>{true} &&
+               moves("grouped") == std::vector<bool>{true} &&
+               moves("temporary") == std::vector<bool>{false} &&
+               moves("borrowed") == std::vector<bool>{false} &&
+               moves("defaulted") == std::vector<bool>{false},
+           "a by-value constructor must receive one implicit Move of an "
+           "eligible operand, and every other return its own value");
+    std::vector<bool> instances = moves("boxed");
+    std::sort(instances.begin(), instances.end());
+    expect(instances == std::vector<bool>{false, true},
+           "a generic return must move its move-only instance's operand and "
+           "copy its copyable instance's");
+  }
+  // Selection, and the exact-type error when nothing converts, are the
+  // declaration's. A named move-only value the return cannot move, such as a
+  // reference binding, a field or a structured-binding element, is copied
+  // and therefore rejected; a borrow-carrying result keeps its exact type.
+  const std::string owners = R"gti(
+struct Owner {
+  int value = 0;
+  Owner(int initial) : value(initial) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+struct Holder {
+  Owner owner;
+  implicit Holder(Owner value) : owner(std::move(value)) {}
+};
+)gti";
+  const auto rejectedWith = [&](const std::string &source, const char *code,
+                                const std::string &fragment) {
+    auto result = analyzeWithPrelude(source);
+    const bool located = std::any_of(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [&](const auto &d) {
+          const bool hinted = std::any_of(
+              d.hints.begin(), d.hints.end(), [&](const std::string &hint) {
+                return hint.find(fragment) != std::string::npos;
+              });
+          return d.code == code && !d.primary.source.empty() &&
+                 d.primary.end > d.primary.start &&
+                 (d.message.find(fragment) != std::string::npos || hinted);
+        });
+    if (!located)
+      for (const auto &d : result.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+    expect(!result.canGenerateCode(), "invalid return must not reach codegen");
+    expect(located, "invalid return needs its located owning diagnostic");
+  };
+  rejectedWith(celsius + "Celsius hot() { return \"hot\"; }\n"
+                         "int main() { return 0; }\n",
+               "GTI-S2003",
+               "Cannot return a value of type 'std::string_view' from a "
+               "function returning 'Celsius'");
+  rejectedWith("struct Buffer {\n  int capacity;\n  Buffer(int size) : "
+               "capacity(size) {}\n};\nBuffer make() { return 64; }\n"
+               "int main() { return make().capacity; }\n",
+               "GTI-S2003", "converts a returned value; write 'Buffer(...)'");
+  rejectedWith("struct Twice {\n  int value;\n  implicit Twice(int first) : "
+               "value(first) {}\n  implicit Twice(int first, int second = 2) "
+               ": value(first + second) {}\n};\nTwice make() { return 1; }\n"
+               "int main() { return make().value; }\n",
+               "GTI-S2013",
+               "is ambiguous; multiple constructors exactly match");
+  rejectedWith(owners + "Holder aliased(Owner& owner) { return owner; }\n"
+                        "int main() { return 0; }\n",
+               "GTI-S2018", "would call the deleted copy constructor");
+  rejectedWith(owners + "class Shelf {\n  Owner owner;\npublic:\n  Shelf() : "
+                        "owner(Owner(1)) {}\n  Holder take() { return "
+                        "this.owner; }\n};\nint main() { return 0; }\n",
+               "GTI-S2018", "would call the deleted copy constructor");
+  rejectedWith(owners + "struct Pair {\n  Owner first;\n  int second;\n  "
+                        "Pair(Owner value) : first(std::move(value)), "
+                        "second(0) {}\n};\nHolder split() {\n  auto [first, "
+                        "second] = Pair(Owner(1));\n  return first;\n}\n"
+                        "int main() { return 0; }\n",
+               "GTI-S2018", "cannot partially move structured binding");
+  rejectedWith(owners + "Holder twice() {\n  Owner owner{1};\n  Holder first = "
+                        "std::move(owner);\n  return owner;\n}\n"
+                        "int main() { return 0; }\n",
+               "GTI-S2018", "has already been moved");
+  rejectedWith("class Borrow {\n  int& value;\npublic:\n  implicit "
+               "Borrow(int& source) : value(source) {}\n};\nBorrow lend(int& "
+               "seven) { return seven; }\nint main() { return 0; }\n",
+               "GTI-S2003",
+               "Cannot return a value of type 'int32_t' from a function "
+               "returning 'Borrow'");
   // No constructor accepts the initializer: the exact-type error remains.
   rejected(celsius + "int main() { Celsius hot = \"hot\"; return 0; }\n",
            "GTI-S2003");

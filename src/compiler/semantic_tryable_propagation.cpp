@@ -4,8 +4,7 @@
 // satisfy `std::tryable`, which the prelude declares; the compiler binds `?`
 // to that concept by trusted declaration identity and knows nothing about the
 // types that conform to it. The selected conformance block's functions run as
-// ordinary calls, and the residual initializes the enclosing return type as
-// `R result = residual;` would.
+// ordinary calls, and the residual returns as `return residual;` would.
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
@@ -55,89 +54,75 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   return call;
 }
 
-// The residual initializes the enclosing return type as `R result =
-// residual;` would: it is R itself, or R has exactly one implicit constructor
-// whose sole parameter is the residual's exact type. Returns false after
-// reporting when neither holds.
+// The residual returns as `return residual;` would from the enclosing callable
+// (ADR 029 decision 5): it is the return type itself, or a fresh residual
+// converts to that type through ADR 027's shared selection, exactly as
+// `R result = residual;` would. A synthesized stand-in carries the fresh
+// residual through that selection, so `?` has no selection rule of its own.
+// Returns false after reporting when no conversion applies.
 auto SemanticVisitor::Impl::selectResidualReturn(
     const Unary &expr, const SemanticType &returnType,
     const SemanticType &residualType,
-    std::optional<ResolvedConstructionInfo> &construction) -> bool {
+    std::optional<ResolvedConstructionInfo> &construction,
+    std::optional<ResolvedOperatorInfo> &conversion) -> bool {
   construction.reset();
+  conversion.reset();
   const Token &site = expr.oper();
   const SemanticType target = selectExactClassSpecialization(returnType);
   if (target == canonicalExactSpecializationType(residualType)) {
     return true;
   }
+  // The residual is the take_residual call's fresh result, located at `?`.
+  const auto holder = std::make_shared<Grouping>(
+      std::make_unique<LiteralExpr>(site, Literal{}));
+  synthesizedExpressions.push_back(holder);
+  const ExprPtr &residual = holder->expression();
+  semanticModel.record(*residual, expressionInfo(residualType));
+  const std::size_t diagnosticStart = diagnostics.size();
+  // Built-in scalar and `expected` initialization never converts a residual:
+  // the propagation plan returns the residual itself or a selected call.
+  if (!isOwnershipAssignable(target, residualType, residual) &&
+      analyzeReturnConversion(residual, target, residualType)) {
+    if (const ResolvedConstructionInfo *selected =
+            semanticModel.findContextualConstruction(*residual)) {
+      construction = *selected;
+    } else if (const ResolvedOperatorInfo *selected =
+                   semanticModel.findContextualConversion(*residual)) {
+      conversion = *selected;
+    }
+    // The selection is the propagation's own; the stand-in is never lowered.
+    semanticModel.forgetContextualConstruction(*residual);
+    semanticModel.forgetContextualConversion(*residual);
+    return (construction || conversion) &&
+           diagnostics.size() == diagnosticStart;
+  }
   const ClassInfo *owner = classInfo(target);
-  const auto reject = [&](std::string message, std::string hint) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2086", DiagnosticPhase::Semantics, site, std::move(message));
-    if (owner != nullptr) {
-      diagnostic.related.push_back(
-          {tokenSpan(owner->name),
-           "The enclosing return type is declared here."});
-    }
-    diagnostic.hints.emplace_back(std::move(hint));
-    diagnostics.emplace_back(std::move(diagnostic));
-    return false;
-  };
-  const std::string returned = "Error propagation returns the residual '" +
-                               typeSpelling(residualType) + "' as '" +
-                               typeSpelling(target) + "'";
-  if (owner == nullptr) {
-    return reject(returned + ", which cannot be initialized from it.",
-                  "Return a type that accepts the residual, or handle the "
-                  "failure explicitly instead of applying '?'.");
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2086", DiagnosticPhase::Semantics, site,
+      "Error propagation returns the residual '" + typeSpelling(residualType) +
+          "' as '" + typeSpelling(target) + "', which " +
+          (owner == nullptr
+               ? std::string("cannot be initialized from it.")
+               : "declares no implicit constructor taking it, and '" +
+                     typeSpelling(residualType) +
+                     "' declares no implicit conversion operator to it."));
+  if (owner != nullptr) {
+    diagnostic.related.push_back(
+        {tokenSpan(owner->name),
+         "The enclosing return type is declared here."});
   }
-  const GenericSubstitution substitution = classSubstitution(target);
-  std::vector<const ConstructorInfo *> matches;
-  for (const ConstructorInfo &constructor : owner->constructors) {
-    if (!constructor.implicitConstruction || constructor.parameterPack ||
-        !constructor.genericParameters.empty() ||
-        constructor.kind != ConstructorKind::Ordinary ||
-        constructor.parameterTypes.size() != 1 ||
-        constructor.declaration == nullptr) {
-      continue;
-    }
-    if (substituteType(constructor.parameterTypes.front(), substitution) ==
-        residualType) {
-      matches.push_back(&constructor);
-    }
-  }
-  if (matches.size() != 1) {
-    return reject(returned + ", which declares " +
-                      (matches.empty() ? "no" : "more than one") +
-                      " implicit constructor taking exactly that residual.",
-                  "Declare one 'implicit " + owner->name.lexeme + "(" +
-                      typeSpelling(residualType) +
-                      " residual)' constructor without further parameters.");
-  }
-  const ConstructorInfo &selected = *matches.front();
-  if (!selected.requirements.empty() || selected.requiresUnsafe) {
-    return reject("Error propagation cannot construct '" +
-                      typeSpelling(target) +
-                      "' through a constrained or unsafe implicit "
-                      "constructor.",
-                  "Declare the residual constructor without a requires "
-                  "clause or 'unsafe'.");
-  }
-  if (!canAccessMember(selected.access, owner->id, target)) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2007", DiagnosticPhase::Semantics, site,
-        "The residual constructor of '" + owner->name.lexeme + "' is " +
-            std::string(accessModifierSpelling(selected.access)) + ".");
-    diagnostic.related.push_back({tokenSpan(selected.declaration->name()),
-                                  "Constructor declared here."});
-    diagnostics.emplace_back(std::move(diagnostic));
-    return false;
-  }
-  construction = ResolvedConstructionInfo{.constructor = selected.id,
-                                          .declaration = selected.declaration,
-                                          .constructedType = target,
-                                          .parameterTypes = {residualType},
-                                          .kind = ConstructorKind::Ordinary};
-  return true;
+  const std::string conversionOperator = "'implicit operator " +
+                                         typeSpelling(target) + "()' in '" +
+                                         typeSpelling(residualType) + "'";
+  diagnostic.hints.emplace_back(
+      "Return a type that the residual initializes, declare " +
+      (owner == nullptr ? conversionOperator
+                        : "'implicit " + owner->name.lexeme + "(" +
+                              typeSpelling(residualType) + " residual)' or " +
+                              conversionOperator) +
+      ", or handle the failure explicitly instead of applying '?'.");
+  diagnostics.emplace_back(std::move(diagnostic));
+  return false;
 }
 
 auto SemanticVisitor::Impl::analyzeTryablePropagation(
@@ -295,7 +280,9 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     return resultType;
   }
   std::optional<ResolvedConstructionInfo> construction;
-  if (!selectResidualReturn(expr, returnType, residualType, construction)) {
+  std::optional<ResolvedOperatorInfo> conversion;
+  if (!selectResidualReturn(expr, returnType, residualType, construction,
+                            conversion)) {
     return SemanticType::Unknown;
   }
   semanticModel.recordTryablePropagation(
@@ -307,7 +294,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
              .test = std::move(*test),
              .output = std::move(*output),
              .residual = std::move(*residual),
-             .returnConstruction = std::move(construction)});
+             .returnConstruction = std::move(construction),
+             .returnConversion = std::move(conversion)});
   return resultType;
 }
 
