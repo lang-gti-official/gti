@@ -81,6 +81,20 @@ functionPointerSignature(const MirProgram &program, const SemanticType &type);
 referenceInitializerCall(const MirProgram &program,
                          const MirConstructorInstance &constructor,
                          const MirConstructorInitializer &initializer);
+// The formal a return-origin contract names, by expanded parameter position.
+// Instance parameter lists are expanded per element and a concrete pack's
+// elements repeat the pack binding, so the origin is the binding plus the
+// element's position within that binding; whether the binding is a pack is a
+// fact of its place type, which callers consult.
+struct MirReturnOriginFormal {
+  HirBindingId binding = 0;
+  std::size_t elementWithinBinding = 0;
+};
+[[nodiscard]] std::optional<MirReturnOriginFormal>
+returnOriginFormal(std::span<const SemanticType> parameterTypes,
+                   std::span<const HirBindingId> parameterBindings,
+                   std::size_t expandedIndex);
+
 [[nodiscard]] bool functionPointerOperation(const MirProgram &program,
                                             const MirInstruction &instruction);
 // Unsafe raw text assertions retain a checked witness without assigning

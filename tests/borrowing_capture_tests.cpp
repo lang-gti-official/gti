@@ -475,11 +475,100 @@ int main() {
 }
 )",
            "GTI-S2093");
-  negative("invocation-pointer-borrowed-result", R"(
-#include <std/functional>
-int& identity(int& value) { return value; }
+  positive("lambda-reference-result", R"(
 int main() {
-  std::function_ptr<int&(int&)> pointer{identity};
+  int cell = 4;
+  auto same = [](int& value) -> int& { return value; };
+  int& view = same(cell);
+  return view - 4;
+}
+)");
+  positive("generic-relay-reference-result", R"(
+[[borrowed_from(value)]]
+int& relay<F>(F& callback, int& value) { return callback(value); }
+int main() {
+  int cell = 4;
+  auto same = [](int& value) -> int& { return value; };
+  int& view = relay(same, cell);
+  return view - 4;
+}
+)");
+  positive("invocation-pointer-reference-result", R"(
+#include <std/functional>
+int& left(int& value, int ignored) { return value; }
+int main() {
+  int cell = 4;
+  std::function_ptr<int&(int&, int)> pointer{left};
+  int& view = pointer(cell, 1);
+  return view - 4;
+}
+)");
+  positive("signature-erased-reference-result", R"(
+#include <std/functional>
+int main() {
+  int cell = 4;
+  auto same = [](int& value) -> int& { return value; };
+  std::function_ref<int&(int&)> view{same};
+  int& chosen = view(cell);
+  return chosen - 4;
+}
+)");
+  negative("lambda-reference-result-escapes-local", R"(
+int main() {
+  int cell = 4;
+  auto bad = [](int& value) -> int& { int local = value; return local; };
+  int& view = bad(cell);
+  return view;
+}
+)",
+           "GTI-S2017");
+  negative("lambda-reference-result-ambiguous", R"(
+int main() {
+  int left = 1;
+  int right = 2;
+  auto bad = [](int& a, int& b) -> int& { return a; };
+  int& view = bad(left, right);
+  return view;
+}
+)",
+           "GTI-S2017");
+  negative("lambda-reference-result-from-capture", R"(
+int main() {
+  int cell = 4;
+  auto bad = [&cell](int ignored) -> int& { return cell; };
+  int& view = bad(1);
+  return view;
+}
+)",
+           "GTI-S2017");
+  negative("lambda-reference-result-from-mutable-parameter", R"(
+int main() {
+  mut int cell = 4;
+  auto bad = [](mut int& value) -> int& { return value; };
+  int& view = bad(cell);
+  return view;
+}
+)",
+           "GTI-S2017");
+  negative("invocation-pointer-ambiguous-origin", R"(
+#include <std/functional>
+[[borrowed_from(a)]]
+int& first(int& a, int& b) { return a; }
+int main() {
+  std::function_ptr<int&(int&, int&)> pointer{first};
+  return 0;
+}
+)",
+           "GTI-S2093");
+  negative("invocation-pointer-origin-mismatch", R"(
+#include <std/functional>
+#include <std/memory>
+[[borrowed_from(object)]]
+int& pick(std::erased_object& object, int& value) {
+  unsafe { return std::restore_ref<int>(object); }
+}
+int main() {
+  std::function_ptr<int&(std::erased_object&, int&)> pointer{pick};
   return 0;
 }
 )",

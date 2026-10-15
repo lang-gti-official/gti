@@ -4726,12 +4726,11 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     return;
   }
   if (isBorrowedCarrierReference(reference)) {
-    const FunctionInfo *function = currentFunctionInfo();
-    if (function != nullptr &&
-        function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-        function->returnBorrowParameter < function->parameterTypes.size() &&
-        isDirectStoredReferenceType(
-            function->parameterTypes[function->returnBorrowParameter])) {
+    const std::optional<ReturnBorrowContract> contract =
+        currentReturnBorrowContract();
+    const SemanticType *originType =
+        contract ? contract->originParameterType() : nullptr;
+    if (originType != nullptr && isDirectStoredReferenceType(*originType)) {
       // A by-value carrier can expose its exact external referent, never its
       // own shell. Keep the existing field-path proof (and precise S2085
       // diagnostics) authoritative for that distinct return family.
@@ -4742,21 +4741,14 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     // A copied local view can be returned by value, but never by reference to
     // its local shell, even if its contents borrow from this or a parameter.
     const SemanticLoanPlace shell = loanPlace(value);
-    bool validShell =
-        function != nullptr && shell.receiver &&
-        function->returnBorrowOrigin == BorrowOriginKind::Receiver;
-    if (function != nullptr && function->declaration != nullptr &&
-        function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-        function->returnBorrowParameter < function->parameterTypes.size() &&
-        function->returnBorrowParameter <
-            function->bodyDeclaration()->parameters().size()) {
-      const auto index = function->returnBorrowParameter;
-      const auto *binding = semanticModel.findBinding(
-          function->bodyDeclaration()->parameters()[index]);
-      validShell =
-          binding != nullptr &&
-          function->parameterTypes[index].kind == SemanticType::Reference &&
-          !shell.receiver && shell.root == binding->symbol;
+    bool validShell = contract && shell.receiver &&
+                      contract->origin == BorrowOriginKind::Receiver;
+    if (const Parameter *origin =
+            contract ? contract->originParameter() : nullptr) {
+      const auto *binding = semanticModel.findBinding(*origin);
+      validShell = binding != nullptr && originType != nullptr &&
+                   originType->kind == SemanticType::Reference &&
+                   !shell.receiver && shell.root == binding->symbol;
     }
     if (!validShell) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -4831,15 +4823,30 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
 auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     const ExprPtr &value, std::string_view description, std::string code)
     -> void {
-  const FunctionInfo *function = currentFunctionInfo();
-  if (function == nullptr ||
-      function->returnBorrowOrigin == BorrowOriginKind::None) {
+  const std::optional<ReturnBorrowContract> contract =
+      currentReturnBorrowContract();
+  if (!contract || contract->origin == BorrowOriginKind::None) {
     return;
   }
+  // Field-path contracts belong to function declarations; a lambda's
+  // contract is one parameter.
+  const FunctionInfo *function =
+      contract->lambda ? nullptr : currentFunctionInfo();
   const ExpressionInfo *valueInfo =
       value == nullptr ? nullptr : semanticModel.findExpression(*value);
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
     return;
+  }
+  // A generic callable's reference result has no source until a concrete
+  // instance selects the callable; that reanalysis proves the relay.
+  {
+    const Expr *candidate = value.get();
+    while (const auto *group = exprAs<Grouping>(candidate))
+      candidate = group->expression().get();
+    if (const auto *call = exprAs<Call>(candidate);
+        call != nullptr && semanticModel.findCall(*call) == nullptr &&
+        semanticModel.findDeferredCallableCall(*call) != nullptr)
+      return;
   }
   const ExprPtr *physicalOrigin = &value;
   std::unordered_set<const Expr *> visitedOrigins;
@@ -4864,26 +4871,18 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     const SemanticLoanPlace shell = receiver != nullptr
                                         ? loanPlace(*receiver)
                                         : SemanticLoanPlace{.receiver = true};
-    bool validShell =
-        stable && shell.receiver &&
-        function->returnBorrowOrigin == BorrowOriginKind::Receiver;
-    if (stable && function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-        function->declaration != nullptr &&
-        function->returnBorrowParameter < function->parameterTypes.size() &&
-        function->returnBorrowParameter <
-            function->bodyDeclaration()->parameters().size()) {
-      const auto index = function->returnBorrowParameter;
-      const auto *binding = semanticModel.findBinding(
-          function->bodyDeclaration()->parameters()[index]);
-      validShell =
-          binding != nullptr &&
-          function->parameterTypes[index].kind == SemanticType::Reference &&
-          !shell.receiver && shell.root == binding->symbol;
-    } else if (stable &&
-               function->returnBorrowOrigin == BorrowOriginKind::Global &&
-               function->returnBorrowPlace) {
-      validShell =
-          !shell.receiver && shell.root == function->returnBorrowPlace->root;
+    bool validShell = stable && shell.receiver &&
+                      contract->origin == BorrowOriginKind::Receiver;
+    if (const Parameter *origin =
+            stable ? contract->originParameter() : nullptr) {
+      const auto *binding = semanticModel.findBinding(*origin);
+      const SemanticType *originType = contract->originParameterType();
+      validShell = binding != nullptr && originType != nullptr &&
+                   originType->kind == SemanticType::Reference &&
+                   !shell.receiver && shell.root == binding->symbol;
+    } else if (stable && contract->origin == BorrowOriginKind::Global &&
+               contract->place) {
+      validShell = !shell.receiver && shell.root == contract->place->root;
     }
     if (!validShell) {
       // A named carrier is stable within this scope, but its long-lived
@@ -4905,6 +4904,27 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
+  }
+  // A lambda's contract is one read-only reference parameter: beyond the
+  // stable physical-origin check above, the returned reference must derive
+  // from that parameter. Field paths, dependency lists, receivers and
+  // globals belong to function declarations.
+  if (function == nullptr) {
+    const Parameter *source = contract->originParameter();
+    if (source == nullptr || isParameterDerivedBorrow(value, *source)) {
+      return;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+        "Returned " + std::string(description) +
+            " must derive from the lambda's read-only parameter '" +
+            source->name.lexeme + "'.");
+    diagnostic.hints.emplace_back(
+        "Return the parameter or a place reached through it; locals, copies, "
+        "captures and temporaries cannot provide a lambda's borrowed "
+        "result.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
   }
   if (!function->returnBorrowFields.empty()) {
     auto actual =
@@ -5356,6 +5376,11 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return isParameterDerivedBorrow(grouping->expression(), parameter,
                                     visiting);
+  }
+  // A forwarded pack element derives from the pack parameter it expands.
+  if (const auto *expansion = exprAs<PackExpansion>(expression.get())) {
+    const Symbol *symbol = resolve(expansion->name());
+    return symbol != nullptr && symbol->parameterDeclaration == &parameter;
   }
   if (const auto *binary = exprAs<Binary>(expression.get());
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {

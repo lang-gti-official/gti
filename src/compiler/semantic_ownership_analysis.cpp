@@ -1784,10 +1784,31 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     return summary;
   }
 
+  // An erased object is opaque: a typed referent is reached through it only
+  // by exact unsafe restoration. A reference to one is therefore a weak
+  // candidate, considered only when no typed reference parameter is
+  // eligible, so a signature-erasing thunk's erased receiver never competes
+  // with the signature's own parameters while restoration keeps its origin.
+  const auto erasedReferent = [&](const SemanticType &parameter) {
+    const ClassInfo *owner = parameter.kind == SemanticType::Reference &&
+                                     parameter.arguments.size() == 1
+                                 ? classInfo(parameter.arguments.front())
+                                 : nullptr;
+    return owner != nullptr && owner->compilerCapability ==
+                                   CompilerCapabilityTypeKind::ErasedObject;
+  };
+  const bool typedCandidate = std::any_of(
+      parameterTypes.begin(), parameterTypes.end(),
+      [&](const SemanticType &parameter) {
+        return parameter.kind == SemanticType::Reference &&
+               parameter.referenceAccess == borrowAccess(returnType) &&
+               !erasedReferent(parameter);
+      });
   const auto readOnlyDependency = [&](const SemanticType &parameter) {
     const bool readOnlyReference =
         parameter.kind == SemanticType::Reference &&
         parameter.referenceAccess == AccessMode::ReadOnly &&
+        (!typedCandidate || !erasedReferent(parameter)) &&
         (parameter.arguments.empty() ||
          !typeTraits(parameter.arguments.front()).containsBorrowedState ||
          isDirectStoredReferenceType(parameter.arguments.front()));
@@ -1892,6 +1913,151 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   function.returnBorrowAccess = summary.access;
   function.returnBorrowParameters = summary.parameters;
   function.returnBorrowPlace = summary.place;
+}
+
+auto SemanticVisitor::Impl::genericReturnBorrowContract(
+    const FunctionDecl &syntax, const SemanticType &returnType,
+    std::span<const SemanticType> parameterTypes, ClassId ownerClass,
+    bool staticMember) const -> GenericReturnBorrowContract {
+  GenericReturnBorrowContract contract;
+  const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
+  if (attribute == nullptr || !attribute->argument ||
+      returnType.kind != SemanticType::Reference ||
+      returnType.arguments.size() != 1) {
+    return contract;
+  }
+  contract.access = returnType.referenceAccess;
+  if (attribute->argument->kind == TokenKind::THIS) {
+    if (ownerClass != 0 && !staticMember)
+      contract.origin = BorrowOriginKind::Receiver;
+    else
+      contract.missing = true;
+    return contract;
+  }
+  // Expanded parameter positions, so the index agrees with MIR's bindings.
+  std::vector<SemanticType> expanded;
+  for (const SemanticType &type : parameterTypes)
+    SemanticType::appendExpandedArgument(expanded, type);
+  const auto &parameters = syntax.parameters();
+  std::size_t position = 0;
+  for (std::size_t index = 0;
+       index < parameters.size() && index < parameterTypes.size(); ++index) {
+    const std::size_t width =
+        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1)
+                               : 1;
+    if (parameters[index].name.lexeme == attribute->argument->lexeme) {
+      std::optional<std::size_t> selected;
+      for (std::size_t element = position;
+           element < position + width && element < expanded.size(); ++element) {
+        const SemanticType &type = expanded[element];
+        const bool eligible = type.kind == SemanticType::Reference &&
+                              (contract.access == AccessMode::ReadOnly ||
+                               type.referenceAccess == AccessMode::Mutable);
+        if (!eligible)
+          continue;
+        if (selected)
+          contract.ambiguous = true;
+        selected = element;
+      }
+      if (selected && !contract.ambiguous) {
+        contract.origin = BorrowOriginKind::Argument;
+        contract.parameter = *selected;
+      } else if (!selected) {
+        contract.missing = true;
+      }
+      return contract;
+    }
+    position += width;
+  }
+  contract.missing = true;
+  return contract;
+}
+
+auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
+    const FunctionInfo &declaration, FunctionInfo &instance) -> void {
+  instance.returnBorrowOrigin = BorrowOriginKind::None;
+  instance.returnBorrowParameter = 0;
+  instance.returnBorrowParameters.clear();
+  instance.returnBorrowFields.clear();
+  instance.returnBorrowPlace.reset();
+  const FunctionDecl *syntax = declaration.bodyDeclaration();
+  if (syntax == nullptr) {
+    return;
+  }
+  const GenericReturnBorrowContract contract = genericReturnBorrowContract(
+      *syntax, instance.returnType, instance.parameterTypes,
+      instance.ownerClass, instance.staticMember);
+  instance.returnBorrowAccess = contract.access;
+  instance.returnBorrowOrigin = contract.origin;
+  instance.returnBorrowParameter = contract.parameter;
+  if (contract.ambiguous || contract.missing) {
+    const auto *attribute = syntax->findFunctionAttribute("borrowed_from");
+    report(attribute && attribute->argument ? *attribute->argument
+                                            : syntax->name(),
+           contract.ambiguous
+               ? "The borrowed_from pack must expand to exactly one reference "
+                 "element with sufficient access in this instance."
+               : "The borrowed_from origin must be a reference parameter with "
+                 "sufficient access in this instance.",
+           "GTI-S2017");
+  }
+}
+
+auto SemanticVisitor::Impl::reportMissingLambdaReturnBorrowSummary(
+    const Lambda &lambda, const FunctionReturnBorrowSummary &summary) -> void {
+  const Token location = lambda.returnType().name.last();
+  Diagnostic diagnostic;
+  if (summary.eligibleParameters > 1) {
+    diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, location,
+        "A lambda's borrowed return dependency is ambiguous; exactly one "
+        "read-only reference parameter may provide its owner.");
+    diagnostic.hints.emplace_back(
+        "Reduce the lambda to one read-only reference parameter, or return "
+        "an owned value.");
+  } else if (summary.hasMutableCandidate ||
+             summary.access == AccessMode::Mutable) {
+    diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, location,
+        "A lambda's borrowed return cannot derive from a mutable parameter "
+        "because escaping mutable dependency graphs are not supported.");
+    diagnostic.hints.emplace_back(
+        "Return a read-only reference that borrows one read-only reference "
+        "parameter, or return an owned value.");
+  } else {
+    diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, location,
+        "A lambda's borrowed return requires exactly one read-only reference "
+        "parameter that outlives the result; captures are not result "
+        "origins.");
+    diagnostic.hints.emplace_back(
+        "Add one read-only reference parameter the result borrows from, or "
+        "return an owned value.");
+  }
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
+auto SemanticVisitor::Impl::callableResultOriginContract(const Call &call) const
+    -> bool {
+  const SemanticType callee = semanticModel.typeOf(*call.callee());
+  if (callee.kind == SemanticType::Lambda) {
+    const LambdaInfo *lambda = semanticModel.findLambda(callee.lambdaId);
+    if (lambda == nullptr && instanceBaseModel != nullptr)
+      lambda = instanceBaseModel->findLambda(callee.lambdaId);
+    return lambda != nullptr &&
+           lambda->returnBorrowOrigin == BorrowOriginKind::Argument &&
+           lambda->returnBorrowAccess == AccessMode::ReadOnly;
+  }
+  if (callee.hasFunctionItemShape()) {
+    const FunctionInfo *function =
+        semanticModel.findFunction(callee.functionId);
+    if (function == nullptr && instanceBaseModel != nullptr)
+      function = instanceBaseModel->findFunction(callee.functionId);
+    return function != nullptr &&
+           function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+           function->returnBorrowAccess == AccessMode::ReadOnly;
+  }
+  return false;
 }
 
 auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
@@ -3015,12 +3181,35 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
   if (call == nullptr) {
     return nullptr;
   }
+  // An origin index past the written arguments names an element of a
+  // forwarded pack; the expansion expression is that element's source.
+  const auto writtenOrForwarded = [&](std::size_t index) -> const ExprPtr * {
+    if (index < call->arguments().size())
+      return &call->arguments()[index];
+    if (!call->arguments().empty() &&
+        exprAs<PackExpansion>(call->arguments().back().get()) != nullptr)
+      return &call->arguments().back();
+    return nullptr;
+  };
   const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
   if (resolved == nullptr) {
+    // A lambda value's result borrows the argument its contract names; a
+    // generic callable call has no source until its instance selects one.
+    const ResolvedLambdaCallInfo *lambdaCall =
+        semanticModel.findLambdaCall(*call);
+    if (lambdaCall != nullptr &&
+        lambdaCall->borrowOrigin == BorrowOriginKind::Argument) {
+      return writtenOrForwarded(lambdaCall->borrowArgument);
+    }
     return nullptr;
   }
   if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
-    return resolvedCallArgument(*call, resolved, resolved->borrowArgument);
+    if (const ExprPtr *argument =
+            resolvedCallArgument(*call, resolved, resolved->borrowArgument))
+      return argument;
+    return resolved->argumentReceiver == nullptr
+               ? writtenOrForwarded(resolved->borrowArgument)
+               : nullptr;
   }
   if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
     if (const auto *member = exprAs<Get>(call->callee().get())) {
@@ -4976,18 +5165,17 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   }
   const bool referenceCarrier = carrier->type.kind == SemanticType::Reference &&
                                 carrier->type.arguments.size() == 1;
-  const FunctionInfo *function = currentFunctionInfo();
+  const FunctionInfo *function =
+      currentLambdaReturn ? nullptr : currentFunctionInfo();
+  const std::optional<ReturnBorrowContract> contract =
+      currentReturnBorrowContract();
   const bool summarizedParameterSource =
-      function != nullptr && function->declaration != nullptr &&
-      function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-      function->returnBorrowParameter <
-          function->bodyDeclaration()->parameters().size() &&
-      (&function->bodyDeclaration()
-               ->parameters()[function->returnBorrowParameter] == &parameter ||
+      (contract && contract->originParameter() == &parameter) ||
+      (function != nullptr && function->declaration != nullptr &&
+       function->returnBorrowOrigin == BorrowOriginKind::Argument &&
        std::any_of(
            function->returnBorrowParameters.begin(),
-           function->returnBorrowParameters.end(),
-           [&](std::size_t index) {
+           function->returnBorrowParameters.end(), [&](std::size_t index) {
              return index < function->bodyDeclaration()->parameters().size() &&
                     &function->bodyDeclaration()->parameters()[index] ==
                         &parameter;

@@ -1777,6 +1777,24 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
+    // A lambda value or generic callable invocation with a reference result
+    // denotes the referent place exactly like a function call result.
+    if (resolved == nullptr) {
+      const SemanticType *callableResult = nullptr;
+      if (const ResolvedLambdaCallInfo *lambdaCall =
+              semanticModel.findLambdaCall(call)) {
+        callableResult = &lambdaCall->returnType;
+      } else if (const DeferredCallableCallInfo *deferred =
+                     semanticModel.findDeferredCallableCall(call)) {
+        callableResult = &deferred->returnType;
+      }
+      if (callableResult != nullptr &&
+          callableResult->kind == SemanticType::Reference &&
+          callableResult->arguments.size() == 1) {
+        return expressionInfo(std::move(type), ValueCategory::Place,
+                              callableResult->referenceAccess);
+      }
+    }
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
