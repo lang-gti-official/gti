@@ -6735,6 +6735,10 @@ auto SemanticVisitor::Impl::resolveRequirements(
     return result;
   }
 
+  // A conformance operation inherits its block's checked header. Resolve its
+  // requirement facts here without diagnosing the same written header again.
+  const bool restated = clause->keyword.generated;
+
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   currentNamespace = scope;
   std::vector<const TypeRef *> argumentsToValidate;
@@ -6766,6 +6770,9 @@ auto SemanticVisitor::Impl::resolveRequirements(
     const std::optional<ConceptId> resolved =
         resolveConceptPath(application.name, scope);
     if (!resolved) {
+      if (restated) {
+        continue;
+      }
       const std::optional<ConceptId> global =
           resolveConceptPathGlobally(application.name, scope);
       if (!(global && *global != 0 && *global <= concepts.size() &&
@@ -6796,14 +6803,16 @@ auto SemanticVisitor::Impl::resolveRequirements(
     }
     if (application.arguments.size() !=
         conceptInfo.declaration->typeParameters().size()) {
-      report(
-          application.name.last(),
-          "Concept '" + conceptInfo.qualifiedName + "' requires " +
-              std::to_string(conceptInfo.declaration->typeParameters().size()) +
-              " type argument" +
-              (conceptInfo.declaration->typeParameters().size() == 1 ? "."
-                                                                     : "s."),
-          "GTI-S2049");
+      if (!restated)
+        report(application.name.last(),
+               "Concept '" + conceptInfo.qualifiedName + "' requires " +
+                   std::to_string(
+                       conceptInfo.declaration->typeParameters().size()) +
+                   " type argument" +
+                   (conceptInfo.declaration->typeParameters().size() == 1
+                        ? "."
+                        : "s."),
+               "GTI-S2049");
       continue;
     }
 
@@ -6821,10 +6830,11 @@ auto SemanticVisitor::Impl::resolveRequirements(
                                   !argument.reference &&
                                   argument.arrayExtents.empty();
       if (plainParameter && isActiveTypePack(argument)) {
-        report(argument.name.last(),
-               "Requires-clause arguments cannot use an unexpanded type "
-               "pack.",
-               "GTI-S2049");
+        if (!restated)
+          report(argument.name.last(),
+                 "Requires-clause arguments cannot use an unexpanded type "
+                 "pack.",
+                 "GTI-S2049");
         requirement.arguments.emplace_back(SemanticType::Unknown);
         valid = false;
         continue;
@@ -6857,7 +6867,6 @@ auto SemanticVisitor::Impl::resolveRequirements(
   // A generated clause is a conformance block's application, restated on
   // each of its operations. validateConformanceTypes validates the block's
   // patterns once, so a restated copy does not report them again.
-  const bool restated = clause->keyword.generated;
   for (const TypeRef *argument : argumentsToValidate) {
     if (!restated) {
       validateType(*argument);

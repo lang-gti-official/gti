@@ -4429,10 +4429,23 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
       currentSourceUnit = sourceUnitFor(function->name());
       if (function->definitionOwner())
         continue;
-      std::vector<GenericParameterInfo> genericParameters =
-          makeGenericParameters(function->genericParameters(), function->name(),
-                                scope);
-      functionGenericParameters.emplace(function, genericParameters);
+      std::vector<GenericParameterInfo> genericParameters;
+      if (const auto header = functionGenericParameters.find(function);
+          header != functionGenericParameters.end()) {
+        genericParameters = header->second;
+        // This check is operation-relative, unlike the shared header checks.
+        std::erase_if(genericParameters, [&](const auto &parameter) {
+          if (parameter.name.lexeme != function->name().lexeme)
+            return false;
+          report(parameter.name, "Generic parameter cannot have the same name "
+                                 "as its declaration.");
+          return true;
+        });
+      } else {
+        genericParameters = makeGenericParameters(function->genericParameters(),
+                                                  function->name(), scope);
+      }
+      functionGenericParameters.insert_or_assign(function, genericParameters);
       const IntrinsicKind intrinsic = trustedIntrinsicKind(
           currentSourceUnit, scope, function->name().lexeme);
       (void)catalog.registerCallable(CallableDeclaration{

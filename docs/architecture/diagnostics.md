@@ -820,6 +820,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   top-level nominal type argument. Do not offer a fix-it: changing the target,
   argument type, package ownership, or declaration location requires intent.
 - `GTI-S2123` owns concepts with a body, conformance blocks, and their uses.
+  The block owns written header diagnostics, including generic parameter
+  constraints. Generated operations reuse those parameter identities and do
+  not repeat concept, arity or pack diagnostics from their restated requires
+  clauses. Operation-relative parameter/name collisions remain checked.
+  Invisible concepts use `GTI-S2024` with the declaring source and include
+  suggestion, also for an empty block; compiler-private paths retain
+  `GTI-S2058`. These checks are independent of the number of operations.
   - **Declarations:** a body with other than one type parameter, a duplicate
     member name, or an operation with a body-only feature (generic
     parameters, requires clause, default, pack, modifier or receiver

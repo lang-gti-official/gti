@@ -132,6 +132,99 @@ for <T> concept measurable<Crate<T>> {
 };
 )gti";
 
+  // A block owns its header, including when there are no generated operations.
+  for (int operations = 0; operations <= 2; ++operations) {
+    const auto members = [&](const std::string &type) {
+      std::string text;
+      if (operations > 0)
+        text += "int measure(" + type + "& item) { return 1; }\n";
+      if (operations > 1)
+        text += "bool is_empty(" + type + "& item) { return false; }\n";
+      return text;
+    };
+    const auto oneHeaderError = [&](const std::string &header,
+                                    const std::string &type,
+                                    const std::string &token,
+                                    const std::string &code) {
+      const std::string source = measurable + header + " {\n" +
+                                 "using unit_type = int;\n" + members(type) +
+                                 "};\nint main() { return 0; }\n";
+      const auto result = analyze(source);
+      const std::size_t start = source.find(token, measurable.size());
+      const auto count =
+          std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                        [&](const auto &diagnostic) {
+                          return diagnostic.primary.start == start &&
+                                 diagnostic.primary.end == start + token.size();
+                        });
+      expect(!result.canGenerateCode() && count == 1,
+             "one header diagnostic regardless of operation count: " + header);
+      expect(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [&](const auto &diagnostic) {
+                           return diagnostic.primary.start == start &&
+                                  diagnostic.code == code;
+                         }),
+             "the header retains its owning diagnostic: " + header);
+      if (count != 1)
+        dump(result);
+    };
+    oneHeaderError("for concept missing<Rope>", "Rope", "missing", "GTI-S2123");
+    oneHeaderError("for concept measurable<Rope, Rope>", "Rope", "measurable",
+                   "GTI-S2123");
+    oneHeaderError("for <unknown_constraint T> concept measurable<Crate<T>>",
+                   "Crate<T>", "unknown_constraint", "GTI-S2029");
+    oneHeaderError("for concept gti_internal::missing<Rope>", "Rope",
+                   "gti_internal", "GTI-S2058");
+
+    const std::string source = "#include \"middle.gti\"\nstruct Rope {};\n"
+                               "for concept measurable<Rope> {\n" +
+                               members("Rope") +
+                               "};\nint main() { return 0; }\n";
+    const auto entry = root / "tests" / "protocol-concepts.gti";
+    const auto conceptPath = root / "tests" / "measure.gti";
+    const auto invisible = lang::Frontend().analyze(
+        entry, source, {root / "stdlib" / "prelude.gti"},
+        {{(root / "tests" / "middle.gti").string(),
+          "#include \"measure.gti\"\n"},
+         {conceptPath.string(), "concept measurable<T> { int measure(T& item); "
+                                "bool is_empty(T& item); };\n"}},
+        {root / "stdlib"});
+    const auto diagnostic =
+        std::find_if(invisible.diagnostics.begin(), invisible.diagnostics.end(),
+                     [](const auto &item) { return item.code == "GTI-S2024"; });
+    expect(!invisible.canGenerateCode() &&
+               std::count_if(invisible.diagnostics.begin(),
+                             invisible.diagnostics.end(),
+                             [](const auto &item) {
+                               return item.code == "GTI-S2024" ||
+                                      item.code == "GTI-S2123" ||
+                                      item.code == "GTI-S2049";
+                             }) == 1,
+           "an invisible concept reports once from its block");
+    expect(diagnostic != invisible.diagnostics.end() &&
+               diagnostic->primary.start == source.find("measurable") &&
+               diagnostic->missingIncludeName == "measurable" &&
+               std::any_of(diagnostic->related.begin(),
+                           diagnostic->related.end(),
+                           [&](const auto &related) {
+                             return related.span.source == conceptPath.string();
+                           }) &&
+               std::any_of(diagnostic->hints.begin(), diagnostic->hints.end(),
+                           [](const auto &hint) {
+                             return hint.find("#include \"measure.gti\"") !=
+                                    std::string::npos;
+                           }),
+           "an invisible concept retains declaration and include help even "
+           "without operations");
+  }
+  rejected(measurable + R"gti(
+for <T> concept measurable<Crate<T>> {
+  using unit_type = int;
+  int T(Crate<T>& item) { return 1; }
+};
+)gti",
+           "GTI-S2000", "Generic parameter cannot have the same name");
+
   // Concrete use: projections reduce to the block's types and operations
   // call the block's functions.
   accepted(measurable + blocks + R"gti(

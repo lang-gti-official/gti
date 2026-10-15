@@ -728,6 +728,19 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                *payloadError, std::nullopt, declaration.id);
     }
+    std::visit(
+        [&](const auto &payload) {
+          if constexpr (requires { payload.sourceUnit; }) {
+            if (program.mir_.failureMetadata().findSource(payload.sourceUnit) ==
+                nullptr) {
+              addIssue(issues,
+                       LoweredProgramIssueKind::InvalidDeclarationInventory,
+                       "lowered declaration has no logical source identity",
+                       std::nullopt, declaration.id);
+            }
+          }
+        },
+        declaration.payload);
 
     const auto recordIdentity = [&](auto &identities, std::size_t identity,
                                     std::string_view kind) {

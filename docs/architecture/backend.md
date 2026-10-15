@@ -3517,6 +3517,18 @@ the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
 
+Generated nominal and instance names hash logical source identities rather
+than host filesystem paths. The source descriptor table carried with failure
+metadata covers every loaded unit, including those without failure sites:
+`<prelude>`, standard-library include names, root/package-relative paths, and
+content-plus-include-route identities for external units. Lowered declaration
+source-unit references must resolve in that table before emission. Declaration
+spans retain physical paths for diagnostics and opt-in debug locations; those
+paths do not participate in generated identifier hashes. This preserves names
+across checkout and toolchain relocation without conflating same-basename
+external units. Failure-site serialization and runtime descriptor IDs retain
+their existing contract; the additional source rows are compiler metadata.
+
 Interface-owned static functions use the ordinary static declaration and direct
 call path. Purity comes only from the verified function's `pureVirtual` fact,
 never from the enclosing interface kind. Lowered declaration and MIR instance

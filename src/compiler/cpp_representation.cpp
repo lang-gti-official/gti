@@ -87,6 +87,15 @@ std::shared_ptr<void> *cppScopedBodyAnalysis(const MirBody &body,
 
 namespace {
 
+[[nodiscard]] std::string_view sourceIdentity(const LoweredProgram &program,
+                                              SourceUnitId sourceUnit) {
+  const auto *source = program.mir().failureMetadata().findSource(sourceUnit);
+  if (source == nullptr) {
+    throw std::logic_error("C++ declaration lacks a logical source identity");
+  }
+  return source->logicalName;
+}
+
 [[nodiscard]] std::string cppLoweredQualifiedName(std::string_view qualified,
                                                   bool global) {
   std::string result = global ? "::" : "::__gti_program::";
@@ -523,7 +532,8 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     appendIdentityText(output, declaration->qualifiedName);
     // A compiler-private or same-spelled nominal declaration in another
     // source unit remains distinct without importing snapshot-local IDs.
-    appendIdentityText(output, row->source.source);
+    appendIdentityText(output,
+                       sourceIdentity(program, declaration->sourceUnit));
     const std::vector<SemanticType> &arguments =
         declaration->exactSpecializationPrimary == 0
             ? type.arguments
@@ -555,7 +565,8 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     }
     appendIdentityText(output, "enum");
     appendIdentityText(output, declaration->qualifiedName);
-    appendIdentityText(output, row->source.source);
+    appendIdentityText(output,
+                       sourceIdentity(program, declaration->sourceUnit));
     return appendArguments();
   }
   case SemanticType::Reference:
@@ -725,7 +736,7 @@ std::string cppClassDeclarationNameSpelling(const LoweredProgram &program,
   std::vector<std::uint8_t> identity;
   appendIdentityText(identity, "lexical-class-primary");
   appendIdentityText(identity, info->qualifiedName);
-  appendIdentityText(identity, row->source.source);
+  appendIdentityText(identity, sourceIdentity(program, info->sourceUnit));
   // Same-spelled disjoint signature primaries remain distinct declarations.
   // Use their source identity, never traversal-local semantic IDs.
   appendIdentityInteger(identity, row->source.start);
@@ -1367,7 +1378,7 @@ std::optional<std::string> cppConcreteClassName(const LoweredProgram &program,
   std::vector<std::uint8_t> identity;
   appendIdentityText(identity, "GTI-CONCRETE-CLASS-V1");
   appendIdentityText(identity, primary->qualifiedName);
-  appendIdentityText(identity, primaryRow->source.source);
+  appendIdentityText(identity, sourceIdentity(program, primary->sourceUnit));
   appendIdentityInteger(identity, primary->genericParameters.size());
   for (const LoweredGenericParameter &parameter : primary->genericParameters) {
     appendIdentityInteger(identity, parameter.value ? 1 : 0);
@@ -1544,7 +1555,7 @@ cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
   appendIdentityText(identity, row.name);
   appendIdentityInteger(identity, function.internalLinkage ? 1 : 0);
   if (function.internalLinkage) {
-    appendIdentityText(identity, row.source.source);
+    appendIdentityText(identity, sourceIdentity(program, function.sourceUnit));
   }
   appendIdentityInteger(identity, function.genericParameters.size());
   for (const LoweredGenericParameter &parameter : function.genericParameters) {
