@@ -687,15 +687,31 @@ value only after its admitted fields are available; a class payload enters
 its alternative by copy from a named value, by transfer from an explicit
 `std::move`, or directly from a fresh prvalue construction, before any later
 sibling field expression evaluates. A payload switch evaluates its subject
-once through a read-only observation, selects by the active alternative,
-binds that alternative's selected fields, and executes the selected arm. An
-ordinary value binding owns an immutable copy and drops it at the arm's end.
-A tag-only pattern observes a move-only payload without extracting it;
-`auto&` instead borrows a field from stable enum storage for the arm, and
-`mut auto&` requires mutable storage and an exclusive loan. The whole enum
-remains the conservative conflict root while a payload loan lives. Temporary
-subjects cannot supply borrowed bindings, and consuming patterns remain
-unsupported. An exhaustive payload switch has no unmatched execution path.
+once, selects by the active alternative, binds that alternative's selected
+fields, and executes the selected arm. An exhaustive payload switch has no
+unmatched execution path.
+
+A named subject place is observed. An ordinary value binding owns an
+immutable copy of its field and drops it at the arm's end. A tag-only pattern
+observes a move-only payload without extracting it; `auto&` instead borrows a
+field from that stable enum storage for the arm, and `mut auto&` requires
+mutable storage and an exclusive loan. The whole enum remains the
+conservative conflict root while a payload loan lives.
+
+A consumed subject, a prvalue such as a call result or a construction or an
+explicit `std::move` of a place, is consumed by the switch. Its full
+expression ends with the enum owned by the switch, and its other temporaries
+end at that boundary as usual. At the selected arm's entry, before the arm's
+first statement, the switch retires the enum. A binding arm moves every field
+of the active alternative into its by-value bindings and releases the drained
+enum without dropping those fields again. Any other arm, tag-only or
+`default`, drops the enum and therefore its active payload. The bindings are
+immutable arm-scoped owners: they drop at the arm's end newest first, like
+ordinary locals, unless they are moved or returned first. A defined runtime
+failure, `return`, `break`, or `continue` inside an arm drops exactly the live
+bindings, and a failure while the subject's other temporaries end drops the
+consumed enum once. A moved place stays moved after the switch on every path.
+A consumed subject cannot supply borrowed bindings.
 
 When any alternative contains an active-cleanup class, the enum owns one
 variant-aware lexical cleanup obligation. Payload construction transfers each
@@ -745,8 +761,8 @@ and retains the ordinary first-failure and remaining-sibling cleanup rules.
 
 Polymorphic dispatch, native/runtime callable transport, operators, direct
 lambda capture of an owning payload enum, fixed arrays of direct owning enum
-elements, stored borrowed state, and consuming match bindings remain
-diagnosed before execution lowering. No native C ABI, stable layout, or
+elements, and stored borrowed state remain diagnosed before execution
+lowering. No native C ABI, stable layout, or
 implicit cleanup for an unsupported wrapper is inferred.
 
 A native union retains only overlapping bytes and no active-field tag. A union

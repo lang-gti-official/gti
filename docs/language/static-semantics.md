@@ -1445,24 +1445,52 @@ int32_t coordinate_sum(Message message) {
 }
 ```
 
-Each binding is an immutable copied value scoped to its arm; a class-typed
-binding therefore requires a copyable payload type, and its copy drops at the
-arm's end exactly like an ordinary local. A move-only active payload can still
-be matched exhaustively by using its tag-only form, such as
-`case Message::owned:`. `case Message::owned(auto& item)` instead binds an
-arm-scoped shared reference to the original payload; `mut auto& item` binds an
-exclusive mutable reference and requires mutable enum storage. Temporary
-subjects cannot provide either reference. The entire matched enum is the
-conservative alias-conflict root, including for sibling fields: two mutable
-payload bindings in the same arm conflict. Owner replacement, movement, or
-conflicting access is forbidden while the loan lives. Existing checked return
-summaries can relay receiver-derived payload references, but cannot let local
-or temporary payloads escape. Consuming patterns remain unsupported. Every alternative
-must be handled exactly once unless a `default` arm is present. A complete
-payload switch is exhaustive for return, ownership-state, loan, HIR, and MIR
-control-flow analysis. `GTI-S2067` owns payload declaration, construction, and
-pattern/exhaustiveness, local-value containment, and callable-boundary
-failures.
+Each binding is an immutable value scoped to its arm. How a by-value binding
+obtains its field follows the value category of the switch subject, by the
+same transport rule as `?` on a result:
+
+- A named place is observed. A by-value binding is a copy, so a class-typed
+  binding requires a copyable payload type, and its copy drops at the arm's
+  end exactly like an ordinary local. A move-only active payload can still be
+  matched exhaustively by using its tag-only form, such as
+  `case Message::owned:`.
+- A consumed subject, a prvalue or an explicit `std::move(place)`, is consumed
+  by the switch. By-value bindings take ownership of their fields by move,
+  which admits move-only payloads, and drop at the arm's end unless moved or
+  returned. A payload type that can be neither moved nor copied cannot be
+  bound by value. `std::move(place)` leaves the place moved after the switch
+  on every path, including tag-only and `default` arms, which drop the
+  consumed enum at their entry.
+
+```gti
+enum class Envelope {
+  empty,
+  owned(Resource item),
+};
+
+Resource take(Envelope envelope) {
+  switch (std::move(envelope)) {
+  case Envelope::owned(item):
+    return item;
+  case Envelope::empty:
+    return Resource();
+  }
+}
+```
+
+`case Message::owned(auto& item)` instead binds an arm-scoped shared reference
+to the original payload; `mut auto& item` binds an exclusive mutable reference
+and requires mutable enum storage. A consumed subject provides neither
+reference. The entire matched enum is the conservative alias-conflict root,
+including for sibling fields: two mutable payload bindings in the same arm
+conflict. Owner replacement, movement, or conflicting access is forbidden
+while the loan lives. Existing checked return summaries can relay
+receiver-derived payload references, but cannot let local or temporary
+payloads escape. Every alternative must be handled exactly once unless a
+`default` arm is present. A complete payload switch is exhaustive for return,
+ownership-state, loan, HIR, and MIR control-flow analysis. `GTI-S2067` owns
+payload declaration, construction, and pattern/exhaustiveness, local-value
+containment, and callable-boundary failures.
 
 ## 3.9 Operators And Contextual Conversion
 
