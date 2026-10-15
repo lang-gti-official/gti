@@ -1018,6 +1018,22 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
                            std::string::npos,
                    "native enum publication must retain field rollback without "
                    "constructing or retiring a duplicate value representation");
+          } else if (!called) {
+            const auto direct = text.text.find(
+                "::new (static_cast<void *>(std::addressof(" + fieldSpelling +
+                "))) ");
+            expect(text.emitted() && retirement != std::string::npos &&
+                       direct != std::string::npos && retirement < direct &&
+                       text.text.find(
+                           "// GTI MIR in-place payload-enum field reparent into p" +
+                           std::to_string(field->id)) != std::string::npos &&
+                       sourceRetirement == std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct(") ==
+                           std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct_from(") ==
+                           std::string::npos,
+                   "a fresh adjacent alternative must construct directly in "
+                   "its empty field while retaining the MIR reparent");
           } else {
             expect(text.emitted() && retirement != std::string::npos &&
                        publication != std::string::npos &&
