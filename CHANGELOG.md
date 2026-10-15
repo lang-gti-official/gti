@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.2 — Reproducible generated names and conformance diagnostics
+## 0.440.3 — Reproducible generated names and conformance diagnostics
 
 - Generated C++ identifiers remain the same when a project or its standard
   library moves to another directory. Distinct source units retain distinct
@@ -17,6 +17,20 @@ for what minor and patch releases mean.
 - Conformance block header errors are reported once, independently of the
   number of operations. An indirectly included concept retains its declaration
   location and direct-include suggestion even when the block has no operations.
+
+## 0.440.2 — Borrowed arguments before a nested call taking a class by value
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a call passes a local by reference and
+  a later argument is a conditional whose test calls a function that takes a
+  class by value, such as `use(plain, owns(std::string("xy")) ? 0 : 2)`. The
+  by-value argument may be a new object, a local moved with `std::move` or
+  copied, or the argument of a method called on another local, and the call
+  may also be one arm of the conditional. If that call, the argument's
+  construction or a later argument fails, each object is destroyed once.
+- A class argument of the outer call that is built from a string, such as
+  `pick(plain, std::string("xy"), argc > 1 ? 0 : 2)`, no longer stops with
+  this error either.
 
 ## 0.440.1 — Conditional member-call results without cleanup
 
