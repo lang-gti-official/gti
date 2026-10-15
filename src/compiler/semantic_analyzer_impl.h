@@ -5,6 +5,7 @@
 #include "diagnostic_registry.h"
 #include "gti/ast_clone.h"
 #include "gti/frontend_work.h"
+#include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
@@ -1161,8 +1162,16 @@ private:
     bool complete = false;
   };
   struct CompleteReturnQueryState {
-    std::vector<std::shared_ptr<CompleteReturnQuery>> entries;
+    std::unordered_map<InstanceAnalysisKey,
+                       std::shared_ptr<CompleteReturnQuery>,
+                       InstanceAnalysisKeyHash>
+        entries;
+    std::unordered_set<InstanceAnalysisKey, InstanceAnalysisKeyHash> discovered;
     std::size_t depth = 0;
+    // Retention is independent of the compilation resource policy: completed
+    // entries can be discarded and recomputed without changing acceptance.
+    static constexpr std::size_t maximumRetainedResults = 64;
+    std::vector<InstanceAnalysisKey> completed;
     std::vector<SemanticCatalog> idleCatalogs;
   };
 
@@ -1799,10 +1808,17 @@ private:
                 bool structural = false) const;
 
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
+  // Normalize one already checked return expression before end-of-body
+  // summary publication. Failure is unknown/invalid, never an empty proof.
+  // The caller still enforces ordinary child-loan escape and availability.
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteReturnBorrow(const FunctionInfo &function,
+                                 const SemanticBorrowDependencySet &complete);
   std::optional<FunctionBorrowDependencySummary> completeFunctionReturnBorrow(
       const CallableCandidate &function,
       const std::vector<SemanticType> &typeArguments,
-      const std::vector<CompileTimeValue> &valueArguments);
+      const std::vector<CompileTimeValue> &valueArguments,
+      const SourceSpan &site);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the

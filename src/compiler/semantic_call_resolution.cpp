@@ -7298,7 +7298,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.
   if (const auto complete = completeFunctionReturnBorrow(
-          function, resolved.typeArguments, resolved.valueArguments);
+          function, resolved.typeArguments, resolved.valueArguments,
+          tokenSpan(expressionToken(call.callee())));
       complete && complete->dependencies.empty()) {
     semanticModel.recordBorrowDependencySet(
         call, {.possibleAlternatives = complete->possibleAlternatives});
