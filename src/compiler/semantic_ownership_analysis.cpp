@@ -4658,6 +4658,23 @@ auto SemanticVisitor::Impl::validateSequencedTransientLoans(
   }
 }
 
+auto SemanticVisitor::Impl::validateForeignStorageBorrow(
+    const ExprPtr &expression) -> bool {
+  const SemanticPlace place = semanticPlace(expression);
+  const SymbolId root = place.rootIdentity != 0 ? place.rootIdentity
+                        : place.root != nullptr ? toolingSymbolFor(*place.root)
+                                                : 0;
+  if (semanticModel.findForeignStorage(root) == nullptr) {
+    return true;
+  }
+  report(
+      expressionToken(expression),
+      "Foreign storage has no GTI owner lifetime for a checked reference; use "
+      "an explicit raw-to-checked operation with a valid owner witness.",
+      "GTI-S2054");
+  return false;
+}
+
 auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     std::span<const SemanticType> parameterTypes,
     std::span<const ExprPtr *> arguments, const Token &location,
@@ -4707,6 +4724,10 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
       mutations.emplace_back(index, std::move(place));
     }
     const bool referenceParameter = parameter.kind == SemanticType::Reference;
+    if (referenceParameter &&
+        !validateForeignStorageBorrow(*arguments[index])) {
+      continue;
+    }
     const ExpressionInfo *argumentInfo =
         *arguments[index] ? semanticModel.findExpression(**arguments[index])
                           : nullptr;
@@ -4753,6 +4774,12 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
                                           : AccessMode::ReadOnly,
            .argument = index});
     }
+  }
+  if (receiver && semanticModel.findForeignStorage(receiver->root) != nullptr) {
+    report(location,
+           "Foreign storage cannot provide a checked method receiver; use an "
+           "explicit raw-to-checked operation with a valid owner witness.",
+           "GTI-S2054");
   }
   if (receiver && (receiver->root != 0 || receiver->receiver)) {
     places.push_back({.place = std::move(*receiver),
@@ -5006,6 +5033,15 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     bool receiverOrigin, AccessMode access, bool protectsStorage,
     SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields)
     -> SemanticLoanId {
+  if (semanticModel.findForeignStorage(place.root) != nullptr &&
+      origin != nullptr) {
+    report(expressionToken(*origin),
+           "Foreign storage has no GTI owner lifetime for a checked reference; "
+           "use "
+           "an explicit raw-to-checked operation with a valid owner witness.",
+           "GTI-S2054");
+    return 0;
+  }
   const SemanticLoanId id = nextSemanticLoanId++;
   const bool lifecycleBound = lifecycleBoundBorrowCarrierFor(carrier.type);
   semanticModel.recordLoan({.id = id,

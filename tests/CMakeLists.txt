@@ -1,6 +1,28 @@
+add_executable(gti_foreign_variable_borrow_tests foreign_variable_borrow_tests.cpp)
+target_link_libraries(gti_foreign_variable_borrow_tests PRIVATE gti_compiler)
+add_test(NAME foreign_variable_borrow COMMAND gti_foreign_variable_borrow_tests)
+
+add_executable(gti_foreign_variable_tests foreign_variable_tests.cpp)
+target_link_libraries(gti_foreign_variable_tests PRIVATE gti_cpp_backend)
+add_test(NAME foreign_variable_pipeline COMMAND gti_foreign_variable_tests)
+add_test(NAME native_variable_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py"
+    $<TARGET_FILE:gti> --example native-variable-bindings)
+set_tests_properties(native_variable_bindgen PROPERTIES TIMEOUT 600)
+
 # Preserve the build-tree location of test executables and corpus tools while
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+
+add_executable(gti_foreign_variable_syntax_tests foreign_variable_syntax_tests.cpp)
+target_link_libraries(gti_foreign_variable_syntax_tests PRIVATE gti_compiler)
+add_test(NAME foreign_variable_syntax COMMAND gti_foreign_variable_syntax_tests)
+if(TARGET gti_lsp)
+  add_test(NAME foreign_variable_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/foreign_variable_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(foreign_variable_lsp PROPERTIES TIMEOUT 90)
+endif()
 
 add_executable(gti_protected_member_tests protected_member_tests.cpp)
 target_link_libraries(gti_protected_member_tests PRIVATE gti_compiler)
@@ -942,6 +964,9 @@ set_tests_properties(native_enum_bindgen PROPERTIES TIMEOUT 300)
 add_test(NAME native_typedef_bindgen
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py" $<TARGET_FILE:gti> --example native-callback-slots)
 set_tests_properties(native_typedef_bindgen PROPERTIES TIMEOUT 300)
+add_test(NAME native_union_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py" $<TARGET_FILE:gti> --example native-union-bindings)
+set_tests_properties(native_union_bindgen PROPERTIES TIMEOUT 300)
 add_test(NAME native_array_index_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_array_index_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(native_array_index_runtime PROPERTIES TIMEOUT 300)

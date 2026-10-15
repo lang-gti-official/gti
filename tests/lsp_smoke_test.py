@@ -8304,6 +8304,7 @@ def test_native_record_tooling(executable, root):
         "  mut float y;\n"
         "};\n"
         "[[c_abi]] struct NativeBytes { mut uint8_t bytes[4]; };\n"
+        "[[c_abi]] union NativePayload { mut uint64_t bits; mut double real; };\n"
         "extern \"C\" { NativeHandle* native_open(); "
         "void native_close(NativeHandle* handle); "
         "NativePoint point_roundtrip(NativePoint value); "
@@ -8387,6 +8388,14 @@ def test_native_record_tooling(executable, root):
         assert hover and "[[c_abi]]" in json.dumps(hover), hover
         assert "size 8 bytes" in json.dumps(hover), hover
         assert "ABI alignment 4 bytes" in json.dumps(hover), hover
+
+        session.send({"jsonrpc": "2.0", "id": 200, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": uri},
+                                 "position": lsp_position(source, source.index("NativePayload") + 1)}})
+        union_hover = session.receive_until(lambda message: message.get("id") == 200)["result"]
+        assert "union NativePayload" in json.dumps(union_hover), union_hover
+        assert "size 8 bytes" in json.dumps(union_hover), union_hover
+        assert "ABI alignment 8 bytes" in json.dumps(union_hover), union_hover
 
         session.send(
             {
@@ -12336,14 +12345,18 @@ def test_mutable_temporary_receiver_tooling(executable, root):
     invalid_source = (
         "class Probe {\n"
         "public:\n"
-        "  Probe() {}\n"
+        "  Probe() : value(0) {}\n"
         "  virtual void reset() mut {}\n"
+        "  mut int& expose() mut { return this.value; }\n"
         "  int inspect() { return 1; }\n"
         "  int inspect() mut { return 2; }\n"
+        "private:\n"
+        "  mut int value;\n"
         "};\n"
         "int main() {\n"
         "  Probe probe = Probe();\n"
         "  probe.reset();\n"
+        "  [[discard]] Probe().expose();\n"
         "  return 0;\n"
         "}\n"
     )
@@ -12403,6 +12416,9 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         # read-only receiver still cannot call a mutating method.
         assert any(item.get("code") == "GTI-S2000" and
                    "requires a mutable receiver" in item.get("message", "")
+                   for item in diagnostics), diagnostics
+        # A checked reference still cannot escape a fresh temporary owner.
+        assert any(item.get("code") == "GTI-S2081"
                    for item in diagnostics), diagnostics
 
         session.send(

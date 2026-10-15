@@ -789,6 +789,18 @@ struct HirEmbeddingPlan {
 
 class HirProgram {
 public:
+  [[nodiscard]] const std::vector<ForeignStorageInfo> &
+  foreignStorageDeclarations() const {
+    return foreignStorage_;
+  }
+  [[nodiscard]] const ForeignStorageInfo *
+  findForeignStorage(SymbolId symbol) const {
+    const auto found = std::find_if(
+        foreignStorage_.begin(), foreignStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
+    return found == foreignStorage_.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] bool valid() const { return valid_; }
 
   [[nodiscard]] ExecutionProfile executionProfile() const {
@@ -899,6 +911,7 @@ public:
   valueIdsForSource(const Expr &source) const;
 
 private:
+  std::vector<ForeignStorageInfo> foreignStorage_;
   friend class HirLowerer;
 
   bool valid_ = true;

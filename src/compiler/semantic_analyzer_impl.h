@@ -2129,6 +2129,8 @@ private:
                                        const ExprPtr &right,
                                        const Token &location);
 
+  [[nodiscard]] bool validateForeignStorageBorrow(const ExprPtr &expression);
+
   void validateCallPlaceExclusivityImpl(
       std::span<const SemanticType> parameterTypes,
       std::span<const ExprPtr *> arguments, const Token &location,
@@ -3379,6 +3381,8 @@ private:
                                const SemanticType &returnType);
 
   void collectRootNativeStorageSymbols(const StmtList &statements);
+  void validateExternCVariable(const VariableDecl &variable,
+                               const SemanticType &type, SymbolId symbol);
 
   struct GlobalBorrowStorageInfo {
     const VariableDecl *declaration = nullptr;
@@ -5023,7 +5027,8 @@ private:
 
   [[nodiscard]] bool isOwnershipAssignment(const SemanticType &target,
                                            const SemanticType &value,
-                                           const ExprPtr &expression) const;
+                                           const ExprPtr &expression,
+                                           const SemanticPlace &destination);
 
   [[nodiscard]] static bool isAssignable(SemanticType target,
                                          SemanticType value,
@@ -5446,6 +5451,8 @@ private:
         programEffects;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
+    std::vector<const Expr *> foreignAddressPlaces;
+    std::unordered_map<std::string, const VariableDecl *> externCVariables;
     LambdaId nextLambdaId = 1;
     SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;

@@ -7569,6 +7569,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
     if (!bindingRoot && !symbolRoot) {
       continue;
     }
+    if (symbolRoot && place.foreignStorage &&
+        program.findForeignStorage(place.symbol) != nullptr) {
+      // External reads in a GTI initializer do not acquire an owned startup
+      // step.
+      continue;
+    }
     std::optional<ProgramInitializationStepId> identity;
     bool exact = true;
     const auto requireIdentity = [&](ProgramInitializationStepId candidate) {
@@ -11420,6 +11426,85 @@ verifyMirProgramContracts(const MirProgram &program) {
         "library MIR retains hosted startup or process-lifetime callbacks");
   }
 
+  const auto validForeignType = [&](const auto &self, const SemanticType &type,
+                                    bool pointee = false) -> bool {
+    switch (type.kind) {
+    case SemanticType::Bool:
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+      return true;
+    case SemanticType::Void:
+    case SemanticType::CString:
+      return pointee;
+    case SemanticType::NativeFunction:
+      return type.hasNativeFunctionShape();
+    case SemanticType::RawPointer:
+      return type.arguments.size() == 1 &&
+             self(self, type.arguments.front(), true);
+    case SemanticType::Class:
+      for (const auto &instance : program.classInstances())
+        if (instance.type == type)
+          return (pointee && instance.cOpaqueHandle) ||
+                 (instance.cAbiRecord && instance.cAbiLayout &&
+                  !instance.requiresActiveCleanup &&
+                  !instance.requiresActiveDropState);
+      return false;
+    default:
+      return false;
+    }
+  };
+  const auto writableForeignValue =
+      [&](const auto &self, const SemanticType &type,
+          std::unordered_set<HirClassInstanceId> &visiting) -> bool {
+    if (type.kind == SemanticType::Array)
+      return type.arguments.size() == 1 &&
+             self(self, type.arguments.front(), visiting);
+    if (type.kind != SemanticType::Class)
+      return true;
+    for (const auto &instance : program.classInstances()) {
+      if (instance.type != type)
+        continue;
+      if (!instance.cAbiRecord || !visiting.insert(instance.id).second)
+        return false;
+      const bool writable =
+          std::all_of(instance.declaredFields.begin(),
+                      instance.declaredFields.end(), [&](const auto &field) {
+                        return field.access == AccessMode::Mutable &&
+                               self(self, field.type, visiting);
+                      });
+      visiting.erase(instance.id);
+      return writable;
+    }
+    return false;
+  };
+  std::unordered_set<SymbolId> foreignSymbols;
+  std::unordered_set<std::string> foreignNames;
+  for (const auto &storage : program.foreignStorageDeclarations()) {
+    if (storage.symbol == 0 || storage.externalSymbol.empty() ||
+        !foreignSymbols.insert(storage.symbol).second ||
+        !foreignNames.insert(storage.externalSymbol).second ||
+        !validForeignType(validForeignType, storage.type))
+      result.errors.push_back(
+          {.message = "invalid or duplicate MIR foreign storage declaration"});
+    for (const auto &step : program.programInitializationPlan().steps)
+      if (step.symbol == storage.symbol)
+        result.errors.push_back(
+            {.message = "foreign storage has a GTI initialization obligation"});
+    for (const auto &function : program.functionInstances())
+      if (function.linkage == LanguageLinkage::C &&
+          function.externalSymbol == storage.externalSymbol)
+        result.errors.push_back(
+            {.message =
+                 "foreign storage symbol collides with a native function"});
+  }
   const FailureOriginAssignmentLookup failureOrigins(program.failureMetadata());
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     const auto verifyStorageType = [&](const SemanticType &type) {
@@ -11430,8 +11515,103 @@ verifyMirProgramContracts(const MirProgram &program) {
              .message = "compiler-owned storage payload retains borrowed state "
                         "without an owner-dependency contract"});
     };
-    for (const auto &place : body.places)
+    const auto foreignError = [&](std::string message) {
+      result.errors.push_back({.bodyKind = body.kind,
+                               .owner = owner,
+                               .message = std::move(message)});
+    };
+    for (const auto &place : body.places) {
       verifyStorageType(place.type);
+      const auto *storage =
+          place.root == MirPlaceRootKind::Symbol && place.capture == 0
+              ? program.findForeignStorage(place.symbol)
+              : nullptr;
+      if (place.foreignStorage != (storage != nullptr))
+        foreignError(
+            "MIR place has missing or forged foreign storage identity");
+      if (storage != nullptr && place.access == AccessMode::Mutable) {
+        SemanticType projectedType = storage->type;
+        for (const auto &projection : place.projections) {
+          if (projection.kind == MirProjectionKind::Field) {
+            const MirClassFieldInfo *field = nullptr;
+            for (const auto &instance : program.classInstances()) {
+              if (instance.type != projectedType)
+                continue;
+              for (const auto &candidate : instance.declaredFields)
+                if (candidate.symbol == projection.field)
+                  field = &candidate;
+            }
+            if (field == nullptr || field->access != AccessMode::Mutable) {
+              foreignError(
+                  "foreign storage projection grants forbidden mutable access");
+              break;
+            }
+            projectedType = field->type;
+          } else if (projection.kind == MirProjectionKind::Index &&
+                     projectedType.kind == SemanticType::Array &&
+                     projectedType.arguments.size() == 1) {
+            projectedType = projectedType.arguments.front();
+          }
+        }
+      }
+      if (storage != nullptr &&
+          (!place.initiallyAvailable || place.binding != 0 ||
+           (place.projections.empty() && place.type != storage->type) ||
+           (storage->access == AccessMode::ReadOnly &&
+            place.access == AccessMode::Mutable)))
+        foreignError(
+            "MIR foreign storage place has invalid type, access, or lifetime");
+    }
+    const auto foreignPlace = [&](MirPlaceId id) {
+      const auto *place = body.findPlace(id);
+      return place != nullptr && place->foreignStorage;
+    };
+    for (const auto &loan : body.loans) {
+      if (foreignPlace(loan.source) ||
+          std::any_of(loan.additionalDependencies.begin(),
+                      loan.additionalDependencies.end(),
+                      [&](const auto &dependency) {
+                        return foreignPlace(dependency.source);
+                      }))
+        foreignError("foreign storage cannot supply a checked owner loan");
+    }
+    for (const auto &drop : body.dropObligations)
+      if (foreignPlace(drop.place))
+        foreignError("foreign storage cannot have a GTI drop obligation");
+    for (const auto &block : body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        const bool foreignDestination =
+            instruction.destination && foreignPlace(*instruction.destination);
+        const bool foreignRead =
+            std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(), [&](const auto &operand) {
+                          return operand.kind != MirOperandKind::Address &&
+                                 foreignPlace(operand.place);
+                        });
+        if ((foreignDestination || foreignRead) && !instruction.rawMemoryAccess)
+          foreignError("foreign storage access lacks unknown-memory effects");
+        if (foreignRead && instruction.kind == MirInstructionKind::Load &&
+            instruction.unsafeOperation == UnsafeOperationKind::None)
+          foreignError("foreign storage load lacks an unsafe operation");
+        if (foreignDestination) {
+          const auto *place = body.findPlace(*instruction.destination);
+          std::unordered_set<HirClassInstanceId> visiting;
+          if (!writableForeignValue(writableForeignValue, place->type,
+                                    visiting))
+            foreignError(
+                "foreign storage write would replace read-only record fields");
+          if (place->access != AccessMode::Mutable ||
+              (instruction.kind != MirInstructionKind::Assign &&
+               instruction.kind != MirInstructionKind::Modify))
+            foreignError(
+                "foreign storage has an invalid write or initialization");
+          if (instruction.unsafeOperation == UnsafeOperationKind::None)
+            foreignError("foreign storage write lacks an unsafe operation");
+        }
+      }
+    }
     for (const auto &value : body.values)
       verifyStorageType(value.info.type);
     verifyStorageType(body.returnType);
@@ -13029,11 +13209,12 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
     if (instance.cAbiRecord) {
-      if (instance.kind != ClassKind::Struct || !instance.bases.empty() ||
-          instance.abstract || instance.polymorphic || !instance.cAbiLayout ||
-          instance.destructor || instance.requiresActiveDropState ||
-          instance.requiresActiveCleanup || !instance.fields.empty() ||
-          !instance.fieldDropOrder.empty()) {
+      if ((instance.kind != ClassKind::Struct &&
+           instance.kind != ClassKind::Union) ||
+          !instance.bases.empty() || instance.abstract ||
+          instance.polymorphic || !instance.cAbiLayout || instance.destructor ||
+          instance.requiresActiveDropState || instance.requiresActiveCleanup ||
+          !instance.fields.empty() || !instance.fieldDropOrder.empty()) {
         result.errors.push_back(
             {.bodyKind = MirBodyKind::FieldInitializers,
              .owner = instance.id,
@@ -13055,8 +13236,10 @@ verifyMirProgramContracts(const MirProgram &program) {
                         field.type != SemanticType::Unknown &&
                         field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
                         field.offsetBytes % field.abiAlignmentBytes == 0 &&
-                        field.offsetBytes >= previousEnd && fieldEndValid &&
-                        fieldEnd <= layout.sizeBytes;
+                        (instance.kind == ClassKind::Union
+                             ? field.offsetBytes == 0
+                             : field.offsetBytes >= previousEnd) &&
+                        fieldEndValid && fieldEnd <= layout.sizeBytes;
           previousEnd = fieldEnd;
         }
         if (!validLayout) {
@@ -13075,9 +13258,9 @@ verifyMirProgramContracts(const MirProgram &program) {
     if (instance.kind == ClassKind::Union) {
       bool validLayout =
           instance.unionLayout.has_value() && instance.bases.empty() &&
-          !instance.abstract && !instance.polymorphic && !instance.cAbiRecord &&
-          !instance.cAbiLayout && !instance.destructor &&
-          !instance.requiresActiveDropState &&
+          !instance.abstract && !instance.polymorphic &&
+          instance.cAbiRecord == instance.cAbiLayout.has_value() &&
+          !instance.destructor && !instance.requiresActiveDropState &&
           !instance.requiresActiveCleanup && instance.fields.empty() &&
           instance.fieldDropOrder.empty();
       if (instance.unionLayout) {
@@ -13093,6 +13276,23 @@ verifyMirProgramContracts(const MirProgram &program) {
                         field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
                         field.sizeBytes <= layout.sizeBytes &&
                         layout.abiAlignmentBytes % field.abiAlignmentBytes == 0;
+        }
+      }
+      if (instance.cAbiLayout && instance.unionLayout) {
+        const auto &record = *instance.cAbiLayout;
+        const auto &overlap = *instance.unionLayout;
+        validLayout = validLayout && record.sizeBytes == overlap.sizeBytes &&
+                      record.abiAlignmentBytes == overlap.abiAlignmentBytes &&
+                      record.fields.size() == overlap.fields.size();
+        if (record.fields.size() == overlap.fields.size()) {
+          for (std::size_t index = 0; index < record.fields.size(); ++index) {
+            const auto &a = record.fields[index];
+            const auto &b = overlap.fields[index];
+            validLayout = validLayout && a.field == b.field &&
+                          a.type == b.type && a.offsetBytes == 0 &&
+                          a.sizeBytes == b.sizeBytes &&
+                          a.abiAlignmentBytes == b.abiAlignmentBytes;
+          }
         }
       }
       if (!validLayout) {
@@ -14821,6 +15021,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       checkProgramType(type);
     }
   };
+  for (const auto &storage : program.foreignStorageDeclarations())
+    checkProgramType(storage.type);
   for (const auto &function : program.functionInstances()) {
     checkProgramType(function.returnType);
     checkTypes(function.typeArguments);

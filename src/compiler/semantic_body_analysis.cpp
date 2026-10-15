@@ -13,6 +13,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   defaultArgumentDependencies.clear();
   reportedDefaultArgumentCycles.clear();
   externCSymbols.clear();
+  requestSession.externCVariables.clear();
+  requestSession.foreignAddressPlaces.clear();
   constexprDefinitionsAnalyzed.clear();
   constexprConstructorsAnalyzed.clear();
   requestSession.constexprWork.reset();
@@ -5211,9 +5213,17 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       bindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
                                                  : AccessMode::ReadOnly);
   info.symbol = symbol;
+  info.foreignStorage = stmt.linkage() == LanguageLinkage::C;
   info.staticStorage = stmt.isStatic();
   info.internalLinkage = internalLinkage;
   semanticModel.record(stmt, std::move(info));
+  if (stmt.linkage() == LanguageLinkage::C) {
+    validateExternCVariable(stmt, declaredType, symbol);
+    declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
+                           stmt.isMutable(), false, symbol, &stmt,
+                           std::nullopt);
+    return;
+  }
   if (std::find(requestSession.invalidOrdinaryLayouts.begin(),
                 requestSession.invalidOrdinaryLayouts.end(),
                 declaredType) != requestSession.invalidOrdinaryLayouts.end()) {
@@ -5787,7 +5797,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   }
   const bool valueAssignable =
       !simpleAssignment ||
-      isOwnershipAssignment(targetType, valueType, expr.value());
+      isOwnershipAssignment(targetType, valueType, expr.value(), targetPlace);
   if (simpleAssignment && !valueAssignable) {
     const bool ownerAssignment =
         isMoveOnlyOwnerType(targetType) && targetType == valueType;
@@ -7887,8 +7897,8 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
           "may still be live.");
     }
   }
-  if (simpleAssignment &&
-      !isOwnershipAssignment(valueTarget, valueType, expr.value())) {
+  if (simpleAssignment && !isOwnershipAssignment(valueTarget, valueType,
+                                                 expr.value(), targetPlace)) {
     const ExpressionInfo *valueInfo =
         semanticModel.findExpression(*expr.value());
     const bool moving =
@@ -7926,7 +7936,8 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
   }
   if (ownerType.kind == SemanticType::RawPointer && simpleAssignment &&
       mutableTarget &&
-      isOwnershipAssignment(valueTarget, valueType, expr.value())) {
+      isOwnershipAssignment(valueTarget, valueType, expr.value(),
+                            targetPlace)) {
     assignRawPointerFields(targetPlace, expr.value().get());
   }
   currentType = valueTarget;
@@ -7997,8 +8008,8 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
                            : SemanticType::Unknown;
     return;
   }
-  if (simpleAssignment &&
-      !isOwnershipAssignment(targetType, valueType, expr.value())) {
+  if (simpleAssignment && !isOwnershipAssignment(targetType, valueType,
+                                                 expr.value(), targetPlace)) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
                "' to a mutable place of type '" + typeSpelling(targetType) +
@@ -8395,7 +8406,7 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
   }
   const bool valueAssignable =
       !simpleAssignment ||
-      isOwnershipAssignment(elementType, valueType, expr.value());
+      isOwnershipAssignment(elementType, valueType, expr.value(), targetPlace);
   if (simpleAssignment && !valueAssignable) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
@@ -9961,8 +9972,8 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
         "Cannot assign to a field while an overlapping borrow may still be "
         "live.");
   }
-  if (simpleAssignment &&
-      !isOwnershipAssignment(targetType, valueType, expr.value())) {
+  if (simpleAssignment && !isOwnershipAssignment(targetType, valueType,
+                                                 expr.value(), targetPlace)) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
                "' to member '" + expr.name().lexeme + "' of type '" +
@@ -9999,7 +10010,7 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   if (simpleAssignment && resolvedMember.type != SemanticType::Function &&
       resolvedMember.assignable && mutableReceiver && targetStateValid &&
       !directSelfMove &&
-      isOwnershipAssignment(targetType, valueType, expr.value())) {
+      isOwnershipAssignment(targetType, valueType, expr.value(), targetPlace)) {
     if (targetType.kind == SemanticType::Class ||
         targetType.kind == SemanticType::Array)
       invalidateRawPointerOrigins(targetPlace);
@@ -10143,7 +10154,24 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
   }
   const bool mutating = expr.oper().kind == TokenKind::PLUS_PLUS ||
                         expr.oper().kind == TokenKind::MINUS_MINUS;
+  const std::size_t foreignAddressCount =
+      requestSession.foreignAddressPlaces.size();
   if (expr.oper().kind == TokenKind::AMPERSAND) {
+    requestSession.foreignAddressPlaces.push_back(nullptr);
+    const Expr *place = expr.right().get();
+    while (place != nullptr) {
+      requestSession.foreignAddressPlaces.push_back(place);
+      if (const auto *group = exprAs<Grouping>(place))
+        place = group->expression().get();
+      else if (const auto *field = exprAs<Get>(place)) {
+        if (field->access().kind == TokenKind::ARROW)
+          break;
+        place = field->object().get();
+      } else if (const auto *index = exprAs<Index>(place))
+        place = index->object().get();
+      else
+        break;
+    }
     ++programStoragePlaceUseDepth;
   }
   const SemanticType rightType =
@@ -10157,6 +10185,7 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
                                                       SemanticType::Bool)
                       : analyze(expr.right()));
   if (expr.oper().kind == TokenKind::AMPERSAND) {
+    requestSession.foreignAddressPlaces.resize(foreignAddressCount);
     --programStoragePlaceUseDepth;
   }
 
