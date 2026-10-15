@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.434.1 — Returning the result of a consuming method
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a function returns the result of a
+  consuming (`&&`) method directly, such as
+  `Tracked take(Single box) { return std::move(box).release(); }`. This
+  failed whenever the method could not fail and its receiver still had a
+  destructor to run after the call: a by-value parameter, a local, or a
+  temporary such as `return Single(1).release();`, in ordinary and generic
+  functions, methods and lambdas. The returned value is destroyed exactly
+  once, by the caller. If the receiver's destructor fails after the call,
+  the result is destroyed before the failure propagates.
+- A consuming call still stops with this error in these cases:
+  - when its result initializes a field in a constructor's member-initializer
+    list, such as `Holder(Single box) : kept(std::move(box).release()) {}`;
+    a member initializer that calls a method on a parameter, such as
+    `kept(source.make())`, fails the same way when the method cannot fail
+  - when its receiver is moved out of a variable inside a conditional
+    expression, such as `left ? std::move(a).release() : std::move(b).release()`
+
 ## 0.434.0 — Protocol concepts and conformance blocks
 
 - A concept can now have a body instead of `= constraint;`. It declares
