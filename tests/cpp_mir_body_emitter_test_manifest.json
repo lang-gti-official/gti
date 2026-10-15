@@ -98,6 +98,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testBorrowedArgumentFallibleConditionAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testConditionalExpectedArgumentReceiverAdmission",
       "suite": "preflight"
     },
@@ -322,6 +326,10 @@
       "suite": "text"
     },
     {
+      "name": "testGenericInstanceSpecialMemberRows",
+      "suite": "text"
+    },
+    {
       "name": "testReferenceParameterBorrowUsesReferentCarrier",
       "suite": "text"
     },
@@ -366,7 +374,15 @@
       "suite": "text"
     },
     {
+      "name": "testPreparedConsumingReceiverLaterFailure",
+      "suite": "text"
+    },
+    {
       "name": "testConditionalPreparedInputResult",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedGenericOwnerReceiverStage",
       "suite": "text"
     },
     {

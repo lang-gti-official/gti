@@ -6454,9 +6454,21 @@ binding, are read through a field (also in a conditional) and initialize
 constructed and destroyed once. A failing guard after the call destroys the
 unpublished returned result, also when that cleanup fails again; a failing
 callee leaves no result, and a failing replacement keeps the old value for
-failure cleanup. `testPreparedConsumingReceiverReturn` in the emitter text
-suite refuses removed, duplicated or unactivated receiver handoffs and a
-non-consuming capability, which MIR verification also rejects.
+failure cleanup. A later argument that can fail after the receiver was
+prepared is covered for a bound, a returned (`mut` source), a field-read, an
+`expected`, a discarded and a replacing result, after an owning argument, in a
+constructor field's receiver and moved argument, in a loop, a generic body, a
+consuming `operator()`, a lambda and either arm of a conditional. Each failure
+leaves the member unrun, destroys an already prepared owning argument once,
+keeps a replaced binding's old value for failure cleanup and unwinds the
+caller's live results in reverse order.
+`testPreparedConsumingReceiverReturn` in the emitter text suite refuses
+removed, duplicated or unactivated receiver handoffs and a non-consuming
+capability, which MIR verification also rejects.
+`testPreparedConsumingReceiverLaterFailure` checks that the call consumes the
+materialized receiver slot, which is retired after the call and destroyed once
+on the failure edge, and refuses a removed, duplicated or non-failure cleanup
+Drop of it.
 `consuming_conditional_receiver_runtime` moves receivers out of named bindings
 inside conditional arms and short-circuit operands in the same eight
 configurations, running each shape through both arms. The shapes are scalar and
@@ -6469,7 +6481,35 @@ its full expression, and only on the arm that ran. A failing receiver destructor
 in either arm reports at the drop after the merge. Cleanup then destroys the
 published result and skips the other arm's receiver, and a failure in that
 cleanup reports the secondary failure. A consuming call that fails inside its
-arm destroys its receiver on that failure edge. Ownership
+arm destroys its receiver on that failure edge.
+`consuming_generic_owner_receiver_runtime` runs the same eight configurations
+for generic owners moved out of a named binding or parameter. Each owner class
+declares a default constructor and leaves its copy constructor to the generic
+declaration, while its instance over a cleanup-bearing payload is move-only.
+The owners hold an owning payload enum, also through a field declaration
+default, or a plain payload field whose default constructor is constrained
+away. Consuming members drop the receiver whole or move the payload out. Their
+results are discarded, bound, returned directly, wrapped in `expected`, stored
+by a member initializer, and selected in conditional arms, a loop and a generic
+caller, and a lambda body and a destructor body consume owners of their own.
+Each receiver is destroyed once, at the end of the full expression that
+consumed it. A failing consuming call and a failing payload destructor each
+destroy the receiver once before the unmoved bindings, and a payload destructor
+that fails again during that cleanup reports the secondary failure.
+`testMovedGenericOwnerReceiverStage` in the emitter text suite admits the
+receiver stage as an alias of its full-expression slot. It refuses forged
+handoffs that MIR verification also rejects: a slot outside any full
+expression, a Move that activates nothing, a transfer at invocation and a
+prepared parameter. `testGenericInstanceSpecialMemberRows` in the same suite
+builds `maybe<T>` and `box<T>` over a move-only payload without a default
+constructor and over `int`. Each class row's boundary, copy-construction and
+copy-assignment proofs follow its own sealed instance rather than the generic
+declaration, and they agree with the copy and default constructors its emitted
+concrete class spells. `testConcreteApplicationSpecialMembers` in the
+declarations suite checks the same applications' HIR and MIR statuses. A
+default constructor whose `std::default_initializable<T>` requirement fails is
+`Deleted` on `box<Tracked>`, while `box<int>` and the open primary keep it, and
+default construction of `box<Tracked>` is rejected. Ownership
 tests retain explicit-only whole-`this` movement and reject forged invocation
 capabilities and missing conditional-arm initialization. LSP checks cover
 consuming-signature hover and versioned diagnostic publication/clearing.
@@ -6861,6 +6901,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, owning-field replacement, local cleanup failure, and secondary destructor failure, with exact cleanup order and source sites in 70 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
 | `constructor_member_call_field_runtime` | member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: failure-free borrowed receivers (by-value, read-only reference and `mut` reference parameters), consuming receivers moved from a parameter (including a cleanup-free one, which the call transfers) or a fresh temporary, a generic owner, field declaration defaults, and two member-call fields; a failing consuming call publishes nothing and cleans up its named or fresh receiver, a failing call on a transferred cleanup-free receiver rolls back the earlier published field, a later initializer failure rolls the published field back, and a consumed receiver whose destructor fails after publication rolls the field back, with the secondary failure reported when that rollback fails too |
 | `constructor_virtual_call_field_runtime` | virtual member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan through the transformed status ABI: a family no member of which fails, a base and a derived override through a base reference, an override selected through a derived reference, an interface contract root through a `mut` reference, a raising override, consuming members on a moved parameter, a moved cleanup-free parameter (a prepared input) and a fresh temporary, a generic owner, a field declaration default on a namespace-scope object, and two virtual-call fields; a failing override publishes nothing and a later initializer failure rolls the published field back |
+| `borrowed_argument_fallible_condition_runtime` | a borrowed argument or receiver kept across a later conditional argument whose test or arm is a call that can fail, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a free function, a constructor, a method on the borrowed receiver and a local lambda consume the arguments; the test borrows another local, reads the borrowed local itself, runs a read or `mut` method on another receiver, or compares a returned text view; arms that select a text view; a `mut` borrowed argument and two borrowed arguments; a failing test or arm destroys each live local once, in reverse order, and nothing that was not yet constructed |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |

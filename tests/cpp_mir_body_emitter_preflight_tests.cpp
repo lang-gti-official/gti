@@ -2335,6 +2335,106 @@ void testConditionalOwningArgumentReceiverAdmission() {
   }
 }
 
+// A borrowed argument stays representation-erased across a later conditional
+// argument whose test, or one arm, is a nested call that can fail. The nested
+// call's own borrows may name other locals, or read the borrowed local
+// itself, but never mutably borrow the borrowed place's root.
+void testBorrowedArgumentFallibleConditionAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_argument_fallible_condition.gti";
+  std::ifstream input(path);
+  expect(input.good(), "the fallible condition fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "the fallible condition fixture must pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the fallible condition fixture needs a complete backend "
+         "representation");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None)
+      entry = &candidate;
+  }
+  expect(entry != nullptr, "the fixture must retain its entry body");
+  if (entry == nullptr)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "borrowed arguments before a conditional with a fallible nested "
+         "call should stay admissible");
+
+  // The first argument of a nested two-argument test, a read borrow of a
+  // local: `sees(first, argv)` borrows the borrowed `first` itself and then
+  // `argv`, while `has(argv, "free")` borrows another local and takes a text
+  // view.
+  const auto nestedReadBorrows = [&](lang::SemanticType::Kind second) {
+    std::vector<lang::MirInstructionId> found;
+    for (const lang::MirBlock &block : entry->body.blocks) {
+      for (const lang::MirInstruction &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call ||
+            call.info.type.kind != lang::SemanticType::Bool ||
+            call.operands.size() != 2 ||
+            call.operands.back().type.kind != second)
+          continue;
+        const lang::MirValue *value =
+            call.operands.front().kind == lang::MirOperandKind::Value
+                ? entry->body.findValue(call.operands.front().value)
+                : nullptr;
+        const lang::MirInstruction *input =
+            value == nullptr
+                ? nullptr
+                : findPreflightInstruction(entry->body, value->definition);
+        if (input != nullptr &&
+            input->kind == lang::MirInstructionKind::CallInput &&
+            input->callInputKind == lang::HirCallInputKind::ReadBorrow &&
+            input->operands.size() == 1 &&
+            input->operands.front().kind == lang::MirOperandKind::BorrowRead)
+          found.push_back(input->id);
+      }
+    }
+    return found;
+  };
+  const auto sameRoot = nestedReadBorrows(lang::SemanticType::Reference);
+  const auto otherRoot = nestedReadBorrows(lang::SemanticType::StringView);
+  expect(sameRoot.size() == 1,
+         "the fixture should read the borrowed local in one nested test");
+  expect(!otherRoot.empty(),
+         "the fixture should read another local in nested tests");
+  if (sameRoot.size() != 1 || otherRoot.empty())
+    return;
+
+  const auto admitted = [&](lang::MirInstructionId id) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != entry->id)
+        continue;
+      lang::MirInstruction *input = findPreflightInstruction(function.body, id);
+      input->callInputKind = lang::HirCallInputKind::MutableBorrow;
+      input->operands.front().kind = lang::MirOperandKind::BorrowWrite;
+      expect(lang::rebuildMirValueUses(function.body),
+             "the forged fallible condition body should retain a rebuildable "
+             "use index");
+    }
+    return lang::CppMirBodyEmitter(forged, map)
+        .supportsFailureBodyText(address);
+  };
+  expect(admitted(otherRoot.front()),
+         "a nested test may mutably borrow a local other than the borrowed "
+         "argument's root");
+  expect(!admitted(sameRoot.front()),
+         "a nested test that mutably borrows the borrowed argument's root "
+         "must fail admission");
+}
+
 void testConditionalExpectedArgumentReceiverAdmission() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/conditional_expected_argument_receiver.gti";
@@ -6070,6 +6170,8 @@ constexpr NamedTest kTests[] = {
     {"testLambdaOwningTransportAdmission", testLambdaOwningTransportAdmission},
     {"testConditionalOwningArgumentReceiverAdmission",
      testConditionalOwningArgumentReceiverAdmission},
+    {"testBorrowedArgumentFallibleConditionAdmission",
+     testBorrowedArgumentFallibleConditionAdmission},
     {"testConditionalExpectedArgumentReceiverAdmission",
      testConditionalExpectedArgumentReceiverAdmission},
     {"testFreshClassPayloadOperandStaging",

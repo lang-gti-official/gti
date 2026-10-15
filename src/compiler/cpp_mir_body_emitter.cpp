@@ -10748,21 +10748,24 @@ stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
   if (!stage.preparedParameterDrop) {
     return false;
   }
-  for (const MirBlock &block : body.blocks) {
-    for (const MirInstruction &member : block.instructions) {
-      if (member.kind == MirInstructionKind::Drop &&
-          std::any_of(member.lifecycle.begin(), member.lifecycle.end(),
-                      [&](const MirLifecycleEvent &event) {
-                        return event.kind == MirLifecycleEventKind::Drop &&
-                               event.source == *stage.preparedParameterDrop &&
-                               event.failureCleanup;
-                      })) {
-        return true;
-      }
+  for (const auto &touch :
+       placeOrObligationTouches(body, 0, *stage.preparedParameterDrop)) {
+    const MirInstruction *member = touch.instruction;
+    if (member != nullptr && member->kind == MirInstructionKind::Drop &&
+        std::any_of(member->lifecycle.begin(), member->lifecycle.end(),
+                    [&](const MirLifecycleEvent &event) {
+                      return event.kind == MirLifecycleEventKind::Drop &&
+                             event.source == *stage.preparedParameterDrop &&
+                             event.failureCleanup;
+                    })) {
+      return true;
     }
   }
   return false;
 }
+
+[[nodiscard]] const MirInstruction *
+preparedReceiverStage(const MirBody &body, const MirInstruction &call);
 
 // Prepared constructor and closure-pack parameters occupy real storage before
 // invocation (and allocation). MIR hands off these staged objects, never a
@@ -10868,6 +10871,16 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
   const MirInstruction *consumer =
       uses.size() == 1 ? findInstruction(body, uses.front().instruction)
                        : nullptr;
+  // A consuming member's cleanup-free receiver moved out of a place is the
+  // same prepared storage when a later argument can fail. The receiver proof
+  // owns its stage, its single handoff and the failure-edge Drops; without
+  // such a Drop it keeps the direct moved-source spelling.
+  if (stage->callInputRole == MirCallInputRole::Receiver)
+    return consumer != nullptr &&
+                   preparedArgumentFailureCleanup(body, *stage) &&
+                   preparedReceiverStage(body, *consumer) == stage
+               ? stage
+               : nullptr;
   const bool allocation =
       consumer && consumer->kind == MirInstructionKind::Call &&
       consumer->intrinsic == IntrinsicKind::AllocateUniqueOwner &&
@@ -14790,11 +14803,12 @@ constructorBaseRollbackDrop(const MirBody &body,
   return matches == 1;
 }
 
-// An ordinary call inside a constructor can still own a prepared argument
-// when a later argument fails. It is an ordinary MIR lifetime slot, not an
-// object subfield requiring empty-state restoration. Reuse the existing
-// complete staging proof; its Drop text and secondary-failure Invoke are
-// checked by the body emitter just as they are in a function body.
+// An ordinary call inside a constructor can still own a prepared argument or
+// consuming receiver when a later argument fails. It is an ordinary MIR
+// lifetime slot, not an object subfield requiring empty-state restoration.
+// Reuse the existing complete staging proofs, for a fresh result and for an
+// input moved or copied from a place; its Drop text and secondary-failure
+// Invoke are checked by the body emitter just as they are in a function body.
 [[nodiscard]] bool failureConstructorPreparedArgumentCleanupDrop(
     const MirBody &body, const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Drop ||
@@ -14805,6 +14819,16 @@ constructorBaseRollbackDrop(const MirBody &body,
   if (event.kind != MirLifecycleEventKind::Drop || event.source == 0 ||
       event.target != 0 || event.conditional || !event.failureCleanup) {
     return false;
+  }
+  const MirPlace *slot = body.findPlace(*instruction.destination);
+  for (const auto &touch : placeOrObligationTouches(body, 0, event.source)) {
+    const MirInstruction *stage = touch.instruction;
+    if (slot != nullptr && instruction.info.type == slot->type &&
+        stage != nullptr && stage->kind == MirInstructionKind::CallInput &&
+        stage->result && stage->preparedParameterDrop == event.source &&
+        stage->destination == slot->id &&
+        materializedConstructorArgumentStage(body, *stage->result) == stage)
+      return true;
   }
   return std::any_of(
       body.values.begin(), body.values.end(), [&](const MirValue &value) {
@@ -16801,18 +16825,30 @@ exactMemberBorrowReceiver(const MirProgram &program, const MirBody &body,
 // argument's. Ordinary call admission spells that destination as the moved
 // source (`copyStagedCallInput`); this proof names the stage it consumes, so
 // result and input-transfer proofs can account for the receiver's handoff.
+// When a later argument can fail, MIR also destroys the prepared slot on that
+// failure edge. The receiver is then real prepared storage, like such an
+// argument (`materializedConstructorArgumentStage`), and those failure-cleanup
+// Drops are the only other instructions that may name it.
 [[nodiscard]] const MirInstruction *
 preparedReceiverStage(const MirBody &body, const MirInstruction &call) {
   if (call.kind != MirInstructionKind::Call || !call.receiver ||
       call.receiver->kind != MirOperandKind::Value || call.callSite == 0)
     return nullptr;
-  const MirInstruction *stage = copyStagedCallInput(body, call.receiver->value);
+  const MirValue *value = body.findValue(call.receiver->value);
+  const MirInstruction *stage =
+      value != nullptr ? findInstruction(body, value->definition) : nullptr;
+  if (stage == nullptr || stage->kind != MirInstructionKind::CallInput ||
+      !stage->destination || !stage->preparedParameterDrop)
+    return nullptr;
+  const bool failureCleanup = preparedArgumentFailureCleanup(body, *stage);
+  if (!failureCleanup &&
+      copyStagedCallInput(body, call.receiver->value) != stage)
+    return nullptr;
   const MirDropObligation *prepared =
-      stage != nullptr && stage->preparedParameterDrop
-          ? body.findDropObligation(*stage->preparedParameterDrop)
-          : nullptr;
+      body.findDropObligation(*stage->preparedParameterDrop);
   const MirPlace *slot =
       prepared != nullptr ? body.findPlace(*stage->destination) : nullptr;
+  const auto uses = body.usesOf(call.receiver->value);
   if (slot == nullptr || stage->callSite != call.callSite ||
       stage->callInputRole != MirCallInputRole::Receiver ||
       stage->callInputIndex != 0 ||
@@ -16820,6 +16856,9 @@ preparedReceiverStage(const MirBody &body, const MirInstruction &call) {
       stage->result != call.receiver->value ||
       stage->info.type != call.receiver->type ||
       !stage->definedFailure.empty() || !stage->localFailureSites.empty() ||
+      stage->receiver || stage->operands.size() != 1 || uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionReceiver ||
+      uses.front().instruction != call.id ||
       !stagedTemporarySourceFor(body, *stage).moved ||
       prepared->kind != MirDropObligationKind::PreparedParameter ||
       prepared->initiallyActive || prepared->place != slot->id ||
@@ -16841,8 +16880,9 @@ preparedReceiverStage(const MirBody &body, const MirInstruction &call) {
                                     .source = prepared->id} ||
       std::any_of(std::next(handoff), call.lifecycle.end(), touches))
     return nullptr;
-  // Nothing else names the prepared slot or its obligation: no edge destroys
-  // the receiver before the call, and nothing observes it afterwards.
+  // Nothing else names the prepared slot or its obligation: only a later
+  // argument's failure edge destroys the receiver before the call, and
+  // nothing observes it afterwards.
   for (const auto &touch :
        placeOrObligationTouches(body, slot->id, prepared->id)) {
     if (touch.instruction == nullptr) {
@@ -16855,6 +16895,14 @@ preparedReceiverStage(const MirBody &body, const MirInstruction &call) {
     }
     const MirInstruction &member = *touch.instruction;
     if (member.id == stage->id || member.id == call.id)
+      continue;
+    if (failureCleanup && member.kind == MirInstructionKind::Drop &&
+        member.destination == slot->id && !member.result && !member.receiver &&
+        member.operands.empty() && !member.successResultDestination &&
+        member.lifecycle ==
+            std::vector<MirLifecycleEvent>{{.kind = MirLifecycleEventKind::Drop,
+                                            .source = prepared->id,
+                                            .failureCleanup = true}})
       continue;
     if (member.destination == slot->id ||
         member.successResultDestination == slot->id ||
@@ -34308,9 +34356,12 @@ public:
         // slot; the adjacent receiver-field Assign consumes it once.
         continue;
       }
-      if (consumedReceiverValueSlot(facts.body, value.id)) {
+      if (consumedReceiverValueSlot(facts.body, value.id) ||
+          consumedReceiverStageSlot(facts.body, value.id)) {
         // The moved receiver already has its exact lifetime slot: its
         // Value-rooted place, or the conditional temporary it moves into.
+        // Its MoveValue receiver stage aliases that slot at the call, so
+        // neither identity is a copy stage needing storage of its own.
         continue;
       }
       if (valueRootedMoveAssignmentSlot(program, representations, facts.body,
@@ -35735,6 +35786,11 @@ private:
   void forEachRetiredCallArgument(const MirBody &body,
                                   const MirInstruction &call,
                                   Visit &&visit) const {
+    // A materialized prepared receiver is consumed like an argument slot.
+    if (call.receiver && call.receiver->kind == MirOperandKind::Value)
+      if (const auto *stage =
+              materializedConstructorArgumentStage(body, call.receiver->value))
+        visit(RetiredCallArgument{.place = *stage->destination});
     for (const MirOperand &operand : call.operands) {
       if (operand.kind != MirOperandKind::Value) {
         continue;
@@ -44860,6 +44916,17 @@ private:
           instruction.receiver->kind == MirOperandKind::Value) {
         receiverPlace =
             consumedReceiverStageSlot(facts.body, instruction.receiver->value);
+        receiverMoved = receiverPlace != nullptr;
+      }
+      if (receiverPlace == nullptr &&
+          instruction.receiver->kind == MirOperandKind::Value) {
+        // A prepared receiver materialized ahead of a fallible argument is
+        // consumed from its own slot.
+        const MirInstruction *prepared = materializedConstructorArgumentStage(
+            facts.body, instruction.receiver->value);
+        receiverPlace = prepared != nullptr
+                            ? facts.body.findPlace(*prepared->destination)
+                            : nullptr;
         receiverMoved = receiverPlace != nullptr;
       }
       if (receiverPlace == nullptr) {
@@ -56400,16 +56467,97 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
     }
+    // Scalars and text views are plain values: reading, staging, computing
+    // or publishing one into an expression temporary cannot carry, replace
+    // or end the borrowed storage.
+    const auto passiveRegionValue = [&](const SemanticType &type) {
+      const auto representation = cppMirExpectedTypeRepresentation(type);
+      return representation == CppMirTypeRepresentationKind::Scalar ||
+             representation == CppMirTypeRepresentationKind::StringView;
+    };
+    // A nested call can run wholly inside the argument region: the test of a
+    // conditional argument, one arm's value, or a direct scalar argument. It
+    // executes at its MIR position with its own Invoke failure edge, and its
+    // inputs are staged for it alone: plain values and borrows of
+    // binding-rooted places as receiver or arguments, none of them a mutable
+    // borrow of the borrowed place's root. Its plain result owns nothing and
+    // cannot carry the borrowed address, whichever region instruction
+    // consumes it.
+    const auto nestedCallBorrow = [&](const MirInstruction &input,
+                                      const MirInstruction &call) {
+      const MirPlace *borrowed =
+          input.kind == MirInstructionKind::CallInput &&
+                  input.operands.size() == 1
+              ? body.findPlace(input.operands.front().place)
+              : nullptr;
+      const bool readBorrow =
+          input.callInputKind == HirCallInputKind::ReadBorrow &&
+          input.operands.front().kind == MirOperandKind::BorrowRead;
+      const bool mutableBorrow =
+          input.callInputKind == HirCallInputKind::MutableBorrow &&
+          input.operands.front().kind == MirOperandKind::BorrowWrite;
+      return borrowed != nullptr && input.result &&
+             input.callSite == call.callSite &&
+             (input.callInputRole == MirCallInputRole::Argument ||
+              input.callInputRole == MirCallInputRole::Receiver) &&
+             (readBorrow ||
+              (mutableBorrow && !sameMirPlaceRoot(*borrowed, *place))) &&
+             borrowed->root == MirPlaceRootKind::Binding &&
+             std::all_of(
+                 borrowed->projections.begin(), borrowed->projections.end(),
+                 [](const MirPlaceProjection &projection) {
+                   return projection.kind == MirProjectionKind::Field ||
+                          projection.kind == MirProjectionKind::Dereference;
+                 }) &&
+             !input.destination && !input.receiver && !input.loan &&
+             input.lifecycle.empty() && input.definedFailure.empty() &&
+             input.localFailureSites.empty() && !input.rawMemoryAccess &&
+             input.unsafeOperation == UnsafeOperationKind::None;
+    };
+    const auto nestedPlainCall = [&](const MirInstruction &call) {
+      if (call.kind != MirInstructionKind::Call || !call.functionTarget ||
+          call.constructorTarget || call.lambdaTarget || call.bodyTarget ||
+          call.callableInvocation || call.intrinsic != IntrinsicKind::None ||
+          !call.result || call.destination || call.loan ||
+          call.rawMemoryAccess ||
+          call.unsafeOperation != UnsafeOperationKind::None ||
+          !call.lifecycle.empty() || call.callSite == consumer->callSite ||
+          !(isPassiveScalarValueType(call.info.type) ||
+            passiveRegionValue(call.info.type)) ||
+          (!call.definedFailure.empty() &&
+           !invokePairedInstruction(body, call.id)))
+        return false;
+      if (call.receiver) {
+        const MirInstruction *receiver =
+            borrowStagedCallInput(body, *call.receiver);
+        if (receiver == nullptr ||
+            receiver->callInputRole != MirCallInputRole::Receiver ||
+            !nestedCallBorrow(*receiver, call))
+          return false;
+      }
+      return std::all_of(
+          call.operands.begin(), call.operands.end(),
+          [&](const MirOperand &input) {
+            if (input.kind != MirOperandKind::Value || input.value == id)
+              return false;
+            const MirInstruction *borrow = borrowStagedCallInput(body, input);
+            return borrow != nullptr
+                       ? borrow->callInputRole == MirCallInputRole::Argument &&
+                             nestedCallBorrow(*borrow, call)
+                       : isPassiveScalarValueType(input.type) ||
+                             passiveRegionValue(input.type);
+          });
+    };
     // A bare local, a binding-rooted field/reference path, or an exact
     // full-expression slot has a stable native address. Erasing its borrowed
     // input across an acyclic argument diamond is exact only when all normal
     // paths reach the one call and cannot mutate or end that storage's
     // lifetime.
-    // Intervening scalar temporaries and exact nested read-call result
-    // preparations do not change that address. Calls still execute where MIR
-    // places them, with their own failure edges; nothing is inlined or moved
-    // across the conditional. Loans, raw memory, and arbitrary stores remain
-    // outside this erased-address proof.
+    // Intervening scalar temporaries, nested plain-value calls and exact nested
+    // read-call result preparations do not change that address. Calls still
+    // execute where MIR places them, with their own failure edges; nothing is
+    // inlined or moved across the conditional. Loans, raw memory, and
+    // arbitrary stores remain outside this erased-address proof.
     std::unordered_set<MirBlockId> visiting;
     std::unordered_set<MirBlockId> complete;
     const auto visit = [&](const auto &self, MirBlockId blockId) -> bool {
@@ -56493,44 +56641,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !instruction.rawMemoryAccess &&
             instruction.unsafeOperation == UnsafeOperationKind::None)
           continue;
-        // A source call supplying a scalar argument cannot carry or replace
-        // this bare receiver. Keep the call at its MIR position, with the
-        // original Invoke failure edge; only its address staging is erased.
-        const auto scalarUses =
-            instruction.result ? nonRootRecordUses(body, *instruction.result)
-                               : std::vector<MirValueUse>{};
-        const MirInstruction *scalarStage =
-            scalarUses.size() == 1 && scalarUses.front().kind ==
-                                          MirValueUseKind::InstructionOperand
-                ? findInstruction(body, scalarUses.front().instruction)
-                : nullptr;
-        if (instruction.kind == MirInstructionKind::Call &&
-            instruction.functionTarget && !instruction.receiver &&
-            !instruction.constructorTarget && !instruction.lambdaTarget &&
-            !instruction.bodyTarget && !instruction.callableInvocation &&
-            instruction.intrinsic == IntrinsicKind::None && !instruction.loan &&
-            !instruction.rawMemoryAccess &&
-            instruction.unsafeOperation == UnsafeOperationKind::None &&
-            instruction.lifecycle.empty() &&
-            isPassiveScalarValueType(instruction.info.type) &&
-            std::all_of(instruction.operands.begin(),
-                        instruction.operands.end(),
-                        [&](const MirOperand &input) {
-                          return input.kind == MirOperandKind::Value &&
-                                 isPassiveScalarValueType(input.type);
-                        }) &&
-            scalarStage != nullptr &&
-            scalarStage->kind == MirInstructionKind::CallInput &&
-            scalarStage->result &&
-            scalarStage->callSite == consumer->callSite &&
-            scalarStage->callInputRole == MirCallInputRole::Argument &&
-            scalarStage->callInputIndex < consumer->operands.size() &&
-            consumer->operands[scalarStage->callInputIndex].kind ==
-                MirOperandKind::Value &&
-            consumer->operands[scalarStage->callInputIndex].value ==
-                *scalarStage->result &&
-            (instruction.definedFailure.empty() ||
-             invokePairedInstruction(body, instruction.id)))
+        // A nested plain-value call, and each borrow staged for it, cannot
+        // carry or replace this borrowed place. Keep the call at its MIR
+        // position, with the original Invoke failure edge; only the outer
+        // address staging is erased.
+        if (nestedPlainCall(instruction))
+          continue;
+        const bool nestedBorrowUse =
+            peerConsumer != nullptr &&
+            (instruction.callInputRole == MirCallInputRole::Receiver
+                 ? peerUses.front().kind == MirValueUseKind::InstructionReceiver
+                 : peerUses.front().kind ==
+                           MirValueUseKind::InstructionOperand &&
+                       peerUses.front().operandIndex ==
+                           instruction.callInputIndex);
+        if (nestedBorrowUse && peerConsumer != consumer &&
+            nestedCallBorrow(instruction, *peerConsumer) &&
+            nestedPlainCall(*peerConsumer))
           continue;
         const auto nestedResult =
             instruction.result
@@ -56741,8 +56868,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (peerBorrow)
             break;
           if (!instruction.result || instruction.destination ||
-              cppMirExpectedTypeRepresentation(instruction.info.type) !=
-                  CppMirTypeRepresentationKind::Scalar) {
+              !passiveRegionValue(instruction.info.type)) {
             return false;
           }
           break;
@@ -56753,8 +56879,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (temporary == nullptr ||
               temporary->root != MirPlaceRootKind::Temporary ||
               !temporary->projections.empty() ||
-              cppMirExpectedTypeRepresentation(temporary->type) !=
-                  CppMirTypeRepresentationKind::Scalar ||
+              !passiveRegionValue(temporary->type) ||
               !instruction.definedFailure.empty()) {
             return false;
           }
@@ -59561,8 +59686,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.receiver->kind == MirOperandKind::Value
                   ? consumedReceiverStageSlot(body, instruction.receiver->value)
                   : nullptr;
+          // A prepared receiver materialized ahead of a fallible argument is
+          // consumed from its own slot, like a retained receiver.
+          const MirInstruction *preparedStage =
+              retainedReceiver == nullptr &&
+                      instruction.receiver->kind == MirOperandKind::Value
+                  ? materializedConstructorArgumentStage(
+                        body, instruction.receiver->value)
+                  : nullptr;
+          const MirPlace *consumedReceiver =
+              preparedStage != nullptr
+                  ? body.findPlace(*preparedStage->destination)
+                  : retainedReceiver;
           const MirPlace *receiverPlace =
-              retainedReceiver != nullptr ? retainedReceiver
+              consumedReceiver != nullptr ? consumedReceiver
               : movedSource.place != nullptr && movedSource.moved
                   ? movedSource.place
                   : ((receiverBorrow.kind == MirOperandKind::BorrowRead ||
@@ -59582,7 +59719,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const ReceiverMutability stagedMutability =
               (staged != nullptr &&
                staged->callInputKind == HirCallInputKind::RetainedReceiver) ||
-                      retainedReceiver != nullptr ||
+                      consumedReceiver != nullptr ||
                       (movedSource.place != nullptr && movedSource.moved)
                   ? ReceiverMutability::Consuming
                   : (receiverBorrow.kind == MirOperandKind::BorrowWrite
