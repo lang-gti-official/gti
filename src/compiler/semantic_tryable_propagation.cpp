@@ -240,7 +240,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   // The propagation plan stages a class, struct or payload-enum operand's
   // temporary or place. A temporary is borrowed for the test exactly as an
   // ordinary call borrows one; other operand kinds are a later slice.
-  if (operandType.kind != SemanticType::Class && !payloadEnumType(operandType)) {
+  if (operandType.kind != SemanticType::Class &&
+      !payloadEnumType(operandType)) {
     return reject("Error propagation through 'std::tryable' currently needs "
                   "a class, struct or payload-enum operand, but received '" +
                       operand + "'.",

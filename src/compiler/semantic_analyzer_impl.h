@@ -3605,8 +3605,7 @@ private:
                    const std::vector<SemanticType> &arguments) const;
   [[nodiscard]] std::optional<std::vector<SemanticType>>
   classTemplateArguments(const SemanticType &type, ClassId owner) const;
-  [[nodiscard]] static bool
-  openConformancePattern(const SemanticType &pattern);
+  [[nodiscard]] static bool openConformancePattern(const SemanticType &pattern);
   [[nodiscard]] std::optional<std::vector<SemanticType>>
   patternInstanceArguments(const SemanticType &pattern,
                            const SemanticType &type) const;
