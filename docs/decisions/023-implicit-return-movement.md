@@ -32,8 +32,8 @@ The move consumes the source and uses the same availability, borrow-conflict,
 partial-move, cleanup, and result-publication rules as explicit `std::move`.
 Copyable values continue to copy on return. The rule does not apply to return
 conversions (revised below), fields or other projections, globals, references,
-captures, temporaries, or immovable values. It is not last-use inference and it does not
-change any non-return consuming context.
+captures, temporaries, or immovable values. It is not last-use inference and it
+does not change any non-return consuming context.
 
 Semantics owns the decision and records an instance-local fact because generic
 substitution can change copyability. HIR materializes that fact as the existing

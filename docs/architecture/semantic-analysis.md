@@ -196,9 +196,10 @@ otherwise locate an operator receiver by node shape. A declaration records a
 contextual conversion on its initializer, in the map that holds a condition's
 `operator bool`, and the declaration's sites accept the initializer through
 `recordsDeclarationConversion`; a converted return records its conversion on
-the returned expression in the same way. Every contextual conversion now records its
-target's program effect edge, so a condition's `operator bool` contributes to
-initializer-order effects like a declaration's conversion does.
+the returned expression in the same way. Every contextual conversion now
+records its target's program effect edge, so a condition's `operator bool`
+contributes to initializer-order effects like a declaration's conversion
+does.
 
 ## Native C scalar target facts
 

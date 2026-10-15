@@ -663,9 +663,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   return moves into an `implicit` constructor or consuming operator taking it
   by value. A named move-only value that instead requires the built-in
   `expected<T, E>` success conversion still names the rejected copy and
-  spells `return std::move(name);` in its hint. Field projections and other same-type
-  move-only return expressions state the copy requirement without presenting
-  identical source and destination types as a mismatch.
+  spells `return std::move(name);` in its hint. Field projections and other
+  same-type move-only return expressions state the copy requirement without
+  presenting identical source and destination types as a mismatch.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
   policy as well as copy/move construction policy. A valid ordinary form is
   exactly `Type() = default;`; point at `default`, relate the first field

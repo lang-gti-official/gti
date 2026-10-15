@@ -1580,8 +1580,11 @@ of that fresh value would (section 3.5): the residual type is `R` itself, or
 the shared selection converts it through one `implicit` constructor of `R` or
 one `implicit` conversion operator of the residual's class. The built-in
 scalar and `expected` initialization conversions do not apply to a residual.
-In a generic body these checks happen for each concrete instance. Propagation through `std::tryable` is not available in constant
-evaluation. Violations are `GTI-S2086`.
+In a generic body these checks happen for each concrete instance.
+Propagation through `std::tryable` is not available in constant evaluation.
+Violations are `GTI-S2086`, except that a residual conversion the shared
+selection rejects, such as an ambiguous one (`GTI-S2122`), keeps that
+selection's diagnostic.
 
 An owning operand whose expression category is a value selects move transport
 for both alternatives. A named owning place selects copy transport for both
