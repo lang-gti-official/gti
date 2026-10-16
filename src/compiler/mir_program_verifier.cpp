@@ -5308,6 +5308,18 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
   const auto invalidSummary = [&](std::string message) {
     return verificationFailure(body, instance.id, std::move(message));
   };
+  if (instance.explicitReturnBorrowOrigin &&
+      instance.returnBorrowOrigin == BorrowOriginKind::None) {
+    const auto inventory =
+        findStoredCarrierReferenceInventory(program, instance.returnType);
+    // An open generic's written constraint may become vacuous for a concrete
+    // dependency-free result (for example T instantiated as int). Retain the
+    // source intent without inventing an origin for that concrete value.
+    if (instance.returnType.kind == SemanticType::Reference ||
+        (inventory && !inventory->empty()))
+      return invalidSummary(
+          "explicit return-borrow constraint has no resolved origin");
+  }
   if (instance.restoresReferenceResult) {
     std::unordered_set<HirFunctionInstanceId> visiting;
     if (!verifiedRestoreSummary(program, instance, visiting))

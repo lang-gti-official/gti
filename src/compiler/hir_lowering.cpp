@@ -625,6 +625,7 @@ private:
          .parameterTypes = std::move(parameterTypes),
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
+         .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
          .returnBorrowParameters = declaration.returnBorrowParameters,
@@ -2064,6 +2065,8 @@ private:
     if (concrete != nullptr) {
       output.program.functions[index].returnBorrowOrigin =
           concrete->returnBorrowOrigin;
+      output.program.functions[index].explicitReturnBorrowOrigin =
+          concrete->explicitReturnBorrowOrigin;
       output.program.functions[index].returnBorrowParameter =
           concrete->returnBorrowParameter;
       output.program.functions[index].returnBorrowParameters =
@@ -4614,7 +4617,7 @@ private:
         appendExtraction(IntrinsicKind::ExpectedValue, valueType);
     const HirValueId successValue =
         valueType == SemanticType::Void ? HirValueId{0}
-        : borrowedSuccess ? successExtraction
+        : borrowedSuccess               ? successExtraction
                           : appendTransport(successExtraction, valueType);
     const HirValueId errorExtraction =
         appendExtraction(IntrinsicKind::ExpectedError, errorType);

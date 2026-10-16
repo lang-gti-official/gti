@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v109`, `mir-body-v90`).
+instruction, body, and caller-assignment facts (`mir-v110`, `mir-body-v90`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,7 +318,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v109`/`mir-body-v90`,
+The combined deterministic serialization is currently `mir-v110`/`mir-body-v90`,
 with `lowered-program-v20` declaration metadata. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
 and place identity. Loan selection records distinguish an evaluated stored
@@ -354,6 +354,19 @@ verified target contracts, and failure successors receive no result fact.
 Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.
+
+Program schema 110 also preserves whether a function's resolved
+`borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
+function rows retain that bit alongside the formal/receiver origin; an explicit
+constraint for a reference-bearing result without a resolved origin is invalid.
+A generic constraint can be vacuous for a concrete dependency-free result while
+retaining its explicit source intent. Source-to-IR tests establish
+preservation, while MIR checks the resolved contract against executable return
+facts. MIR does not inspect the AST to rediscover a completely erased source
+annotation. This distinction prepares conditional complete-result contracts to
+retain explicit restrictions without inventing a dependency for an empty
+alternative; nonempty conditional call transport is not yet enabled by this
+metadata increment. Body serialization remains version 90.
 
 Version 105/body 86 additionally distinguishes absent borrow-set evidence
 from a complete producer-attached set, including a proven empty set. An empty
@@ -476,7 +489,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v109`/`lowered-program-v20`, preserving
+The combined serialization is `mir-v110`/`lowered-program-v20`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
