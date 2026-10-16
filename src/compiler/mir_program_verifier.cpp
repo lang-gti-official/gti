@@ -4465,6 +4465,194 @@ findStoredCarrierReference(const MirProgram &program,
              : std::optional<MirStoredCarrierReference>(references.front());
 }
 
+// Resolve one sealed conditional field path to the already materialized MIR
+// referent. The guard chooses the alternative; a same-spelled field elsewhere
+// is not a substitute. This reads no inactive field and grants no access.
+[[nodiscard]] std::optional<MirPlaceId>
+storedCarrierReferentPlace(const MirProgram &program, const MirBody &body,
+                           const MirPlace &carrier,
+                           const MirStoredCarrierReference &path) {
+  SemanticType type = carrier.type;
+  auto projections = carrier.projections;
+  AccessMode access = carrier.access;
+  const auto dereference = [&]() {
+    if (type.kind != SemanticType::Reference)
+      return true;
+    if (type.arguments.size() != 1)
+      return false;
+    access = type.referenceAccess;
+    type = SemanticType(type.arguments.front());
+    projections.push_back({.kind = MirProjectionKind::Dereference});
+    return true;
+  };
+  if (!dereference())
+    return std::nullopt;
+  std::vector<SymbolId> prefix;
+  std::size_t usedConditions = 0;
+  for (const auto symbol : path.fields) {
+    std::optional<SemanticType> field;
+    const BorrowDependencyCondition *guard = nullptr;
+    for (const auto &condition : path.conditions)
+      if (condition.subobject == prefix) {
+        if (guard || condition.enumeration != type)
+          return std::nullopt;
+        guard = &condition;
+        ++usedConditions;
+      }
+    if (type.kind == SemanticType::Enum) {
+      const auto *enumeration = program.findPayloadEnum(type);
+      if (!guard || !enumeration ||
+          guard->variant >= enumeration->variants.size())
+        return std::nullopt;
+      const auto &variant = enumeration->variants[guard->variant];
+      if (variant.payloadTypes.size() != variant.payloadSymbols.size())
+        return std::nullopt;
+      for (std::size_t index = 0; index < variant.payloadSymbols.size();
+           ++index)
+        if (variant.payloadSymbols[index] == symbol) {
+          if (field)
+            return std::nullopt;
+          field = variant.payloadTypes[index];
+        }
+    } else {
+      if (guard)
+        return std::nullopt;
+      field = mirFieldProjectionType(program, type, symbol);
+    }
+    if (!field)
+      return std::nullopt;
+    projections.push_back({.kind = MirProjectionKind::Field, .field = symbol});
+    prefix.push_back(symbol);
+    type = *field;
+    if (!dereference())
+      return std::nullopt;
+  }
+  if (usedConditions != path.conditions.size() ||
+      path.reference.kind != SemanticType::Reference ||
+      path.reference.arguments.size() != 1 ||
+      type != path.reference.arguments.front() ||
+      access != path.reference.referenceAccess)
+    return std::nullopt;
+  for (const auto &place : body.places)
+    if (place.root == carrier.root && place.binding == carrier.binding &&
+        place.symbol == carrier.symbol && place.capture == carrier.capture &&
+        place.loan == carrier.loan && place.value == carrier.value &&
+        place.temporary == carrier.temporary &&
+        place.projections == projections && place.type == type &&
+        place.access == access && !place.foreignStorage)
+      return place.id;
+  return std::nullopt;
+}
+
+struct CompleteBorrowParameterEntry {
+  MirPlaceId carrier = 0;
+  MirLoanId group = 0;
+  SemanticType type = SemanticType::Unknown;
+  MirBorrowDependencySet dependencies;
+};
+
+// Establish the external dependency domain of one exact formal independently
+// of value annotations. Nonempty facts require the full typed entry contract,
+// including every guarded path, and its exact already-materialized referents.
+[[nodiscard]] std::optional<CompleteBorrowParameterEntry>
+completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
+                                 std::size_t owner, HirBindingId binding) {
+  const auto *function = body.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(owner)
+                             : nullptr;
+  const auto *lambda =
+      body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
+  const auto *constructor = body.kind == MirBodyKind::Constructor
+                                ? program.findConstructorInstance(owner)
+                                : nullptr;
+  const auto *bindings = function      ? &function->parameterBindings
+                         : lambda      ? &lambda->parameterBindings
+                         : constructor ? &constructor->parameterBindings
+                                       : nullptr;
+  const auto *types = function      ? &function->parameterTypes
+                      : lambda      ? &lambda->parameterTypes
+                      : constructor ? &constructor->parameterTypes
+                                    : nullptr;
+  if (!bindings || !types || bindings->size() != types->size() || !binding ||
+      std::count(bindings->begin(), bindings->end(), binding) != 1)
+    return std::nullopt;
+  const auto index = std::find(bindings->begin(), bindings->end(), binding) -
+                     bindings->begin();
+  const auto &formal = (*types)[index];
+  const bool reference = formal.kind == SemanticType::Reference;
+  if (reference && formal.arguments.size() != 1)
+    return std::nullopt;
+  const auto &type = reference ? formal.arguments.front() : formal;
+  const auto inventory = findStoredCarrierReferenceInventory(program, type);
+  auto alternatives = findStoredCarrierAlternativeInventory(program, type);
+  if (!inventory || !alternatives)
+    return std::nullopt;
+  const auto exactCarrier = [&](const MirPlace &place) {
+    return place.root == MirPlaceRootKind::Binding &&
+           place.binding == binding && place.type == formal &&
+           place.projections.empty() && place.initiallyAvailable &&
+           !place.foreignStorage;
+  };
+  const auto carrier =
+      std::find_if(body.places.begin(), body.places.end(), exactCarrier);
+  if (carrier == body.places.end())
+    return std::nullopt;
+  CompleteBorrowParameterEntry result{
+      .carrier = carrier->id,
+      .type = type,
+      .dependencies = {.possibleAlternatives = std::move(*alternatives)}};
+  if (inventory->empty())
+    return reference ? std::nullopt : std::optional{std::move(result)};
+  // Existing unconditional carriers retain their original proof. This entry
+  // extension is required when that inventory has real alternative guards.
+  if (std::none_of(inventory->begin(), inventory->end(),
+                   [](const auto &path) { return !path.conditions.empty(); }))
+    return std::nullopt;
+  const MirLoan *entry = nullptr;
+  for (const auto &loan : body.loans) {
+    const auto *source = body.findPlace(loan.source);
+    if (!loan.entry || loan.kind != MirLoanKind::Stored || !source ||
+        !exactCarrier(*source))
+      continue;
+    if (entry)
+      return std::nullopt;
+    entry = &loan;
+  }
+  if (!entry || entry->parent || entry->storedDependency || entry->escapes ||
+      entry->producedBy || entry->storedField || entry->twoPhase ||
+      entry->referenceSelection || (reference && entry->lifecycleBound) ||
+      (!reference && std::find(entry->carriers.begin(), entry->carriers.end(),
+                               binding) == entry->carriers.end()) ||
+      entry->designatedFields != inventory->front().fields ||
+      entry->conditions != inventory->front().conditions ||
+      entry->access != inventory->front().reference.referenceAccess ||
+      entry->additionalDependencies.size() + 1 != inventory->size())
+    return std::nullopt;
+  for (std::size_t path = 1; path < inventory->size(); ++path) {
+    const MirLoanDependency expected{
+        .designatedFields = (*inventory)[path].fields,
+        .access = (*inventory)[path].reference.referenceAccess,
+        .conditions = (*inventory)[path].conditions};
+    if (entry->additionalDependencies[path - 1] != expected)
+      return std::nullopt;
+  }
+  result.carrier = entry->source;
+  result.group = entry->id;
+  for (const auto &path : *inventory) {
+    const auto external = storedCarrierReferentPlace(
+        program, body, *body.findPlace(entry->source), path);
+    if (!external)
+      return std::nullopt;
+    result.dependencies.dependencies.push_back(
+        {.source = *external,
+         .parent = entry->id,
+         .designatedFields = path.fields,
+         .access = path.reference.referenceAccess,
+         .conditions = path.conditions});
+  }
+  return result;
+}
+
 [[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
                                             const MirInstruction &instruction) {
   if ((instruction.kind != MirInstructionKind::Construct &&
@@ -4963,6 +5151,28 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
         return verificationFailure(body, owner,
                                    "abstract stored dependency must name the "
                                    "exact receiver or reference formal");
+    }
+    const auto inventory =
+        findStoredCarrierReferenceInventory(program, carrierType);
+    const bool conditional =
+        inventory &&
+        std::any_of(inventory->begin(), inventory->end(),
+                    [](const auto &path) { return !path.conditions.empty(); });
+    if (conditional) {
+      const auto entry = source->root == MirPlaceRootKind::Binding
+                             ? completeBorrowParameterEntryFact(
+                                   program, body, owner, source->binding)
+                             : std::nullopt;
+      if (!entry || entry->group != loan.id || entry->carrier != source->id ||
+          (abstractEntry &&
+           (parameterBindings == nullptr ||
+            !exactAbstractStoredCarrierPublications(
+                program, body, *parameterBindings, loan, carrierType))))
+        return verificationFailure(
+            body, owner,
+            "conditional stored entry lacks its exact typed formal, guarded "
+            "reference paths and external referent places");
+      continue;
     }
     const auto paths = findStoredCarrierReferences(program, carrierType);
     if (paths.empty()) {
@@ -11701,32 +11911,11 @@ struct CompleteBorrowFlow {
                            : lambda      ? &lambda->parameterBindings
                            : constructor ? &constructor->parameterBindings
                                          : nullptr;
-  const auto *types = function      ? &function->parameterTypes
-                      : lambda      ? &lambda->parameterTypes
-                      : constructor ? &constructor->parameterTypes
-                                    : nullptr;
-  if (parameters && types && parameters->size() == types->size())
-    for (std::size_t parameter = 0; parameter < parameters->size();
-         ++parameter) {
-      const auto &type = (*types)[parameter];
-      if (type.kind == SemanticType::Reference)
-        continue;
-      const auto inventory = findStoredCarrierReferenceInventory(program, type);
-      auto alternatives = findStoredCarrierAlternativeInventory(program, type);
-      if (!inventory || !inventory->empty() || !alternatives)
-        continue;
-      MirBorrowDependencySet complete{.possibleAlternatives =
-                                          std::move(*alternatives)};
-      // An unknown entry tag admits every typed alternative. Nonconditional
-      // values have an explicitly empty alternative inventory. In both cases
-      // the complete empty dependency inventory comes from the exact by-value
-      // formal and sealed layout, never from an annotation or absent loan.
-      for (const auto &place : body.places)
-        if (place.root == MirPlaceRootKind::Binding &&
-            place.binding == (*parameters)[parameter] && place.type == type &&
-            place.projections.empty() && place.initiallyAvailable)
-          initial.places[place.id - 1] = complete;
-    }
+  if (parameters)
+    for (const auto binding : *parameters)
+      if (const auto entry =
+              completeBorrowParameterEntryFact(program, body, owner, binding))
+        publish(initial, entry->carrier, entry->dependencies);
   auto flow = runMirForwardDataflow(
       body, std::move(initial), transfer,
       [&](State &target, const State &incoming,

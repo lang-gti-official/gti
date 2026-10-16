@@ -8663,6 +8663,23 @@ Nonempty enum parameter/constructor facts, complete interprocedural transport
 and final public reference-payload admission still require their independent
 proofs; this prerequisite does not claim that source feature is complete.
 
+The guarded parameter-entry increment now reconstructs the complete dependency
+set from the exact function/lambda/constructor formal, sealed reference and
+alternative inventories, the unique checked stored-entry group, and typed MIR
+referent places. Both initial flow and stored-entry verification use that same
+query. Each possible field keeps its own guard, access and parent; a missing
+formal, layout, path, group or referent yields unknown rather than empty.
+The internal test changes an otherwise valid owned-enum fixture into reference
+metadata and verifies the exact entry domain plus eleven substituted/missing
+proof cases. The artificial whole program is still required to fail verification;
+this is entry-proof evidence, not public source or runtime acceptance. The
+optimized build and `complete_borrow_summaries` pass in
+`/private/tmp/gti-conditional-entry-{build,summary}17.log`; the four regression
+gates are queued through the shared suite window in
+`/private/tmp/gti-conditional-entry-regressions17.log`. Constructor operand
+retention, independent complete construction, call transport and final source
+admission remain separate pending obligations.
+
 An error-only input to a reference-returning operation cannot manufacture an
 origin: if its verified normal-return contract requires an impossible active
 dependency, the implementation must represent that lack of a normal result
