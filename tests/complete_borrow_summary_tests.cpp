@@ -1,5 +1,6 @@
 #include "../src/compiler/mir_verification_queries.h"
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
@@ -193,6 +194,83 @@ int main() {
              "handoff rejects reordered/missing/substituted/duplicated setup "
              "identities");
     }
+    // A body-local fixture supplies an already established external authority.
+    // It does not claim the sealed enum/formal inventory of a complete program.
+    // This checks the permission transition separately from the shape query.
+    auto live = body;
+    live.kind = lang::MirBodyKind::Function;
+    live.blocks.resize(3);
+    live.blocks[2].id = 3;
+    live.blocks[0].terminator.target = 3;
+    live.blocks[0].terminator.value->type = live.places[0].type;
+    live.blocks[0].terminator.switchTargets[0].value->kind =
+        lang::SwitchCaseKind::Enumerator;
+    live.blocks[0].terminator.switchTargets[0].value->type =
+        live.places[0].type;
+    live.blocks[1].terminator.kind = lang::MirTerminatorKind::Return;
+    live.blocks[2].terminator.kind = lang::MirTerminatorKind::Return;
+    live.places[0].initiallyAvailable = true;
+    live.places[1].type = lang::SemanticType::Int32;
+    const auto reference =
+        lang::SemanticType::referenceTo(lang::SemanticType::Int32);
+    live.places[2].type = reference;
+    live.places.push_back({.id = 4,
+                           .root = lang::MirPlaceRootKind::Binding,
+                           .binding = 3,
+                           .type = lang::SemanticType::Int32,
+                           .initiallyAvailable = true});
+    live.loans[0].source = 4;
+    live.loans[0].entry = true;
+    live.loans[0].carriers.push_back(3);
+    live.loans[1].source = 4;
+    live.loans[1].referenceSelection->fields = {1};
+    live.loans[1].referenceSelection->conditions = {
+        {.enumeration = live.places[0].type, .variant = 0}};
+    live.loans[1].referenceSelection->reference = reference;
+    auto &setup = live.blocks[1].instructions;
+    setup[0].info.type = lang::SemanticType::Int32;
+    setup[0].info.category = lang::ValueCategory::Place;
+    live.values[0].info = setup[0].info;
+    live.values[0].sourceValue = setup[0].hirValue;
+    setup[2].operands[0].type = reference;
+    setup[3].operands[0].type = reference;
+    setup[3].operands[0].place = 2;
+    setup.push_back(
+        {.id = 5, .kind = lang::MirInstructionKind::EndBorrow, .loan = 2});
+    live.blocks[2].instructions.push_back(
+        {.id = 6, .kind = lang::MirInstructionKind::EndBorrow, .loan = 1});
+    lang::rebuildMirReachability(live);
+    expect(lang::rebuildMirValueUses(live), "handoff fixture value uses index");
+    const auto liveResult = lang::verifyMirBody(live);
+    for (const auto &error : liveResult.errors)
+      std::cerr << "live handoff fixture block " << error.block
+                << " instruction " << error.instruction << ": " << error.message
+                << '\n';
+    expect(liveResult.valid(),
+           "exact consuming prefix transfers an active external capability");
+    auto expired = live;
+    expired.blocks[0].instructions.push_back(
+        {.id = 7, .kind = lang::MirInstructionKind::EndBorrow, .loan = 1});
+    expect(lang::rebuildMirValueUses(expired) &&
+               !lang::verifyMirBody(expired).valid(),
+           "an earlier retirement cannot authorize a later handoff");
+    auto invented = live;
+    invented.loans[1].producedBy = 0;
+    expect(!lang::verifyMirBody(invented).valid(),
+           "a handoff producer cannot pretend to be a parentless later alias");
+    auto substituted = live;
+    substituted.places.push_back({.id = 5,
+                                  .root = lang::MirPlaceRootKind::Binding,
+                                  .binding = 4,
+                                  .type = lang::SemanticType::Int32,
+                                  .initiallyAvailable = true});
+    substituted.loans[1].source = 5;
+    expect(!lang::verifyMirBody(substituted).valid(),
+           "handoff cannot substitute a same-typed external owner");
+    auto stronger = live;
+    stronger.loans[1].access = lang::AccessMode::Mutable;
+    expect(!lang::verifyMirBody(stronger).valid(),
+           "handoff cannot strengthen its former group's shared access");
   }
   for (const auto &declarations : {leaf + forwarding, forwarding + leaf}) {
     const auto result =
