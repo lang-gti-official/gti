@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v108`, `mir-body-v89`).
+instruction, body, and caller-assignment facts (`mir-v109`, `mir-body-v90`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,12 +318,17 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v108`/`mir-body-v89`,
+The combined deterministic serialization is currently `mir-v109`/`mir-body-v90`,
 with `lowered-program-v20` declaration metadata. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
 and place identity. Loan selection records distinguish an evaluated stored
 reference address (exact extraction value and carrier) from the external places
-that may own its referent. The records alone grant no borrowing authority;
+that may own its referent. Consuming selections also identify the exact old
+dependency group in `transferredFrom`; this is a handoff claim, not a live
+reborrow parent. Body verification requires an existing, distinct group only
+for a transfer-mode producer. Program verification must separately prove the
+closed field-transfer prefix and preserve external ancestry after the old
+carrier retires. The records alone grant no borrowing authority;
 stored-reference payload admission remains closed pending complete selected-owner
 verification. The declaration format also retains exact external storage
 names. Earlier versions record
@@ -471,7 +476,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v108`/`lowered-program-v20`, preserving
+The combined serialization is `mir-v109`/`lowered-program-v20`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

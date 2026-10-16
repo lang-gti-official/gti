@@ -8372,6 +8372,14 @@ function-summary publication, so return validation need not depend on an
 unfinished summary of its own body. Nonempty publication is still closed until
 independent MIR normalization, call substitution and combined source/loan
 regression evidence are complete; scaffold implementation is not admission.
+The MIR scaffold independently normalizes return places through typed
+formal/receiver paths, rather than trusting the semantic mapping. Semantic
+ancestry checking traverses primary, stored and every additional parent edge,
+including shared DAG ancestry; no primary entry may hide a local cleanup-bound
+secondary owner. These newly added nonempty paths are not yet validated or
+enabled. Final call substitution and malformed nonempty mapping tests remain
+open. Stable payload-string performance acceptance currently takes priority
+over enabling this follow-up.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
@@ -8522,6 +8530,22 @@ entry loan, formal identity and typed guarded field path. Positive parameter
 ancestry and missing/substituted parent/path/foreign-storage negatives are
 required before revisiting that predicate; this is not permission to bypass it.
 
+Consuming selections additionally carry the exact old dependency-group identity
+through semantics, HIR and MIR. This handoff claim must match independently
+reconstructed carrier flow; it cannot keep the consumed shell alive as an
+ordinary reborrow parent or invent an owner when an abstract parameter group
+retires. The closed arm-entry prefix must transfer every selected field once,
+without a fallible user operation between publications. Copying a reference
+does not carry a handoff claim; reborrowing retains its ordinary checked parent.
+The identity-only scaffold uses `mir-v109`/`mir-body-v90`. An optimized local
+build and the `complete_borrow_summaries`, `sum_type_pipeline` and
+`tryable_propagation` suites pass. Four malformed body tests reject missing,
+self, foreign and non-transferring group identities; the same plausible
+body-local fixture is independently rejected at program level because its
+sealed field is owned rather than borrowed. This evidence covers metadata
+transport and shape, not permission to activate a transferred loan or public
+reference-payload acceptance. Logs are retained under
+`/private/tmp/gti-payload-handoff-*`.
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The

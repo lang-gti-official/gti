@@ -2730,7 +2730,9 @@ private:
       }
       if (loan.referenceSelection) {
         const auto &selection = *loan.referenceSelection;
-        HirReferenceSelection resolved{.fields = selection.fields,
+        HirReferenceSelection resolved{.transferredFrom =
+                                           selection.transferredFrom,
+                                       .fields = selection.fields,
                                        .conditions = selection.conditions,
                                        .reference = selection.reference};
         std::size_t matches = 0;
@@ -4612,7 +4614,7 @@ private:
         appendExtraction(IntrinsicKind::ExpectedValue, valueType);
     const HirValueId successValue =
         valueType == SemanticType::Void ? HirValueId{0}
-        : borrowedSuccess               ? successExtraction
+        : borrowedSuccess ? successExtraction
                           : appendTransport(successExtraction, valueType);
     const HirValueId errorExtraction =
         appendExtraction(IntrinsicKind::ExpectedError, errorType);

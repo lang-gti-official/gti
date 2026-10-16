@@ -99,6 +99,9 @@ struct SemanticBorrowDependencySet {
 struct SemanticReferenceSelection {
   const Expr *source = nullptr;
   const Expr *carrier = nullptr;
+  // Exact consumed dependency group whose authority is handed off by the
+  // closed arm-entry prefix. This is provenance, not a live reborrow parent.
+  SemanticLoanId transferredFrom = 0;
   std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
