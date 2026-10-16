@@ -11290,12 +11290,134 @@ struct CompleteBorrowFlow {
         return state.places[index];
     return std::nullopt;
   };
+  const auto fromSelectedLoan = [&](const State &state, MirLoanId id) -> Fact {
+    const auto *loan = body.findLoan(id);
+    if (!loan || !loan->referenceSelection)
+      return std::nullopt;
+    const auto &selection = *loan->referenceSelection;
+    if (!selection.value || selection.value > state.values.size())
+      return std::nullopt;
+    const auto *extract = definitions[selection.value - 1];
+    const auto *value = body.findValue(selection.value);
+    if (!extract || !value || extract->tombstone ||
+        extract->kind != MirInstructionKind::Compute ||
+        extract->operation != MirOperation::PayloadExtract ||
+        extract->result != selection.value || extract->operands.size() != 1 ||
+        extract->operands.front().place != selection.carrier ||
+        !extract->payloadExtractionKind ||
+        !isStoredReferenceExtraction(*extract->payloadExtractionKind) ||
+        selection.reference.kind != SemanticType::Reference ||
+        selection.reference.arguments.size() != 1 ||
+        selection.reference.arguments.front() != value->info.type ||
+        value->info.category != ValueCategory::Place ||
+        (loan->access == AccessMode::Mutable &&
+         value->info.access != AccessMode::Mutable))
+      return std::nullopt;
+    auto fact = state.values[selection.value - 1];
+    if (!fact || fact->dependencies.empty() ||
+        !completeBorrowSetHasTypedShape(
+            program,
+            SemanticType::referenceTo(value->info.type, value->info.access),
+            *fact))
+      return std::nullopt;
+    // Reuse the original executable projection, never the loan's attached
+    // primary/additional origin claims. Independent selection verification
+    // proves this current capability retains precisely all those owners; its
+    // activity, permission and endpoint remain ordinary loan obligations.
+    for (auto &dependency : fact->dependencies) {
+      if (loan->access == AccessMode::Mutable &&
+          dependency.access != AccessMode::Mutable)
+        return std::nullopt;
+      dependency.access = loan->access;
+      dependency.parent = loan->id;
+    }
+    return fact;
+  };
+  const auto fromReferenceLoan = [&](const State &state, MirLoanId id) -> Fact {
+    const auto *loan = body.findLoan(id);
+    if (!loan)
+      return std::nullopt;
+    if (loan->referenceSelection)
+      return fromSelectedLoan(state, id);
+    if (!body.findPlace(loan->source) || !loan->designatedFields.empty() ||
+        !loan->conditions.empty())
+      return std::nullopt;
+    // Ordinary unconditional reference loans already have an independent
+    // exact-origin proof. Reuse that authority in full, never just its primary
+    // source. Conditional and selected origins require executable facts above.
+    MirBorrowDependencySet fact{
+        .dependencies = {
+            {.source = loan->source, .parent = id, .access = loan->access}}};
+    for (const auto &dependency : loan->additionalDependencies) {
+      if (!body.findPlace(dependency.source) ||
+          !dependency.designatedFields.empty() ||
+          !dependency.conditions.empty() || dependency.access != loan->access)
+        return std::nullopt;
+      fact.dependencies.push_back(
+          {.source = dependency.source, .parent = id, .access = loan->access});
+    }
+    return fact;
+  };
+  const auto fromReferencePlace = [&](const State &state,
+                                      MirPlaceId id) -> Fact {
+    const auto *place = body.findPlace(id);
+    if (!place)
+      return std::nullopt;
+    if (place->root == MirPlaceRootKind::Loan && place->projections.empty())
+      return fromReferenceLoan(state, place->loan);
+    if (place->root == MirPlaceRootKind::Value && place->projections.empty() &&
+        place->value && place->value <= state.values.size())
+      if (auto fact = state.values[place->value - 1];
+          fact && !fact->dependencies.empty() &&
+          fact->possibleAlternatives.empty())
+        return fact;
+    if (place->root == MirPlaceRootKind::Binding &&
+        ((place->projections.empty() &&
+          place->type.kind == SemanticType::Reference) ||
+         (place->projections.size() == 1 &&
+          place->projections.front().kind == MirProjectionKind::Dereference))) {
+      const auto loans = bindingLoans.find(place->binding);
+      if (loans != bindingLoans.end() && loans->second.size() == 1)
+        return fromReferenceLoan(state, loans->second.front());
+      return std::nullopt;
+    }
+    if (place->root == MirPlaceRootKind::Loan ||
+        place->type.kind == SemanticType::Reference ||
+        std::any_of(place->projections.begin(), place->projections.end(),
+                    [](const auto &projection) {
+                      return projection.kind == MirProjectionKind::Dereference;
+                    }))
+      return std::nullopt;
+    // A direct borrow of physical storage has that exact place as its owner.
+    // Ordinary borrow/availability verification still proves the address and
+    // endpoint; no reference-carrier alias is flattened into physical storage.
+    return MirBorrowDependencySet{
+        .dependencies = {{.source = id, .access = place->access}}};
+  };
   const auto fromOperand = [&](const State &state,
                                const MirOperand &operand) -> Fact {
     if (operand.kind == MirOperandKind::Value)
       return operand.value && operand.value <= state.values.size()
                  ? state.values[operand.value - 1]
                  : std::nullopt;
+    if (operand.kind == MirOperandKind::Loan)
+      return fromReferenceLoan(state, operand.loan);
+    if (operand.kind == MirOperandKind::BorrowRead ||
+        operand.kind == MirOperandKind::BorrowWrite) {
+      auto fact = fromReferencePlace(state, operand.place);
+      if (!fact)
+        return std::nullopt;
+      const auto access = operand.kind == MirOperandKind::BorrowWrite
+                              ? AccessMode::Mutable
+                              : AccessMode::ReadOnly;
+      for (auto &dependency : fact->dependencies) {
+        if (access == AccessMode::Mutable &&
+            dependency.access != AccessMode::Mutable)
+          return std::nullopt;
+        dependency.access = access;
+      }
+      return fact;
+    }
     return operand.kind == MirOperandKind::Copy ||
                    operand.kind == MirOperandKind::Move
                ? fromPlace(state, operand.place)
@@ -11661,15 +11783,103 @@ struct CompleteBorrowFlow {
          sameEntries(left->possibleAlternatives, right->possibleAlternatives);
 }
 
-// Program-local proof cache. A recursive edge observes unknown, never the
-// declaration's claim, so mutually forged summaries cannot justify one another.
-// The same executable flow reconstruction also verifies value annotations.
+struct CompleteBorrowSourcePath {
+  SemanticType referent = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  // The first stored reference crossed by this formal-relative path. An
+  // absent prefix denotes physical caller storage, not a by-value shell.
+  std::optional<std::size_t> externalPrefix;
+  std::vector<BorrowDependencyCondition> conditions;
+};
+
+[[nodiscard]] std::optional<CompleteBorrowSourcePath>
+completeBorrowSourcePath(const MirProgram &program,
+                         const MirFunctionInstance &function,
+                         const BorrowedFieldOrigin &mapping) {
+  SemanticType type = SemanticType::Unknown;
+  bool physicalCallerStorage = false;
+  CompleteBorrowSourcePath source;
+  if (mapping.origin == BorrowOriginKind::Argument) {
+    if (mapping.parameter >= function.parameterTypes.size())
+      return std::nullopt;
+    type = function.parameterTypes[mapping.parameter];
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+      physicalCallerStorage = true;
+      source.access = type.referenceAccess;
+      type = SemanticType(type.arguments.front());
+    }
+  } else if (mapping.origin == BorrowOriginKind::Receiver) {
+    const auto *owner =
+        function.owner ? program.findClassInstance(*function.owner) : nullptr;
+    if (!owner || function.staticMember || mapping.parameter != 0)
+      return std::nullopt;
+    type = owner->type;
+    physicalCallerStorage =
+        function.receiverMutability != ReceiverMutability::Consuming;
+    source.access = receiverAllowsMutation(function.receiverMutability)
+                        ? AccessMode::Mutable
+                        : AccessMode::ReadOnly;
+  } else
+    return std::nullopt;
+  std::vector<SymbolId> prefix;
+  for (const auto symbol : mapping.sourceFields) {
+    if (!symbol)
+      return std::nullopt;
+    SemanticType field = SemanticType::Unknown;
+    if (const auto *enumeration = program.findPayloadEnum(type)) {
+      for (std::size_t alternative = 0;
+           alternative < enumeration->variants.size(); ++alternative) {
+        const auto &variant = enumeration->variants[alternative];
+        if (variant.payloadTypes.size() != variant.payloadSymbols.size())
+          return std::nullopt;
+        for (std::size_t index = 0; index < variant.payloadTypes.size();
+             ++index)
+          if (variant.payloadSymbols[index] == symbol) {
+            if (field != SemanticType::Unknown)
+              return std::nullopt;
+            field = variant.payloadTypes[index];
+            source.conditions.push_back({.subobject = prefix,
+                                         .enumeration = type,
+                                         .variant = alternative});
+          }
+      }
+    } else if (const auto *owner =
+                   uniqueMirClassInstanceForType(program, type)) {
+      for (const auto &candidate : owner->declaredFields)
+        if (candidate.symbol == symbol) {
+          if (field != SemanticType::Unknown)
+            return std::nullopt;
+          field = candidate.type;
+        }
+    }
+    if (field == SemanticType::Unknown)
+      return std::nullopt;
+    prefix.push_back(symbol);
+    if (field.kind == SemanticType::Reference) {
+      if (field.arguments.size() != 1)
+        return std::nullopt;
+      if (!source.externalPrefix)
+        source.externalPrefix = prefix.size();
+      source.access = field.referenceAccess;
+      field = SemanticType(field.arguments.front());
+    }
+    type = std::move(field);
+  }
+  if (!physicalCallerStorage && !source.externalPrefix)
+    return std::nullopt;
+  source.referent = std::move(type);
+  return source;
+}
+
 [[nodiscard]] bool
 completeBorrowMappingIsWellFormed(const MirProgram &program,
                                   const MirFunctionInstance &function,
                                   const BorrowedFieldOrigin &mapping) {
   const auto resultInventory =
-      findStoredCarrierReferenceInventory(program, function.returnType);
+      function.returnType.kind == SemanticType::Reference
+          ? std::optional{std::vector<MirStoredCarrierReference>{
+                {.reference = function.returnType}}}
+          : findStoredCarrierReferenceInventory(program, function.returnType);
   if (!resultInventory)
     return false;
   const auto result = std::find_if(
@@ -11682,81 +11892,24 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
       });
   if (result == resultInventory->end())
     return false;
-  SemanticType type = SemanticType::Unknown;
-  bool physicalCallerStorage = false;
-  AccessMode access = AccessMode::ReadOnly;
-  if (mapping.origin == BorrowOriginKind::Argument) {
-    if (mapping.parameter >= function.parameterTypes.size())
+  if (function.explicitReturnBorrowOrigin) {
+    if (mapping.origin != function.returnBorrowOrigin ||
+        (mapping.origin == BorrowOriginKind::Argument &&
+         mapping.parameter != function.returnBorrowParameter &&
+         std::find(function.returnBorrowParameters.begin(),
+                   function.returnBorrowParameters.end(), mapping.parameter) ==
+             function.returnBorrowParameters.end()) ||
+        (!function.returnBorrowFields.empty() &&
+         std::find(function.returnBorrowFields.begin(),
+                   function.returnBorrowFields.end(),
+                   mapping) == function.returnBorrowFields.end()))
       return false;
-    type = function.parameterTypes[mapping.parameter];
-    if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
-      physicalCallerStorage = true;
-      access = type.referenceAccess;
-      type = SemanticType(type.arguments.front());
-    }
-  } else if (mapping.origin == BorrowOriginKind::Receiver) {
-    const auto *owner =
-        function.owner ? program.findClassInstance(*function.owner) : nullptr;
-    if (!owner || function.staticMember || mapping.parameter != 0)
-      return false;
-    type = owner->type;
-    physicalCallerStorage =
-        function.receiverMutability != ReceiverMutability::Consuming;
-    access = receiverAllowsMutation(function.receiverMutability)
-                 ? AccessMode::Mutable
-                 : AccessMode::ReadOnly;
-  } else
-    return false;
-  bool externalReferent = false;
-  std::vector<SymbolId> prefix;
-  std::vector<BorrowDependencyCondition> conditions;
-  for (const auto symbol : mapping.sourceFields) {
-    if (!symbol)
-      return false;
-    SemanticType field = SemanticType::Unknown;
-    if (const auto *enumeration = program.findPayloadEnum(type)) {
-      for (std::size_t alternative = 0;
-           alternative < enumeration->variants.size(); ++alternative) {
-        const auto &variant = enumeration->variants[alternative];
-        if (variant.payloadTypes.size() != variant.payloadSymbols.size())
-          return false;
-        for (std::size_t index = 0; index < variant.payloadTypes.size();
-             ++index)
-          if (variant.payloadSymbols[index] == symbol) {
-            if (field != SemanticType::Unknown)
-              return false;
-            field = variant.payloadTypes[index];
-            conditions.push_back({.subobject = prefix,
-                                  .enumeration = type,
-                                  .variant = alternative});
-          }
-      }
-    } else if (const auto *owner =
-                   uniqueMirClassInstanceForType(program, type)) {
-      for (const auto &candidate : owner->declaredFields)
-        if (candidate.symbol == symbol) {
-          if (field != SemanticType::Unknown)
-            return false;
-          field = candidate.type;
-        }
-    }
-    if (field == SemanticType::Unknown)
-      return false;
-    prefix.push_back(symbol);
-    if (field.kind == SemanticType::Reference) {
-      if (field.arguments.size() != 1)
-        return false;
-      externalReferent = true;
-      access = field.referenceAccess;
-      field = SemanticType(field.arguments.front());
-    }
-    type = std::move(field);
   }
-  return (physicalCallerStorage || externalReferent) &&
-         type == result->reference.arguments.front() &&
+  const auto source = completeBorrowSourcePath(program, function, mapping);
+  return source && source->referent == result->reference.arguments.front() &&
          (mapping.access == AccessMode::ReadOnly ||
-          access == AccessMode::Mutable) &&
-         conditions == mapping.sourceConditions;
+          source->access == AccessMode::Mutable) &&
+         source->conditions == mapping.sourceConditions;
 }
 
 [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
@@ -11798,28 +11951,11 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
     }
     // Recover source guards from the exact typed formal path, independently
     // of the returned annotation's result-side guards.
-    SemanticType sourceType = SemanticType::Unknown;
-    if (mapping.origin == BorrowOriginKind::Argument &&
-        mapping.parameter < function.parameterTypes.size())
-      sourceType = function.parameterTypes[mapping.parameter];
-    else if (mapping.origin == BorrowOriginKind::Receiver && function.owner)
-      if (const auto *owner = program.findClassInstance(*function.owner))
-        sourceType = owner->type;
-    if (sourceType.kind == SemanticType::Reference &&
-        sourceType.arguments.size() == 1)
-      sourceType = SemanticType(sourceType.arguments.front());
-    const auto inventory =
-        findStoredCarrierReferenceInventory(program, sourceType);
-    if (inventory)
-      for (const auto &path : *inventory)
-        if (path.fields.size() <= mapping.sourceFields.size() &&
-            std::equal(path.fields.begin(), path.fields.end(),
-                       mapping.sourceFields.begin())) {
-          if (!mapping.sourceConditions.empty() &&
-              mapping.sourceConditions != path.conditions)
-            return std::nullopt;
-          mapping.sourceConditions = path.conditions;
-        }
+    const auto sourcePath =
+        completeBorrowSourcePath(program, function, mapping);
+    if (!sourcePath)
+      return std::nullopt;
+    mapping.sourceConditions = sourcePath->conditions;
     if (!completeBorrowMappingIsWellFormed(program, function, mapping))
       return std::nullopt;
     if (std::find(result.dependencies.begin(), result.dependencies.end(),
@@ -11829,6 +11965,9 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
   return result;
 }
 
+// Program-local proof cache. A recursive edge observes unknown, never the
+// declaration's claim, so mutually forged summaries cannot justify one another.
+// The same executable flow reconstruction also verifies value annotations.
 class CompleteBorrowSummaryVerification {
 public:
   explicit CompleteBorrowSummaryVerification(const MirProgram &program)
@@ -11850,6 +11989,13 @@ public:
       const auto &claim = *function->completeReturnBorrow;
       const bool covers =
           observed &&
+          std::all_of(
+              observed->dependencies.begin(), observed->dependencies.end(),
+              [&](const auto &dependency) {
+                return std::find(claim.dependencies.begin(),
+                                 claim.dependencies.end(),
+                                 dependency) != claim.dependencies.end();
+              }) &&
           std::all_of(observed->possibleAlternatives.begin(),
                       observed->possibleAlternatives.end(),
                       [&](const BorrowAlternativePath &alternative) {
@@ -11860,8 +12006,9 @@ public:
                       });
       if (wellFormed(*function, claim) && covers) {
         // Keep the declaration contract stable across optimizer narrowing.
-        // Its extra alternatives are independently checked conservative cases,
-        // not facts inferred from an attached claim or unreachable returns.
+        // Its additional well-typed alternatives and dependency obligations
+        // are conservative cases, not inferred from an attached claim or
+        // unreachable returns. Explicit source restrictions still apply.
         summaries[id - 1] = claim;
       } else {
         appendVerification(
@@ -11902,21 +12049,22 @@ private:
 
   bool wellFormed(const MirFunctionInstance &function,
                   const FunctionBorrowDependencySummary &claim) const {
-    if (!claim.dependencies.empty() || claim.possibleAlternatives.empty())
+    if (!completeBorrowResultHasTypedShape(
+            program, function.returnType, claim.possibleAlternatives,
+            std::span<const BorrowedFieldOrigin>(claim.dependencies),
+            [](const BorrowedFieldOrigin &dependency) {
+              return CompleteBorrowResultPathView{
+                  .fields = dependency.resultFields,
+                  .conditions = dependency.resultConditions,
+                  .access = dependency.access};
+            }))
       return false;
-    for (std::size_t index = 0; index < claim.possibleAlternatives.size();
-         ++index) {
-      const auto &path = claim.possibleAlternatives[index];
-      if (path.conditions.size() != 1 ||
-          std::find(claim.possibleAlternatives.begin(),
-                    claim.possibleAlternatives.begin() + index,
-                    path) != claim.possibleAlternatives.begin() + index)
-        return false;
-      const auto &condition = path.conditions.front();
-      if (!condition.subobject.empty() ||
-          condition.enumeration != function.returnType ||
-          !dependencyFreePayloadAlternative(program, condition.enumeration,
-                                            condition.variant))
+    for (std::size_t index = 0; index < claim.dependencies.size(); ++index) {
+      const auto &dependency = claim.dependencies[index];
+      if (!completeBorrowMappingIsWellFormed(program, function, dependency) ||
+          std::find(claim.dependencies.begin(),
+                    claim.dependencies.begin() + index,
+                    dependency) != claim.dependencies.begin() + index)
         return false;
     }
     return true;
@@ -11942,13 +12090,17 @@ private:
       if (!block || !block->terminator.value ||
           block->terminator.value->type != function.returnType ||
           !returned.dependencies ||
-          !returned.dependencies->dependencies.empty() ||
-          returned.dependencies->possibleAlternatives.empty())
+          !completeBorrowSetHasTypedShape(program, function.returnType,
+                                          *returned.dependencies))
         return std::nullopt;
       const auto normalized = normalizedCompleteReturnBorrow(
           program, function, *returned.dependencies);
       if (!normalized)
         return std::nullopt;
+      for (const auto &dependency : normalized->dependencies)
+        if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
+                      dependency) == summary.dependencies.end())
+          summary.dependencies.push_back(dependency);
       for (const auto &alternative : normalized->possibleAlternatives)
         if (std::find(summary.possibleAlternatives.begin(),
                       summary.possibleAlternatives.end(),

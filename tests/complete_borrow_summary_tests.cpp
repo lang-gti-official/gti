@@ -274,11 +274,18 @@ int main() { mut Token value = Token::item(7); return read(value); }
               selectedLoan = loan.id;
               producer = instruction.id;
             }
-    // This deliberately exercises body-local identity shape only. Its sealed
-    // program still declares an owned int field, so the stronger program proof
-    // must reject it; metadata alone never grants reference-payload admission.
-    expect(selectedLoan != 0 && lang::verifyMirBody(body).valid(),
-           "handoff identity has an exact selected producer and distinct loan");
+    // Exact descriptor IDs alone cannot invent a consuming arm's whole-group
+    // handoff. The sealed program also still declares an owned int field;
+    // neither proof layer may grant reference-payload admission from metadata.
+    const auto handoffShape = lang::verifyMirBody(body);
+    expect(selectedLoan != 0 && !handoffShape.valid() &&
+               std::any_of(
+                   handoffShape.errors.begin(), handoffShape.errors.end(),
+                   [](const auto &error) {
+                     return error.message.find("whole-group arm handoff") !=
+                            std::string::npos;
+                   }),
+           "handoff identity also requires a verified whole-group arm handoff");
     expect(!lang::verifyMirProgram(shape).valid(),
            "body-local handoff identity cannot override the sealed field type");
     if (selectedLoan != 0)
