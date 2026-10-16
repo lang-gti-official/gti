@@ -8460,6 +8460,15 @@ the public reference-payload gate remains closed. The optimized combined build
 and focused backend, complete-borrow-summary and sum-type regressions pass;
 these do not yet constitute positive reference-payload runtime acceptance.
 
+The next body-flow prerequisite expands scalar selected-reference accesses to
+all possible external places as one access, retains every independent parent,
+and suspends/restores the capabilities used by local copies and reborrows.
+Exact same-referent aliases preserve their address identity; an unproven
+projection suffix is rejected. Consuming reference activation still rejects
+until the closed arm prefix proves its whole-group handoff, including abstract
+entry provenance. Optimized syntax checks pass for this draft; positive
+body-flow, forged/expired-parent and alias-negative tests remain required.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
