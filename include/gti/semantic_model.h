@@ -6,6 +6,7 @@
 #include "gti/semantic_core.h"
 
 #include <functional>
+#include <span>
 
 namespace lang {
 
@@ -731,6 +732,25 @@ struct FunctionBorrowDependencySummary {
   friend bool operator==(const FunctionBorrowDependencySummary &,
                          const FunctionBorrowDependencySummary &) = default;
 };
+
+// Context-free result-domain restriction. Each caller independently proves
+// supplier availability from its own typed actual-argument facts; this helper
+// neither establishes origins nor interprets loans, producers, or signatures.
+enum class BorrowSupplierAvailability { Available, Impossible, Unknown };
+enum class BorrowResultDomainStatus { Known, Unknown, NoNormalResult };
+struct RestrictedBorrowResultDomain {
+  BorrowResultDomainStatus status = BorrowResultDomainStatus::Unknown;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+  std::vector<std::size_t> dependencies;
+};
+
+// Requires an independently validated typed declaration contract. Mappings for
+// one result field/guard/access are alternative suppliers (OR), not independent
+// prerequisites. An unresolved supplier never becomes an impossible supplier;
+// pruning every alternative is not a dependency-free normal result.
+[[nodiscard]] RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const BorrowSupplierAvailability> suppliers);
 
 // A restored referent's abstract checked field dependency. The unsafe exact-T
 // restoration contract certifies these fields belong to the original object;
