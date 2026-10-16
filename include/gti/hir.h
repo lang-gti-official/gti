@@ -138,6 +138,7 @@ struct HirBinding {
 struct HirReferenceSelection {
   HirValueId value = 0;
   HirValueId carrier = 0;
+  SemanticLoanId transferredFrom = 0;
   std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;

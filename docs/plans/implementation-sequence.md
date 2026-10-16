@@ -8498,6 +8498,22 @@ admit reference payloads. The next proof compares its projected complete owner
 set with executable carrier flow at the extraction point, verifies every
 owner's access/liveness, and preserves the cached address after shell retirement.
 Same-referent aliases retain the original selection plus their checked parent.
+Consuming selections additionally carry the exact old dependency-group identity
+through semantics, HIR and MIR. This handoff claim must match independently
+reconstructed carrier flow; it cannot keep the consumed shell alive as an
+ordinary reborrow parent or invent an owner when an abstract parameter group
+retires. The closed arm-entry prefix must transfer every selected field once,
+without a fallible user operation between publications. Copying a reference
+does not carry a handoff claim; reborrowing retains its ordinary checked parent.
+The identity-only scaffold uses `mir-v109`/`mir-body-v90`. An optimized local
+build and the `complete_borrow_summaries`, `sum_type_pipeline` and
+`tryable_propagation` suites pass. Four malformed body tests reject missing,
+self, foreign and non-transferring group identities; the same plausible
+body-local fixture is independently rejected at program level because its
+sealed field is owned rather than borrowed. This evidence covers metadata
+transport and shape, not permission to activate a transferred loan or public
+reference-payload acceptance. Logs are retained under
+`/private/tmp/gti-payload-handoff-*`.
 Projected aliases additionally require an exact typed runtime projection applied
 to every possible owner; no projection is admitted by choosing the first owner.
 

@@ -185,6 +185,73 @@ int main() { auto value = unwrap(Envelope::wrap(Token::item(7))); return 0; }
       }
   }
 
+  const auto selectedShape = analyze(token + R"gti(
+int read(mut Token& input) {
+  switch (input) {
+  case Token::item(auto& item): return item;
+  case Token::empty: return 0;
+  }
+}
+int main() { mut Token value = Token::item(7); return read(value); }
+)gti");
+  if (selectedShape.canGenerateCode()) {
+    auto shape = selectedShape.mir;
+    const auto id = functionId(selectedShape, "read");
+    auto &body = lang::MirProgramTestAccess::functions(shape)[id - 1].body;
+    lang::MirLoanId selectedLoan = 0;
+    lang::MirInstructionId producer = 0;
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.operation == lang::MirOperation::PayloadExtract &&
+            instruction.result)
+          for (auto &loan : body.loans)
+            if (loan.producedBy == instruction.hirValue && loan.parent != 0) {
+              const auto &type = instruction.operands.front().type;
+              const auto *enumeration = shape.findPayloadEnum(type);
+              const auto field = enumeration->variants[*instruction.enumVariant]
+                                     .payloadSymbols[*instruction.payloadIndex];
+              instruction.payloadExtractionKind =
+                  lang::PayloadExtractionKind::TransferReference;
+              loan.referenceSelection = lang::MirReferenceSelection{
+                  .value = *instruction.result,
+                  .carrier = instruction.operands.front().place,
+                  .transferredFrom = loan.parent,
+                  .fields = {field},
+                  .conditions = {{.enumeration = type,
+                                  .variant = *instruction.enumVariant}},
+                  .reference = lang::SemanticType::referenceTo(
+                      instruction.info.type, instruction.info.access)};
+              selectedLoan = loan.id;
+              producer = instruction.id;
+            }
+    // This deliberately exercises body-local identity shape only. Its sealed
+    // program still declares an owned int field, so the stronger program proof
+    // must reject it; metadata alone never grants reference-payload admission.
+    expect(selectedLoan != 0 && lang::verifyMirBody(body).valid(),
+           "handoff identity has an exact selected producer and distinct loan");
+    expect(!lang::verifyMirProgram(shape).valid(),
+           "body-local handoff identity cannot override the sealed field type");
+    if (selectedLoan != 0)
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto malformed = body;
+        auto &selection = *malformed.loans[selectedLoan - 1].referenceSelection;
+        if (mutation == 0)
+          selection.transferredFrom = 0;
+        if (mutation == 1)
+          selection.transferredFrom = selectedLoan;
+        if (mutation == 2)
+          selection.transferredFrom = malformed.loans.size() + 1;
+        if (mutation == 3)
+          for (auto &block : malformed.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == producer)
+                instruction.payloadExtractionKind =
+                    lang::PayloadExtractionKind::CopyReference;
+        expect(!lang::verifyMirBody(malformed).valid(),
+               "handoff identity rejects missing/self/foreign/copy-group IDs");
+      }
+  }
+
   const auto single = analyze(token + leaf + "int main() { return 0; }");
   if (single.canGenerateCode()) {
     auto conservative = single.mir;
