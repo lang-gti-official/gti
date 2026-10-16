@@ -4768,7 +4768,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           // Concrete groups already name their earlier external ancestors.
           // An abstract formal has no earlier body-local parent: retain its
           // exact identity through transferredFrom, not an expired parent.
-          for (auto &dependency : projected->dependencies)
+          for (const auto &dependency : projected->dependencies)
             if (dependency.parent == subjectDependency) {
               const auto *group = semanticModel.findLoan(subjectDependency);
               if (!group || !group->entry ||
@@ -4776,7 +4776,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                 validHandoff = false;
                 break;
               }
-              dependency.parent = 0;
             }
           transferredPayloadDependencies.emplace(payload.source,
                                                  std::move(*projected));
@@ -4842,6 +4841,14 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                    "authority; consuming handoff is not yet verified.",
                    "GTI-S2067");
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            // The extraction observes incoming authority before handoff.
+            // Its value fact is distinct from the successor loan published
+            // after retirement of the old group.
+            const auto extractedDependencies = *dependencies;
+            if (consumedSubject)
+              for (auto &dependency : dependencies->dependencies)
+                if (dependency.parent == subjectDependency)
+                  dependency.parent = 0;
             const auto enumeration = enumTypeFor(pattern.type);
             const auto variant = std::find_if(
                 enumeration->enumerators.begin(),
@@ -4887,7 +4894,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               loanFlow.records.at(payload.binding.retainedLoan)
                   .confinedToRegion = false;
               semanticModel.recordBorrowDependencySet(*payload.source,
-                                                      std::move(*dependencies));
+                                                      extractedDependencies);
             }
           }
         } else if (payload.binding.type.kind == SemanticType::Reference) {
