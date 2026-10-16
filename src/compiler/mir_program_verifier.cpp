@@ -5308,6 +5308,18 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
   const auto invalidSummary = [&](std::string message) {
     return verificationFailure(body, instance.id, std::move(message));
   };
+  if (instance.explicitReturnBorrowOrigin &&
+      instance.returnBorrowOrigin == BorrowOriginKind::None) {
+    const auto inventory =
+        findStoredCarrierReferenceInventory(program, instance.returnType);
+    // An open generic's written constraint may become vacuous for a concrete
+    // dependency-free result (for example T instantiated as int). Retain the
+    // source intent without inventing an origin for that concrete value.
+    if (instance.returnType.kind == SemanticType::Reference ||
+        (inventory && !inventory->empty()))
+      return invalidSummary(
+          "explicit return-borrow constraint has no resolved origin");
+  }
   if (instance.restoresReferenceResult) {
     std::unordered_set<HirFunctionInstanceId> visiting;
     if (!verifiedRestoreSummary(program, instance, visiting))
@@ -10866,10 +10878,20 @@ using CompleteBorrowCallSummaryLookup =
     std::function<const FunctionBorrowDependencySummary *(
         HirFunctionInstanceId)>;
 
-[[nodiscard]] bool
-completeBorrowSetHasTypedShape(const MirProgram &program,
-                               const SemanticType &type,
-                               const MirBorrowDependencySet &set) {
+// A result-domain view deliberately contains no body-local place or loan IDs.
+// Local facts and declaration-relative summaries share this structural proof;
+// their independent origin/availability proofs remain with their consumers.
+struct CompleteBorrowResultPathView {
+  std::span<const SymbolId> fields;
+  std::span<const BorrowDependencyCondition> conditions;
+  AccessMode access;
+};
+
+template <typename Dependency, typename ResultPath>
+[[nodiscard]] bool completeBorrowResultHasTypedShape(
+    const MirProgram &program, const SemanticType &type,
+    std::span<const BorrowAlternativePath> possibleAlternatives,
+    std::span<const Dependency> dependencies, ResultPath resultPath) {
   const bool reference =
       type.kind == SemanticType::Reference && type.arguments.size() == 1;
   const auto references =
@@ -10880,7 +10902,7 @@ completeBorrowSetHasTypedShape(const MirProgram &program,
       reference ? std::optional{std::vector<BorrowAlternativePath>{}}
                 : findStoredCarrierAlternativeInventory(program, type);
   if (!references || !alternatives ||
-      (alternatives->empty() != set.possibleAlternatives.empty()))
+      (alternatives->empty() != possibleAlternatives.empty()))
     return false;
   const auto contains = [](const auto &all, const auto &required) {
     return std::all_of(required.begin(), required.end(), [&](const auto &item) {
@@ -10889,19 +10911,18 @@ completeBorrowSetHasTypedShape(const MirProgram &program,
   };
   const auto possible = [&](const auto &conditions) {
     return conditions.empty() ||
-           std::any_of(set.possibleAlternatives.begin(),
-                       set.possibleAlternatives.end(), [&](const auto &path) {
+           std::any_of(possibleAlternatives.begin(), possibleAlternatives.end(),
+                       [&](const auto &path) {
                          return contains(path.conditions, conditions);
                        });
   };
-  for (std::size_t index = 0; index < set.possibleAlternatives.size();
-       ++index) {
-    const auto &path = set.possibleAlternatives[index];
+  for (std::size_t index = 0; index < possibleAlternatives.size(); ++index) {
+    const auto &path = possibleAlternatives[index];
     if (std::find(alternatives->begin(), alternatives->end(), path) ==
             alternatives->end() ||
-        std::find(set.possibleAlternatives.begin(),
-                  set.possibleAlternatives.begin() + index,
-                  path) != set.possibleAlternatives.begin() + index)
+        std::find(possibleAlternatives.begin(),
+                  possibleAlternatives.begin() + index,
+                  path) != possibleAlternatives.begin() + index)
       return false;
   }
   // Every potentially active borrowed enum subobject needs some exact
@@ -10924,39 +10945,63 @@ completeBorrowSetHasTypedShape(const MirProgram &program,
                                 reference.fields.begin());
             }))
       continue;
-    if (std::none_of(
-            set.possibleAlternatives.begin(), set.possibleAlternatives.end(),
-            [&](const auto &candidate) {
-              if (candidate.conditions.size() != path.conditions.size())
-                return false;
-              const auto &last = candidate.conditions.back();
-              return last.subobject == selected.subobject &&
-                     last.enumeration == selected.enumeration &&
-                     contains(candidate.conditions, ancestors);
-            }))
+    if (std::none_of(possibleAlternatives.begin(), possibleAlternatives.end(),
+                     [&](const auto &candidate) {
+                       if (candidate.conditions.size() !=
+                           path.conditions.size())
+                         return false;
+                       const auto &last = candidate.conditions.back();
+                       return last.subobject == selected.subobject &&
+                              last.enumeration == selected.enumeration &&
+                              contains(candidate.conditions, ancestors);
+                     }))
       return false;
   }
-  const auto matches = [](const MirLoanDependency &dependency,
+  const auto matches = [](const CompleteBorrowResultPathView &dependency,
                           const MirStoredCarrierReference &path) {
-    return dependency.designatedFields == path.fields &&
-           dependency.conditions == path.conditions &&
+    return std::equal(dependency.fields.begin(), dependency.fields.end(),
+                      path.fields.begin(), path.fields.end()) &&
+           std::equal(dependency.conditions.begin(),
+                      dependency.conditions.end(), path.conditions.begin(),
+                      path.conditions.end()) &&
            path.reference.kind == SemanticType::Reference &&
            path.reference.arguments.size() == 1 &&
            dependency.access == path.reference.referenceAccess;
   };
-  for (const auto &dependency : set.dependencies)
-    if (dependency.source == 0 || !possible(dependency.conditions) ||
+  for (const auto &item : dependencies) {
+    const auto dependency = resultPath(item);
+    if (!possible(dependency.conditions) ||
         std::none_of(
             references->begin(), references->end(),
             [&](const auto &path) { return matches(dependency, path); }))
       return false;
+  }
   for (const auto &path : *references)
     if (possible(path.conditions) &&
-        std::none_of(
-            set.dependencies.begin(), set.dependencies.end(),
-            [&](const auto &dependency) { return matches(dependency, path); }))
+        std::none_of(dependencies.begin(), dependencies.end(),
+                     [&](const auto &dependency) {
+                       return matches(resultPath(dependency), path);
+                     }))
       return false;
   return true;
+}
+
+[[nodiscard]] bool
+completeBorrowSetHasTypedShape(const MirProgram &program,
+                               const SemanticType &type,
+                               const MirBorrowDependencySet &set) {
+  for (const auto &dependency : set.dependencies)
+    if (dependency.source == 0)
+      return false;
+  return completeBorrowResultHasTypedShape(
+      program, type, set.possibleAlternatives,
+      std::span<const MirLoanDependency>(set.dependencies),
+      [](const MirLoanDependency &dependency) {
+        return CompleteBorrowResultPathView{.fields =
+                                                dependency.designatedFields,
+                                            .conditions = dependency.conditions,
+                                            .access = dependency.access};
+      });
 }
 
 // Project the exact selected payload's complete dependency set. The source
