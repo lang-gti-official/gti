@@ -627,6 +627,8 @@ struct HirFunctionInstance {
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  // Preserve the source constraint separately from inferred return facts.
+  bool explicitReturnBorrowOrigin = false;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
