@@ -177,5 +177,91 @@ int main() { return 0; }
                        return diagnostic.code == "GTI-S2017";
                      }),
          "an external selected referent remains protected by its live child");
+  const auto transfer = analyze(R"gti(
+enum Pair { empty, both(mut int& first, mut int& second) };
+int consume(mut Pair input) {
+  switch (std::move(input)) {
+  case Pair::both(first, second): {
+    auto& child = first;
+    second = 9;
+    return child + second;
+  }
+  case Pair::empty: return 0;
+  }
+}
+int main() { return 0; }
+)gti");
+  onlyAdmissionDiagnostics(transfer);
+  std::vector<lang::SemanticLoanId> transferred;
+  for (const auto &loan : transfer.semantics.loans()) {
+    if (!loan.referenceSelection ||
+        loan.referenceSelection->transferredFrom == 0)
+      continue;
+    const auto *group =
+        transfer.semantics.findLoan(loan.referenceSelection->transferredFrom);
+    expect(group && group->entry &&
+               group->kind == lang::SemanticLoanKind::StoredValue &&
+               !loan.protectsStorage,
+           "transfer keeps exact abstract external provenance, not shell life");
+    if (loan.parent == 0) {
+      transferred.push_back(loan.id);
+      expect(loan.access == lang::AccessMode::Mutable,
+             "plain consuming pattern transfers mutable field authority");
+      const auto *observed = transfer.semantics.findBorrowDependencySet(
+          *loan.referenceSelection->source);
+      expect(observed && observed->dependencies.size() == 1 &&
+                 observed->dependencies.front().parent ==
+                     loan.referenceSelection->transferredFrom,
+             "extraction retains incoming parents before successor handoff");
+    } else {
+      const auto *parent = transfer.semantics.findLoan(loan.parent);
+      expect(parent && parent->referenceSelection &&
+                 parent->referenceSelection->transferredFrom ==
+                     loan.referenceSelection->transferredFrom &&
+                 loan.access == lang::AccessMode::ReadOnly,
+             "a later alias reborrows its live successor, not the old group");
+    }
+  }
+  expect(transferred.size() == 2,
+         "consuming two mutable reference fields publishes two successors");
+  const auto transferredConflict = analyze(R"gti(
+enum Reading { empty, item(mut int& value) };
+int consume(mut Reading input) {
+  switch (std::move(input)) {
+  case Reading::item(value): {
+    auto& shared = value;
+    value = 9;
+    return shared;
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { return 0; }
+)gti");
+  expect(std::any_of(transferredConflict.diagnostics.begin(),
+                     transferredConflict.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2017";
+                     }),
+         "transferred references still suspend exclusive access for children");
+  const auto sourceReuse = analyze(R"gti(
+enum Reading { empty, item(mut int& value) };
+int consume(mut Reading input) {
+  switch (std::move(input)) {
+  case Reading::item(value): {
+    auto again = std::move(input);
+    return value;
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { return 0; }
+)gti");
+  expect(std::any_of(
+             sourceReuse.diagnostics.begin(), sourceReuse.diagnostics.end(),
+             [](const auto &diagnostic) {
+               return diagnostic.message.find("moved") != std::string::npos;
+             }),
+         "handoff does not restore availability of the consumed carrier");
   return failures == 0 ? 0 : 1;
 }

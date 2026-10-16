@@ -4565,11 +4565,32 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   if (const auto *loan = semanticModel.findLoan(subjectDependency);
       loan && loan->kind == SemanticLoanKind::Reference)
     subjectDependency = loan->storedDependency;
+  bool consumesDependency = false;
+  if (consumedSubject && subjectDependencies &&
+      !subjectDependencies->dependencies.empty()) {
+    const auto *group = semanticModel.findLoan(subjectDependency);
+    const auto flow = loanFlow.records.find(subjectDependency);
+    const auto *carrier = subjectSource && subjectSource->carrier
+                              ? resolve(subjectSource->carrier->name())
+                              : nullptr;
+    consumesDependency =
+        group && group->kind == SemanticLoanKind::StoredValue &&
+        !group->lifecycleBound && flow != loanFlow.records.end() &&
+        flow->second.active && flow->second.carriers.size() == 1 && carrier &&
+        flow->second.carriers.contains(toolingSymbolFor(*carrier));
+    if (!consumesDependency)
+      report(stmt.keyword(),
+             "A consuming borrowed payload requires one exact active carrier "
+             "with independently transferable dependencies.",
+             "GTI-S2067");
+  }
   if (consumedSubject) {
     // Like an immutable local initialized from the subject: arms move its
     // fields out, but no source code can name or assign it.
-    semanticModel.recordConsumedSwitchSubject(
-        stmt, bindingInfo(subjectType, AccessMode::ReadOnly));
+    auto hidden = bindingInfo(subjectType, AccessMode::ReadOnly);
+    if (consumesDependency)
+      hidden.retainedLoan = subjectDependency;
+    semanticModel.recordConsumedSwitchSubject(stmt, std::move(hidden));
   }
   const bool validSubject = isInteger(subjectType) ||
                             subjectType == SemanticType::Char ||
@@ -4722,6 +4743,49 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
     beginScope();
     loanFlow.activeSwitchArms.push_back(
         {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
+    std::unordered_map<const Expr *, SemanticBorrowDependencySet>
+        transferredPayloadDependencies;
+    bool validHandoff = consumesDependency;
+    if (consumesDependency) {
+      // Analyze mutually exclusive arms from the same incoming authority.
+      // Capture every selected external path before retiring that authority;
+      // later bindings must not rediscover it through an already moved shell.
+      loanFlow.records.at(subjectDependency).active = true;
+      for (const auto &[_, pattern] : payloadPatterns)
+        for (const auto &payload : pattern.bindings) {
+          if (payload.extractionKind !=
+              PayloadExtractionKind::TransferReference) {
+            if (typeTraits(payload.binding.type).containsBorrowedState)
+              validHandoff = false;
+            continue;
+          }
+          auto projected = selectedPayloadReferenceDependencies(
+              pattern, payload, *subjectDependencies);
+          if (!projected) {
+            validHandoff = false;
+            continue;
+          }
+          // Concrete groups already name their earlier external ancestors.
+          // An abstract formal has no earlier body-local parent: retain its
+          // exact identity through transferredFrom, not an expired parent.
+          for (const auto &dependency : projected->dependencies)
+            if (dependency.parent == subjectDependency) {
+              const auto *group = semanticModel.findLoan(subjectDependency);
+              if (!group || !group->entry ||
+                  !hasCheckedExternalBorrowOrigin(dependency)) {
+                validHandoff = false;
+                break;
+              }
+            }
+          transferredPayloadDependencies.emplace(payload.source,
+                                                 std::move(*projected));
+        }
+      if (validHandoff) {
+        loanFlow.records.at(subjectDependency).active = false;
+        semanticModel.recordLoanEndAtSwitchArmEntry(subjectDependency, stmt,
+                                                    armIndex);
+      }
+    }
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -4756,20 +4820,35 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             }
           }
         if (isStoredReferenceExtraction(payload.extractionKind)) {
-          auto dependencies = subjectDependencies
-                                  ? selectedPayloadReferenceDependencies(
-                                        pattern, payload, *subjectDependencies)
-                                  : std::nullopt;
-          if (!dependencies || consumedSubject ||
-              (payload.extractionKind ==
-                   PayloadExtractionKind::ReborrowReference &&
-               subjectDependency == 0)) {
+          const auto transferred =
+              transferredPayloadDependencies.find(payload.source);
+          auto dependencies =
+              consumedSubject
+                  ? (validHandoff &&
+                             transferred != transferredPayloadDependencies.end()
+                         ? std::optional{transferred->second}
+                         : std::nullopt)
+                  : (subjectDependencies
+                         ? selectedPayloadReferenceDependencies(
+                               pattern, payload, *subjectDependencies)
+                         : std::nullopt);
+          if (!dependencies || (payload.extractionKind ==
+                                    PayloadExtractionKind::ReborrowReference &&
+                                subjectDependency == 0)) {
             report(*payload.name,
                    "A stored reference selection requires a complete checked "
                    "external dependency set and its exact active carrier "
                    "authority; consuming handoff is not yet verified.",
                    "GTI-S2067");
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            // The extraction observes incoming authority before handoff.
+            // Its value fact is distinct from the successor loan published
+            // after retirement of the old group.
+            const auto extractedDependencies = *dependencies;
+            if (consumedSubject)
+              for (auto &dependency : dependencies->dependencies)
+                if (dependency.parent == subjectDependency)
+                  dependency.parent = 0;
             const auto enumeration = enumTypeFor(pattern.type);
             const auto variant = std::find_if(
                 enumeration->enumerators.begin(),
@@ -4801,6 +4880,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               loan.referenceSelection = SemanticReferenceSelection{
                   .source = payload.source,
                   .carrier = stmt.expression().get(),
+                  .transferredFrom = consumedSubject ? subjectDependency : 0,
                   .fields = {variant->payloadSymbols[payload.payloadIndex]},
                   .conditions = {{.enumeration = pattern.type,
                                   .variant = pattern.variantIndex}},
@@ -4814,7 +4894,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               loanFlow.records.at(payload.binding.retainedLoan)
                   .confinedToRegion = false;
               semanticModel.recordBorrowDependencySet(*payload.source,
-                                                      std::move(*dependencies));
+                                                      extractedDependencies);
             }
           }
         } else if (payload.binding.type.kind == SemanticType::Reference) {
@@ -4891,6 +4971,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
+  if (consumesDependency)
+    loanFlow.records.at(subjectDependency).active = false;
   const bool exhaustivePayload =
       payloadEnum != nullptr && !invalidPayloadPattern &&
       coveredPayloadVariants.size() == payloadEnum->enumerators.size();
