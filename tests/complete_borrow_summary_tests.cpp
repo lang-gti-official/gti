@@ -386,6 +386,29 @@ int main() { mut Token value = Token::item(7); mut int other = 1; return read(va
         std::cerr << "selected reborrow: " << error.message << '\n';
     expect(selectedLoan != 0 && selectedResult.valid(),
            "selected reborrow has an exact producer and active parent");
+    // Exact descriptor IDs alone cannot invent a consuming arm's whole-group
+    // handoff. The sealed program also still declares an owned int field;
+    // neither proof layer may grant reference-payload admission from metadata.
+    const auto handoffShape = [&] {
+      auto consuming = body;
+      if (selectedLoan != 0)
+        consuming.loans[selectedLoan - 1].referenceSelection->transferredFrom =
+            consuming.loans[selectedLoan - 1].parent;
+      for (auto &block : consuming.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == producer)
+            instruction.payloadExtractionKind =
+                lang::PayloadExtractionKind::TransferReference;
+      return lang::verifyMirBody(consuming);
+    }();
+    expect(selectedLoan != 0 && !handoffShape.valid() &&
+               std::any_of(
+                   handoffShape.errors.begin(), handoffShape.errors.end(),
+                   [](const auto &error) {
+                     return error.message.find("whole-group arm handoff") !=
+                            std::string::npos;
+                   }),
+           "handoff identity also requires a verified whole-group arm handoff");
     expect(!lang::verifyMirProgram(shape).valid(),
            "body-local handoff identity cannot override the sealed field type");
     if (selectedLoan != 0) {
