@@ -4556,6 +4556,15 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   const bool consumedSubject = subjectInfo != nullptr &&
                                subjectInfo->category == ValueCategory::Value &&
                                subjectInfo->type == subjectType;
+  // Snapshot the selected operand's complete external owners before arm-local
+  // moves or replacement can change the source binding's current value fact.
+  const auto subjectDependencies =
+      completeBorrowDependencySet(stmt.expression());
+  const auto subjectSource = retainedLoanSource(stmt.expression());
+  SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
+  if (const auto *loan = semanticModel.findLoan(subjectDependency);
+      loan && loan->kind == SemanticLoanKind::Reference)
+    subjectDependency = loan->storedDependency;
   if (consumedSubject) {
     // Like an immutable local initialized from the subject: arms move its
     // fields out, but no source code can name or assign it.
@@ -4746,7 +4755,69 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               carrier->rawPointerFields = fields;
             }
           }
-        if (payload.binding.type.kind == SemanticType::Reference) {
+        if (isStoredReferenceExtraction(payload.extractionKind)) {
+          auto dependencies = subjectDependencies
+                                  ? selectedPayloadReferenceDependencies(
+                                        pattern, payload, *subjectDependencies)
+                                  : std::nullopt;
+          if (!dependencies || consumedSubject ||
+              (payload.extractionKind ==
+                   PayloadExtractionKind::ReborrowReference &&
+               subjectDependency == 0)) {
+            report(*payload.name,
+                   "A stored reference selection requires a complete checked "
+                   "external dependency set and its exact active carrier "
+                   "authority; consuming handoff is not yet verified.",
+                   "GTI-S2067");
+          } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            const auto enumeration = enumTypeFor(pattern.type);
+            const auto variant = std::find_if(
+                enumeration->enumerators.begin(),
+                enumeration->enumerators.end(), [&](const auto &candidate) {
+                  return candidate.variantIndex == pattern.variantIndex;
+                });
+            const bool reborrow = payload.extractionKind ==
+                                  PayloadExtractionKind::ReborrowReference;
+            if (reborrow)
+              for (auto &dependency : dependencies->dependencies)
+                dependency.parent = subjectDependency;
+            for (const auto &dependency : dependencies->dependencies)
+              reportBorrowConflict(
+                  *payload.name,
+                  conflictingLoans(dependency.place, dependency.access,
+                                   dependency.parent),
+                  "Cannot select this reference while an overlapping "
+                  "external borrow may still be live.");
+            const auto &primary = dependencies->dependencies.front();
+            payload.binding.retainedLoan = createRetainedLoan(
+                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
+                primary.place, primary.place.root, primary.place.receiver,
+                primary.access, primary.protectsStorage, primary.parent);
+            if (payload.binding.retainedLoan != 0) {
+              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
+              loan.additionalDependencies.assign(
+                  dependencies->dependencies.begin() + 1,
+                  dependencies->dependencies.end());
+              loan.referenceSelection = SemanticReferenceSelection{
+                  .source = payload.source,
+                  .carrier = stmt.expression().get(),
+                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
+                  .conditions = {{.enumeration = pattern.type,
+                                  .variant = pattern.variantIndex}},
+                  .reference = variant->payloadTypes[payload.payloadIndex]};
+              semanticModel.recordLoan(std::move(loan));
+              for (const auto &dependency : dependencies->dependencies)
+                if (dependency.protectsStorage)
+                  registerStorageLoan(dependency.place.root,
+                                      dependency.place.receiver,
+                                      payload.binding.retainedLoan);
+              loanFlow.records.at(payload.binding.retainedLoan)
+                  .confinedToRegion = false;
+              semanticModel.recordBorrowDependencySet(*payload.source,
+                                                      std::move(*dependencies));
+            }
+          }
+        } else if (payload.binding.type.kind == SemanticType::Reference) {
           const AccessMode access = payload.binding.type.referenceAccess;
           const ExpressionInfo *subject =
               semanticModel.findExpression(*stmt.expression());
