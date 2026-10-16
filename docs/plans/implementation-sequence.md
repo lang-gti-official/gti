@@ -8436,6 +8436,18 @@ all-origin access checks and producer/entry seeding remain required. Optimized
 C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
 claimed for it.
 
+The MIR bridge now retains the selected extraction's exact SSA value and
+physical carrier place separately from its possible external owner places.
+Lowering requires the unique current-body producer and the structural stored
+reference extraction mode; malformed selections cannot turn an ordinary
+storage borrow into reference transfer. This identity scaffold still does not
+admit reference payloads. The next proof compares its projected complete owner
+set with executable carrier flow at the extraction point, verifies every
+owner's access/liveness, and preserves the cached address after shell retirement.
+Same-referent aliases retain the original selection plus their checked parent.
+Projected aliases additionally require an exact typed runtime projection applied
+to every possible owner; no projection is admitted by choosing the first owner.
+
 The extraction operation verifier distinguishes a stored field's reference type
 from the place-valued referent exposed by its binding, checks access narrowing,
 and recognizes exact selected-reference borrow/initialize steps in a consuming
@@ -8464,6 +8476,19 @@ projection suffix is rejected. Consuming reference activation still rejects
 until the closed arm prefix proves its whole-group handoff, including abstract
 entry provenance. Optimized syntax checks pass for this draft; positive
 body-flow, forged/expired-parent and alias-negative tests remain required.
+
+The all-origin body-flow checkpoint now passes its optimized focused build,
+complete-borrow-summary, backend and sum-type tests. Each independent selected
+origin is checked against its own parent's containment and permissions; a
+normal sibling ending first cannot restore a capability still suspended by a
+selected sibling's additional origin. The body-only fixture exercises shared
+selection, multiple possible owners and both retirement orders. Mutations reject
+missing, substituted, insufficient-access and actually retired parent authority.
+A plausible consuming-selection descriptor still fails the separate whole-group
+handoff requirement, and its malformed identities fail the earlier shape check.
+These fixtures deliberately leave the sealed program's field owned: program
+verification rejects the forged reference interpretation. Public nonempty
+admission and real reference-payload runtime acceptance remain separate goals.
 
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
@@ -8543,15 +8568,6 @@ entry loan, formal identity and typed guarded field path. Positive parameter
 ancestry and missing/substituted parent/path/foreign-storage negatives are
 required before revisiting that predicate; this is not permission to bypass it.
 
-The MIR bridge now retains the selected extraction's exact SSA value and
-physical carrier place separately from its possible external owner places.
-Lowering requires the unique current-body producer and the structural stored
-reference extraction mode; malformed selections cannot turn an ordinary
-storage borrow into reference transfer. This identity scaffold still does not
-admit reference payloads. The next proof compares its projected complete owner
-set with executable carrier flow at the extraction point, verifies every
-owner's access/liveness, and preserves the cached address after shell retirement.
-Same-referent aliases retain the original selection plus their checked parent.
 Consuming selections additionally carry the exact old dependency-group identity
 through semantics, HIR and MIR. This handoff claim must match independently
 reconstructed carrier flow; it cannot keep the consumed shell alive as an
@@ -8568,9 +8584,6 @@ sealed field is owned rather than borrowed. This evidence covers metadata
 transport and shape, not permission to activate a transferred loan or public
 reference-payload acceptance. Logs are retained under
 `/private/tmp/gti-payload-handoff-*`.
-Projected aliases additionally require an exact typed runtime projection applied
-to every possible owner; no projection is admitted by choosing the first owner.
-
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
 Legacy unconditional inventory queries do not flatten conditional paths. The
