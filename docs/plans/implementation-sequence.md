@@ -8559,6 +8559,31 @@ Consuming selection, projected aliases, nonempty constructor/entry MIR facts,
 and missing/substituted/expired ancestry mutations remain required; this is not
 runtime or completed reference-payload evidence.
 
+The consuming producer now has a staged semantic/MIR handoff for a source with
+one exact active dependency group and one live carrier. Semantics snapshots all
+selected field dependencies before the arm retires that group; concrete sources
+keep earlier external parents, whereas an abstract entry retains its typed
+provenance in `transferredFrom`, not an expired ordinary parent. Same-referent
+aliases reborrow the new live selection. The hidden subject's real value
+initialization acquires the existing group without changing the formal's entry
+identity or making the hidden shell initially available. Its MIR prefix emits
+all exact extractions first, ends the old group once, then publishes successor
+borrow/binding pairs. Physical shell `TransferOut` and dependency retirement
+are distinct even for passive no-drop enums. Owned-only match ordering remains
+unchanged. Shared groups with several live carriers, lifecycle-bound group
+handoff and nested reference-bearing value fields remain explicit structural
+goals, not accepted cases.
+
+The optimized compiler build and semantic/sum-type/tryable focused suites pass
+for this producer increment. Semantic coverage observes two mutable reference
+successors, a narrowed alias, disjoint referent mutation, and rejection of
+mutation through a borrowed successor or reuse of the moved source. Public
+reference-payload admission remains closed, so the compiled MIR producer is
+not yet actual reference-payload MIR/runtime evidence. Independent handoff,
+nonempty entry/constructor transport, historical-entry escape/return checks and
+malformed origin/access/group tests must be connected before admission.
+Evidence is retained under `/private/tmp/gti-reference-transfer-*`.
+
 An edit review rejected removing the selected-origin `protectsStorage` check:
 the bit's absence alone does not establish an external owner's lifetime. The
 guard remains in place. Abstract parameter reference fields legitimately do
