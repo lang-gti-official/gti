@@ -1819,6 +1819,10 @@ private:
       const std::vector<SemanticType> &typeArguments,
       const std::vector<CompileTimeValue> &valueArguments,
       const SourceSpan &site);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  instantiateCompleteCallBorrow(const Call &call,
+                                const ResolvedCallInfo &resolved,
+                                const FunctionBorrowDependencySummary &summary);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the
