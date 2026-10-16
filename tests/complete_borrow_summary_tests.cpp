@@ -148,6 +148,119 @@ int main() {
         return function.id;
     return lang::HirFunctionInstanceId{0};
   };
+  {
+    const std::string declaration =
+        "enum Reading { error, value(int& owner) };\n";
+    const std::string inspect = R"gti(
+[[borrowed_from(owner)]] Reading inspect(int& owner, bool fail) {
+  if (fail) return Reading::error;
+  return Reading::value(owner);
+}
+)gti";
+    const std::string unrelated = "int unrelated() { return 7; }\n";
+    for (const bool reversed : {false, true}) {
+      const auto result =
+          lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
+              .analyze(
+                  root / "tests" / "complete-borrow-producer.gti",
+                  declaration +
+                      (reversed ? unrelated + inspect : inspect + unrelated) +
+                      "int main() { return 0; }\n",
+                  {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+      expect(result.syntaxValid && !result.semanticValid &&
+                 !result.canGenerateCode(),
+             "conditional constraint staging keeps source admission closed");
+      bool onlyAdmission = !result.diagnostics.empty();
+      for (const auto &diagnostic : result.diagnostics) {
+        const bool gate =
+            diagnostic.code == "GTI-S2067" &&
+            (diagnostic.message ==
+                 "Payload enums do not yet store reference fields." ||
+             diagnostic.message.find(
+                 "is not a supported owning or passive enum payload.") !=
+                 std::string::npos);
+        if (!gate) {
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+          onlyAdmission = false;
+        }
+      }
+      expect(onlyAdmission,
+             "conditional constraint has no unrelated semantic failure");
+      bool inspected = false;
+      for (const auto &statement : result.program.declarations()) {
+        const auto *syntax = lang::stmtAs<lang::FunctionDecl>(statement.get());
+        if (!syntax || syntax->name().lexeme != "inspect")
+          continue;
+        inspected = true;
+        const auto *function = result.semantics.findFunction(*syntax);
+        expect(function && function->explicitReturnBorrowOrigin &&
+                   function->returnBorrowOrigin ==
+                       lang::BorrowOriginKind::Argument &&
+                   function->returnBorrowParameter == 0,
+               "conditional result retains its explicit formal constraint");
+        expect(function && !function->completeReturnBorrow,
+               "an errored function cannot publish a complete result proof");
+        const auto *owner =
+            result.semantics.findBinding(syntax->parameters().front());
+        bool foundProducer = false;
+        for (const auto &bodyStatement : syntax->body()->statements()) {
+          const auto *returned =
+              lang::stmtAs<lang::ReturnStmt>(bodyStatement.get());
+          if (!returned || !returned->value())
+            continue;
+          foundProducer = true;
+          const auto *fact =
+              result.semantics.findBorrowDependencySet(*returned->value());
+          expect(fact && fact->dependencies.size() == 1 &&
+                     fact->possibleAlternatives.size() == 1,
+                 "direct producer retains its exact active owner fact");
+          if (!fact || fact->dependencies.size() != 1)
+            continue;
+          const auto &dependency = fact->dependencies.front();
+          expect(owner && dependency.place.root == owner->symbol &&
+                     dependency.place.projections.empty() &&
+                     dependency.designatedFields.size() == 1 &&
+                     dependency.conditions.size() == 1 &&
+                     dependency.access == lang::AccessMode::ReadOnly &&
+                     fact->possibleAlternatives.front().conditions ==
+                         dependency.conditions,
+                 "producer keeps the exact source, field, access and guard");
+        }
+        expect(foundProducer, "conditional producer return was inspected");
+      }
+      expect(inspected, "conditional constraint declaration was inspected");
+    }
+    // Admission diagnostics are deliberately still present in this staged
+    // increment. A bad explicit constraint must add its own owning-layer
+    // diagnostic; the payload gate is not evidence that it was checked.
+    for (const auto &[source, expectedCode] :
+         std::vector<std::pair<std::string, std::string>>{
+             {declaration +
+                  "[[borrowed_from(typo)]] Reading wrong(int& owner) { "
+                  "return Reading::value(owner); }\n",
+              "GTI-S2099"},
+             {declaration +
+                  "[[borrowed_from(owner)]] Reading wrong(int& owner, "
+                  "int& other) { return Reading::value(other); }\n",
+              "GTI-S2045"},
+             {"[[borrowed_from(owner)]] int wrong(int& owner) { "
+              "return owner; }\n",
+              "GTI-S2099"}}) {
+      const auto result =
+          lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
+              .analyze(root / "tests" / "complete-borrow-constraint.gti",
+                       source + "int main() { return 0; }\n",
+                       {root / "stdlib" / "prelude.gti"}, {},
+                       {root / "stdlib"});
+      expect(!result.semanticValid && std::any_of(result.diagnostics.begin(),
+                                                  result.diagnostics.end(),
+                                                  [&](const auto &item) {
+                                                    return item.code ==
+                                                           expectedCode;
+                                                  }),
+             "bad explicit constraints retain their own diagnostic");
+    }
+  }
   const auto explicitConstraint = analyze(R"gti(
 [[borrowed_from(value)]] int& selected(int& value, int& other) {
   return value;

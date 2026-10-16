@@ -1819,6 +1819,10 @@ private:
       const std::vector<SemanticType> &typeArguments,
       const std::vector<CompileTimeValue> &valueArguments,
       const SourceSpan &site);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  instantiateCompleteCallBorrow(const Call &call,
+                                const ResolvedCallInfo &resolved,
+                                const FunctionBorrowDependencySummary &summary);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the
@@ -2044,6 +2048,7 @@ private:
   storedReferenceReferent(const SemanticType &type) const;
 
   [[nodiscard]] bool isBorrowReturningType(const SemanticType &type) const;
+  [[nodiscard]] bool isConditionalBorrowResult(const SemanticType &type) const;
 
   [[nodiscard]] FunctionReturnBorrowSummary functionReturnBorrowSummary(
       const SemanticType &returnType,
@@ -2072,8 +2077,9 @@ private:
   };
   // The contract an explicit borrowed_from selects for one substitution of a
   // generic-result declaration: None when the substituted result is not a
-  // checked reference, otherwise the named parameter or the one eligible
-  // element of the named final pack, by expanded parameter position.
+  // checked reference or conditional reference-bearing result, otherwise the
+  // named parameter or the one eligible element of the named final pack, by
+  // expanded parameter position.
   [[nodiscard]] GenericReturnBorrowContract
   genericReturnBorrowContract(const FunctionDecl &syntax,
                               const SemanticType &returnType,

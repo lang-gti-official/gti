@@ -11383,6 +11383,21 @@ struct CompleteBorrowFlow {
   std::vector<CompleteBorrowReturnFact> normalReturns;
 };
 
+struct CompleteBorrowSourcePath {
+  SemanticType referent = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  // The first stored reference crossed by this formal-relative path. An
+  // absent prefix denotes physical caller storage, not a by-value shell.
+  std::optional<std::size_t> externalPrefix;
+  std::size_t externalReferences = 0;
+  std::vector<BorrowDependencyCondition> conditions;
+};
+
+[[nodiscard]] std::optional<CompleteBorrowSourcePath>
+completeBorrowSourcePath(const MirProgram &program,
+                         const MirFunctionInstance &function,
+                         const BorrowedFieldOrigin &mapping);
+
 [[nodiscard]] CompleteBorrowFlow reconstructCompleteBorrowFlow(
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const CompleteBorrowCallSummaryLookup &callSummary) {
@@ -11674,6 +11689,167 @@ struct CompleteBorrowFlow {
         key.value && key.value <= state.values.size())
       state.values[key.value - 1] = fact;
   };
+  const auto callResult =
+      [&](const State &state, const MirInstruction &instruction,
+          const MirFunctionInstance &target,
+          const FunctionBorrowDependencySummary &summary) -> Fact {
+    using Availability = BorrowSupplierAvailability;
+    std::vector<Availability> availability(summary.dependencies.size(),
+                                           Availability::Unknown);
+    std::vector<std::vector<MirLoanDependency>> supplying(
+        summary.dependencies.size());
+    const auto contains = [](const auto &all, const auto &required) {
+      return std::all_of(
+          required.begin(), required.end(), [&](const auto &item) {
+            return std::find(all.begin(), all.end(), item) != all.end();
+          });
+    };
+    for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
+      const auto &mapping = summary.dependencies[index];
+      const auto path = completeBorrowSourcePath(program, target, mapping);
+      if (!path || path->externalReferences > 1)
+        continue;
+      const MirOperand *argument = nullptr;
+      bool referenceInput = false;
+      if (mapping.origin == BorrowOriginKind::Argument &&
+          mapping.parameter < instruction.operands.size() &&
+          mapping.parameter < target.parameterTypes.size()) {
+        argument = &instruction.operands[mapping.parameter];
+        referenceInput = target.parameterTypes[mapping.parameter].kind ==
+                         SemanticType::Reference;
+      } else if (mapping.origin == BorrowOriginKind::Receiver &&
+                 instruction.receiver) {
+        argument = &*instruction.receiver;
+        referenceInput = true;
+      }
+      if (!argument)
+        continue;
+      Fact input;
+      if (!referenceInput) {
+        input = fromOperand(state, *argument);
+      } else {
+        // A reference stage proves the address's owner, not the referent's
+        // conditional payload contents. Read carrier facts from the exact
+        // addressed storage instead of confusing the two complete sets.
+        const MirOperand *address = argument;
+        if (argument->kind == MirOperandKind::Value) {
+          const auto *stage =
+              argument->value && argument->value <= definitions.size()
+                  ? definitions[argument->value - 1]
+                  : nullptr;
+          if (!stage || stage->kind != MirInstructionKind::CallInput ||
+              stage->result != argument->value ||
+              stage->callSite != instruction.callSite ||
+              stage->operands.size() != 1)
+            continue;
+          address = &stage->operands.front();
+        }
+        if (address->kind == MirOperandKind::BorrowRead ||
+            address->kind == MirOperandKind::BorrowWrite)
+          input = fromPlace(state, address->place);
+        else if (address->kind == MirOperandKind::Loan) {
+          const auto *loan = body.findLoan(address->loan);
+          if (loan && loan->additionalDependencies.empty() &&
+              !loan->referenceSelection)
+            input = fromPlace(state, loan->source);
+        }
+      }
+      std::vector<BorrowDependencyCondition> inputGuard;
+      for (const auto &condition : path->conditions)
+        if (!path->externalPrefix ||
+            condition.subobject.size() < *path->externalPrefix)
+          inputGuard.push_back(condition);
+      if (input && !inputGuard.empty() &&
+          !input->possibleAlternatives.empty() &&
+          std::none_of(input->possibleAlternatives.begin(),
+                       input->possibleAlternatives.end(),
+                       [&](const auto &item) {
+                         return contains(item.conditions, inputGuard);
+                       })) {
+        availability[index] = Availability::Impossible;
+        continue;
+      }
+      std::vector<MirLoanDependency> sources;
+      const auto prefix = path->externalPrefix.value_or(0);
+      if (path->externalPrefix) {
+        if (!input)
+          continue;
+        for (const auto &dependency : input->dependencies)
+          if (dependency.designatedFields.size() == prefix &&
+              std::equal(dependency.designatedFields.begin(),
+                         dependency.designatedFields.end(),
+                         mapping.sourceFields.begin()) &&
+              dependency.conditions == inputGuard)
+            sources.push_back(dependency);
+      } else if (const auto address = fromOperand(state, *argument)) {
+        if (!address->possibleAlternatives.empty())
+          continue;
+        sources = address->dependencies;
+      }
+      if (sources.empty())
+        continue;
+      bool complete = true;
+      for (auto dependency : sources) {
+        if (!body.findPlace(dependency.source) ||
+            (mapping.access == AccessMode::Mutable &&
+             dependency.access != AccessMode::Mutable) ||
+            (!path->externalPrefix && (!dependency.designatedFields.empty() ||
+                                       !dependency.conditions.empty()))) {
+          complete = false;
+          break;
+        }
+        if (prefix < mapping.sourceFields.size()) {
+          auto expected = canonicalBorrowOrigin(body, dependency.source,
+                                                bindingLoans, true);
+          if (expected.ambiguous) {
+            complete = false;
+            break;
+          }
+          for (std::size_t field = prefix; field < mapping.sourceFields.size();
+               ++field)
+            expected.projections.push_back(
+                {.kind = MirProjectionKind::Field,
+                 .field = mapping.sourceFields[field]});
+          MirPlaceId projected = 0;
+          for (const auto &candidate : body.places)
+            if (candidate.type == path->referent &&
+                (mapping.access == AccessMode::ReadOnly ||
+                 candidate.access == AccessMode::Mutable) &&
+                sameCanonicalPlace(expected,
+                                   canonicalBorrowOrigin(body, candidate.id,
+                                                         bindingLoans, true))) {
+              projected = candidate.id;
+              break;
+            }
+          if (!projected) {
+            complete = false;
+            break;
+          }
+          dependency.source = projected;
+        }
+        dependency.designatedFields = mapping.resultFields;
+        dependency.conditions = mapping.resultConditions;
+        dependency.access = mapping.access;
+        if (std::find(supplying[index].begin(), supplying[index].end(),
+                      dependency) == supplying[index].end())
+          supplying[index].push_back(std::move(dependency));
+      }
+      if (complete)
+        availability[index] = Availability::Available;
+    }
+    const auto domain =
+        restrictCompleteBorrowResultDomain(summary, availability);
+    if (domain.status != BorrowResultDomainStatus::Known)
+      return std::nullopt;
+    MirBorrowDependencySet result{.possibleAlternatives =
+                                      domain.possibleAlternatives};
+    for (const auto index : domain.dependencies)
+      for (const auto &dependency : supplying[index])
+        if (std::find(result.dependencies.begin(), result.dependencies.end(),
+                      dependency) == result.dependencies.end())
+          result.dependencies.push_back(dependency);
+    return result;
+  };
   const auto execute = [&](State &state, const MirInstruction &instruction) {
     Fact result;
     const bool payload =
@@ -11699,9 +11875,8 @@ struct CompleteBorrowFlow {
                   target->parameterTypes == instruction.parameterTypes
               ? callSummary(target->id)
               : nullptr;
-      if (summary && summary->dependencies.empty())
-        result = MirBorrowDependencySet{.possibleAlternatives =
-                                            summary->possibleAlternatives};
+      if (summary)
+        result = callResult(state, instruction, *target, *summary);
     } else if (instruction.operands.size() == 1 &&
                (instruction.kind == MirInstructionKind::Load ||
                 instruction.kind == MirInstructionKind::Move ||
@@ -11986,15 +12161,6 @@ struct CompleteBorrowFlow {
          sameEntries(left->possibleAlternatives, right->possibleAlternatives);
 }
 
-struct CompleteBorrowSourcePath {
-  SemanticType referent = SemanticType::Unknown;
-  AccessMode access = AccessMode::ReadOnly;
-  // The first stored reference crossed by this formal-relative path. An
-  // absent prefix denotes physical caller storage, not a by-value shell.
-  std::optional<std::size_t> externalPrefix;
-  std::vector<BorrowDependencyCondition> conditions;
-};
-
 [[nodiscard]] std::optional<CompleteBorrowSourcePath>
 completeBorrowSourcePath(const MirProgram &program,
                          const MirFunctionInstance &function,
@@ -12061,6 +12227,7 @@ completeBorrowSourcePath(const MirProgram &program,
     if (field.kind == SemanticType::Reference) {
       if (field.arguments.size() != 1)
         return std::nullopt;
+      ++source.externalReferences;
       if (!source.externalPrefix)
         source.externalPrefix = prefix.size();
       source.access = field.referenceAccess;

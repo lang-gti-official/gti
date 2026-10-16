@@ -7943,8 +7943,11 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       // Body-based inference must neither overwrite it nor rescue a typo.
       // Resolve it again after concrete field metadata exists: a by-value
       // carrier's external dependency cannot be known at initial inventory.
+      // Both a prototype and its separate definition may occur in this index.
+      // Attributes and their parameter names belong to the API declaration,
+      // never the definition's independently named executable bindings.
       const auto contract = genericReturnBorrowContract(
-          *declaration, updated.returnType, updated.parameterTypes,
+          *updated.declaration, updated.returnType, updated.parameterTypes,
           updated.ownerClass, updated.staticMember);
       updated.returnBorrowOrigin = contract.origin;
       updated.returnBorrowParameter = contract.parameter;
