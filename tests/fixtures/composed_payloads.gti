@@ -1,0 +1,130 @@
+#include <std/experimental/optional>
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int zero = 0;
+
+class Resource {
+  int id;
+  int divisor;
+public:
+  Resource(int value, int by = 1) : id(value), divisor(by) {
+    std::println(value);
+  }
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    std::println(0 - this.id);
+    int checked = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+enum Packet<T> { empty, item(T value) };
+enum Pair<T, U> { empty, items(T first, U second) };
+
+std::experimental::optional<Packet<Resource>> find(int id) {
+  return std::experimental::optional<Packet<Resource>>(
+      Packet<Resource>::item(Resource(id)));
+}
+
+std::experimental::optional<int> consume_optional() {
+  Packet<Resource> packet = ?find(1);
+  switch (std::move(packet)) {
+  case Packet<Resource>::empty:
+    return std::experimental::optional<int>();
+  case Packet<Resource>::item(resource):
+    return std::experimental::optional<int>(resource.read());
+  }
+}
+
+int run(int phase) {
+  if (phase == 1) {
+    auto never = Pair<Packet<Resource>, int>::items(
+        Packet<Resource>::item(Resource(20)), 1 / zero);
+    return 1;
+  }
+  if (phase == 2) {
+    auto owner = Pair<Packet<Resource>, Packet<Resource>>::items(
+        Packet<Resource>::item(Resource(30)),
+        Packet<Resource>::item(Resource(31, zero)));
+    return 0;
+  }
+  if (phase == 3) {
+    auto owner = Pair<Packet<Resource>, Packet<Resource>>::items(
+        Packet<Resource>::item(Resource(40, zero)),
+        Packet<Resource>::item(Resource(41, zero)));
+    return 0;
+  }
+  if (phase == 4) {
+    auto never = Pair<Packet<Resource>, int>::items(
+        Packet<Resource>::item(Resource(50, zero)), 1 / zero);
+    return 1;
+  }
+  {
+    auto result = consume_optional();
+    if (!result || result.value() != 1) { return 1; }
+  }
+  {
+    mut auto owner = Packet<Packet<Resource>>::item(
+        Packet<Resource>::item(Resource(2)));
+    owner = Packet<Packet<Resource>>::item(Packet<Resource>::item(Resource(3)));
+    switch (std::move(owner)) {
+    case Packet<Packet<Resource>>::empty: return 2;
+    case Packet<Packet<Resource>>::item(inner):
+      switch (std::move(inner)) {
+      case Packet<Resource>::empty: return 3;
+      case Packet<Resource>::item(value):
+        if (value.read() != 3) { return 4; }
+        break;
+      }
+      break;
+    }
+  }
+  {
+    Resource[2] items = {Resource(4), Resource(5)};
+    auto owner = Packet<Resource[2]>::item(std::move(items));
+    switch (std::move(owner)) {
+    case Packet<Resource[2]>::empty: return 5;
+    case Packet<Resource[2]>::item(values):
+      if (values[0].read() != 4 || values[1].read() != 5) { return 6; }
+      break;
+    }
+  }
+  {
+    expected<Resource, int> value = Resource(6);
+    auto owner = Packet<expected<Resource, int>>::item(std::move(value));
+    switch (std::move(owner)) {
+    case Packet<expected<Resource, int>>::empty: return 7;
+    case Packet<expected<Resource, int>>::item(result):
+      if (!result || result.value().read() != 6) { return 8; }
+      break;
+    }
+  }
+  {
+    expected<int, Resource> error = unexpected(Resource(7));
+    auto owner = Packet<expected<int, Resource>>::item(std::move(error));
+    switch (std::move(owner)) {
+    case Packet<expected<int, Resource>>::empty: return 9;
+    case Packet<expected<int, Resource>>::item(result):
+      if (result || result.error().read() != 7) { return 12; }
+      break;
+    }
+  }
+  {
+    auto value = std::make_unique<Resource>(8);
+    auto owner = Packet<std::unique_ptr<Resource>>::item(std::move(value));
+    switch (std::move(owner)) {
+    case Packet<std::unique_ptr<Resource>>::empty: return 10;
+    case Packet<std::unique_ptr<Resource>>::item(pointer):
+      if (pointer->read() != 8) { return 11; }
+      break;
+    }
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}

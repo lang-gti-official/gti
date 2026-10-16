@@ -732,6 +732,19 @@ ordinary body lookup and return-borrow validation must confirm the actual
 origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
 and the LSP consume the same validated receiver/argument summary.
 
+`FunctionInfo::completeReturnBorrow` is a separate complete result contract,
+not an inferred owner for an empty alternative. The current dependency-free
+enum slice collects every structurally reachable explicit return and demands
+callee bodies before transporting their facts. Concrete generic result queries
+reuse ordinary instance analysis in isolated workers keyed by declaration and
+exact owner/type/value arguments. Recursive or unavailable evidence stays
+unknown, including an unproved synthetic residual return from `?`; a callable
+with no normal return does not obtain a vacuous empty contract. Explicit
+unknown entries shadow base-model facts during concrete reanalysis. These
+contracts carry typed alternative inventories and declaration-relative mappings,
+never callee-local loan/place IDs. Guarded nonempty mappings remain a separate
+completion step with ordinary lifetime/escape obligations unchanged.
+
 Dependent generic type defaults retain their resolved symbolic semantic type.
 Only while resolving that default, constraints on open type arguments defer;
 name lookup, arity, and closed constraints remain checked immediately. Selecting

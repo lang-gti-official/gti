@@ -5,6 +5,7 @@
 #include "diagnostic_registry.h"
 #include "gti/ast_clone.h"
 #include "gti/frontend_work.h"
+#include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
@@ -161,6 +162,8 @@ public:
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] bool
+  lifecycleBoundBorrowCarrierFor(const SemanticType &type) const override;
   [[nodiscard]] std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override;
 
@@ -1026,6 +1029,9 @@ private:
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
     bool deferredConstexprSelection = false;
+    // A synthetic early return needs its own complete result evidence;
+    // explicit ReturnStmt facts alone cannot describe the callable's result.
+    bool unknownImplicitResultReturn = false;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
@@ -1150,6 +1156,25 @@ private:
     std::vector<SemanticCatalog> idleCatalogs;
   };
 
+  struct CompleteReturnQuery {
+    InstanceAnalysisKey key;
+    std::optional<FunctionBorrowDependencySummary> result;
+    bool complete = false;
+  };
+  struct CompleteReturnQueryState {
+    std::unordered_map<InstanceAnalysisKey,
+                       std::shared_ptr<CompleteReturnQuery>,
+                       InstanceAnalysisKeyHash>
+        entries;
+    std::unordered_set<InstanceAnalysisKey, InstanceAnalysisKeyHash> discovered;
+    std::size_t depth = 0;
+    // Retention is independent of the compilation resource policy: completed
+    // entries can be discarded and recomputed without changing acceptance.
+    static constexpr std::size_t maximumRetainedResults = 64;
+    std::vector<InstanceAnalysisKey> completed;
+    std::vector<SemanticCatalog> idleCatalogs;
+  };
+
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     std::optional<ConstantValue> constant;
@@ -1170,6 +1195,9 @@ private:
     std::size_t declarationOrder = 0;
     SemanticLoanId retainedLoan = 0;
     std::vector<SemanticLoanId> storageLoans;
+    // Conditional dependency facts follow value flow. Existing valueState and
+    // loan flow remain the authority for availability and liveness.
+    std::optional<SemanticBorrowDependencySet> completeBorrowSet;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     std::string qualifiedName;
@@ -1430,6 +1458,7 @@ private:
     EnumConstant value;
     std::size_t variantIndex = 0;
     std::vector<SemanticType> payloadTypes;
+    std::vector<SymbolId> payloadSymbols;
     Symbol symbol;
   };
 
@@ -1548,6 +1577,9 @@ private:
       const FunctionDecl *declaration = nullptr;
       SemanticType returnType = SemanticType::Unknown;
       std::vector<SemanticType> parameterTypes;
+      // A declaration-relative result origin. The contract is inert for
+      // concrete owned results and binds checked borrowed results.
+      std::optional<std::size_t> returnBorrowParameter;
     };
     bool protocol = false;
     std::vector<std::string> associatedTypes;
@@ -1765,9 +1797,32 @@ private:
 
   [[nodiscard]] bool expressionNeverReturns(const Expr *expression) const;
 
-  [[nodiscard]] FlowSummary summarizeFlow(const StmtList &statements) const;
+  [[nodiscard]] FlowSummary
+  summarizeFlow(const StmtList &statements,
+                std::vector<const ReturnStmt *> *normalReturns = nullptr,
+                bool structural = false) const;
 
-  [[nodiscard]] FlowSummary summarizeFlow(const Stmt *statement) const;
+  [[nodiscard]] FlowSummary
+  summarizeFlow(const Stmt *statement,
+                std::vector<const ReturnStmt *> *normalReturns = nullptr,
+                bool structural = false) const;
+
+  void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
+  // Normalize one already checked return expression before end-of-body
+  // summary publication. Failure is unknown/invalid, never an empty proof.
+  // The caller still enforces ordinary child-loan escape and availability.
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteReturnBorrow(const FunctionInfo &function,
+                                 const SemanticBorrowDependencySet &complete);
+  std::optional<FunctionBorrowDependencySummary> completeFunctionReturnBorrow(
+      const CallableCandidate &function,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments,
+      const SourceSpan &site);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  instantiateCompleteCallBorrow(const Call &call,
+                                const ResolvedCallInfo &resolved,
+                                const FunctionBorrowDependencySummary &summary);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the
@@ -1880,19 +1935,35 @@ private:
   struct StoredField {
     StoredField(const VariableDecl *field) : declaration(field) {}
     StoredField(const LambdaCapture *field) : capture(field) {}
+    StoredField(const Parameter *field) : payload(field) {}
 
     [[nodiscard]] const Token &name() const {
-      return declaration != nullptr ? declaration->name() : capture->name;
+      return declaration != nullptr ? declaration->name()
+             : capture != nullptr   ? capture->name
+                                    : payload->name;
     }
     bool operator==(const StoredField &) const = default;
 
     const VariableDecl *declaration = nullptr;
     const LambdaCapture *capture = nullptr;
+    // The parameter declaration belongs to one exact enum alternative. Its
+    // stable symbol is also the alternative-qualified dependency identity;
+    // it is not an ordinary class member or an unconditional field.
+    const Parameter *payload = nullptr;
+  };
+
+  struct StoredReferenceCondition {
+    // Path from the carrier to the enum subobject whose alternative guards
+    // this dependency. Nested alternatives form a conjunction, not a flat tag.
+    std::vector<StoredField> subobject;
+    SemanticType enumeration = SemanticType::Unknown;
+    std::size_t variant = 0;
   };
 
   struct StoredReferencePath {
     std::vector<StoredField> fields;
     SemanticType reference = SemanticType::Unknown;
+    std::vector<StoredReferenceCondition> conditions;
   };
 
   struct StoredReferenceBinding {
@@ -1911,10 +1982,45 @@ private:
   [[nodiscard]] std::vector<SymbolId>
   storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
-  // Enumerate every independently checked dependency in declaration order.
-  // An empty result means either no reference or an unsupported carrier shape.
+  [[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
+  storedConditionSymbols(const SemanticType &type,
+                         std::span<const StoredReferenceCondition> conditions);
+
+  // A present inventory enumerates every independently checked dependency in
+  // declaration order. Present-empty is dependency-free; absent is unsupported
+  // or unresolved and must never be used to establish empty-set evidence.
+  [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
+  storedReferenceInventory(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
+  storedBorrowAlternativeInventory(const SemanticType &type);
+
+  enum class StoredReferenceQuery { SymbolicPaths, CompleteInventory };
+  [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
+  collectStoredReferencePaths(const SemanticType &type,
+                              StoredReferenceQuery query) const;
+
+  // Compatibility query for paths that require a nonempty inventory. New
+  // complete-set producers must use storedReferenceInventory instead.
   [[nodiscard]] std::vector<StoredReferencePath>
   storedReferencePaths(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBorrowDependencySet(const ExprPtr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  payloadBorrowDependencySet(const Call &call,
+                             const EnumeratorRecord &enumerator);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  selectedPayloadReferenceDependencies(
+      const ResolvedPayloadPatternInfo &pattern,
+      const PayloadBindingInfo &binding,
+      const SemanticBorrowDependencySet &source);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  joinedBorrowDependencySets(
+      const std::optional<SemanticBorrowDependencySet> &left,
+      const std::optional<SemanticBorrowDependencySet> &right) const;
+  void invalidateBorrowDependencySet(const SemanticPlace &place);
 
   // A concrete carrier may wrap its one direct reference in ordinary nominal
   // fields. The complete declaration path is the dependency identity; an
@@ -1942,6 +2048,7 @@ private:
   storedReferenceReferent(const SemanticType &type) const;
 
   [[nodiscard]] bool isBorrowReturningType(const SemanticType &type) const;
+  [[nodiscard]] bool isConditionalBorrowResult(const SemanticType &type) const;
 
   [[nodiscard]] FunctionReturnBorrowSummary functionReturnBorrowSummary(
       const SemanticType &returnType,
@@ -1970,8 +2077,9 @@ private:
   };
   // The contract an explicit borrowed_from selects for one substitution of a
   // generic-result declaration: None when the substituted result is not a
-  // checked reference, otherwise the named parameter or the one eligible
-  // element of the named final pack, by expanded parameter position.
+  // checked reference or conditional reference-bearing result, otherwise the
+  // named parameter or the one eligible element of the named final pack, by
+  // expanded parameter position.
   [[nodiscard]] GenericReturnBorrowContract
   genericReturnBorrowContract(const FunctionDecl &syntax,
                               const SemanticType &returnType,
@@ -2066,6 +2174,22 @@ private:
 
   [[nodiscard]] SemanticLoanPlace loanPlace(const ExprPtr &expression);
 
+  // A selected stored reference has one runtime address but may retain
+  // several possible external owners after a control-flow join. Snapshot
+  // those origins at access evaluation; never choose its first dependency.
+  [[nodiscard]] std::optional<std::vector<SemanticLoanDependency>>
+  selectedReferenceDependencies(const SemanticPlace &place) const;
+  // Prove an external referent through exact checked entry paths and parent
+  // edges; a non-storage-protecting dependency is not itself lifetime proof.
+  [[nodiscard]] bool
+  hasCheckedExternalBorrowOrigin(const SemanticLoanDependency &dependency);
+
+  [[nodiscard]] std::vector<SemanticLoanPlace>
+  loanPlaces(const SemanticPlace &place);
+
+  [[nodiscard]] std::vector<SemanticLoanPlace>
+  loanPlaces(const ExprPtr &expression, bool transient = false);
+
   [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
                                               const SemanticLoanPlace &right);
 
@@ -2084,6 +2208,11 @@ private:
                                const SemanticLoanPlace &stable,
                                AccessMode requested, std::string message,
                                SemanticLoanId throughLoan = 0);
+
+  void reportLoanPlaceConflicts(const Token &token,
+                                std::span<const SemanticLoanPlace> places,
+                                AccessMode requested, std::string message,
+                                SemanticLoanId throughLoan = 0);
 
   void reportLoanPlaceConflict(const Token &token, const SemanticPlace &place,
                                AccessMode requested, std::string message,
@@ -2119,6 +2248,12 @@ private:
   static void appendUniquePlace(std::vector<SemanticLoanPlace> &places,
                                 SemanticLoanPlace place);
 
+  void appendLoanPlaces(std::vector<SemanticLoanPlace> &places,
+                        const SemanticPlace &place);
+
+  void appendLoanPlaces(std::vector<SemanticLoanPlace> &places,
+                        const ExprPtr &expression, bool transient = false);
+
   void appendTransientMutationPlaces(const ExprPtr &expression,
                                      std::vector<SemanticLoanPlace> &places);
 
@@ -2140,14 +2275,16 @@ private:
       std::span<const ExprPtr *> arguments, const Token &location,
       std::optional<SemanticLoanPlace> receiver = std::nullopt,
       AccessMode receiverAccess = AccessMode::ReadOnly,
-      bool transientReceiver = false);
+      bool transientReceiver = false,
+      std::span<const SemanticLoanPlace> receiverOrigins = {});
 
   void validateCallPlaceExclusivity(
       std::span<const SemanticType> parameterTypes,
       std::span<const ExprPtr> arguments, const Token &location,
       std::optional<SemanticLoanPlace> receiver = std::nullopt,
       AccessMode receiverAccess = AccessMode::ReadOnly,
-      bool transientReceiver = false);
+      bool transientReceiver = false,
+      std::span<const SemanticLoanPlace> receiverOrigins = {});
 
   void noteUnsupportedNestedLoanControlFlow();
 
@@ -2167,7 +2304,8 @@ private:
       const Expr *origin, SemanticLoanPlace place, SymbolId owner,
       bool receiverOrigin, AccessMode access, bool protectsStorage,
       SemanticLoanId parent = 0, bool entry = false,
-      std::vector<SymbolId> designatedFields = {});
+      std::vector<SymbolId> designatedFields = {},
+      std::vector<BorrowDependencyCondition> conditions = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
   SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
@@ -3141,7 +3279,8 @@ private:
                                   std::string_view context,
                                   bool allowRvalueReference = false,
                                   bool typeMetadata = false,
-                                  bool genericFunctionParameter = false);
+                                  bool genericFunctionParameter = false,
+                                  bool contractedReferenceResult = false);
 
   void validateReferenceReferent(const SemanticType &type, const Token &site);
 
@@ -3670,6 +3809,9 @@ private:
                      const std::vector<std::string> &fromScope) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
+  [[nodiscard]] std::optional<std::size_t>
+  protocolBorrowContractFailure(const RegisteredConformance &conformance,
+                                const std::vector<SemanticType> &binding) const;
   void validateAssociatedTypePath(const TypeRef &type, ConceptId id);
   [[nodiscard]] std::optional<ProtocolOperationTarget>
   protocolOperationTarget(const QualifiedName &callee) const;
@@ -5457,6 +5599,7 @@ private:
     std::vector<CThreadCallUse> cThreadCallUses;
     std::vector<RawBorrowCallUse> rawBorrowCallUses;
     std::shared_ptr<RawResultQueryState> rawResultQueries;
+    std::shared_ptr<CompleteReturnQueryState> completeReturnQueries;
     std::shared_ptr<RawResultQuery> collectingRawResult;
     std::size_t rawAccessObservation = 0;
     bool hasCThreadRequirements = false;

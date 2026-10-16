@@ -7,6 +7,7 @@
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <variant>
@@ -70,8 +71,62 @@ int main() {
   expect(frontend.hir.enumDeclarations().size() == 2 &&
              frontend.mir.payloadEnums().size() == 2,
          "two exact instances coexist without a symbolic primary");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = frontend.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged)) {
+      for (auto &block : function.body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (changed ||
+              instruction.operation != lang::MirOperation::PayloadExtract)
+            continue;
+          expect(instruction.payloadExtractionKind.has_value(),
+                 "payload extraction preserves the resolved pattern mode");
+          if (mutation == 0)
+            instruction.payloadExtractionKind.reset();
+          else if (mutation == 1)
+            instruction.payloadExtractionKind =
+                lang::PayloadExtractionKind::TransferReference;
+          else
+            instruction.payloadExtractionKind =
+                instruction.info.category == lang::ValueCategory::Place
+                    ? lang::PayloadExtractionKind::CopyValue
+                    : lang::PayloadExtractionKind::BorrowValue;
+          changed = true;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "missing or substituted extraction modes cannot change storage "
+           "borrowing into reference transfer or value copying");
+  }
   if (frontend.mir.payloadEnums().size() != 2)
     return 1;
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = frontend.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged)) {
+      for (auto &loan : function.body.loans) {
+        if (changed || loan.kind != lang::MirLoanKind::Local)
+          continue;
+        for (const auto &value : function.body.values) {
+          if (changed || value.info.category != lang::ValueCategory::Place)
+            continue;
+          lang::SemanticType reference{lang::SemanticType::Reference};
+          reference.arguments.push_back(value.info.type);
+          loan.referenceSelection = lang::MirReferenceSelection{
+              .value = mutation == 0 ? 0 : value.id,
+              .carrier = mutation == 1 ? 0 : loan.source,
+              .fields = {1},
+              .reference = reference};
+          changed = true;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "a missing or unrelated selected-reference producer cannot "
+           "reinterpret an ordinary storage borrow");
+  }
   const auto &left = frontend.mir.payloadEnums()[0];
   const auto &right = frontend.mir.payloadEnums()[1];
   expect(left.declaration == right.declaration && left.type != right.type &&
@@ -94,6 +149,18 @@ int main() {
   lang::MirProgramTestAccess::enums(badMir)[1].type = left.type;
   expect(!lang::verifyMirProgram(badMir).valid(),
          "MIR rejects duplicated or cross-instance enum metadata");
+  auto cyclicMir = frontend.mir;
+  auto &cyclicEnum = lang::MirProgramTestAccess::enums(cyclicMir).front();
+  cyclicEnum.variants[1].payloadTypes[0] = cyclicEnum.type;
+  const auto cyclicVerification = lang::verifyMirProgram(cyclicMir);
+  expect(!cyclicVerification.valid() &&
+             std::any_of(cyclicVerification.errors.begin(),
+                         cyclicVerification.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("inline layout") !=
+                                  std::string::npos;
+                         }),
+         "MIR rejects forged recursive enum layout before deriving cleanup");
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto leftName = lang::cppConcreteEnumName(lowered, left.type);
@@ -102,7 +169,7 @@ int main() {
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v20") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v105"),
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v110"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
@@ -115,6 +182,25 @@ int main() {
   }
   expect(!lang::verifyLoweredProgram(badLowered).empty(),
          "sealed declarations reject a forged concrete enum identity");
+  for (const bool changeCleanup : {false, true}) {
+    auto changedCarrier = lowered;
+    for (auto &row :
+         lang::LoweredProgramTestAccess::declarations(changedCarrier)) {
+      if (auto *enumeration =
+              std::get_if<lang::LoweredEnumDeclaration>(&row.payload);
+          enumeration && enumeration->type == right.type) {
+        if (changeCleanup)
+          enumeration->requiresActiveCleanup =
+              !enumeration->requiresActiveCleanup;
+        else
+          enumeration->traits.copyable = !enumeration->traits.copyable;
+        break;
+      }
+    }
+    expect(!lang::verifyLoweredProgram(changedCarrier).empty(),
+           "tagged carrier selection cannot forge cleanup or native operation "
+           "availability independently of sealed MIR traits");
+  }
   auto rows =
       lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
   expect(rows.enums.size() == 2 && rows.enums[0].type != rows.enums[1].type,
@@ -141,6 +227,71 @@ int main() {
                artifact.contents.find("struct " + *rightName) !=
                    std::string::npos,
            "production verified-MIR emission defines both concrete layouts");
+  }
+  const auto compositionLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto composed = lang::Frontend().analyze(
+      "composed-payload-move.gti", R"(
+class Resource {
+  int id;
+public:
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+  int read() { return this.id; }
+};
+enum Packet<T> { empty, item(T value) };
+int main() {
+  Resource[2] values = {Resource(3), Resource(4)};
+  auto packet = Packet<Resource[2]>::item(std::move(values));
+  switch (std::move(packet)) {
+  case Packet<Resource[2]>::empty: return 1;
+  case Packet<Resource[2]>::item(items):
+    return items[0].read() + items[1].read() - 7;
+  }
+}
+)",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(composed.canGenerateCode(),
+         "an owning array payload retains verified move/drop identities");
+  if (!composed.canGenerateCode())
+    for (const auto &diagnostic : composed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (composed.canGenerateCode()) {
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto invalid = composed.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(invalid)) {
+        auto &body = function.body;
+        for (const auto &block : body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Move ||
+                instruction.info.type.kind != lang::SemanticType::Array ||
+                instruction.lifecycle.size() != 1)
+              continue;
+            const auto target = instruction.lifecycle.front().target;
+            for (auto &drop : body.dropObligations) {
+              if (drop.id != target)
+                continue;
+              if (mutation == 0)
+                drop.value = 0;
+              else if (mutation == 1)
+                drop.value = instruction.hirValue + 10000;
+              else if (mutation == 2)
+                drop.generatedValue = 10000;
+              else
+                drop.place = instruction.operands.front().place;
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(invalid).valid(),
+             "array payload move rejects missing/substituted drop identity or "
+             "slot");
+    }
   }
   const auto projected =
       lang::Frontend().analyze("projected-enum-borrow.gti", R"(
