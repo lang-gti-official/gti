@@ -207,6 +207,12 @@ int main() { return 0; }
       transferred.push_back(loan.id);
       expect(loan.access == lang::AccessMode::Mutable,
              "plain consuming pattern transfers mutable field authority");
+      const auto *observed = transfer.semantics.findBorrowDependencySet(
+          *loan.referenceSelection->source);
+      expect(observed && observed->dependencies.size() == 1 &&
+                 observed->dependencies.front().parent ==
+                     loan.referenceSelection->transferredFrom,
+             "extraction retains incoming parents before successor handoff");
     } else {
       const auto *parent = transfer.semantics.findLoan(loan.parent);
       expect(parent && parent->referenceSelection &&
