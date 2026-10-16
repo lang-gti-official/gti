@@ -2205,13 +2205,25 @@ public:
       // this state exists only so a transformed failure-capable constructor
       // can default-create its observation-free native shell, publish fields
       // in verified MIR order, and destroy an unpublished shell safely.
-      output << "std::variant<std::monostate";
+      output << "::gti_internal::backend::payload_variant<std::monostate";
       for (std::size_t index = 0; index < enumeration.enumerators.size();
            ++index) {
         output << ", __gti_variant_"
                << enumeration.enumerators[index].variantIndex;
       }
       output << "> __gti_value;\n";
+      writeIndent();
+      // A user-provided empty-shell constructor initializes the tag without
+      // value-initializing inactive payload bytes. No source value can observe
+      // those bytes, and zeroing them needlessly couples scalar payload bits
+      // to the discriminant when native optimizers combine return paths.
+      output << name << "() noexcept {}\n";
+      writeIndent();
+      output << "template <std::size_t Index, typename... Args>\n";
+      writeIndent();
+      output << "explicit " << name
+             << "(std::in_place_index_t<Index> selected, Args &&...args)"
+                " : __gti_value(selected, std::forward<Args>(args)...) {}\n";
       writeIndent();
       output << "friend bool operator==(const " << name << " &, const " << name
              << " &) = default;\n";
@@ -3875,10 +3887,18 @@ public:
              << *descriptor.classInstance << ") {\n";
       first = false;
       ++indentation;
-      writeIndent();
-      output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
-                "record, unwinding, &::gti_internal::backend::"
-                "__gti_failure_artifact_descriptor_v1);\n";
+      // With no source destructor and one child there is no second action to
+      // sequence after a failure. Forward the exact record/unwinding and
+      // result; the caller still owns native retirement. Multi-action and
+      // source-destructor recipes retain their ordered failure context.
+      const bool singleAction =
+          !descriptor.destructor && descriptor.aggregate.size() == 1;
+      if (!singleAction) {
+        writeIndent();
+        output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
+                  "record, unwinding, &::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1);\n";
+      }
       if (descriptor.destructor) {
         const auto *body = mir.findDestructorInstance(*descriptor.destructor);
         if (body == nullptr)
@@ -3913,22 +3933,28 @@ public:
           throw std::logic_error(
               "unique cleanup lost its MIR-selected subobject");
         writeIndent();
-        output << "if (!sequence.step(";
+        output << (singleAction ? "return " : "if (!sequence.step(");
+        const std::string record =
+            singleAction ? "record" : "sequence.record()";
+        const std::string unwinding =
+            singleAction ? "unwinding" : "sequence.unwinding()";
         if (step.uniqueOwnerBase) {
           if (!step.classInstance)
             throw std::logic_error(
                 "unique cleanup lost its next aggregate step");
           output << receiver << "template __gti_mir_unique_cleanup_failure<"
-                 << *step.classInstance
-                 << ">(sequence.record(), sequence.unwinding())";
+                 << *step.classInstance << ">(" << record << ", " << unwinding
+                 << ")";
         } else {
-          output << cppMirCleanupValueExpression(
-              mir, step, receiver, "sequence.record()", "sequence.unwinding()");
+          output << cppMirCleanupValueExpression(mir, step, receiver, record,
+                                                 unwinding);
         }
-        output << ")) return false;\n";
+        output << (singleAction ? ";\n" : ")) return false;\n");
       }
-      writeIndent();
-      output << "return sequence.success();\n";
+      if (!singleAction) {
+        writeIndent();
+        output << "return sequence.success();\n";
+      }
       --indentation;
       writeIndent();
       output << "}\n";
@@ -7198,8 +7224,14 @@ public:
         throw std::logic_error(
             "declared lowered destructor has no lifecycle cleanup adapter");
       }
-      output << "{ " << loweredLifecycleCleanupName(classDeclaration->id)
-             << "(); }\n";
+      // The generated state is initialized on every native construction and
+      // disarmed by the verified move/drop protocol. Expose the same guard
+      // already used by the cleanup adapter so retiring a moved shell need
+      // not call its out-of-line failure machinery. The live adapter and all
+      // automatic member destruction remain unchanged.
+      output << "{ if (" << loweredLifecycleActiveName(classDeclaration->id)
+             << ") { " << loweredLifecycleCleanupName(classDeclaration->id)
+             << "(); } }\n";
       emitted = true;
       retainedPrimaryEmitted = retainedPrimaryEmitted || retainedPrimary;
       if (!generic) {

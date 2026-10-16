@@ -2823,6 +2823,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       genericParametersFor(stmt);
   beginTypeParameterScope(genericParameters);
   const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
+  const FunctionInfo *primaryFunctionInfo =
+      instanceBaseModel == nullptr ? functionInfo
+                                   : instanceBaseModel->findFunction(stmt);
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
@@ -2927,8 +2930,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         reportContract(
             attribute,
             "A borrowed_from contract requires a GTI function or method.");
-      } else if (functionInfo != nullptr &&
-                 containsOpenTypeParameter(functionInfo->returnType)) {
+      } else if (primaryFunctionInfo != nullptr &&
+                 containsOpenTypeParameter(primaryFunctionInfo->returnType)) {
         // A generic result decides per instance: the contract binds the
         // instances whose result is a checked reference and is inert for
         // the others. The named parameter may be a final pack whose one
@@ -2947,8 +2950,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       } else if (functionInfo->returnBorrowOrigin == BorrowOriginKind::None) {
         reportContract(
             *contract.argument,
-            "The selected borrow origin must name a reference parameter with "
-            "sufficient access, or a non-static receiver.");
+            "The selected borrow origin must name a reference parameter or "
+            "single-dependency carrier with sufficient access, or a "
+            "non-static receiver.");
       }
       continue;
     }
@@ -3048,7 +3052,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       stmt.returnType(),
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
-      methodDeclaration ? "method return type" : "function return type");
+      methodDeclaration ? "method return type" : "function return type", false,
+      false, false,
+      hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
   if (nestsBorrowedState(declaredReturnType) &&
       !isFallibleBorrowType(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
@@ -5477,6 +5483,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   if (auto *target = resolveMutable(stmt.name())) {
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
+    if (target->bindingKind == SemanticBindingKind::LocalVariable &&
+        target->type.kind != SemanticType::Reference &&
+        initializerType == declaredType && !contextualConstruction) {
+      const auto complete = completeBorrowDependencySet(initializer);
+      if (complete && !complete->possibleAlternatives.empty())
+        target->completeBorrowSet = complete;
+    }
   }
   if (initializer && declaredType.kind == SemanticType::Reference &&
       exprAs<DirectInitializer>(initializer.get()) == nullptr) {
@@ -5870,6 +5883,13 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                      .after = ValueState::Available});
         }
         reinitializePlace(placeForSymbol(*target));
+        const auto complete = completeBorrowDependencySet(expr.value());
+        target->completeBorrowSet =
+            target->type.kind != SemanticType::Reference &&
+                    targetType == valueType && complete &&
+                    !complete->possibleAlternatives.empty()
+                ? complete
+                : std::nullopt;
       }
     }
   }
@@ -9805,6 +9825,12 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
                                      .value = enumerator->value,
                                      .variantIndex = enumerator->variantIndex});
     if (type.enumId != 0 && type.enumId <= enums.size() &&
+        enums[type.enumId - 1].payload && enumerator->payloadTypes.empty())
+      semanticModel.recordBorrowDependencySet(
+          expr, {.possibleAlternatives = {
+                     {.conditions = {{.enumeration = type,
+                                      .variant = enumerator->variantIndex}}}}});
+    if (type.enumId != 0 && type.enumId <= enums.size() &&
         enums[type.enumId - 1].payload && !enumerator->payloadTypes.empty() &&
         !allowPayloadEnumeratorReference) {
       report(expr.name().last(),
@@ -10538,6 +10564,8 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
   }
   if (symbol->valueState != ValueState::Available) {
     reportUnavailableValue(expr.name(), *symbol);
+  } else if (symbol->completeBorrowSet) {
+    semanticModel.recordBorrowDependencySet(expr, *symbol->completeBorrowSet);
   }
   currentType = symbol->type.kind == SemanticType::Reference &&
                         symbol->type.arguments.size() == 1
@@ -13641,6 +13669,13 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   if (auto *target = resolveMutable(declaration.name())) {
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
+    if (local && target->type.kind != SemanticType::Reference &&
+        inferredType == initializerType) {
+      const auto complete =
+          completeBorrowDependencySet(declaration.initializer());
+      if (complete && !complete->possibleAlternatives.empty())
+        target->completeBorrowSet = complete;
+    }
   }
   const bool retainedReference = (type.reference || rangeOwnerReference) &&
                                  !isDirectOwnerType(initializerType);

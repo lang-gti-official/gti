@@ -20,7 +20,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = InvalidField;
   bool has_value(Checked<T>& checked) { return checked.failed == 0; }
-  T take_value(Checked<T> checked) { return checked.value; }
+  [[borrowed_from(checked)]] T take_value(Checked<T> checked) { return checked.value; }
   InvalidField take_residual(Checked<T> checked) {
     return InvalidField(checked.failed);
   }
