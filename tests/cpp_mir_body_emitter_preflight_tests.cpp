@@ -38,6 +38,272 @@ void testDischargedCompoundOperatorVocabulary() {
       "proved successful path exactly matches C++ semantics");
 }
 
+void testPassivePayloadTagObservation() {
+  const auto frontend = analyze("passive-payload-tag.gti", R"(
+enum State<T> { empty, value(T value) };
+bool present(State<int>& state) {
+  switch (state) {
+  case State<int>::empty: return false;
+  case State<int>::value: return true;
+  }
+}
+class Holder {
+  State<int> state;
+public:
+  Holder() : state(State<int>::value(7)) {}
+  bool present() {
+    switch (this.state) {
+    case State<int>::empty: return false;
+    case State<int>::value: return true;
+    }
+  }
+};
+int main() {
+  auto state = State<int>::value(7);
+  Holder holder{};
+  return present(state) && holder.present() ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(), "passive tag observer should lower");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  constexpr std::string_view closedDomain = "mir_closed_enum_unreachable_v1";
+  std::size_t observed = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      const auto &switching = block.terminator;
+      if (switching.kind != lang::MirTerminatorKind::Switch ||
+          !switching.value ||
+          !frontend.mir.findPayloadEnum(switching.value->type))
+        continue;
+      ++observed;
+      expect(switching.value->kind == lang::MirOperandKind::BorrowRead &&
+                 switching.value->place != 0,
+             "tag-only matching must observe the enum place, not copy it");
+      for (const auto &candidate : function.body.blocks)
+        for (const auto &instruction : candidate.instructions)
+          expect(instruction.kind != lang::MirInstructionKind::Load ||
+                     instruction.info.type != switching.value->type,
+                 "tag-only matching must not stage a whole-enum copy");
+      const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                         function.id};
+      const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+      const auto text =
+          emitter.emitBodyText(address, "closed-payload-domain", 1);
+      expect(text.emitted() &&
+                 text.text.find(closedDomain) != std::string::npos,
+             "exact initialized entry observers expose the closed tag domain");
+      for (int mutation = 0; mutation != 14; ++mutation) {
+        auto forged = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        auto &entry = changed->body.blocks[block.id - 1];
+        auto &term = entry.terminator;
+        auto &place = changed->body.places[term.value->place - 1];
+        auto &fallback = changed->body.blocks[term.target - 1];
+        switch (mutation) {
+        case 0:
+          term.switchTargets.pop_back();
+          break;
+        case 1:
+          term.switchTargets[1].value = term.switchTargets[0].value;
+          break;
+        case 2:
+          term.switchTargets[0].value->value.magnitude = 99;
+          break;
+        case 3:
+          ++term.switchTargets[0].value->enumOwner;
+          break;
+        case 4:
+          term.switchTargets[0].value->type = lang::SemanticType::Int32;
+          break;
+        case 5:
+          term.value->kind = lang::MirOperandKind::Move;
+          break;
+        case 6:
+          place.type = lang::SemanticType::Int32;
+          break;
+        case 7:
+          fallback.terminator.kind = lang::MirTerminatorKind::Return;
+          break;
+        case 8:
+          fallback.instructions.push_back(entry.instructions.front());
+          break;
+        case 9:
+          entry.instructions.front().kind = lang::MirInstructionKind::Drop;
+          break;
+        case 10:
+          term.switchTargets[0].target = changed->body.entry;
+          break;
+        case 11:
+          if (function.owner)
+            changed->receiverMutability = lang::ReceiverMutability::Consuming;
+          else
+            for (auto &root : changed->body.places)
+              root.initiallyAvailable = false;
+          break;
+        case 12:
+          if (function.owner)
+            ++place.projections.front().field;
+          else
+            changed->parameterBindings.front() = 0;
+          break;
+        case 13:
+          if (entry.instructions.front().ownership)
+            entry.instructions.front().ownership->before =
+                lang::OwnershipStateSet::Moved;
+          else
+            place.root = lang::MirPlaceRootKind::Value;
+          break;
+        }
+        const lang::CppMirBodyEmitter rejected(forged, map);
+        const auto rejectedText =
+            rejected.emitBodyText(address, "forged-domain", 1);
+        expect(!rejectedText.emitted() ||
+                   rejectedText.text.find(closedDomain) == std::string::npos,
+               "incomplete, substituted, effectful or unavailable domains "
+               "never become native unreachable");
+      }
+      for (int mutation = 0; mutation != 5; ++mutation) {
+        auto rows = buildRows(frontend, frontend.mir);
+        const auto row = std::find_if(
+            rows.enums.begin(), rows.enums.end(), [&](const auto &candidate) {
+              return candidate.type == switching.value->type;
+            });
+        expect(row != rows.enums.end(), "observer has an exact enum row");
+        if (row == rows.enums.end())
+          continue;
+        switch (mutation) {
+        case 0:
+          row->payloadVariants.pop_back();
+          break;
+        case 1:
+          row->payloadVariants[1].index = 0;
+          break;
+        case 2:
+          ++row->owner;
+          break;
+        case 3:
+          row->traits.copyable = !row->traits.copyable;
+          break;
+        case 4:
+          rows.enums.push_back(*row);
+          break;
+        }
+        const lang::CppMirBodyEmissionMap forgedRows(std::move(rows));
+        const lang::CppMirBodyEmitter rejected(frontend.mir, forgedRows);
+        const auto rejectedText =
+            rejected.emitBodyText(address, "forged-enum-row", 1);
+        expect(!rejectedText.emitted() ||
+                   rejectedText.text.find(closedDomain) == std::string::npos,
+               "stale, incomplete or ambiguous representation rows cannot "
+               "prove a closed domain");
+      }
+    }
+  }
+  expect(observed == 2,
+         "fixture must exercise reference and receiver-field observers");
+  std::size_t constructed = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operation != lang::MirOperation::PayloadConstruct)
+          continue;
+        ++constructed;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                           constructor.id};
+        const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+        const auto text =
+            emitter.emitFailureBodyText(address, "passive-field", 1);
+        constexpr std::string_view publication =
+            "direct passive payload field publication";
+        expect(text.emitted() &&
+                   text.text.find(publication) != std::string::npos,
+               "passive enum fields construct directly at their MIR "
+               "publication point");
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto forged = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              forged.findConstructorInstance(constructor.id));
+          auto *producer =
+              findPreflightInstruction(changed->body, instruction.id);
+          switch (mutation) {
+          case 0:
+            ++changed->initializers.front().field;
+            break;
+          case 1:
+            changed->initializers.front().targetType =
+                lang::SemanticType::Int32;
+            break;
+          case 2:
+            changed->initializers.front().generatedDefault = true;
+            break;
+          case 3:
+            changed->initializers.push_back(changed->initializers.front());
+            break;
+          case 4:
+            producer->localFailureSites.push_back(1);
+            break;
+          case 5:
+            changed->body.blocks[block.id - 1]
+                .instructions.back()
+                .fullExpressionEnd = 0;
+            break;
+          case 6:
+            producer->info.traits.containsBorrowedState = true;
+            break;
+          }
+          const lang::CppMirBodyEmitter rejected(forged, map);
+          const auto rejectedText =
+              rejected.emitFailureBodyText(address, "forged-passive-field", 1);
+          expect(!rejectedText.emitted() ||
+                     rejectedText.text.find(publication) == std::string::npos,
+                 "passive publication rejects wrong fields, roots, effects, or "
+                 "borrowed state");
+        }
+      }
+  }
+  expect(constructed == 1,
+         "fixture exercises one direct passive field construction");
+}
+
+void testPayloadObserverRequiresCompleteReceiver() {
+  // The backend's entry-domain proof relies on this source/MIR call boundary:
+  // a read-only method cannot receive an object with a moved enum field.
+  const auto invalid =
+      analyzeWithStandardLibrary("partial-payload-observer.gti", R"gti(
+#include <std/string>
+enum State { empty, value(std::string text) };
+class Holder {
+  mut State state;
+public:
+  Holder() : state(State::value(std::string("owned"))) {}
+  bool present() {
+    switch (this.state) {
+    case State::empty: return false;
+    case State::value: return true;
+    }
+  }
+  bool consume_then_observe() mut {
+    auto moved = std::move(this.state);
+    return this.present();
+  }
+};
+int main() { mut Holder holder{}; return holder.consume_then_observe() ? 1 : 0; }
+)gti");
+  expect(!invalid.canGenerateCode() &&
+             std::any_of(
+                 invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                 [](const auto &diagnostic) {
+                   return diagnostic.code == "GTI-S2018" &&
+                          diagnostic.message.find(
+                              "Place 'this.state' has already been moved") !=
+                              std::string::npos;
+                 }),
+         "read-only entry observers reject a caller with a moved enum field");
+}
+
 void testBoundedSecondaryFailureRecordStorage() {
   std::string source = R"gti(
 class Guard {
@@ -1018,6 +1284,23 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
                            std::string::npos,
                    "native enum publication must retain field rollback without "
                    "constructing or retiring a duplicate value representation");
+          } else if (!called) {
+            const auto direct =
+                text.text.find("::new (static_cast<void *>(std::addressof(" +
+                               fieldSpelling + "))) ");
+            expect(text.emitted() && retirement != std::string::npos &&
+                       direct != std::string::npos && retirement < direct &&
+                       text.text.find("// GTI MIR in-place payload-enum field "
+                                      "reparent into p" +
+                                      std::to_string(field->id)) !=
+                           std::string::npos &&
+                       sourceRetirement == std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct(") ==
+                           std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct_from(") ==
+                           std::string::npos,
+                   "a fresh adjacent alternative must construct directly in "
+                   "its empty field while retaining the MIR reparent");
           } else {
             expect(text.emitted() && retirement != std::string::npos &&
                        publication != std::string::npos &&
@@ -1073,7 +1356,283 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
          "nonassignable enum field publications");
 }
 
+void testPassiveEnumTemporaryBorrowAdmission() {
+  const auto frontend = analyze("passive-enum-temporary-borrow.gti", R"gti(
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+Token make(int value) { return Token::item(value); }
+int main() { return inspect(Token::item(7)) + inspect(make(5)) - 12; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "an ordinary observer may borrow a passive enum temporary");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "a passive enum temporary must have a complete representation");
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const auto text = emitter.supportsFailureBodyText(address)
+                          ? emitter.emitFailureBodyText(address, "enum-view", 1)
+                          : emitter.emitBodyText(address, "enum-view", 1);
+    expect(text.emitted(), "the checked enum read view must emit");
+    for (const auto &loan : function.body.loans) {
+      const auto *place = function.body.findPlace(loan.source);
+      if (loan.kind != lang::MirLoanKind::CallArgument || !place ||
+          place->type.kind != lang::SemanticType::Enum)
+        continue;
+      ++checked;
+      expect(text.text.find("__gti_mir_v_" + std::to_string(place->value)) !=
+                     std::string::npos &&
+                 text.text.find("__gti_mir_p_" + std::to_string(place->id) +
+                                ";") == std::string::npos,
+             "a temporary read view reuses the passive SSA object");
+      for (int mutation = 0; mutation != 11; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        auto &changedLoan = body->loans[loan.id - 1];
+        auto &changedPlace = body->places[place->id - 1];
+        lang::MirInstruction *stage = nullptr;
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::CallInput &&
+                instruction.loan == loan.id)
+              stage = &instruction;
+        auto drop = std::find_if(body->dropObligations.begin(),
+                                 body->dropObligations.end(),
+                                 [&](const auto &candidate) {
+                                   return candidate.place == place->id;
+                                 });
+        expect(stage && drop != body->dropObligations.end(),
+               "the proof mutation must retain its exact stage and drop");
+        if (!stage || drop == body->dropObligations.end())
+          continue;
+        switch (mutation) {
+        case 0:
+          changedPlace.sourceValue = 0;
+          break;
+        case 1:
+          changedLoan.producedBy = 0;
+          break;
+        case 2:
+          changedLoan.escapes = true;
+          break;
+        case 3:
+          changedLoan.access = lang::AccessMode::Mutable;
+          break;
+        case 4:
+          stage->operands.front().place = 0;
+          break;
+        case 5:
+          stage->loan.reset();
+          break;
+        case 6:
+          drop->fullExpression = 0;
+          break;
+        case 7:
+          drop->value = 0;
+          break;
+        case 8:
+          drop->dropType.requiresActiveCleanup = true;
+          break;
+        case 9: {
+          const auto *value = body->findValue(place->value);
+          findPreflightInstruction(*body, value->definition)->lifecycle.clear();
+          break;
+        }
+        case 10:
+          changedPlace.initiallyAvailable = true;
+          break;
+        }
+        const lang::CppMirBodyEmitter malformedEmitter(malformed, map);
+        expect(!lang::verifyMirProgram(malformed).valid() &&
+                   !malformedEmitter.supportsBodyText(address) &&
+                   !malformedEmitter.supportsFailureBodyText(address),
+               "temporary admission rejects missing or forged producer, "
+               "materialization, full-expression and call-loan proof " +
+                   std::to_string(mutation));
+      }
+    }
+  }
+  expect(checked == 2,
+         "ordinary observers must test constructed and returned temporaries");
+}
+
+void testPassiveEnumTemporaryObservationThenTransfer() {
+  const auto frontend =
+      analyzeWithStandardLibrary("enum-observe-transfer.gti", R"gti(
+struct Rejected { int code; Rejected(int value) : code(value) {} };
+struct Status {
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected value) : code(value.code) {}
+};
+enum Parse { ok(int value), failed(int code) };
+for concept std::tryable<Parse> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Parse& value) {
+    switch (value) {
+      case Parse::ok: return true;
+      case Parse::failed: return false;
+    }
+  }
+  int take_value(Parse value) {
+    switch (value) {
+      case Parse::ok(item): return item;
+      case Parse::failed: return 0;
+    }
+  }
+  Rejected take_residual(Parse value) {
+    switch (value) {
+      case Parse::ok: return Rejected(0);
+      case Parse::failed(code): return Rejected(code);
+    }
+  }
+};
+Status parse() { int value = ?Parse::ok(7); return Status(value); }
+int main() { return parse().code - 7; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "a passive enum temporary may be observed then transferred by value");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "observation and later passive transfer must share one SSA object");
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.body.loans.empty())
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    auto withPassiveRead = frontend.mir;
+    auto *body = lang::findMirBody(withPassiveRead, address);
+    lang::MirInstructionId nextInstruction = 1;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        nextInstruction = std::max(nextInstruction, instruction.id + 1);
+    bool inserted = false;
+    lang::MirValueId readResult = 0;
+    lang::MirValueId readSource = 0;
+    for (auto &block : body->blocks) {
+      for (auto at = block.instructions.begin(); at != block.instructions.end();
+           ++at) {
+        if (at->kind != lang::MirInstructionKind::Move ||
+            at->info.type.kind != lang::SemanticType::Enum)
+          continue;
+        // Ordinary enum temporary transport also represents an unused
+        // passive read; it is not limited to reads feeding value stages.
+        auto extra = *at;
+        extra.id = nextInstruction;
+        extra.kind = lang::MirInstructionKind::Load;
+        extra.operands.front().kind = lang::MirOperandKind::Copy;
+        extra.result = body->values.size() + 1;
+        readResult = *extra.result;
+        const auto *source = body->findPlace(extra.operands.front().place);
+        readSource = source ? source->value : 0;
+        body->values.push_back({.id = *extra.result,
+                                .sourceValue = extra.hirValue,
+                                .info = extra.info,
+                                .definitionBlock = block.id,
+                                .definition = extra.id});
+        block.instructions.insert(at, std::move(extra));
+        inserted = true;
+        break;
+      }
+      if (inserted)
+        break;
+    }
+    if (!inserted)
+      continue;
+    ++checked;
+    expect(lang::rebuildMirValueUses(*body),
+           "the passive read must have an exact SSA use inventory");
+    const auto verification = lang::verifyMirProgram(withPassiveRead);
+    for (const auto &error : verification.errors)
+      std::cerr << "passive read fixture: " << error.message << '\n';
+    expect(verification.valid(),
+           "an unused passive read is valid MIR, not a missing lifetime proof");
+    const lang::CppMirBodyEmitter readEmitter(withPassiveRead, map);
+    const auto text =
+        readEmitter.supportsFailureBodyText(address)
+            ? readEmitter.emitFailureBodyText(address, "enum-read", 1)
+            : readEmitter.emitBodyText(address, "enum-read", 1);
+    expect(text.emitted() && readResult != 0 && readSource != 0 &&
+               text.text.find("__gti_mir_v_" + std::to_string(readResult) +
+                              " = __gti_mir_v_" + std::to_string(readSource) +
+                              ";") != std::string::npos,
+           "ordinary temporary transport emits the exact passive SSA copy");
+  }
+  expect(checked == 1,
+         "one observed temporary must exercise ordinary passive transport");
+}
+
 void testFreshClassPayloadOperandStaging() {
+  const auto native = analyze("native-payload-call-staging.gti", R"gti(
+[[c_abi]] struct NativeValue { int stamp; };
+extern "C" { NativeValue produce(int stamp); }
+enum NativeResult { pair(NativeValue first, NativeValue second), empty };
+int main() {
+  unsafe {
+    auto result = NativeResult::pair(produce(1), produce(2));
+    switch (result) {
+      case NativeResult::pair(first, second):
+        return first.stamp + second.stamp - 3;
+      case NativeResult::empty: return 1;
+    }
+  }
+}
+)gti");
+  expect(native.canGenerateCode(), "direct native payload calls must lower");
+  if (native.canGenerateCode()) {
+    const lang::CppMirBodyEmissionMap rows(buildRows(native, native.mir));
+    const lang::CppMirBodyEmitter backend(native.mir, rows);
+    expect(backend.analyzeProgram().ready(),
+           "native payload calls must reuse exact passive SSA staging");
+    for (const auto &function : native.mir.functionInstances()) {
+      if (function.entryKind == lang::ProgramEntryKind::None)
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto malformed = native.mir;
+        auto *body = lang::findMirBody(malformed, address);
+        bool changed = false;
+        for (auto &block : body->blocks) {
+          for (auto &instruction : block.instructions) {
+            if (instruction.operation != lang::MirOperation::PayloadConstruct)
+              continue;
+            if (mutation == 0)
+              instruction.localFailureSites.push_back(1);
+            else if (mutation == 1)
+              instruction.operands.front().type = lang::SemanticType::Int32;
+            else if (mutation == 2)
+              instruction.enumVariant = 1;
+            else
+              instruction.operands.back() = instruction.operands.front();
+            changed = true;
+          }
+        }
+        const lang::CppMirBodyEmitter forged(malformed, rows);
+        expect(changed && !forged.supportsBodyText(address) &&
+                   !forged.supportsFailureBodyText(address),
+               "native payload staging rejects failure, wrong type/tag and "
+               "duplicated result use");
+      }
+    }
+  }
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/payload_fresh_class_operands.gti";
   std::ifstream input(path);
@@ -4511,8 +5070,25 @@ void testScalarPrefixConstructorStatusAdmission() {
 }
 
 void testOwningConstructorAcrossArgumentDiamond() {
-  const auto frontend = analyzeWithStandardLibrary(
-      "cpp-mir-owning-constructor-argument-diamond.gti", R"(
+  const std::string sources[] = {R"(
+#include <std/string>
+class Reading {
+public:
+  int& value;
+  mut std::string text;
+  Reading(int& source, std::string input)
+      : value(source), text(std::move(input)) {}
+};
+int inspect(int& owner, bool choose) {
+  Reading result{owner, std::string(choose ? "present" : "")};
+  return result.value;
+}
+int main() {
+  int owner = 42;
+  return inspect(owner, true) + inspect(owner, false) - 84;
+}
+)",
+                                 R"(
 #include <std/string>
 class Parcel {
   std::string text;
@@ -4531,79 +5107,216 @@ int exercise(bool choose) {
   return 0;
 }
 int main() { return exercise(true); }
-)");
-  expect(frontend.canGenerateCode() && frontend.mir.valid(),
-         "owning constructor after scalar argument diamond must verify");
-  if (!frontend.canGenerateCode() || !frontend.mir.valid())
-    return;
-  lang::HirFunctionInstanceId owner = 0;
-  lang::MirInstructionId producerId = 0;
-  lang::MirInstructionId stageId = 0;
-  for (const auto &function : frontend.mir.functionInstances()) {
-    for (const auto &block : function.body.blocks) {
-      for (const auto &instruction : block.instructions) {
-        if (instruction.kind != lang::MirInstructionKind::CallInput ||
-            instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
-            instruction.operands.size() != 1 ||
-            !instruction.preparedParameterDrop ||
-            instruction.operands.front().kind != lang::MirOperandKind::Value)
-          continue;
-        const auto *value =
-            function.body.findValue(instruction.operands.front().value);
-        const auto *producer =
-            value ? findPreflightInstruction(function.body, value->definition)
-                  : nullptr;
-        if (producer && producer->kind == lang::MirInstructionKind::Construct &&
-            producer->successResultDrop) {
-          owner = function.id;
-          producerId = producer->id;
-          stageId = instruction.id;
+)",
+                                 R"(
+#include <std/string>
+class Reading {
+public:
+  int& value;
+  mut std::string text;
+  Reading(int& source, std::string input)
+      : value(source), text(std::move(input)) {}
+};
+int inspect(int& owner, bool choose) {
+  Reading result{owner, (std::string(choose ? "present" : ""))};
+  return result.value;
+}
+int main() {
+  int owner = 42;
+  return inspect(owner, true) + inspect(owner, false) - 84;
+}
+)"};
+  for (const auto &source : sources) {
+    const auto frontend = analyzeWithStandardLibrary(
+        "cpp-mir-owning-constructor-argument-diamond.gti", source);
+    expect(frontend.canGenerateCode() && frontend.mir.valid(),
+           "owning constructor after passive argument diamond must verify");
+    if (!frontend.canGenerateCode() || !frontend.mir.valid())
+      return;
+    lang::HirFunctionInstanceId owner = 0;
+    lang::MirInstructionId producerId = 0;
+    lang::MirInstructionId stageId = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::CallInput ||
+              instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+              instruction.operands.size() != 1 ||
+              !instruction.preparedParameterDrop ||
+              instruction.operands.front().kind != lang::MirOperandKind::Value)
+            continue;
+          const auto *value =
+              function.body.findValue(instruction.operands.front().value);
+          const auto *producer =
+              value ? findPreflightInstruction(function.body, value->definition)
+                    : nullptr;
+          if (producer &&
+              producer->kind == lang::MirInstructionKind::Construct &&
+              producer->successResultDrop) {
+            owner = function.id;
+            producerId = producer->id;
+            stageId = instruction.id;
+          }
         }
       }
     }
+    expect(owner && producerId && stageId,
+           "diamond must retain exact owning constructor result staging");
+    if (!owner)
+      return;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = owner};
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+    expect(
+        lang::CppMirBodyEmitter(frontend.mir, map)
+            .supportsFailureBodyText(address),
+        "owning constructor staging must preserve the earlier stable receiver");
+    const auto rejectMutation = [&](const auto &mutate,
+                                    std::string_view message) {
+      auto changed = frontend.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          changed.functionInstances());
+      auto &body = functions[owner - 1].body;
+      auto *producer = findPreflightInstruction(body, producerId);
+      auto *stage = findPreflightInstruction(body, stageId);
+      mutate(body, *producer, *stage);
+      expect(!lang::verifyMirProgram(changed).valid(), message);
+      expect(!lang::CppMirBodyEmitter(changed, map)
+                  .supportsFailureBodyText(address),
+             message);
+    };
+    rejectMutation(
+        [](auto &, auto &, auto &stage) { stage.lifecycle.front().source = 0; },
+        "argument diamond cannot erase the owning result Reparent source");
+    rejectMutation(
+        [](auto &, auto &, auto &stage) {
+          stage.lifecycle.front().target = stage.lifecycle.front().source;
+        },
+        "argument diamond cannot reparent to the wrong prepared slot");
+    rejectMutation(
+        [](auto &body, auto &producer, auto &) {
+          for (auto &block : body.blocks) {
+            if (block.terminator.invokeInstruction == producer.id)
+              block.terminator.successLifecycle.clear();
+          }
+        },
+        "argument diamond cannot erase successful result activation");
   }
-  expect(owner && producerId && stageId,
-         "diamond must retain exact owning constructor result staging");
-  if (!owner)
+}
+
+void testMutableReferencePrefixBeforeOwnedField() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-mutable-reference-owned-prefix.gti", R"(
+#include <std/string>
+class Editing {
+public:
+  mut int& value;
+  mut std::string error;
+  Editing(mut int& source, std::string failure)
+      : value(source), error(std::move(failure)) {}
+};
+int edit(mut int& owner, bool fail) {
+  mut Editing result{owner, std::string(fail ? "failed" : "")};
+  result.value += 1;
+  return result.value;
+}
+int main() {
+  mut int owner = 40;
+  int first = edit(owner, false);
+  return edit(owner, true) - first - 1;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "exclusive reference preceding an owned field must verify");
+  if (!frontend.canGenerateCode() || !frontend.mir.valid())
     return;
-  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                     .owner = owner};
+  const lang::MirConstructorInstance *constructor = nullptr;
+  for (const auto &candidate : frontend.mir.constructorInstances()) {
+    if (candidate.parameterTypes.size() == 2 &&
+        candidate.parameterTypes.front().kind ==
+            lang::SemanticType::Reference &&
+        candidate.parameterTypes.front().referenceAccess ==
+            lang::AccessMode::Mutable &&
+        candidate.initializers.size() == 2 &&
+        candidate.initializers.front().storesReference &&
+        candidate.initializers.back().ownedParameter == 1)
+      constructor = &candidate;
+  }
+  expect(constructor != nullptr, "fixture must retain the exact constructor");
+  if (!constructor)
+    return;
+  const auto references =
+      lang::cppMirStoredReferenceBindings(frontend.mir, *constructor);
+  const auto owned =
+      lang::cppMirOwnedParameterFieldBindings(frontend.mir, *constructor);
+  expect(references && references->size() == 1 && owned && owned->size() == 1,
+         "exact exclusive transfer prefix permits the later owned-field move");
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  expect(
-      lang::CppMirBodyEmitter(frontend.mir, map)
-          .supportsFailureBodyText(address),
-      "owning constructor staging must preserve the earlier stable receiver");
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = constructor->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "mutable reference and owned field retain native constructor support");
   const auto rejectMutation = [&](const auto &mutate,
                                   std::string_view message) {
     auto changed = frontend.mir;
-    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-        changed.functionInstances());
-    auto &body = functions[owner - 1].body;
-    auto *producer = findPreflightInstruction(body, producerId);
-    auto *stage = findPreflightInstruction(body, stageId);
-    mutate(body, *producer, *stage);
-    expect(!lang::verifyMirProgram(changed).valid(), message);
+    auto *candidate = const_cast<lang::MirConstructorInstance *>(
+        changed.findConstructorInstance(constructor->id));
+    mutate(*candidate);
+    const auto bindings =
+        lang::cppMirOwnedParameterFieldBindings(changed, *candidate);
+    expect(!bindings, message);
     expect(
         !lang::CppMirBodyEmitter(changed, map).supportsFailureBodyText(address),
         message);
   };
+  const auto changeStored = [](auto &candidate, const auto &mutate) {
+    for (auto &loan : candidate.body.loans) {
+      if (loan.storedField == candidate.initializers.front().field) {
+        mutate(loan);
+        return;
+      }
+    }
+  };
   rejectMutation(
-      [](auto &, auto &, auto &stage) { stage.lifecycle.front().source = 0; },
-      "argument diamond cannot erase the owning result Reparent source");
-  rejectMutation(
-      [](auto &, auto &, auto &stage) {
-        stage.lifecycle.front().target = stage.lifecycle.front().source;
+      [&](auto &candidate) {
+        changeStored(candidate, [&](auto &loan) {
+          loan.storedField = candidate.initializers.back().field;
+        });
       },
-      "argument diamond cannot reparent to the wrong prepared slot");
+      "exclusive prefix rejects a substituted reference field");
   rejectMutation(
-      [](auto &body, auto &producer, auto &) {
-        for (auto &block : body.blocks) {
-          if (block.terminator.invokeInstruction == producer.id)
-            block.terminator.successLifecycle.clear();
-        }
+      [&](auto &candidate) {
+        changeStored(candidate, [](auto &loan) { loan.source = 0; });
       },
-      "argument diamond cannot erase successful result activation");
+      "exclusive prefix rejects a missing exact formal origin");
+  rejectMutation(
+      [&](auto &candidate) {
+        changeStored(candidate, [](auto &loan) {
+          loan.access = lang::AccessMode::ReadOnly;
+        });
+      },
+      "exclusive prefix rejects substituted shared access");
+  rejectMutation(
+      [&](auto &candidate) {
+        changeStored(candidate, [](auto &loan) { loan.entry = false; });
+      },
+      "exclusive prefix rejects a non-entry transfer");
+  rejectMutation(
+      [](auto &candidate) {
+        candidate.body.blocks.front()
+            .instructions.front()
+            .operands.front()
+            .place = 0;
+      },
+      "exclusive prefix rejects a substituted initializer referent");
+  rejectMutation(
+      [](auto &candidate) {
+        candidate.body.blocks.front().instructions[1].fullExpressionEnd = 0;
+      },
+      "exclusive prefix rejects a missing initializer boundary");
 }
 
 void testOptionalPayloadCleanupComposition() {
@@ -6276,8 +6989,15 @@ constexpr NamedTest kTests[] = {
      testConditionalExpectedArgumentReceiverAdmission},
     {"testFreshClassPayloadOperandStaging",
      testFreshClassPayloadOperandStaging},
+    {"testPassiveEnumTemporaryBorrowAdmission",
+     testPassiveEnumTemporaryBorrowAdmission},
+    {"testPassiveEnumTemporaryObservationThenTransfer",
+     testPassiveEnumTemporaryObservationThenTransfer},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
+    {"testPassivePayloadTagObservation", testPassivePayloadTagObservation},
+    {"testPayloadObserverRequiresCompleteReceiver",
+     testPayloadObserverRequiresCompleteReceiver},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},
     {"testReadyBodyAndRepresentationFailures",
      testReadyBodyAndRepresentationFailures},
@@ -6315,6 +7035,8 @@ constexpr NamedTest kTests[] = {
      testScalarPrefixConstructorStatusAdmission},
     {"testOwningConstructorAcrossArgumentDiamond",
      testOwningConstructorAcrossArgumentDiamond},
+    {"testMutableReferencePrefixBeforeOwnedField",
+     testMutableReferencePrefixBeforeOwnedField},
     {"testOptionalPayloadCleanupComposition",
      testOptionalPayloadCleanupComposition},
     {"testSourceStringCStringAdmissionFailsClosed",

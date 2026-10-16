@@ -453,7 +453,11 @@ private:
     Token name =
         consume(TokenKind::IDENTIFIER, "Expect type alias name after 'using'.");
     consume(TokenKind::EQUAL, "Expect '=' after type alias name.");
+    std::optional<Token> access;
+    if (match({TokenKind::MUT}))
+      access = previous();
     TypeRef target = parseType();
+    target.referenceMutability = std::move(access);
     consume(TokenKind::SEMICOLON, "Expect ';' after type alias declaration.");
     return std::make_shared<TypeAliasDecl>(std::move(keyword), std::move(name),
                                            std::move(target));
@@ -512,7 +516,11 @@ private:
               {.keyword = std::move(keyword), .name = std::move(name)});
           continue;
         }
-        StmtPtr operation = typedDeclaration(true);
+        StmtPtr operation =
+            check(TokenKind::LEFT_BRACKET) &&
+                    peekAt(1).kind == TokenKind::LEFT_BRACKET
+                ? bracketAttributedDeclaration(LanguageLinkage::Gti)
+                : typedDeclaration(true);
         const auto *function =
             dynamic_cast<const FunctionDecl *>(operation.get());
         if (function == nullptr || function->body() != nullptr ||
@@ -585,7 +593,10 @@ private:
         } else {
           conformanceGenericParameters = genericParameters;
           conformanceRequirement = blockRequirement;
-          member = typedDeclaration(true);
+          member = check(TokenKind::LEFT_BRACKET) &&
+                           peekAt(1).kind == TokenKind::LEFT_BRACKET
+                       ? bracketAttributedDeclaration(LanguageLinkage::Gti)
+                       : typedDeclaration(true);
           conformanceGenericParameters.reset();
           conformanceRequirement.reset();
           const auto *function =

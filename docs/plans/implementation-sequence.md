@@ -335,7 +335,7 @@ workflow determine task scope and integration.
 | `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0; library-only instance reuse in 0.420.0; library-only instance bodies omitted from editor HIR in 0.421.0; trusted prefix preamble in 0.423.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Editor snapshots reuse validated library-only concrete instance analyses, no longer lower library-only instance bodies, and resume from a preamble of the standard-library prefix analysed once per include graph (089 per-edit 470 to about 80 ms; exit measure met). Remaining: the adoption copy (about 17 ms per edit). See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
 | `RT-2` through `RT-11` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
-| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. Next: promote it to `std::optional` once surface, failure behaviour and performance match, retiring the compiler-private optional storage. Performance is the larger gap: at `-O2` it is 1.6 times slower in a tight `int` loop and 1.13 times in an allocating `string` loop, because of payload-enum construction and layout ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)); then patterns over built-in type constructors and signature-level borrow-origin contracts, so `expected` can move onto the same protocol; and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
+| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements now remove the former 1.6-times scalar / 1.13-times string gap as the current macOS description; exact-head paired macOS evidence shows no observed material regression, while the final GCC/Linux result remains outstanding ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. Further goals include patterns over built-in type constructors and signature-level borrow-origin contracts, so `expected` can move onto the same protocol; and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
@@ -8069,6 +8069,15 @@ consumer, and release refreshes remain outstanding for the full campaign.
   capture, excluded transport/storage profiles and stable-layout work remain
   bounded separately by ADR 014 and the current language contract; do not
   reopen generic declaration acceptance.
+- **Structural composition update (2026-10-15):** the composition campaign
+  extends actual alternative fields to finite nested enums, fixed arrays,
+  and existing result values (both success and error alternatives), preserving
+  source-defined owner wrappers.
+  Focused tests cover consuming extraction, replacement, partial construction,
+  nested destructor failure and emergency cleanup under C++20/23 and sanitizers.
+  Final combined integration remains pending the performance and borrowed-payload
+  slices. Arrays of owning enum elements, direct enum result alternatives and
+  direct lexical closure fields remain separate transport/representation goals.
 - **State/role:** bounded profiles delivered; prerequisites `D-LANG-01`, `M-OWN-02`,
   `M-LIFE-01`, and `S-LAYOUT-01` are done. The first passive, non-generic
   payload family is implemented across syntax, semantics, HIR, MIR, C++20/23,
@@ -8242,6 +8251,430 @@ consumer, and release refreshes remain outstanding for the full campaign.
   partial-initialization/drop state, move/borrow and positive/negative tests,
   deterministic layout facts, and O0/O3 runtime parity. The passive first slice
   already has exact construction, exhaustive diagnostics, and runtime parity.
+
+#### Conditional payload dependency sets (2026-10-15 implementation goal)
+
+The borrowed-payload slice is being developed with the owned-composition and
+layout work. Its motivating client is a source-defined result whose success
+stores a checked reference and whose failure owns an error; unrelated sum/view
+types must use exactly the same rules. Accepting reference payload syntax alone
+does not establish this support.
+
+- A dependency set distinguishes **complete and empty** from absent/unknown
+  evidence. Error and unit alternatives do not acquire a fabricated owner.
+  Unknown evidence must never be interpreted as the empty set.
+  Keep real loans origin-bearing; the complete set is a separate value/binding
+  fact that may contain zero, one, or several conditional loan dependencies.
+  Existing unconditional multi-field dependencies remain complete sets, not a
+  forced single-origin representation. Empty evidence identifies the exact
+  constructor alternative and proves every payload field dependency-free.
+- A dependency identifies its source place, access, escape boundary, loan
+  endpoint and transfer/drop behavior. Its destination path includes the
+  exact alternative-qualified payload field identity. Abstract parameter
+  paths describe conditional dependencies, not unconditional live fields.
+- Construction proves the selected alternative's complete set. Movement
+  preserves it; replacement ends the old active dependencies before publishing
+  the new set. A control-flow join unions the conditional alternatives without
+  discarding a possible dependency or inventing a common origin.
+  Nested conditions retain their complete typed alternative/field path.
+  Unknown tags retain every possibly active obligation; only dominating tag
+  evidence may select one alternative. No general Boolean solver is required.
+- Matching first proves the exact active tag. Extracting a reference payload
+  relays the external referent, while borrowing an owned payload protects enum
+  storage. Consuming a carrier must not consume the external referent or end a
+  loan transferred into the result.
+- Returning an empty alternative needs no owner contract. A potentially
+  borrowed return still needs exact caller-owned origins for every possible
+  borrowed alternative. Protocol result-origin contracts and propagation carry
+  those same facts; the backend must not infer them from layout or API names.
+
+Current prerequisite work adds protocol operation `borrowed_from` contracts,
+explicit mutable associated reference types, reference-result propagation and
+stable payload field identities. Payload storage admission remains unchanged
+until the conditional-set proof is complete. Required gates include zero-owner
+error/unit construction and return, borrowed success with owned errors,
+mutable exclusivity, replacement and failure cleanup, and malformed MIR that
+removes a dependency or substitutes an origin, tag, access or expired source.
+The runnable example and C++20/23 O0/O1/O2/O3 native matrix must demonstrate the
+usable wrapper, not only metadata formation.
+
+Prerequisite checkpoint evidence: optimized macOS `protocol_concepts` passes
+the shared/mutable generic result-origin cases and malformed forwarding-chain
+checks. The shared/mutable class-wrapper cases in `tryable_propagation` pass
+their semantic/HIR/MIR checks, including guard destruction and mutable alias
+negatives. Ordinary passive enum temporary observers and direct enum temporary
+propagation now pass the focused semantic/HIR/MIR and representation tests;
+malformed loan, materialization, access and lifetime mutations remain rejected.
+The complete-set query distinguishes present-empty metadata from absence,
+including instance overlays and rebasing. Its concrete type-inventory query
+rejects unresolved children; symbolic generic path enumeration remains a
+separate contract and never supplies completeness evidence.
+
+The prerequisite checkpoint carries complete sets through semantics/HIR/MIR and emits
+exact empty evidence for dependency-free payload constructors and unit
+alternatives. MIR recomputes the selected alternative's field traits and
+rejects absent evidence, wrong enum/tag/path, duplicate alternatives and
+invented dependencies. Optimized focused protocol, propagation, generic-enum
+backend and cleanup-bound tests pass. Exact local bindings (written types and
+`auto`), copies, explicit/implicit moves and branch unions now preserve empty
+sets. MIR reconstructs that flow with the existing forward solver and rejects
+omitted/substituted join alternatives and invented proofs after unknown inputs
+or mutable calls. Incoming loop facts remain unknown until the general
+conditional loop contract is implemented; first-iteration facts are not reused
+for backedges. No loan endpoint or availability check is replaced by this
+value-fact analysis. Nonempty conditional construction/transport and
+guarded declaration-owned result summaries remain incomplete; guards on unsupported
+loan/call records fail closed and reference-bearing payload admission stays
+closed.
+
+The next result-summary checkpoint adds declaration-relative, known-empty
+function contracts and exact direct-call transport. Semantic analysis demands
+ordinary bodies independently of declaration order and reanalyzes concrete
+generic queries in isolated workers; unknown, recursive, resource-limited and
+nonreturning results stay unknown. Explicit unknown facts shadow older instance
+snapshots. MIR uses one producer/storage/return reconstruction engine, with
+memoized independent callee proof, rather than trusting a declaration claim.
+Each reachable normal return must refine the declared alternative inventory;
+extra well-typed dependency-free alternatives are conservative and remain valid
+after optimizer branch elimination. Missing actual alternatives, duplicate or
+wrong type/tag/field paths and invented dependencies fail verification. Calls
+publish result facts only on their successful edge. Synthetic early returns
+from propagation currently make the summary unknown until their selected
+residual operation's complete result contract can be instantiated.
+
+This checkpoint is work in progress. Prerequisite queries now share the existing
+64-level/16,384-distinct-instance resource policy with HIR discovery, with the
+established resource diagnostic instead of silently returning unknown. Exact
+active cycles remain unknown. A separate 64-result retention cache evicts only
+completed entries; eviction must cause recomputation, never different
+acceptance. Dedicated depth/eviction and existing generic-discovery tests pass
+with the optimized compiler. The memoized MIR observation path and coordinated
+schema pass the relinked focused summary target; the combined entry-fact
+checkpoint still needs its own rebuild and validation.
+
+Dependency-free by-value payload-enum parameters now seed a complete set with
+every concrete alternative. Semantics derives it from the strict type inventory;
+MIR independently reconstructs it from exact formal bindings, types, available
+entry storage and sealed payload rows. This does not infer an empty set for an
+unknown reference parameter or after a mutable call. Optimized focused tests
+cover forwarding the complete entry inventory and reject substituted formal
+types/bindings, unavailable entry storage and omitted alternatives. Nonempty
+conditional entry loans remain a subsequent proof step.
+
+The next internal scaffold shares a pure per-return normalization query with
+source escape checking. It resolves each complete dependency against the
+result's typed field/alternative inventory and the exact formal or receiver,
+preserving source and result conditions, access and every possible origin.
+Traversing a stored reference denotes its external referent; a by-value owned
+shell does not become caller-owned storage. Explicit origin contracts and local
+cleanup-bound capabilities remain restrictions. This hook runs before finalized
+function-summary publication, so return validation need not depend on an
+unfinished summary of its own body. Nonempty publication is still closed until
+independent MIR normalization, call substitution and combined source/loan
+regression evidence are complete; scaffold implementation is not admission.
+The MIR scaffold independently normalizes return places through typed
+formal/receiver paths, rather than trusting the semantic mapping. Semantic
+ancestry checking traverses primary, stored and every additional parent edge,
+including shared DAG ancestry; no primary entry may hide a local cleanup-bound
+secondary owner. These newly added nonempty paths are not yet validated or
+enabled. Final call substitution and malformed nonempty mapping tests remain
+open. Stable payload-string performance acceptance currently takes priority
+over enabling this follow-up.
+
+Focused optimized macOS evidence covers declaration order, exact generic
+substitution, unknown/mutated inputs, direct/indirect recursion, no-return
+distinction, forged contracts and O0/O3 optimization. This is a prerequisite,
+not completion of reference-bearing result factories: the next increment must
+normalize every guarded external origin/access to a declaration-relative
+parameter/receiver mapping, transport it at calls, and integrate the full
+conditional input inventory and residual-return proof. Normal full-suite,
+platform, native matrix and performance validation apply to final integration;
+the earlier expedited full-suite waiver is no longer active.
+
+Example 165's original shared and mutable class-wrapper paths now compile and
+run at O2 with the expected output. General constructor-staging fixes admit
+text views across conditional arguments and exact transferred mutable-reference
+prefixes before owned fields; malformed identity/access/lifecycle evidence
+remains rejected. The focused native matrix passes all nine modes:
+C++20/C++23 at O0/O1/O2/O3 and C++23 O1 with ASan/UBSan, including example 165
+and the existing cleanup traces. The earlier named passive operand probe is
+now covered by the upstream enum-propagation fixture's named, moved and fresh
+operands. Its original failure is historical, not evidence of a distinct
+remaining bug; the combined full runtime matrix remains an integration gate.
+The earlier expedited prerequisite request did not mark the complete
+borrowed-enum goal finished or authorize unverified reference-bearing payloads.
+On 2026-10-16 the owner restored the normal validation and integration workflow
+and requested completion of the reference-payload goal. Full relevant validation
+is required for this follow-up; no safety or performance gate is waived.
+
+The follow-up separates two cooperating implementation regions:
+
+- Conditional enum inventories, construction, retained loans, active-tag
+  extraction and local value transport extend the existing place/loan model.
+  Primary and additional dependencies must preserve the same typed alternative
+  conditions. Shared references may alias; exclusive references transfer or
+  reborrow according to the existing access rules. Moving an alternative never
+  moves its external referent. Exact error-only alternatives carry a complete
+  empty set, not a fabricated storage loan.
+- Function-result summaries use declaration-relative parameter/receiver paths
+  and typed alternative conditions, never body-local place or loan identities.
+  They are demanded independently of declaration order and checked against all
+  reachable normal returns. Calls substitute only independently verified
+  summaries; unresolved recursive summaries remain unknown. The same local
+  complete-set dataflow supplies producer/return evidence to both checks, so
+  this does not introduce another ownership or liveness engine.
+
+The selected-reference scaffold records the exact projected expression and
+subject in semantics, then resolves them to one current-body HIR extraction
+value and carrier operand. This is address-production identity, not an owner
+dependency: the external dependency set remains separate and may contain
+several origins for the same field after a branch join. A strict alternative
+inventory also records dependency-free unit/error variants, rather than
+inferring them from the absence of a reference path. These records do not yet
+admit stored reference payloads; independent MIR publication/transfer proofs,
+all-origin access checks and producer/entry seeding remain required. Optimized
+C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
+claimed for it.
+
+The MIR bridge now retains the selected extraction's exact SSA value and
+physical carrier place separately from its possible external owner places.
+Lowering requires the unique current-body producer and the structural stored
+reference extraction mode; malformed selections cannot turn an ordinary
+storage borrow into reference transfer. This identity scaffold still does not
+admit reference payloads. The next proof compares its projected complete owner
+set with executable carrier flow at the extraction point, verifies every
+owner's access/liveness, and preserves the cached address after shell retirement.
+Same-referent aliases retain the original selection plus their checked parent.
+Projected aliases additionally require an exact typed runtime projection applied
+to every possible owner; no projection is admitted by choosing the first owner.
+
+The extraction operation verifier distinguishes a stored field's reference type
+from the place-valued referent exposed by its binding, checks access narrowing,
+and recognizes exact selected-reference borrow/initialize steps in a consuming
+arm's closed setup prefix. This is a structural prerequisite, not admission:
+the complete dependency gate remains closed until independent owner, parent and
+group-transfer proofs pass. In particular a retired abstract parameter group
+cannot become a missing-parent exception; its transferred reference needs exact
+typed entry provenance and a verified handoff. The changed verifier translation
+unit passes optimized syntax checking; runtime admission is not yet claimed.
+
+The selected-reference origin check now compares the exact field/tag identity
+and every retained external place/access against the independent pre-extraction
+projection. A missing carrier fact is unknown, never an empty successful proof;
+the scalar result cannot omit, add, or substitute possible owners. Physical
+address selection remains distinct from this owner comparison. Active parents,
+abstract entry provenance and group handoff are separate required proofs, so
+the public reference-payload gate remains closed. The optimized combined build
+and focused backend, complete-borrow-summary and sum-type regressions pass;
+these do not yet constitute positive reference-payload runtime acceptance.
+
+The next body-flow prerequisite expands scalar selected-reference accesses to
+all possible external places as one access, retains every independent parent,
+and suspends/restores the capabilities used by local copies and reborrows.
+Exact same-referent aliases preserve their address identity; an unproven
+projection suffix is rejected. Consuming reference activation still rejects
+until the closed arm prefix proves its whole-group handoff, including abstract
+entry provenance. Optimized syntax checks pass for this draft; positive
+body-flow, forged/expired-parent and alias-negative tests remain required.
+
+The all-origin body-flow checkpoint now passes its optimized focused build,
+complete-borrow-summary, backend and sum-type tests. Each independent selected
+origin is checked against its own parent's containment and permissions; a
+normal sibling ending first cannot restore a capability still suspended by a
+selected sibling's additional origin. The body-only fixture exercises shared
+selection, multiple possible owners and both retirement orders. Mutations reject
+missing, substituted, insufficient-access and actually retired parent authority.
+A plausible consuming-selection descriptor still fails the separate whole-group
+handoff requirement, and its malformed identities fail the earlier shape check.
+These fixtures deliberately leave the sealed program's field owned: program
+verification rejects the forged reference interpretation. Public nonempty
+admission and real reference-payload runtime acceptance remain separate goals.
+
+A shared, non-permitting consuming-prefix query now recognizes the intended
+handoff schedule: a unique guarded switch edge over the exact carrier, every
+payload address cached first, the old Stored group retired, and each successor
+published into its exact binding before user code. Physical cleanup retirement
+is separate: a passive carrier need not have a drop obligation. Ten malformed
+shape fixtures reject reordered, omitted, duplicated and substituted staging,
+group, cached address, binding and tag identities. The optimized combined build
+and complete-borrow-summary, reference-payload semantic, backend and sum-type
+tests pass. This query alone grants no permission to use an expired group;
+incoming activity, independent complete origins, sealed field coverage and the
+transfer of abstract entry provenance remain mandatory before activation opens.
+
+The body verifier now replays that closed prefix as one local capability
+handoff: the exact retirement must observe a definitely active group, every
+successor must belong to that prefix, and each external origin retains its
+access and live earlier parents. A synthetic body with established external
+authority passes; earlier retirement, substituted owner, strengthened access
+and an invented parentless alias fail. The independent program check also
+requires every sealed field to be extracted and exact pre-retirement origins.
+This is prerequisite evidence, not public reference-payload admission: abstract
+formal provenance still needs the independently reconstructed entry fact, and
+real source construction/transport/runtime acceptance remains required.
+
+The next access scaffold snapshots every external origin of a selected scalar
+reference at operand evaluation. Reads, mutations and call exclusivity compare
+all possible owners; one selected reference is one access, so alternatives are
+not spuriously compared against each other as simultaneous aliases. The
+runtime selected address still comes from its exact extraction, not any one
+owner. Producer and same-body reborrow publication remain closed until their
+independent MIR proof is connected. Projected reborrows additionally require
+the ordinary typed runtime projection to be checked against the same suffix on
+every external origin; the root selection descriptor is not that proof.
+
+Complete-flow observations now retain the carrier fact immediately before each
+reachable extraction, independently of its attached annotations. Per-field
+consuming extraction keeps an exact owning shell's fact until its final
+`TransferOut`; ordinary whole-value moves still invalidate facts immediately.
+Tag dominance, unique field consumption and final shell retirement remain
+separate mandatory lifecycle proofs. Reordered, duplicate and missing exact
+retirement mutations accompany this seam. After integration with the MIR
+selection identity, the optimized compiler rebuild and `sum_type_pipeline`,
+`complete_borrow_summaries`, `tryable_propagation`, `protocol_concepts`, and
+`cleanup_bound_borrow` pass. These are prerequisite/regression checks, not
+reference-payload runtime acceptance; nonempty publication remains closed.
+
+A shared payload-projection proof now selects the sealed variant and field,
+rebases nested field/alternative paths, and retains every possible external
+origin from the independently reconstructed carrier fact. Stored references
+may only narrow access to their resolved extraction result; their external
+referent is never moved. Missing borrowed-subobject alternatives remain
+unknown, whereas an entirely dependency-free child's alternatives may be
+conservatively recovered from its complete typed inventory. Extraction result
+annotations are checked against this projection, not used as its premise.
+The focused nested-enum fixture and forged tag/path/dependency mutations cover
+this prerequisite; reference-bearing publication still requires the selected
+loan, handoff and liveness proofs described below.
+
+Conditional parameter-entry preparation now expands every abstract stored
+reference path into its exact parameter-relative external place and keeps all
+typed alternative guards. The declaration entry loan itself remains the
+existing grouped authority; the complete set does not create a second liveness
+model. Conditional return checking uses the shared declaration-relative
+normalizer only after the ordinary local-child escape check. These paths still
+have no source-admission claim: nonempty MIR entry/constructor/call transport,
+all-parent escape proof, selected publication and their negative gates must be
+connected before that admission opens.
+
+Semantic entry/selection producers now retain direct shared reference copies
+and exclusive reborrows from exact enum-parameter paths while the public
+admission diagnostics remain in place. An iterative ancestry query matches the
+current body's formal/receiver, strict reference inventory, alternative guards,
+access and active parent; `protectsStorage == false` alone is never authority.
+Same-referent aliases retain the original address selection plus their checked
+parent. External permission conflicts are separate from protection of the enum
+shell's bytes, so a live child suspends exclusive parent use without making two
+independent reference fields alias each other. Guard-qualified HIR-to-MIR field
+projection now requires the exact enum subobject and alternative and explicitly
+dereferences a stored reference while keeping its semantic overlap key
+transparent. That representation path still needs actual nonempty MIR producer
+coverage before admission.
+
+The optimized `reference_payload_semantics` test observes these source-rejected
+programs' semantic records without bypassing the gate: shared/exclusive entry
+selection, same-referent narrowing, independent fields, and mutation rejected
+while a child is live. Its positives require only the documented admission
+diagnostics, not arbitrary failing analysis. The optimized sum-type and tryable
+regressions also pass. Evidence is retained in
+`/private/tmp/gti-reference-entry-{build6,test6,sum6,tryable6}.log`.
+Consuming selection, projected aliases, nonempty constructor/entry MIR facts,
+and missing/substituted/expired ancestry mutations remain required; this is not
+runtime or completed reference-payload evidence.
+
+The consuming producer now has a staged semantic/MIR handoff for a source with
+one exact active dependency group and one live carrier. Semantics snapshots all
+selected field dependencies before the arm retires that group; concrete sources
+keep earlier external parents, whereas an abstract entry retains its typed
+provenance in `transferredFrom`, not an expired ordinary parent. Same-referent
+aliases reborrow the new live selection. The hidden subject's real value
+initialization acquires the existing group without changing the formal's entry
+identity or making the hidden shell initially available. Its MIR prefix emits
+all exact extractions first, ends the old group once, then publishes successor
+borrow/binding pairs. Physical shell `TransferOut` and dependency retirement
+are distinct even for passive no-drop enums. Owned-only match ordering remains
+unchanged. Shared groups with several live carriers, lifecycle-bound group
+handoff and nested reference-bearing value fields remain explicit structural
+goals, not accepted cases.
+
+The optimized compiler build and semantic/sum-type/tryable focused suites pass
+for this producer increment. Semantic coverage observes two mutable reference
+successors, a narrowed alias, disjoint referent mutation, and rejection of
+mutation through a borrowed successor or reuse of the moved source. Public
+reference-payload admission remains closed, so the compiled MIR producer is
+not yet actual reference-payload MIR/runtime evidence. Independent handoff,
+nonempty entry/constructor transport, historical-entry escape/return checks and
+malformed origin/access/group tests must be connected before admission.
+Evidence is retained under `/private/tmp/gti-reference-transfer-*`.
+
+An edit review rejected removing the selected-origin `protectsStorage` check:
+the bit's absence alone does not establish an external owner's lifetime. The
+guard remains in place. Abstract parameter reference fields legitimately do
+not protect their carrier's storage, so the next proof must distinguish those
+checked external dependencies from unproven or foreign storage using the exact
+entry loan, formal identity and typed guarded field path. Positive parameter
+ancestry and missing/substituted parent/path/foreign-storage negatives are
+required before revisiting that predicate; this is not permission to bypass it.
+
+Consuming selections additionally carry the exact old dependency-group identity
+through semantics, HIR and MIR. This handoff claim must match independently
+reconstructed carrier flow; it cannot keep the consumed shell alive as an
+ordinary reborrow parent or invent an owner when an abstract parameter group
+retires. The closed arm-entry prefix must transfer every selected field once,
+without a fallible user operation between publications. Copying a reference
+does not carry a handoff claim; reborrowing retains its ordinary checked parent.
+The identity-only scaffold uses `mir-v109`/`mir-body-v90`. An optimized local
+build and the `complete_borrow_summaries`, `sum_type_pipeline` and
+`tryable_propagation` suites pass. Four malformed body tests reject missing,
+self, foreign and non-transferring group identities; the same plausible
+body-local fixture is independently rejected at program level because its
+sealed field is owned rather than borrowed. This evidence covers metadata
+transport and shape, not permission to activate a transferred loan or public
+reference-payload acceptance. Logs are retained under
+`/private/tmp/gti-payload-handoff-*`.
+The first follow-up checkpoint preserves alternative guards on primary as well
+as additional loans and introduces a strict optional MIR reference inventory.
+Legacy unconditional inventory queries do not flatten conditional paths. The
+semantic constructor-set producer reuses ordinary reference binding's stable
+storage proof, preserves exact field/alternative identities, and remains behind
+the closed source-admission gate. Local C++ syntax checks pass for the changed
+ownership and MIR-verifier translation units; this is not language-test or
+runtime evidence. The initial focused remote run was canceled while queued to
+preserve another task's performance window and has been fetched and cleaned up.
+Optimized focused and full validation remain required before integration.
+
+The extraction prerequisite records a resolved structural mode for copying or
+moving an owned field, borrowing its storage, copying a shared stored reference,
+transferring a consumed stored reference, or reborrowing a stored reference.
+HIR/MIR preserve that selection instead of inferring it from the binding's
+reference type. The verifier checks the mode against the concrete alternative,
+operand and value category; missing or substituted modes are rejected. External
+reference extraction is still closed pending exact selected-address/dependency
+proof. Its implementation must preserve every possible external origin at a
+branch join, never pick the first origin or treat the carrier as the referent.
+Explicit reference patterns reborrow an unconsumed carrier; a plain binding on
+a consumed reference alternative transfers the reference without moving its
+external object. The backend caches the external address at extraction, before
+retiring a consumed carrier; later reference publication must not re-read a
+dead carrier's field. These paths remain unreachable until independent selected
+reference proofs are implemented and validated. The prerequisite syntax checks
+do not constitute runtime evidence or admit reference payloads.
+
+The usable end-to-end client is an ordinary source-defined result with borrowed
+success and owning failure, including shared and exclusive results, direct
+protocol calls and prefix propagation. An unrelated nested sum/view client must
+exercise the same rule. Acceptance includes known-empty construction/return,
+conditional joins, moved carriers, selected reference extraction, source
+destructor retention, mutable alias and dangling-return rejection, and malformed
+MIR with omitted/substituted paths, origins, tags, access or call summaries.
+An error-only input to a reference-returning operation cannot manufacture an
+origin: if its verified normal-return contract requires an impossible active
+dependency, the implementation must represent that lack of a normal result
+explicitly or retain a documented conservative rejection until the corresponding
+proof is implemented. It must not infer permission from missing metadata.
+Normal release gates include C++20/C++23 O0/O1/O2/O3 runtime and failure-cleanup
+coverage, sanitizers, the example/corpus checks, relevant tooling and broad
+compiler validation, and optimized runtime/allocation/code-size measurements.
 
 ### L-ERR-01: Error Propagation Operator
 
@@ -9460,7 +9893,7 @@ owned by the rows and domain plans above.
 | Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Borrowed capture/results and inline consuming projection remain general lifetime/origin goals, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **generic, recursively owned and borrowed-pattern profiles delivered** | `L-SUM-01` and ADR 014 cover substituted alternative identity, owning class payloads, finite recursive containment, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Polymorphic transport, direct capture, non-class owning payloads/fixed arrays, stored reference payloads and stable layout remain distinct goals. |
+| Payload enums/matching | **generic, structurally owned and borrowed-pattern profiles delivered; stored reference payloads in progress** | `L-SUM-01` and ADR 014 cover substituted alternative identity, finite nested payload enums, owning fixed arrays and representable owning wrappers, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Stored reference payloads still require conditional dependency and result-summary proofs; polymorphic transport and direct capture remain distinct goals. |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |

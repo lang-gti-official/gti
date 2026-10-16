@@ -73,6 +73,9 @@ struct SemanticConstraintFailure {
   // arguments.
   bool missingConformance = false;
   std::vector<SemanticType> conformanceArguments;
+  // A matching block exists, but a concrete reference result does not retain
+  // the protocol's declaration-relative origin contract.
+  std::optional<Token> conformanceBorrowOperation;
 };
 
 class SemanticDiagnosticReporter {

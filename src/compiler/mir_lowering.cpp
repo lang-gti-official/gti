@@ -236,6 +236,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     for (const HirEnumerator &variant : enumeration.enumerators) {
       lowered.variants.push_back({.variantIndex = variant.variantIndex,
                                   .payloadTypes = variant.payloadTypes,
+                                  .payloadSymbols = variant.payloadSymbols,
                                   .payloadRequiresActiveCleanup =
                                       variant.payloadRequiresActiveCleanup});
     }
@@ -397,10 +398,12 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .threadConfinedCallback = instance.threadConfinedCallback,
          .processMemoryOperation = instance.processMemoryOperation,
          .returnBorrowOrigin = instance.returnBorrowOrigin,
+         .explicitReturnBorrowOrigin = instance.explicitReturnBorrowOrigin,
          .returnBorrowParameter = instance.returnBorrowParameter,
          .returnBorrowAccess = instance.returnBorrowAccess,
          .returnBorrowParameters = instance.returnBorrowParameters,
          .returnBorrowFields = instance.returnBorrowFields,
+         .completeReturnBorrow = instance.completeReturnBorrow,
          .returnBorrowPlace = instance.returnBorrowPlace,
          .restoresReferenceResult = instance.restoresReferenceResult,
          .restoredBorrowFields = instance.restoredBorrowFields,

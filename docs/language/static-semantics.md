@@ -1362,29 +1362,35 @@ constructing another alternative.
 
 By-value layout checks distinguish concrete generic instances when traversing
 class fields and enum alternatives. A cycle cannot be hidden by visiting the
-same generic primary with different arguments. Finite nested class payloads
+same generic primary with different arguments. Finite nested class and enum payloads
 remain valid; direct recursive layouts and structurally growing by-value
 recurrence remain ill-formed.
 
 An enum with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
-types are primitive scalars, `std::string_view`, `nullptr_t`, recursive raw
-pointers, integral scoped enums, and ordinary concrete class instances,
-including generic instances. A concrete class
-payload may require active cleanup through its destructor or owned fields; the
-enum then has lexical cleanup and folds its copy, move, and ownership policy
-from every alternative. Stored borrowed state remains ill-formed. Active
-cleanup carried by a nested payload enum, fixed array, owner primitive, or
-another non-class aggregate is also rejected with `GTI-S2067` until that
-recursive partial-state representation is defined. References, fixed arrays,
-and nested payload enums remain outside the admitted payload surface.
+types include primitive scalars, `std::string_view`, `nullptr_t`, recursive raw
+pointers, native function pointers, integral scoped enums, concrete payload
+enums, fixed arrays, `expected` result carriers, and ordinary concrete class
+instances, including generic instances. The array element or result
+alternatives must themselves be admitted field types. Ownership and cleanup
+fold from actual fields, not from whether their outer type is a class:
+`Message<Message<std::string>>`, `Message<Resource[2]>`, and
+`Message<expected<Resource, Error>>` use the same ordered field publication
+and recursive cleanup contract. A `void` success alternative in a result
+carrier contains no object. Owning indirection may break a layout cycle;
+an inline enum/class/array cycle is still ill-formed. Stored borrowed state
+and direct lexical closure payloads remain outside this owning slice.
+The temporary `unexpected(...)` error-construction adapter is not itself an
+admitted field; construct an `expected` error alternative before storing it.
+Closure fields need a concrete closure-field representation before admission;
+unsupported fields are rejected with `GTI-S2067`, not left to native emission.
 
-A class payload argument may be a fresh prvalue construction, a copy of a
+A payload argument may be a fresh prvalue construction, a copy of a
 named value, or an explicit `std::move` of a named value; the payload enters
 the alternative before any later sibling field expression evaluates, matching
-the ordinary left-to-right argument order. An enum whose alternatives carry
-class payloads folds its copyability, movability, and ownership traits from
+the ordinary left-to-right argument order. An enum folds its copyability,
+movability, assignment, and ownership traits from
 those payload types, so a move-only payload makes the enum value move-only.
 An admitted owning enum supports whole-value move construction. Move
 assignment between direct local bindings additionally requires the folded
@@ -1411,7 +1417,7 @@ is dropped before the replacement obligation is published. Recursive owning
 class containment is permitted when its by-value layout is finite, including
 an alternative holding a vector of enclosing nodes. A direct enum/class
 by-value cycle remains ill-formed. This does not authorize reference payloads,
-direct non-class aggregate payloads, stored-reference classes,
+stored-reference classes,
 compiler-private capabilities, polymorphic bases, or native-layout
 declarations.
 
@@ -1557,10 +1563,14 @@ fresh value of `X`. A payload enum declares no constructors, so a residual
 initializes a payload-enum return type only when it has that type. A
 temporary
 or `std::move(place)` operand needs a movable `X`. A named place needs a
-copyable `X` and remains available. `X`, `value_type` and `residual_type`
-contain no stored borrows, and `value_type` and `residual_type` are not
-references. The expression has type `std::tryable<X>::value_type`, or `void`
-when that type is `void`.
+copyable `X` and remains available. A borrowed `X` must currently have one
+exact stored-dependency path. A reference `value_type` is permitted when
+`take_value`'s `[[borrowed_from(value)]]` contract relays that path's external
+owner. The expression is then a place with the declared reference access;
+consuming the operand does not terminate the returned external borrow. Other
+value types and the residual contain no stored borrows; the residual is not a
+reference. The expression otherwise has type `std::tryable<X>::value_type`,
+or `void` when that type is `void`.
 
 The immediately enclosing function or lambda has a declared return type `R`,
 which is not `void`. The residual type is `R` itself, or `R` declares exactly

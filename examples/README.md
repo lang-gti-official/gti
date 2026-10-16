@@ -61,6 +61,8 @@ You do not need to read the entire sequence to find an API pattern:
 | Return a reference through a callback, a generic relay, an invocation pointer or a callable view | [160: borrowed callback results](160-borrowed-callback-results.gti) |
 | Propagate an empty optional with `?`, moving a move-only value out | [162: experimental optional](162-experimental-optional.gti) |
 | Propagate a failed `result<T, E>` enum with `?`, moving owned strings out | [163: payload-enum propagation](163-payload-enum-propagation.gti) |
+| Compose enum, array and owning payloads in source-defined wrappers | [164: payload composition](164-payload-composition.gti) |
+| Consume a fallible view while retaining its external success borrow | [165: borrowed payload results](165-borrowed-payload-results.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -230,6 +232,8 @@ is a teaching helper, not a production server.
 | `161-consuming-matches.gti` | a switch over temporary messages that moves their owned strings into its bindings, an arm without bindings that drops its message on entry, a source-defined optional whose `&&` accessor moves the value out of its field, and a borrowed match over a named enum |
 | `162-experimental-optional.gti` | the source-defined `std::experimental::optional` holding a move-only record, `?` moving it out or returning an empty optional, and `std::experimental::nullopt` |
 | `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
+| `164-payload-composition.gti` | a source-defined optional containing another owning payload enum, consuming nested patterns, and a fixed-array payload |
+| `165-borrowed-payload-results.gti` | a source-defined result with an owning string error and a reference success; `borrowed_from` relays the external owner when `?` consumes the wrapper |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

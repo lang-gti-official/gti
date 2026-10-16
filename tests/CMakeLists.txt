@@ -1188,6 +1188,12 @@ add_executable(gti_tryable_propagation_tests
   "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
 target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend)
 add_test(NAME tryable_propagation COMMAND gti_tryable_propagation_tests)
+add_executable(gti_complete_borrow_summary_tests complete_borrow_summary_tests.cpp)
+target_link_libraries(gti_complete_borrow_summary_tests PRIVATE gti_compiler)
+add_test(NAME complete_borrow_summaries COMMAND gti_complete_borrow_summary_tests)
+add_executable(gti_reference_payload_semantic_tests reference_payload_semantic_tests.cpp)
+target_link_libraries(gti_reference_payload_semantic_tests PRIVATE gti_compiler)
+add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime
@@ -2100,6 +2106,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(experimental_optional_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME payload_enum_carrier_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(payload_enum_carrier_runtime PROPERTIES TIMEOUT 900)
+
+  add_test(
+    NAME composed_payload_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/composed_payload_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(composed_payload_runtime PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME payload_enum_propagation_runtime
