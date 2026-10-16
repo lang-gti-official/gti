@@ -2708,6 +2708,17 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                                  return projection.kind ==
                                         MirProjectionKind::Dereference;
                                });
+              // A selected scalar can have alternative external owners just
+              // like a composed stored value. Each additional reference must
+              // be contained in its own authority, not the first owner's
+              // unrelated storage. Activation separately proves liveness and
+              // exclusion; the program proof checks the exact projected set.
+              if (loan.referenceSelection && child != loan.source &&
+                  authority != 0 && authority != loan.parent &&
+                  dependency != loan.additionalDependencies.end())
+                return !loanPermitsPlace(body, body.loans[authority - 1],
+                                         childPlace, dependency->access,
+                                         bindingLoans, inactive);
               // Independent input references retain their own checked
               // authority. The production flow check below verifies its
               // liveness and access; it must not be contained in the first
@@ -3307,6 +3318,38 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           return invalid;
       return std::nullopt;
     };
+    const auto suspendsParentCapability = [&](const MirLoan &child,
+                                              MirLoanId parent) {
+      const auto &authority = body.loans[parent - 1];
+      if (!child.referenceSelection) {
+        if (child.parent != parent)
+          return false;
+        return (child.kind == MirLoanKind::Local ||
+                fieldMappedLoans.contains(child.id)) &&
+                       authority.kind == MirLoanKind::Stored &&
+                       !authority.designatedFields.empty()
+                   ? loanPermitsPlace(body, authority,
+                                      canonicalPlace(body, child.source,
+                                                     bindingLoans, active),
+                                      AccessMode::Mutable, bindingLoans, active)
+                   : authority.access == AccessMode::Mutable;
+      }
+      const auto covers = [&](MirPlaceId source, MirLoanId declared) {
+        const auto originParent =
+            declared ? declared : dependencyAuthority(body, source);
+        return originParent == parent &&
+               loanPermitsPlace(
+                   body, authority,
+                   canonicalPlace(body, source, bindingLoans, active),
+                   AccessMode::Mutable, bindingLoans, active);
+      };
+      return covers(child.source, child.parent) ||
+             std::any_of(child.additionalDependencies.begin(),
+                         child.additionalDependencies.end(),
+                         [&](const auto &dependency) {
+                           return covers(dependency.source, dependency.parent);
+                         });
+    };
     const auto callInputDefinition =
         [&](const MirOperand &operand) -> const MirInstruction * {
       if (operand.kind != MirOperandKind::Value) {
@@ -3709,34 +3752,18 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           auto parents = additionalLoanAuthorities(body, record);
           if (record.parent)
             parents.push_back(record.parent);
-          const auto suspends = [&](const MirLoan &child, MirLoanId parent) {
-            const auto &authority = body.loans[parent - 1];
-            const auto covers = [&](MirPlaceId source, MirLoanId declared) {
-              const auto originParent =
-                  declared ? declared : dependencyAuthority(body, source);
-              return originParent == parent &&
-                     loanPermitsPlace(
-                         body, authority,
-                         canonicalPlace(body, source, bindingLoans, active),
-                         AccessMode::Mutable, bindingLoans, active);
-            };
-            if (covers(child.source, child.parent))
-              return true;
-            return std::any_of(child.additionalDependencies.begin(),
-                               child.additionalDependencies.end(),
-                               [&](const auto &dependency) {
-                                 return covers(dependency.source,
-                                               dependency.parent);
-                               });
-          };
           for (const auto parent : parents) {
             const bool sibling = std::any_of(
                 children[parent - 1].begin(), children[parent - 1].end(),
                 [&](MirLoanId child) {
-                  return active[child - 1] != MirLoanFlowState::Inactive &&
-                         suspends(body.loans[child - 1], parent);
+                  return (loanFlowContains(active[child - 1],
+                                           MirLoanFlowState::Active) ||
+                          loanFlowContains(active[child - 1],
+                                           MirLoanFlowState::Suspended)) &&
+                         suspendsParentCapability(body.loans[child - 1],
+                                                  parent);
                 });
-            const bool suspended = suspends(record, parent);
+            const bool suspended = suspendsParentCapability(record, parent);
             if (active[parent - 1] != (suspended || sibling
                                            ? MirLoanFlowState::Suspended
                                            : MirLoanFlowState::Active))
@@ -3785,23 +3812,12 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             continue;
           }
           const auto suspendsParentFor = [&](MirLoanId child) {
-            const auto &parentLoan = body.loans[parent - 1];
-            return (body.loans[child - 1].kind == MirLoanKind::Local ||
-                    fieldMappedLoans.contains(child)) &&
-                           parentLoan.kind == MirLoanKind::Stored &&
-                           !parentLoan.designatedFields.empty()
-                       ? loanPermitsPlace(
-                             body, parentLoan,
-                             canonicalPlace(body, body.loans[child - 1].source,
-                                            bindingLoans, active),
-                             AccessMode::Mutable, bindingLoans, active)
-                       : parentLoan.access == AccessMode::Mutable;
+            return suspendsParentCapability(body.loans[child - 1], parent);
           };
           const bool siblingSuspends = std::any_of(
               children[parent - 1].begin(), children[parent - 1].end(),
               [&](MirLoanId child) {
-                return body.loans[child - 1].parent == parent &&
-                       (loanFlowContains(active[child - 1],
+                return (loanFlowContains(active[child - 1],
                                          MirLoanFlowState::Active) ||
                         loanFlowContains(active[child - 1],
                                          MirLoanFlowState::Suspended)) &&

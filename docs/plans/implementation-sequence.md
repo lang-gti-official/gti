@@ -8477,6 +8477,19 @@ until the closed arm prefix proves its whole-group handoff, including abstract
 entry provenance. Optimized syntax checks pass for this draft; positive
 body-flow, forged/expired-parent and alias-negative tests remain required.
 
+The all-origin body-flow checkpoint now passes its optimized focused build,
+complete-borrow-summary, backend and sum-type tests. Each independent selected
+origin is checked against its own parent's containment and permissions; a
+normal sibling ending first cannot restore a capability still suspended by a
+selected sibling's additional origin. The body-only fixture exercises shared
+selection, multiple possible owners and both retirement orders. Mutations reject
+missing, substituted, insufficient-access and actually retired parent authority.
+A plausible consuming-selection descriptor still fails the separate whole-group
+handoff requirement, and its malformed identities fail the earlier shape check.
+These fixtures deliberately leave the sealed program's field owned: program
+verification rejects the forged reference interpretation. Public nonempty
+admission and real reference-payload runtime acceptance remain separate goals.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
