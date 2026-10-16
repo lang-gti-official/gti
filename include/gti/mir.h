@@ -1414,6 +1414,8 @@ struct MirFunctionInstance {
   ProcessMemoryRuntimeOperation processMemoryOperation =
       ProcessMemoryRuntimeOperation::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  // Resolved source intent supplied by semantics, not inferred from this body.
+  bool explicitReturnBorrowOrigin = false;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
