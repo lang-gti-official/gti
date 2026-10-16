@@ -1324,7 +1324,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v86\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v87\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3517,7 +3517,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v105 ") &&
+  expect(mirDump.starts_with("mir-v106 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -13085,8 +13085,9 @@ int main() {
       cleanupTypes.size() == 1 ? *cleanupTypes.begin() : std::string();
   expect(
       cleanupType != nullptr && !concreteCleanup.empty() &&
-          artifact.contents.find("~" + concreteCleanup + "() noexcept { " +
-                                 cleanupName + "(); }") != std::string::npos &&
+          artifact.contents.find("~" + concreteCleanup + "() noexcept { if (" +
+                                 activeName + ") { " + cleanupName +
+                                 "(); } }") != std::string::npos &&
           artifact.contents.find("bool " + activeName + " = true;") !=
               std::string::npos &&
           artifact.contents.find("if (!" + activeName + ") { return true; }") !=
@@ -13103,8 +13104,8 @@ int main() {
               std::string::npos &&
           hasMirIntrinsicKind(frontend, lang::IntrinsicKind::ObjectDestroy) &&
           artifact.contents.find("mir_prefix_pop_v1") == std::string::npos,
-      "the backend should lower declared cleanup through an active drop state "
-      "and generated safe moves");
+      "the backend should guard native retirement with the same initialized "
+      "active drop state while retaining declared cleanup and safe moves");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-destructor.gti", R"(
@@ -18482,7 +18483,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v105 ") &&
+             mirDump.starts_with("mir-v106 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -20116,6 +20117,18 @@ public:
   CleanupReadPair(Resource& left, Resource& right) : first(left), second(right) {}
   int read() { return this.first.read() + this.second.read(); }
 };
+class DestructorReadPair {
+  CarrierGuard guard{};
+  Resource& first;
+  Resource& second;
+public:
+  DestructorReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  ~DestructorReadPair() {
+    [[discard]] this.first.read();
+    [[discard]] this.second.read();
+  }
+  int read() { return this.first.read() + this.second.read(); }
+};
 class CleanupInspector {
   CarrierGuard guard{};
   Resource& resource;
@@ -20173,6 +20186,11 @@ Resource global_resource{};
   return CleanupReadPair(first, second).read();
 )"),
                                   std::string(R"(
+  Resource first{};
+  Resource second{};
+  return DestructorReadPair(first, second).read();
+)"),
+                                  std::string(R"(
   Resource resource{};
   return conditional_cleanup(resource, true);
 )")}) {
@@ -20187,8 +20205,11 @@ Resource global_resource{};
     expect(frontend.canGenerateCode(),
            "borrowed temporaries support immediate readonly and "
            "mutable method calls, preserving owner reuse between expressions");
+    const bool dependentCleanup =
+        body.find("DestructorReadPair(first, second)") != std::string::npos;
     if (frontend.canGenerateCode() &&
-        body.find("CleanupReadPair(first, second)") != std::string::npos) {
+        (dependentCleanup ||
+         body.find("CleanupReadPair(first, second)") != std::string::npos)) {
       bool checkedCarrier = false;
       bool checkedEarlyEnd = false;
       for (const auto &function : frontend.mir.functionInstances()) {
@@ -20205,11 +20226,12 @@ Resource global_resource{};
                                    ? lang::MirTemporaryCarrierDependency{}
                                    : lang::findMirTemporaryCarrierDependency(
                                          function.body, *place);
-          expect(carrier && carrier.loan->lifecycleBound &&
-                     !shell.lifecycleBound &&
-                     carrier.loan->additionalDependencies.size() == 1,
-                 "cleanup-bearing temporary keeps both owners in its owning "
-                 "Stored loan and a distinct non-owning receiver shell");
+          expect(
+              carrier && carrier.loan->lifecycleBound == dependentCleanup &&
+                  !shell.lifecycleBound &&
+                  carrier.loan->additionalDependencies.size() == 1,
+              "temporary retains both owners, marks only actual borrowed "
+              "cleanup as lifecycle-bound, and separates its receiver shell");
           if (!carrier)
             continue;
           checkedCarrier = true;
@@ -20230,15 +20252,25 @@ Resource global_resource{};
                   return instruction.kind == lang::MirInstructionKind::Drop &&
                          instruction.destination == carrier.drop->place;
                 });
+            if (drop == block.instructions.end())
+              continue;
+            // Fallible destruction ends its retained borrow on the Invoke
+            // continuation, not beside the Drop in the originating block.
+            const auto *endBlock = &block;
+            if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                block.terminator.invokeInstruction == drop->id)
+              endBlock = function.body.findBlock(block.terminator.target);
+            if (!endBlock)
+              continue;
             const auto end = std::find_if(
-                block.instructions.begin(), block.instructions.end(),
+                endBlock->instructions.begin(), endBlock->instructions.end(),
                 [&](const auto &instruction) {
                   return instruction.kind ==
                              lang::MirInstructionKind::EndBorrow &&
                          instruction.loan == carrier.loan->id;
                 });
-            if (drop == block.instructions.end() ||
-                end == block.instructions.end() || drop >= end)
+            if (end == endBlock->instructions.end() ||
+                (endBlock == &block && drop >= end))
               continue;
             auto malformed = frontend.mir;
             auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -20246,11 +20278,13 @@ Resource global_resource{};
             auto &instructions =
                 changed->body.blocks[block.id - 1].instructions;
             const auto dropIndex = drop - block.instructions.begin();
-            const auto endIndex = end - block.instructions.begin();
-            std::rotate(instructions.begin() + dropIndex,
-                        instructions.begin() + endIndex,
-                        instructions.begin() + endIndex + 1);
-            expect(!lang::verifyMirProgram(malformed).valid(),
+            auto &ends = changed->body.blocks[endBlock->id - 1].instructions;
+            const auto endIndex = end - endBlock->instructions.begin();
+            const auto movedEnd = ends[endIndex];
+            ends.erase(ends.begin() + endIndex);
+            instructions.insert(instructions.begin() + dropIndex, movedEnd);
+            const auto rejected = lang::verifyMirProgram(malformed);
+            expect(!rejected.valid(),
                    "cleanup-bearing temporary cannot release its owners "
                    "before the exact full-expression value drop");
             checkedEarlyEnd = true;
@@ -20258,7 +20292,8 @@ Resource global_resource{};
         }
       }
       expect(checkedCarrier && checkedEarlyEnd,
-             "cleanup-bearing temporary exercises marker and early-end proofs");
+             "temporary exercises marker and early-end rejection proofs for "
+             "both generated and fallible destructor cleanup");
     }
   }
 

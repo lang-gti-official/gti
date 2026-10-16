@@ -253,10 +253,12 @@ void testSemanticAndIrModel() {
       gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   expect(
       artifact.contents.find("union Bits {") != std::string::npos &&
-          artifact.contents.find("std::variant<std::monostate") !=
+          artifact.contents.find(
+              "::gti_internal::backend::payload_variant<std::monostate") !=
               std::string::npos &&
           artifact.contents.find(".__gti_value.index()") != std::string::npos &&
-          artifact.contents.find("std::get<2>(") != std::string::npos &&
+          artifact.contents.find("::gti_internal::backend::payload_get<2>(") !=
+              std::string::npos &&
           artifact.contents.find("std::is_union_v<Bits>") != std::string::npos,
       "the C++ backend should use native unions and tagged variant storage");
 }
@@ -828,7 +830,8 @@ int main() {
   expect(enumDefinition != std::string::npos &&
              wrapperDefinition != std::string::npos &&
              enumDefinition < wrapperDefinition &&
-             containmentArtifact.contents.find("std::variant<std::monostate") !=
+             containmentArtifact.contents.find(
+                 "::gti_internal::backend::payload_variant<std::monostate") !=
                  std::string::npos,
          "the C++ type schedule should define an embedded payload enum before "
          "its owning class and retain the private disengaged shell");
@@ -1014,11 +1017,12 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(nestedOwning, "GTI-S2067") &&
-             hasMessage(nestedOwning, "not a concrete class value") &&
-             hasMessage(nestedOwning, "owning class alternatives only"),
-         "nested owning payload enums should remain a diagnosed omission of "
-         "the bounded class-payload slice");
+  expect(nestedOwning.canGenerateCode() &&
+             lang::verifyMirProgram(nestedOwning.mir).valid(),
+         "finite nested owning payload enums use structural cleanup recipes");
+  if (nestedOwning.canGenerateCode())
+    expect(!gti_test::emitCppText(nestedOwning).empty(),
+           "non-generic nested owning payloads reach native representation");
 
   const lang::FrontendResult genericPayload =
       analyze("generic-class-payload-enum.gti", R"(
@@ -1059,7 +1063,9 @@ int main() { return 0; }
           lang::SemanticType::UInt64;
       const auto checked = lang::verifyMirProgram(forged);
       expect(!checked.valid() &&
-                 hasMirMessage(checked, "payload-enum lifecycle table"),
+                 hasMirMessage(checked,
+                               "payload-enum inline layout is recursive or "
+                               "unresolved"),
              "a forged alternative cannot borrow another generic "
              "instantiation's cleanup proof");
     }

@@ -68,6 +68,16 @@ def main():
         executable = root / "consumer"
         run([cli, source, "-o", executable], environment)
         assert "portable installed GTI" in run([executable], environment)
+        # Floating parsing must link from the relocated archive alone, including
+        # the private parser selected by older SDKs or the forced-portable build.
+        numeric = root / "installed-floating-input.gti"
+        fixture = pathlib.Path(__file__).resolve().parent / "fixtures/charconv_float.gti"
+        numeric.write_text(fixture.read_text())
+        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+            parsed = root / ("installed-floating-input-" + standard)
+            run([cli, numeric, "--std", standard, optimization, "-o", parsed],
+                environment, cwd=root)
+            run_program(parsed, "", environment, root)
         # Resolve an installed interface and its republished legacy unit after
         # relocation, without a source-tree stdlib or an environment override.
         assert (relocated / "share/gti/stdlib/modules/string.gti").is_file()

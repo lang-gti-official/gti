@@ -215,7 +215,10 @@ void addIncludeSuggestions(
       requested.insert(diagnostic.missingIncludeName);
     }
   }
-  if (requested.empty() || !result.sourceValid)
+  // Adding an include cannot repair syntax in the frozen source graph. Every
+  // speculative edit below already requires valid syntax, so recovered parser
+  // errors cannot produce a fix and must not trigger a workspace-wide search.
+  if (requested.empty() || !result.sourceValid || !result.syntaxValid)
     return;
   result.includeSuggestionsRequested = true;
 

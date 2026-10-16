@@ -153,7 +153,16 @@ add_executable(gti_runtime_filesystem_tests runtime_filesystem_tests.cpp)
 target_compile_features(gti_runtime_filesystem_tests PRIVATE cxx_std_20)
 target_link_libraries(gti_runtime_filesystem_tests PRIVATE gti_runtime)
 add_test(NAME filesystem_runtime_boundary COMMAND gti_runtime_filesystem_tests)
-add_executable(gti_runtime_charconv_tests runtime_charconv_tests.cpp)
+add_executable(gti_runtime_charconv_tests runtime_charconv_tests.cpp
+               runtime_charconv_parser_tests.cpp)
+if(GTI_HAS_STD_FLOAT_FROM_CHARS)
+  target_compile_definitions(gti_runtime_charconv_tests PRIVATE
+                             GTI_HAS_STD_FLOAT_FROM_CHARS=1)
+endif()
+if(NOT GTI_HAS_STD_FLOAT_FROM_CHARS OR GTI_FORCE_PORTABLE_CHARCONV)
+  target_compile_definitions(gti_runtime_charconv_tests PRIVATE
+                             GTI_TEST_PORTABLE_CHARCONV=1)
+endif()
 target_compile_features(gti_runtime_charconv_tests PRIVATE cxx_std_20)
 target_link_libraries(gti_runtime_charconv_tests PRIVATE gti_runtime)
 add_test(NAME charconv_runtime_boundary COMMAND gti_runtime_charconv_tests)
@@ -2100,6 +2109,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(experimental_optional_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME payload_enum_carrier_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(payload_enum_carrier_runtime PROPERTIES TIMEOUT 900)
+
+  add_test(
+    NAME composed_payload_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/composed_payload_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(composed_payload_runtime PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME payload_enum_propagation_runtime

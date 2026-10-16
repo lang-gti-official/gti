@@ -146,7 +146,7 @@ for <std::move_constructible T> concept std::tryable<optional<T>> {
   using value_type = T;
   using residual_type = nullopt_t;
   bool has_value(optional<T>& value) { return value.has_value(); }
-  T take_value(optional<T> value) { return std::move(value).value(); }
+  [[borrowed_from(value)]] T take_value(optional<T> value) { return std::move(value).value(); }
   nullopt_t take_residual(optional<T> value) { return nullopt_t(); }
 };
 }

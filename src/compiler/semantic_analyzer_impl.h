@@ -161,6 +161,8 @@ public:
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] bool
+  lifecycleBoundBorrowCarrierFor(const SemanticType &type) const override;
   [[nodiscard]] std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override;
 
@@ -1170,6 +1172,9 @@ private:
     std::size_t declarationOrder = 0;
     SemanticLoanId retainedLoan = 0;
     std::vector<SemanticLoanId> storageLoans;
+    // Conditional dependency facts follow value flow. Existing valueState and
+    // loan flow remain the authority for availability and liveness.
+    std::optional<SemanticBorrowDependencySet> completeBorrowSet;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     std::string qualifiedName;
@@ -1430,6 +1435,7 @@ private:
     EnumConstant value;
     std::size_t variantIndex = 0;
     std::vector<SemanticType> payloadTypes;
+    std::vector<SymbolId> payloadSymbols;
     Symbol symbol;
   };
 
@@ -1548,6 +1554,9 @@ private:
       const FunctionDecl *declaration = nullptr;
       SemanticType returnType = SemanticType::Unknown;
       std::vector<SemanticType> parameterTypes;
+      // A declaration-relative result origin. The contract is inert for
+      // concrete owned results and binds checked borrowed results.
+      std::optional<std::size_t> returnBorrowParameter;
     };
     bool protocol = false;
     std::vector<std::string> associatedTypes;
@@ -1880,19 +1889,35 @@ private:
   struct StoredField {
     StoredField(const VariableDecl *field) : declaration(field) {}
     StoredField(const LambdaCapture *field) : capture(field) {}
+    StoredField(const Parameter *field) : payload(field) {}
 
     [[nodiscard]] const Token &name() const {
-      return declaration != nullptr ? declaration->name() : capture->name;
+      return declaration != nullptr ? declaration->name()
+             : capture != nullptr   ? capture->name
+                                    : payload->name;
     }
     bool operator==(const StoredField &) const = default;
 
     const VariableDecl *declaration = nullptr;
     const LambdaCapture *capture = nullptr;
+    // The parameter declaration belongs to one exact enum alternative. Its
+    // stable symbol is also the alternative-qualified dependency identity;
+    // it is not an ordinary class member or an unconditional field.
+    const Parameter *payload = nullptr;
+  };
+
+  struct StoredReferenceCondition {
+    // Path from the carrier to the enum subobject whose alternative guards
+    // this dependency. Nested alternatives form a conjunction, not a flat tag.
+    std::vector<StoredField> subobject;
+    SemanticType enumeration = SemanticType::Unknown;
+    std::size_t variant = 0;
   };
 
   struct StoredReferencePath {
     std::vector<StoredField> fields;
     SemanticType reference = SemanticType::Unknown;
+    std::vector<StoredReferenceCondition> conditions;
   };
 
   struct StoredReferenceBinding {
@@ -1911,10 +1936,29 @@ private:
   [[nodiscard]] std::vector<SymbolId>
   storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
 
-  // Enumerate every independently checked dependency in declaration order.
-  // An empty result means either no reference or an unsupported carrier shape.
+  // A present inventory enumerates every independently checked dependency in
+  // declaration order. Present-empty is dependency-free; absent is unsupported
+  // or unresolved and must never be used to establish empty-set evidence.
+  [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
+  storedReferenceInventory(const SemanticType &type) const;
+
+  enum class StoredReferenceQuery { SymbolicPaths, CompleteInventory };
+  [[nodiscard]] std::optional<std::vector<StoredReferencePath>>
+  collectStoredReferencePaths(const SemanticType &type,
+                              StoredReferenceQuery query) const;
+
+  // Compatibility query for paths that require a nonempty inventory. New
+  // complete-set producers must use storedReferenceInventory instead.
   [[nodiscard]] std::vector<StoredReferencePath>
   storedReferencePaths(const SemanticType &type) const;
+
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBorrowDependencySet(const ExprPtr &expression) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  joinedBorrowDependencySets(
+      const std::optional<SemanticBorrowDependencySet> &left,
+      const std::optional<SemanticBorrowDependencySet> &right) const;
+  void invalidateBorrowDependencySet(const SemanticPlace &place);
 
   // A concrete carrier may wrap its one direct reference in ordinary nominal
   // fields. The complete declaration path is the dependency identity; an
@@ -3141,7 +3185,8 @@ private:
                                   std::string_view context,
                                   bool allowRvalueReference = false,
                                   bool typeMetadata = false,
-                                  bool genericFunctionParameter = false);
+                                  bool genericFunctionParameter = false,
+                                  bool contractedReferenceResult = false);
 
   void validateReferenceReferent(const SemanticType &type, const Token &site);
 
@@ -3670,6 +3715,9 @@ private:
                      const std::vector<std::string> &fromScope) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
+  [[nodiscard]] std::optional<std::size_t>
+  protocolBorrowContractFailure(const RegisteredConformance &conformance,
+                                const std::vector<SemanticType> &binding) const;
   void validateAssociatedTypePath(const TypeRef &type, ConceptId id);
   [[nodiscard]] std::optional<ProtocolOperationTarget>
   protocolOperationTarget(const QualifiedName &callee) const;

@@ -1823,19 +1823,28 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   case SemanticType::Bool:
   case SemanticType::Char:
   case SemanticType::StringView:
+  case SemanticType::CString:
   case SemanticType::NullPtr:
   case SemanticType::RawPointer:
+  case SemanticType::NativeFunction:
     return true;
   case SemanticType::Enum:
-    return type.enumId != owner && type.enumId != 0 &&
-           type.enumId <= enums.size() && !enums[type.enumId - 1].payload;
+    // Exact concrete layout validation, not the primary declaration ID,
+    // distinguishes a finite nested instance from a recursive inline value.
+    return type.enumId != 0 && type.enumId <= enums.size();
+  case SemanticType::Array:
+    return type.arguments.size() == 1 &&
+           payloadTypeAllowed(type.arguments.front(), owner);
+  case SemanticType::Expected:
+    return type.arguments.size() == 2 &&
+           (type.arguments.front() == SemanticType::Void ||
+            payloadTypeAllowed(type.arguments.front(), owner)) &&
+           payloadTypeAllowed(type.arguments.back(), owner);
+  case SemanticType::UniqueOwner:
+    return true;
   case SemanticType::Class:
-    // The cleanup-free class-payload family: an ordinary concrete class
-    // value may live inside an alternative. Active-cleanup and
-    // borrowed-state payloads are rejected at construction, where class
-    // traits are complete; the enum's own traits fold the payload's
-    // copy/move/ownership facts, so a move-only payload makes the enum
-    // value move-only.
+    // Cleanup and ownership fold structurally from the actual payload, not
+    // from its public spelling. Stored borrows are validated separately.
     return type.classId != 0;
   default:
     return false;
@@ -1930,6 +1939,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
       const auto found = info.enumerators.find(enumerator.name.lexeme);
       std::vector<SemanticType> payloadTypes;
       payloadTypes.reserve(enumerator.payload.size());
+      std::vector<SymbolId> payloadSymbols;
+      payloadSymbols.reserve(enumerator.payload.size());
       std::unordered_set<std::string> payloadNames;
       for (const Parameter &parameter : enumerator.payload) {
         validateType(parameter.type);
@@ -1957,33 +1968,37 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
           report(*parameter.pack, "Payload enum fields cannot be variadic.",
                  "GTI-S2067");
         }
-        if (parameter.type.reference || !parameter.type.arrayExtents.empty()) {
-          report(location,
-                 "The first payload-enum family does not store references "
-                 "or fixed arrays.",
+        if (parameter.type.reference) {
+          report(location, "Payload enums do not yet store reference fields.",
                  "GTI-S2067");
         } else if (type != SemanticType::Unknown &&
                    !containsOpenTypeParameter(type) &&
                    !payloadTypeAllowed(type, info.id)) {
           report(location,
                  "Payload field type '" + typeSpelling(type) +
-                     "' is outside the passive payload family.",
+                     "' is outside the supported payload field family.",
                  "GTI-S2067");
         }
-        // Class payloads with active cleanup or borrowed state are rejected
-        // at construction, where class traits are complete; enum payload
-        // resolution runs before member metadata exists.
+        // Borrowed-state payloads are checked again at construction, where
+        // class traits are complete. Owning cleanup is structural.
         payloadTypes.push_back(type);
+        payloadSymbols.push_back(recordToolingSymbol(
+            parameter.name, SymbolKind::Field,
+            qualifiedName(info.namespaceScope, info.name.lexeme) +
+                "::" + enumerator.name.lexeme + "::" + parameter.name.lexeme,
+            type, parameter.mutability == Mutability::Mutable));
       }
       if (found != info.enumerators.end()) {
         found->second.payloadTypes = payloadTypes;
+        found->second.payloadSymbols = payloadSymbols;
       }
       modelEnumerators.push_back(
           {.declaration = &enumerator,
            .value = {.magnitude = variantIndex},
            .explicitValue = enumerator.initializer != nullptr,
            .variantIndex = variantIndex,
-           .payloadTypes = std::move(payloadTypes)});
+           .payloadTypes = std::move(payloadTypes),
+           .payloadSymbols = std::move(payloadSymbols)});
     }
     semanticModel.recordEnumType(
         *info.declaration,
@@ -2015,6 +2030,35 @@ auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
       self(self, argument);
     if (current.kind == SemanticType::Enum) {
       if (const auto info = enumTypeFor(current)) {
+        std::vector<SemanticType> layoutClasses;
+        std::vector<SemanticType> layoutEnums{current};
+        bool exhausted = false;
+        for (const auto &variant : info->enumerators) {
+          for (const auto &payload : variant.payloadTypes) {
+            if (byValueTypeReachesClass(payload, current, layoutClasses,
+                                        layoutEnums, exhausted)) {
+              auto diagnostic =
+                  makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, site,
+                                 "Payload enum '" + typeSpelling(current) +
+                                     "' has a recursive by-value layout.");
+              diagnostic.related.push_back(
+                  {tokenSpan(enums[current.enumId - 1].name),
+                   "The recursively contained enum is declared here."});
+              diagnostic.hints.emplace_back(
+                  "Break the inline cycle with an owning indirection.");
+              diagnostics.push_back(std::move(diagnostic));
+              visiting.pop_back();
+              return;
+            }
+            if (exhausted) {
+              diagnostics.push_back(makeDiagnostic(
+                  DiagnosticId::GenericInstantiationLimit, tokenSpan(site),
+                  {"concrete-layout-depth", "64"}));
+              visiting.pop_back();
+              return;
+            }
+          }
+        }
         for (const auto &variant : info->enumerators) {
           for (std::size_t index = 0; index < variant.payloadTypes.size();
                ++index) {
@@ -4799,8 +4843,10 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
-    if (std::find(visitingEnums.begin(), visitingEnums.end(), type) !=
-        visitingEnums.end()) {
+    if (type == target || nonDecreasingNominalRecurrence(type, visitingEnums))
+      return true;
+    if (visiting.size() + visitingEnums.size() >= 64) {
+      exhausted = true;
       return false;
     }
     visitingEnums.push_back(type);
@@ -4845,6 +4891,10 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     return false;
   }
   visiting.push_back(type);
+  // Keep the enum recurrence walk aware of intervening class declarations:
+  // a closed class can break an incoming generic substitution, making e.g.
+  // Event<B> -> B -> Event<Leaf> a finite layout.
+  visitingEnums.push_back(type);
 
   const ClassInfo &nested = classInfo(type.classId);
   const GenericSubstitution substitution = classSubstitution(type);
@@ -4861,11 +4911,13 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums,
                                 exhausted)) {
       visiting.pop_back();
+      visitingEnums.pop_back();
       return true;
     }
   }
 
   visiting.pop_back();
+  visitingEnums.pop_back();
   return false;
 }
 
@@ -4873,6 +4925,13 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
   for (const ClassInfo &owner :
        registering(classes, registrationFloor.classes)) {
     validateOrdinaryClassLayout(openClassType(owner.id));
+  }
+  // Enum signatures are registered before class fields. Revisit closed sums
+  // once all inline containment edges exist, including unused declarations.
+  for (const EnumInfo &owner : registering(enums, registrationFloor.enums)) {
+    if (owner.payload && owner.genericParameters.empty())
+      validateConcreteEnumPayloads(SemanticType::enumType(owner.id),
+                                   owner.name);
   }
 }
 
@@ -7882,6 +7941,17 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     if (updated.explicitReturnBorrowOrigin) {
       // A declaration contract is authoritative even when invalid (None).
       // Body-based inference must neither overwrite it nor rescue a typo.
+      // Resolve it again after concrete field metadata exists: a by-value
+      // carrier's external dependency cannot be known at initial inventory.
+      // Both a prototype and its separate definition may occur in this index.
+      // Attributes and their parameter names belong to the API declaration,
+      // never the definition's independently named executable bindings.
+      const auto contract = genericReturnBorrowContract(
+          *updated.declaration, updated.returnType, updated.parameterTypes,
+          updated.ownerClass, updated.staticMember);
+      updated.returnBorrowOrigin = contract.origin;
+      updated.returnBorrowParameter = contract.parameter;
+      updated.returnBorrowAccess = contract.access;
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);
