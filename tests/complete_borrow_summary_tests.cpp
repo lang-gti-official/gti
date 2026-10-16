@@ -236,13 +236,16 @@ int main() { auto value = unwrap(Envelope::wrap(Token::item(7))); return 0; }
   }
 
   const auto selectedShape = analyze(token + R"gti(
-int read(mut Token& input) {
+int read(mut Token& input, mut int& other) {
+  auto& otherRef = other;
+  mut int result = 0;
   switch (input) {
-  case Token::item(auto& item): return item;
-  case Token::empty: return 0;
+  case Token::item(auto& item): result = otherRef; result = item; break;
+  case Token::empty: result = otherRef; break;
   }
+  return result + other;
 }
-int main() { mut Token value = Token::item(7); return read(value); }
+int main() { mut Token value = Token::item(7); mut int other = 1; return read(value, other); }
 )gti");
   if (selectedShape.canGenerateCode()) {
     auto shape = selectedShape.mir;
@@ -261,11 +264,10 @@ int main() { mut Token value = Token::item(7); return read(value); }
               const auto field = enumeration->variants[*instruction.enumVariant]
                                      .payloadSymbols[*instruction.payloadIndex];
               instruction.payloadExtractionKind =
-                  lang::PayloadExtractionKind::TransferReference;
+                  lang::PayloadExtractionKind::ReborrowReference;
               loan.referenceSelection = lang::MirReferenceSelection{
                   .value = *instruction.result,
                   .carrier = instruction.operands.front().place,
-                  .transferredFrom = loan.parent,
                   .fields = {field},
                   .conditions = {{.enumeration = type,
                                   .variant = *instruction.enumVariant}},
@@ -274,23 +276,36 @@ int main() { mut Token value = Token::item(7); return read(value); }
               selectedLoan = loan.id;
               producer = instruction.id;
             }
-    // Exact descriptor IDs alone cannot invent a consuming arm's whole-group
-    // handoff. The sealed program also still declares an owned int field;
-    // neither proof layer may grant reference-payload admission from metadata.
-    const auto handoffShape = lang::verifyMirBody(body);
-    expect(selectedLoan != 0 && !handoffShape.valid() &&
-               std::any_of(
-                   handoffShape.errors.begin(), handoffShape.errors.end(),
-                   [](const auto &error) {
-                     return error.message.find("whole-group arm handoff") !=
-                            std::string::npos;
-                   }),
-           "handoff identity also requires a verified whole-group arm handoff");
+    // This deliberately exercises body-local identity shape only. Its sealed
+    // program still declares an owned int field, so the stronger program proof
+    // must reject it; metadata alone never grants reference-payload admission.
+    const auto selectedResult = lang::verifyMirBody(body);
+    if (!selectedResult.valid())
+      for (const auto &error : selectedResult.errors)
+        std::cerr << "selected reborrow: " << error.message << '\n';
+    expect(selectedLoan != 0 && selectedResult.valid(),
+           "selected reborrow has an exact producer and active parent");
     expect(!lang::verifyMirProgram(shape).valid(),
            "body-local handoff identity cannot override the sealed field type");
-    if (selectedLoan != 0)
+    if (selectedLoan != 0) {
+      auto transfer = body;
+      transfer.loans[selectedLoan - 1].referenceSelection->transferredFrom =
+          transfer.loans[selectedLoan - 1].parent;
+      for (auto &block : transfer.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == producer)
+            instruction.payloadExtractionKind =
+                lang::PayloadExtractionKind::TransferReference;
+      const auto transferResult = lang::verifyMirBody(transfer);
+      expect(std::any_of(
+                 transferResult.errors.begin(), transferResult.errors.end(),
+                 [](const auto &error) {
+                   return error.message.find("whole-group arm handoff") !=
+                          std::string::npos;
+                 }),
+             "a plausible transfer identity does not prove its group handoff");
       for (int mutation = 0; mutation != 4; ++mutation) {
-        auto malformed = body;
+        auto malformed = transfer;
         auto &selection = *malformed.loans[selectedLoan - 1].referenceSelection;
         if (mutation == 0)
           selection.transferredFrom = 0;
@@ -304,9 +319,91 @@ int main() { mut Token value = Token::item(7); return read(value); }
               if (instruction.id == producer)
                 instruction.payloadExtractionKind =
                     lang::PayloadExtractionKind::CopyReference;
-        expect(!lang::verifyMirBody(malformed).valid(),
+        const auto malformedResult = lang::verifyMirBody(malformed);
+        expect(std::any_of(malformedResult.errors.begin(),
+                           malformedResult.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find("selection producer") !=
+                                    std::string::npos;
+                           }),
                "handoff identity rejects missing/self/foreign/copy-group IDs");
       }
+      lang::MirLoanId otherLoan = 0;
+      const auto otherBinding =
+          shape.findFunctionInstance(id)->parameterBindings[1];
+      for (const auto &loan : body.loans)
+        if (loan.entry && body.findPlace(loan.source)->binding == otherBinding)
+          otherLoan = loan.id;
+      expect(otherLoan != 0,
+             "independent reference parameter has entry authority");
+      if (otherLoan != 0) {
+        auto alternatives = body;
+        alternatives.loans[selectedLoan - 1].additionalDependencies.push_back(
+            {.source = alternatives.loans[otherLoan - 1].source,
+             .parent = otherLoan,
+             .access = lang::AccessMode::ReadOnly});
+        const auto result = lang::verifyMirBody(alternatives);
+        if (!result.valid())
+          for (const auto &error : result.errors)
+            std::cerr << "selected alternative: " << error.message << '\n';
+        expect(result.valid(), "one selected scalar access checks "
+                               "independently borrowed alternatives");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = alternatives;
+          auto &dependency =
+              malformed.loans[selectedLoan - 1].additionalDependencies.front();
+          if (mutation == 0)
+            malformed.loans[otherLoan - 1].entry = false;
+          if (mutation == 1)
+            dependency.access = lang::AccessMode::Mutable;
+          if (mutation == 2)
+            dependency.parent = malformed.loans[selectedLoan - 1].parent;
+          expect(!lang::verifyMirBody(malformed).valid(),
+                 "selected alternatives reject missing, stronger or "
+                 "substituted parents");
+        }
+        auto expired = alternatives;
+        lang::MirLoanId otherChild = 0;
+        lang::MirInstructionId nextInstruction = 0;
+        for (const auto &loan : expired.loans)
+          if (loan.parent == otherLoan && !loan.referenceSelection)
+            otherChild = loan.id;
+        for (const auto &block : expired.blocks)
+          for (const auto &instruction : block.instructions)
+            nextInstruction = std::max(nextInstruction, instruction.id);
+        expect(otherChild != 0, "fixture retains a normal shared sibling");
+        if (otherChild != 0) {
+          for (auto &block : expired.blocks) {
+            const auto activation = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind == lang::MirInstructionKind::Borrow &&
+                         instruction.loan == selectedLoan;
+                });
+            if (activation == block.instructions.end())
+              continue;
+            lang::MirInstruction endChild;
+            endChild.id = ++nextInstruction;
+            endChild.kind = lang::MirInstructionKind::EndBorrow;
+            endChild.loan = otherChild;
+            lang::MirInstruction endParent = endChild;
+            endParent.id = ++nextInstruction;
+            endParent.loan = otherLoan;
+            block.instructions.insert(activation, {endChild, endParent});
+          }
+          const auto expiredResult = lang::verifyMirBody(expired);
+          expect(std::any_of(expiredResult.errors.begin(),
+                             expiredResult.errors.end(),
+                             [](const auto &error) {
+                               return error.message.find(
+                                          "lacks a live input authority") !=
+                                      std::string::npos;
+                             }),
+                 "selected activation rejects an actually retired additional "
+                 "parent");
+        }
+      }
+    }
   }
 
   const auto single = analyze(token + leaf + "int main() { return 0; }");
