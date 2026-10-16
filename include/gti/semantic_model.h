@@ -2145,6 +2145,10 @@ public:
   findBorrowDependencySet(const Expr &expression) const;
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findBorrowDependencies(const Expr &expression) const;
+  // Constructor inputs for the separately checked closure-loan producer.
+  // These are not a complete value fact, even when the input vector is empty.
+  [[nodiscard]] std::span<const SemanticLoanDependency>
+  findCaptureBorrowDependencies(const Expr &expression) const;
 
   [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
 
@@ -2576,6 +2580,8 @@ private:
   // Explicitly unknown in this analysis, including when a base snapshot had
   // a fact for the same syntax in a different concrete instance.
   void clearBorrowDependencySet(const Expr &expression);
+  void recordCaptureBorrowDependencies(
+      const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 
@@ -2809,6 +2815,8 @@ private:
   std::vector<SemanticLoanInfo> retainedLoans;
   std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
+  std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
+      captureBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;

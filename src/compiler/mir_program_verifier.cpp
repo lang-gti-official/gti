@@ -11383,6 +11383,20 @@ struct CompleteBorrowFlow {
                  instruction.info.type == instruction.operands.front().type))) {
       result = fromOperand(state, instruction.operands.front());
     }
+    if (!result && instruction.result &&
+        instruction.info.category == ValueCategory::Value) {
+      // A concrete value with no reference paths and no conditional
+      // alternatives cannot retain an external checked loan. This is a
+      // positive typed-layout proof, not inference from absent annotations or
+      // unknown storage. Place/reference results are deliberately excluded.
+      const auto inventory =
+          findStoredCarrierReferenceInventory(program, instruction.info.type);
+      const auto alternatives =
+          findStoredCarrierAlternativeInventory(program, instruction.info.type);
+      if (inventory && inventory->empty() && alternatives &&
+          alternatives->empty())
+        result = MirBorrowDependencySet{};
+    }
     // These are fact invalidations only: existing availability, lifecycle and
     // loan analyses remain the authority for movement and borrow endpoints.
     for (const auto &operand : instruction.operands) {
@@ -11573,18 +11587,18 @@ struct CompleteBorrowFlow {
     for (std::size_t parameter = 0; parameter < parameters->size();
          ++parameter) {
       const auto &type = (*types)[parameter];
-      if (type.kind != SemanticType::Enum)
+      if (type.kind == SemanticType::Reference)
         continue;
       const auto inventory = findStoredCarrierReferenceInventory(program, type);
       auto alternatives = findStoredCarrierAlternativeInventory(program, type);
-      if (!inventory || !inventory->empty() || !alternatives ||
-          alternatives->empty())
+      if (!inventory || !inventory->empty() || !alternatives)
         continue;
       MirBorrowDependencySet complete{.possibleAlternatives =
                                           std::move(*alternatives)};
-      // An unknown entry tag admits every typed alternative. The complete
-      // empty inventory comes from the concrete parameter and sealed layout,
-      // never a value annotation or the absence of an attached loan.
+      // An unknown entry tag admits every typed alternative. Nonconditional
+      // values have an explicitly empty alternative inventory. In both cases
+      // the complete empty dependency inventory comes from the exact by-value
+      // formal and sealed layout, never from an annotation or absent loan.
       for (const auto &place : body.places)
         if (place.root == MirPlaceRootKind::Binding &&
             place.binding == (*parameters)[parameter] && place.type == type &&
@@ -12159,11 +12173,18 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
     if (!payload && !value.borrowDependencies)
       continue;
     if (!payload && value.borrowDependencies) {
-      if (!value.borrowDependencies->dependencies.empty() ||
-          value.borrowDependencies->possibleAlternatives.empty())
+      auto resultType = value.info.type;
+      if (producer && producer->operation == MirOperation::PayloadExtract &&
+          producer->payloadExtractionKind &&
+          isStoredReferenceExtraction(*producer->payloadExtractionKind) &&
+          value.info.category == ValueCategory::Place)
+        resultType =
+            SemanticType::referenceTo(value.info.type, value.info.access);
+      if (!completeBorrowSetHasTypedShape(program, resultType,
+                                          *value.borrowDependencies))
         return verificationFailure(body, owner,
-                                   "conditional transport requires an "
-                                   "implemented complete loan-set proof");
+                                   "complete dependency set does not match its "
+                                   "typed result domain");
       const auto *block = body.findBlock(value.definitionBlock);
       const bool parameter =
           value.definition == 0 && block &&

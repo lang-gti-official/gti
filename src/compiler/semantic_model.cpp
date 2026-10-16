@@ -1859,6 +1859,7 @@ void SemanticModel::clear() {
   payloadBindings.clear();
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
+  captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
   constexprBranches.clear();
@@ -2128,6 +2129,11 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
     for (const auto &alternative : complete->possibleAlternatives)
       borrowedDependencies += alternative.conditions.size();
   }
+  for (const auto &[_, captures] : captureBorrowDependencies) {
+    borrowedDependencies += captures.size();
+    for (const auto &dependency : captures)
+      borrowedDependencies += dependency.conditions.size();
+  }
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
@@ -2143,7 +2149,9 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           fullExpressionOrder.size()) *
              96 +
          (retainedLoans.size() + borrowedDependencies) * 256 +
-         expressionBorrowDependencies.size() * 96 +
+         (expressionBorrowDependencies.size() +
+          captureBorrowDependencies.size()) *
+             96 +
          semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
          (resolvedSymbols.size() + definedFailures.size() +
           placeSelections.size() + implicitReturnMoves.size()) *
@@ -2347,8 +2355,23 @@ std::span<const SemanticLoanDependency>
 SemanticModel::findBorrowDependencies(const Expr &expression) const {
   const auto *complete = findBorrowDependencySet(expression);
   return complete == nullptr
-             ? std::span<const SemanticLoanDependency>{}
+             ? findCaptureBorrowDependencies(expression)
              : std::span<const SemanticLoanDependency>{complete->dependencies};
+}
+
+std::span<const SemanticLoanDependency>
+SemanticModel::findCaptureBorrowDependencies(const Expr &expression) const {
+  if (const auto found = captureBorrowDependencies.find(&expression);
+      found != captureBorrowDependencies.end())
+    return found->second;
+  return base == nullptr ? std::span<const SemanticLoanDependency>{}
+                         : base->findCaptureBorrowDependencies(expression);
+}
+
+void SemanticModel::recordCaptureBorrowDependencies(
+    const Expr &expression, std::vector<SemanticLoanDependency> dependencies) {
+  captureBorrowDependencies.insert_or_assign(&expression,
+                                             std::move(dependencies));
 }
 
 void SemanticModel::recordBorrowDependencies(
@@ -2490,6 +2513,7 @@ void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
+  captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
   switchArmLoanEnds.clear();

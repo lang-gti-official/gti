@@ -8644,6 +8644,25 @@ exercise the same rule. Acceptance includes known-empty construction/return,
 conditional joins, moved carriers, selected reference extraction, source
 destructor retention, mutable alias and dangling-return rejection, and malformed
 MIR with omitted/substituted paths, origins, tags, access or call summaries.
+
+The complete-value transport prerequisite now lowers exact HIR dependency sets
+to current-body MIR source places and mapped parents rather than discarding
+nonempty or nonconditional facts. Independent flow reconstructs a known-empty
+fact for a concrete value with an explicitly empty typed dependency/alternative
+inventory, and seeds the same fact for exact available by-value formals. It does
+not infer emptiness from missing layout, an absent loan, or a reference result.
+Closure capture-constructor inputs have separate semantic/HIR metadata: their
+existing checked capture-loan producer remains authoritative, and those inputs
+are not misrepresented as a complete result set. The callback regression checks
+that separation through semantics, HIR and MIR. Optimized focused
+`tryable_propagation`, `complete_borrow_summaries`,
+`reference_payload_semantics`, `borrowing_capture_semantics` and
+`sum_type_pipeline` all pass; logs are
+`/private/tmp/gti-complete-value-entry-{build,tests}16.log`.
+Nonempty enum parameter/constructor facts, complete interprocedural transport
+and final public reference-payload admission still require their independent
+proofs; this prerequisite does not claim that source feature is complete.
+
 An error-only input to a reference-returning operation cannot manufacture an
 origin: if its verified normal-return contract requires an impossible active
 dependency, the implementation must represent that lack of a normal result

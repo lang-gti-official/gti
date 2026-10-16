@@ -9142,7 +9142,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentType = SemanticType::lambdaType(
       id, returnType, parameterTypes, captureTypes, classTypeArguments,
       functionTypeArguments, classValueArguments, functionValueArguments);
-  semanticModel.recordBorrowDependencies(expr, std::move(captureDependencies));
+  semanticModel.recordCaptureBorrowDependencies(expr,
+                                                std::move(captureDependencies));
   semanticModel.record(
       expr,
       LambdaInfo{.id = id,
