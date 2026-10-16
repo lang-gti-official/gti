@@ -967,7 +967,12 @@ and the edit must introduce no new errors. Wrong namespace, access, overload,
 configuration, package, and module guesses therefore fail closed. Existing
 unrelated errors may remain; a candidate that reveals additional errors is
 conservatively withheld until those errors are addressed. No discovery runs
-for a snapshot without unresolved-name requests or for completion-marker analysis.
+for a snapshot without unresolved-name requests, with source-loading or parser
+errors, or for completion-marker analysis. Parser recovery still supplies its
+ordinary diagnostics and semantic queries, but an include edit cannot repair
+syntax in the frozen source graph. Skipping discovery in that case avoids a
+workspace-wide scan whose speculative edits would all be rejected; fixing the
+syntax restores include suggestions on the next snapshot.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the

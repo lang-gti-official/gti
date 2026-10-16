@@ -602,6 +602,38 @@ int main() { return 0; }
   }
 
   const std::string missingSource = "using values = std::vector<int>;\n";
+  const lang::Frontend recoveredFrontend({.analyzeRecoveredProgram = true});
+  const auto recovered = recoveredFrontend.analyze(
+      "recovered-missing-include.gti",
+      missingSource + "enum Broken { item(int value };\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(recovered.sourceValid && !recovered.syntaxValid &&
+             std::any_of(recovered.diagnostics.begin(),
+                         recovered.diagnostics.end(), [](const auto &item) {
+                           return item.phase == lang::DiagnosticPhase::Parsing;
+                         }) &&
+             std::any_of(recovered.diagnostics.begin(),
+                         recovered.diagnostics.end(), [](const auto &item) {
+                           return !item.missingIncludeName.empty();
+                         }),
+         "parser recovery retains both syntax and unresolved-name diagnostics");
+  expect(!recovered.includeSuggestionsRequested &&
+             recovered.includeSuggestionInputs.empty() &&
+             !hasDiagnosticHint(recovered.diagnostics,
+                                "#include <std/vector>"),
+         "unrepairable syntax prevents speculative include discovery");
+  const auto repaired = recoveredFrontend.analyze(
+      "recovered-missing-include.gti",
+      missingSource + "enum Broken { item(int value) };\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const auto *repairedInclude =
+      findDiagnosticByCode(repaired.diagnostics, "GTI-S2089");
+  expect(repaired.syntaxValid && repaired.includeSuggestionsRequested &&
+             !repaired.includeSuggestionInputs.empty() &&
+             repairedInclude != nullptr && repairedInclude->fixes.size() == 1 &&
+             repairedInclude->fixes.front().replacement ==
+                 "#include <std/vector>\n",
+         "repairing syntax restores the compiler-owned missing-include fix");
   const lang::FrontendResult missing = lang::Frontend().analyze(
       "missing-vector-include.gti", missingSource, {standardLibraryPrelude()},
       {}, {standardLibraryRoot()});
