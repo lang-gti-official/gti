@@ -20252,15 +20252,25 @@ Resource global_resource{};
                   return instruction.kind == lang::MirInstructionKind::Drop &&
                          instruction.destination == carrier.drop->place;
                 });
+            if (drop == block.instructions.end())
+              continue;
+            // Fallible destruction ends its retained borrow on the Invoke
+            // continuation, not beside the Drop in the originating block.
+            const auto *endBlock = &block;
+            if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                block.terminator.invokeInstruction == drop->id)
+              endBlock = function.body.findBlock(block.terminator.target);
+            if (!endBlock)
+              continue;
             const auto end = std::find_if(
-                block.instructions.begin(), block.instructions.end(),
+                endBlock->instructions.begin(), endBlock->instructions.end(),
                 [&](const auto &instruction) {
                   return instruction.kind ==
                              lang::MirInstructionKind::EndBorrow &&
                          instruction.loan == carrier.loan->id;
                 });
-            if (drop == block.instructions.end() ||
-                end == block.instructions.end() || drop >= end)
+            if (end == endBlock->instructions.end() ||
+                (endBlock == &block && drop >= end))
               continue;
             auto malformed = frontend.mir;
             auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -20268,20 +20278,22 @@ Resource global_resource{};
             auto &instructions =
                 changed->body.blocks[block.id - 1].instructions;
             const auto dropIndex = drop - block.instructions.begin();
-            const auto endIndex = end - block.instructions.begin();
-            std::rotate(instructions.begin() + dropIndex,
-                        instructions.begin() + endIndex,
-                        instructions.begin() + endIndex + 1);
-            expect(!lang::verifyMirProgram(malformed).valid(),
+            auto &ends = changed->body.blocks[endBlock->id - 1].instructions;
+            const auto endIndex = end - endBlock->instructions.begin();
+            const auto movedEnd = ends[endIndex];
+            ends.erase(ends.begin() + endIndex);
+            instructions.insert(instructions.begin() + dropIndex, movedEnd);
+            const auto rejected = lang::verifyMirProgram(malformed);
+            expect(!rejected.valid(),
                    "cleanup-bearing temporary cannot release its owners "
                    "before the exact full-expression value drop");
             checkedEarlyEnd = true;
           }
         }
       }
-      expect(checkedCarrier && checkedEarlyEnd == dependentCleanup,
-             "temporary exercises marker proofs and retains owners through "
-             "drop exactly when its cleanup depends on them");
+      expect(checkedCarrier && checkedEarlyEnd,
+             "temporary exercises marker and early-end rejection proofs for "
+             "both generated and fallible destructor cleanup");
     }
   }
 
