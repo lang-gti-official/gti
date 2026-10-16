@@ -74,7 +74,41 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
 | RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. The sort slice is delivered in 0.410.1 as bounded iterative introsort; see [RT-9](#rt-9-library-algorithm-and-data-structure-choices). |
 | RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
-| RT-11 payload-enum construction and layout | Measured 2026-10-15 with `std::experimental::optional` against `std::optional` at `-O2`: a 200-million-iteration `int` lookup loop takes 0.27 s against 0.17 s, and an allocating `string` loop 1.63 s against 1.44 s, with identical output and binaries within 1% in size. Both loops inline the same calls, so the difference is representation. An engaged value is built in a value slot and then move-constructed into the field once its empty shell is retired, so the payload moves two or three more times than through the compiler-private optional storage, each move followed by a moved-from destruction. For a trivially copyable payload, the whole-object copies and moves let LLVM fuse the `std::variant` tag and payload into one integer, so tag tests after a dominating `has_value()` are not folded. A tag-only switch over a passive enum also copies its subject first, which a hand-edited probe put at about 7% of the `int` loop. Prerequisite for promoting the experimental optional: construct a fresh alternative directly in its destination field or result storage when MIR proves the destination's empty shell, and switch on the place without a copy, preserving the verified Move/Replace/Drop schedule. A GTI-owned tagged layout is the further option if in-place construction does not close the gap. |
+| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. The earlier 1.6-times scalar / 1.13-times string result is historical, not current. Exact-head macOS measurements at `bcb67338` meet the workload quality gates and show no observed material regression; see the evidence below. Final GCC/Linux comparison remains outstanding, so cross-platform parity and promotion of `std::experimental::optional` are not yet declared complete. |
+
+RT-11 evidence (2026-10-15): `scripts/benchmark_compare.py` compared the source
+and built-in optional workloads with Apple Clang 21, C++23, `-O2`, two warmups
+and two independently ordered 15-pair runs (seeds 1337/7331). The scalar loop
+was lengthened symmetrically to 400 million iterations so each timing exceeds
+the existing 100 ms minimum. Both runs record clean compiler/source identity
+`bcb6733845f78c6eb172d2166b2ab8d44fb40bac`. They ran on a shared, awake host,
+not a quiet machine: all workload quality gates pass, but the string samples
+remain noisy. Median paired source/built-in ratios are 0.8931 for `int`
+(bootstrap 95% interval 0.8668–0.9154) and 0.9810 for `string`
+(0.9438–1.0231). This supports no observed material regression on this host,
+not a precise string speedup or universal parity claim. Executable sizes are
+125208/125192 bytes for scalar and 128792/128760 for string. Separate resource
+builds take 0.81/0.82 s and 1.24/1.22 s, with peak RSS 122.3/112.8 MB and
+147.9/141.8 MB respectively; shared-host build timings are descriptive.
+The nine-mode optional/allocation matrix, including ASan/UBSan, retains zero
+scalar allocations and equal source/built-in string allocation counts/bytes.
+The seven-mode source-destructor matrix preserves all 37 cleanup/failure cases
+per mode, including partial construction and secondary failure.
+
+Earlier clean GCC 14 evidence at `c959926b` showed a real 2.6% string residual
+(30 pairs, ratio 1.0262, interval 1.0209–1.0289). That compiler predates the
+guarded-retirement change and must not be relabeled as current evidence.
+The replacement attempt is retained as Linux run
+`run-aafde360b7b646bba1306256730cf08e`, source snapshot
+`23c45bcfb0879712d41bca9ec9a96abfcb58478988cce91f19aae459e96ec19e` at
+`bcb67338`: its optimized GCC 14 build passed in 546.55 s, but the benchmark
+never started behind an unrelated full suite. The owner's expedited flight
+wrap-up canceled only this queued task run; successful build logs and canceled
+status were fetched before removing its remote source/build trees. A new
+exact-candidate paired run remains required to close Linux performance
+acceptance; successful compiler construction is not runtime timing evidence.
+The expedited release's full-suite waiver does not waive this distinction or
+turn an unfinished measurement into proof.
 
 Closed-world executable lowering from #176 is already integrated; the old
 whole-stdlib code-size observations must be remeasured, not used as current

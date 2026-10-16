@@ -1324,7 +1324,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v86\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v90\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3517,7 +3517,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v105 ") &&
+  expect(mirDump.starts_with("mir-v110 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -13085,8 +13085,9 @@ int main() {
       cleanupTypes.size() == 1 ? *cleanupTypes.begin() : std::string();
   expect(
       cleanupType != nullptr && !concreteCleanup.empty() &&
-          artifact.contents.find("~" + concreteCleanup + "() noexcept { " +
-                                 cleanupName + "(); }") != std::string::npos &&
+          artifact.contents.find("~" + concreteCleanup + "() noexcept { if (" +
+                                 activeName + ") { " + cleanupName +
+                                 "(); } }") != std::string::npos &&
           artifact.contents.find("bool " + activeName + " = true;") !=
               std::string::npos &&
           artifact.contents.find("if (!" + activeName + ") { return true; }") !=
@@ -13103,8 +13104,8 @@ int main() {
               std::string::npos &&
           hasMirIntrinsicKind(frontend, lang::IntrinsicKind::ObjectDestroy) &&
           artifact.contents.find("mir_prefix_pop_v1") == std::string::npos,
-      "the backend should lower declared cleanup through an active drop state "
-      "and generated safe moves");
+      "the backend should guard native retirement with the same initialized "
+      "active drop state while retaining declared cleanup and safe moves");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-destructor.gti", R"(
@@ -18482,7 +18483,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v105 ") &&
+             mirDump.starts_with("mir-v110 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

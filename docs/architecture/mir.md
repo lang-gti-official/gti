@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v105`, `mir-body-v86`).
+instruction, body, and caller-assignment facts (`mir-v110`, `mir-body-v90`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -318,10 +318,20 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v105`/`mir-body-v86`,
-with `lowered-program-v20` declaration metadata. Version 105/body 86 adds
-foreign-storage inventories and place identity; the declaration format also
-retains exact external storage names. Earlier versions record
+The combined deterministic serialization is currently `mir-v110`/`mir-body-v90`,
+with `lowered-program-v20` declaration metadata. The combined schema retains
+complete borrowed-dependency-set proofs alongside foreign-storage inventories
+and place identity. Loan selection records distinguish an evaluated stored
+reference address (exact extraction value and carrier) from the external places
+that may own its referent. Consuming selections also identify the exact old
+dependency group in `transferredFrom`; this is a handoff claim, not a live
+reborrow parent. Body verification requires an existing, distinct group only
+for a transfer-mode producer. Program verification must separately prove the
+closed field-transfer prefix and preserve external ancestry after the old
+carrier retires. The records alone grant no borrowing authority;
+stored-reference payload admission remains closed pending complete selected-owner
+verification. The declaration format also retains exact external storage
+names. Earlier versions record
 checked borrowing capture modes, each concrete environment's invocation
 capability, per-dependency loan parents, and exact stateless GTI function-pointer
 targets. Reference captures retain ordinary checked-reference storage and
@@ -329,6 +339,72 @@ carrier origins; mutable captures make the environment non-copyable and require
 exclusive invocation. Composed carriers retain every dependency and ancestor,
 including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
+
+Function rows retain optional declaration-relative complete result dependency
+contracts. For the initial known-empty enum slice, MIR independently validates
+each declared alternative's exact concrete type, tag and dependency-free
+payload layout, then reconstructs facts at every reachable normal return. The
+actual alternatives must be covered by the declaration contract; additional
+well-typed dependency-free cases are conservative, so optimizer narrowing does
+not change caller lifetime obligations. Unknown return facts and a function
+with no normal return cannot prove this contract. A program-local memoized
+query treats recursive/in-progress callees as unknown; declarations cannot
+justify one another cyclically. Exact direct calls use only independently
+verified target contracts, and failure successors receive no result fact.
+Value-annotation and return-contract checks share the same producer/storage
+dataflow reconstruction. These facts neither establish nor replace ordinary
+loan, access, escape, movement or cleanup proofs.
+
+The shared context-free result-domain utility combines alternative suppliers
+for one exact result field/guard/access as an OR. It preserves every available
+supplier and treats an unresolved supplier as unknown even when another is
+available. Only independently impossible suppliers can eliminate a case; an
+empty required nested domain also eliminates its containing case. Eliminating
+every case is a distinct no-normal-result state, never a complete empty result.
+The utility only handles typed guard/domain relationships. Semantic analysis
+and MIR must independently establish the actual argument origins and supplier
+states; neither shares an origin interpreter or trusts the other's attached
+facts. Nonempty call substitution remains an integration prerequisite.
+
+Program schema 110 also preserves whether a function's resolved
+`borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
+function rows retain that bit alongside the formal/receiver origin; an explicit
+constraint for a reference-bearing result without a resolved origin is invalid.
+A generic constraint can be vacuous for a concrete dependency-free result while
+retaining its explicit source intent. Source-to-IR tests establish
+preservation, while MIR checks the resolved contract against executable return
+facts. MIR does not inspect the AST to rediscover a completely erased source
+annotation. This distinction prepares conditional complete-result contracts to
+retain explicit restrictions without inventing a dependency for an empty
+alternative; nonempty conditional call transport is not yet enabled by this
+metadata increment. Body serialization remains version 90.
+
+Version 105/body 86 additionally distinguishes absent borrow-set evidence
+from a complete producer-attached set, including a proven empty set. An empty
+payload construction names its exact concrete enum alternative; MIR checks
+every active field's dependency-free traits against the sealed type tables.
+Typed nested alternative paths accompany the set, independently of the real
+origin-bearing loans. Dependency-free complete sets also follow exact local
+initialization, copy, explicit/implicit move, value stages and branch joins.
+The existing forward-dataflow solver independently reconstructs that transport
+from constructor instructions and physical carrier storage; it does not use
+an attached claim as its premise. A join preserves every possible alternative;
+an unknown predecessor, moved source or mutable call cannot manufacture empty
+evidence. Existing availability/lifecycle/loan checks remain authoritative.
+The semantic loop visitor conservatively forgets incoming exact-alternative
+facts, rather than treating its single visit as a proof for every iteration;
+a dominating construction inside the loop can establish fresh evidence.
+Conditional nonempty loans, loop-carried conditional dependency contracts and
+declaration-owned result-summary proofs remain implementation goals. This
+infrastructure does not admit reference-bearing enum payloads yet.
+
+Version 107/body 88 preserves typed active-alternative conditions on the primary
+loan dependency as well as each additional dependency. Conditions retain exact
+enum identities and nested subobject paths across semantic, HIR and MIR records;
+they are not qualified as body-local origin places. Until the active-alternative
+proof is implemented, the verifier rejects conditional primary and additional
+loans symmetrically rather than silently treating the first field as
+unconditional.
 
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. Restoration is explicitly unsafe and retains its
@@ -424,7 +500,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v105`/`lowered-program-v20`, preserving
+The combined serialization is `mir-v110`/`lowered-program-v20`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -1217,11 +1293,18 @@ types and serialize the new zero-state `FunctionItem` operation with its exact
 concrete namespace target. Program v53 adds the closed payload-enum lifecycle
 table: exact enum identity, folded traits, enum-wide active cleanup, dense
 variants, ordered field types, and per-field active-cleanup facts.
-`PayloadConstruct` exact-checks that table, transfers every active class
+`PayloadConstruct` exact-checks that table, transfers every active owning
 operand once, and initializes one enum value
 obligation; `PayloadExtract` and switches observe an active enum place without
 copying the enum, or, for a consuming switch, move fields out of its hidden
-subject binding with one final `TransferOut`. Program v52 serializes ordered type and `uint64_t` value arguments on every
+subject binding with one final `TransferOut`. Nested enums, fixed arrays and
+result payloads use structural success/error drop recipes, not class-only transfer
+rules. Program verification rejects recursive inline enum/class/array layouts
+before invoking recursive trait or drop queries; owning indirection is not an
+inline-layout edge. A prepared move identifies its source/generated drop in
+the correct HIR/SSA identity domain and preserves the exact place and slot;
+missing or substituted identities do not authorize publication.
+Program v52 serializes ordered type and `uint64_t` value arguments on every
 concrete function row. HIR-to-MIR lowering and the detached lowered verifier
 exact-compare both vectors, so a nondeducible value-only function or method
 cannot collapse into another instance or delegate identity recovery to native
@@ -3512,8 +3595,8 @@ value, stage site/role/type, unique result slot, activation, and scheduled drop;
 it does not reclassify this carrier as a fresh owning temporary.
 
 An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
-input names an exact fresh class/struct producer and its selected parameter is
-read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
+input names an exact fresh class/struct producer or a passive payload-enum
+construction, and its selected parameter is read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
 place, emits `BorrowRead`, and attaches one `CallArgument` loan to the
 `CallInput`. The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
@@ -3524,6 +3607,20 @@ producer/target, borrowed state, an escaping result, producer/input reordering,
 premature or missing loan ending, and a missing or duplicate drop. The backend
 therefore consumes a complete schedule rather than relying on C++ reference
 lifetime rules.
+
+An ordinary enum observer and the generated `has_value` observation for
+source-defined propagation use the same schedule. Their materialization may be the
+exact typed `PayloadConstruct` producer, checked against the enum's alternative
+table, rather than a class constructor. The complete full-expression lifetime
+obligation remains mandatory, including for passive payloads; the call loan
+still ends on every normal and failure successor. This does not permit an
+observation to return or retain a reference to temporary enum storage.
+Passive enum representation retains the existing SSA value, rather than
+allocating a class lifetime slot. Its view requires an exact unique
+`PayloadConstruct`, typed alternative, materialization, read loan, call stage
+and full-expression obligation. Subsequent passive copy/transfer stages keep
+that same value; owning or reference-bearing alternatives are not admitted by
+this representation rule.
 
 An ordinary-call or constructor argument may use `MoveBorrowedTemporary` only
 for the corresponding HIR input: one exact fresh GTI call result of the same

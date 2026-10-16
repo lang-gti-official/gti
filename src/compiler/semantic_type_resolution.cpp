@@ -1000,8 +1000,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
             break;
           case FreshTemporaryValueFailure::UnsupportedProducer:
             reason = argumentLabel + std::to_string(index + 1) +
-                     " is not produced directly by an ordinary constructor "
-                     "or source-defined GTI function call.";
+                     " is not a supported fresh record producer or passive "
+                     "payload-enum construction.";
             break;
           case FreshTemporaryValueFailure::None:
           case FreshTemporaryValueFailure::NotClassValue:
@@ -3416,6 +3416,12 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                          bool allowNativeFunctionType) -> void {
   const std::size_t diagnosticStart = diagnostics.size();
+  if (type.referenceMutability && !type.reference) {
+    report(*type.referenceMutability,
+           "Mutable type access requires a checked reference; use 'mut T&'.",
+           "GTI-S2030");
+    return;
+  }
   if (type.qualifiedOwner) {
     if (const std::optional<ConceptId> protocol =
             protocolConceptOwner(*type.qualifiedOwner, currentNamespace)) {
@@ -4240,8 +4246,8 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
 
 auto SemanticVisitor::Impl::validateReferencePlacement(
     const TypeRef &type, bool allowTopLevel, std::string_view context,
-    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter)
-    -> void {
+    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter,
+    bool contractedReferenceResult) -> void {
   const SemanticType resolved = typeOf(type);
   if (resolved.kind == SemanticType::FunctionSignature) {
     report(type.name.last(),
@@ -4251,7 +4257,7 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
     return;
   }
   if (resolved.kind == SemanticType::Reference && !type.reference &&
-      !typeMetadata) {
+      !typeMetadata && !contractedReferenceResult) {
     report(type.name.last(),
            "A reference type substituted into a " + std::string(context) +
                " requires an explicit reference declarator; keep the generic "
@@ -4672,6 +4678,28 @@ auto SemanticVisitor::Impl::validateStoredBorrowReturn(
   // particular, a rejected confined callable result must not cascade into
   // an unrelated owner-origin diagnostic for the enclosing return type.
   if (valueType == SemanticType::Unknown) {
+    return;
+  }
+  const auto inventory = storedReferenceInventory(returnType);
+  const bool conditionalResult =
+      inventory &&
+      std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); });
+  if (conditionalResult) {
+    if (valueType != returnType)
+      return;
+    if (rejectEscapingLocalChildLoan(value, "a conditional borrowed return"))
+      return;
+    const auto complete = completeBorrowDependencySet(value);
+    const auto *function =
+        currentLambdaReturn ? nullptr : currentFunctionInfo();
+    if (complete && function &&
+        normalizedCompleteReturnBorrow(*function, *complete))
+      return;
+    report(expressionToken(value),
+           "A borrowed return requires a complete dependency set preserving "
+           "every caller-owned origin, access mode and active alternative.",
+           "GTI-S2045");
     return;
   }
   if (isFallibleBorrowType(returnType)) {

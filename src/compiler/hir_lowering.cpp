@@ -1,6 +1,7 @@
 #include "gti/hir.h"
 
 #include "diagnostic_registry.h"
+#include "gti/generic_instantiation_limits.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -239,8 +240,10 @@ private:
   // These are compilation resource bounds, not a termination proof or a
   // semantic restriction on exact recursive calls. Existing canonical
   // instances never consume another step in the discovery chain.
-  static constexpr std::size_t maximumDiscoveryDepth = 64;
-  static constexpr std::size_t maximumDiscoveredInstances = 16384;
+  static constexpr std::size_t maximumDiscoveryDepth =
+      GenericInstantiationLimits::maximumDepth;
+  static constexpr std::size_t maximumDiscoveredInstances =
+      GenericInstantiationLimits::maximumDistinctInstances;
 
   struct InstanceDiscovery {
     std::size_t depth;
@@ -622,10 +625,12 @@ private:
          .parameterTypes = std::move(parameterTypes),
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
+         .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
          .returnBorrowParameters = declaration.returnBorrowParameters,
          .returnBorrowFields = declaration.returnBorrowFields,
+         .completeReturnBorrow = declaration.completeReturnBorrow,
          .returnBorrowPlace = declaration.returnBorrowPlace,
          .restoresReferenceResult = declaration.restoresReferenceResult,
          .restoredBorrowFields = declaration.restoredBorrowFields,
@@ -935,7 +940,8 @@ private:
       HirEnumerator variant{.source = enumerator.declaration,
                             .value = enumerator.value,
                             .variantIndex = enumerator.variantIndex,
-                            .payloadTypes = enumerator.payloadTypes};
+                            .payloadTypes = enumerator.payloadTypes,
+                            .payloadSymbols = enumerator.payloadSymbols};
       for (const SemanticType &payload : enumerator.payloadTypes) {
         variant.payloadRequiresActiveCleanup.push_back(
             instanceProvider->requiresActiveCleanupFor(payload));
@@ -2059,12 +2065,16 @@ private:
     if (concrete != nullptr) {
       output.program.functions[index].returnBorrowOrigin =
           concrete->returnBorrowOrigin;
+      output.program.functions[index].explicitReturnBorrowOrigin =
+          concrete->explicitReturnBorrowOrigin;
       output.program.functions[index].returnBorrowParameter =
           concrete->returnBorrowParameter;
       output.program.functions[index].returnBorrowParameters =
           concrete->returnBorrowParameters;
       output.program.functions[index].returnBorrowFields =
           concrete->returnBorrowFields;
+      output.program.functions[index].completeReturnBorrow =
+          concrete->completeReturnBorrow;
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
@@ -2685,10 +2695,15 @@ private:
               [&](SymbolId carrier) { return bindings.contains(carrier); }))
         pending.push_back(loan.id);
     }
-    for (const auto &value : body.values)
-      for (const auto &dependency : value.borrowDependencies)
+    for (const auto &value : body.values) {
+      if (value.borrowDependencies)
+        for (const auto &dependency : value.borrowDependencies->dependencies)
+          if (dependency.parent != 0)
+            pending.push_back(dependency.parent);
+      for (const auto &dependency : value.captureBorrowDependencies)
         if (dependency.parent != 0)
           pending.push_back(dependency.parent);
+    }
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -2713,11 +2728,39 @@ private:
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .designatedFields = loan.designatedFields,
+                      .conditions = loan.conditions,
                       .additionalDependencies = loan.additionalDependencies,
                       .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
       for (auto &dependency : lowered.additionalDependencies) {
         dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+      }
+      if (loan.referenceSelection) {
+        const auto &selection = *loan.referenceSelection;
+        HirReferenceSelection resolved{.transferredFrom =
+                                           selection.transferredFrom,
+                                       .fields = selection.fields,
+                                       .conditions = selection.conditions,
+                                       .reference = selection.reference};
+        std::size_t matches = 0;
+        for (const auto &value : body.values) {
+          if (value.source != selection.source ||
+              value.kind != HirValueKind::PayloadExtraction ||
+              value.operands.size() != 1)
+            continue;
+          const auto *carrier = body.findValue(value.operands.front());
+          if (carrier == nullptr || carrier->source != selection.carrier)
+            continue;
+          ++matches;
+          resolved.value = value.id;
+          resolved.carrier = carrier->id;
+        }
+        // Never resolve through the program-wide source index: repeated
+        // generic instances have distinct local values for the same syntax.
+        if (matches != 1 || selection.source == nullptr ||
+            selection.carrier == nullptr)
+          lifecycleValid = false;
+        lowered.referenceSelection = std::move(resolved);
       }
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);
@@ -3254,6 +3297,7 @@ private:
                   .borrowAccess = implicitMove->borrowAccess,
                   .place = ownership.place,
                   .ownership = ownership};
+    move.borrowDependencies = found->borrowDependencies;
     const HirValueId moveId = move.id;
     body.values.push_back(std::move(move));
     output.program.sourceValueIds[expression.get()].push_back(moveId);
@@ -3568,7 +3612,7 @@ private:
                   lowerPayloadBinding(*payload.name, payload.binding, body);
               const HirValueId extraction = nextValueId++;
               const bool borrowed =
-                  payload.binding.type.kind == SemanticType::Reference;
+                  isReferencePayloadBinding(payload.extractionKind);
               const SemanticType extractedType =
                   borrowed ? payload.binding.type.arguments.front()
                            : payload.binding.type;
@@ -3587,7 +3631,8 @@ private:
                    .operands = {*subject},
                    .enumOwner = payloadPattern->owner,
                    .enumVariant = payloadPattern->variantIndex,
-                   .payloadIndex = payload.payloadIndex});
+                   .payloadIndex = payload.payloadIndex,
+                   .payloadExtractionKind = payload.extractionKind});
               output.program.sourceValueIds[payload.source].push_back(
                   extraction);
               loweredArm.payloadBindings.push_back(
@@ -4717,15 +4762,41 @@ private:
       } else if (plan.consumesOperand) {
         kind = HirCallInputKind::ReadTemporaryBorrow;
       }
+      if (!consumes && kind == HirCallInputKind::ReadBorrow) {
+        const auto source = std::find_if(body.values.begin(), body.values.end(),
+                                         [&](const HirValue &candidate) {
+                                           return candidate.id == argument;
+                                         });
+        if (source == body.values.end() || !source->place) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        // The protocol test reads the wrapper's storage before either arm
+        // consumes it. Give this synthetic occurrence the exact checked
+        // place, rather than inheriting the later move's ownership event.
+        source->ownership = OwnershipEvent{.kind = OwnershipEventKind::Read,
+                                           .place = *source->place};
+      }
+      const bool borrowed = call.returnType.kind == SemanticType::Reference &&
+                            call.returnType.arguments.size() == 1;
+      const SemanticType resultType =
+          borrowed ? call.returnType.arguments.front() : call.returnType;
       HirValue value{
           .id = nextValueId++,
           .kind = HirValueKind::Call,
-          .info = {.type = call.returnType,
-                   .category = ValueCategory::Value,
-                   .access = AccessMode::ReadOnly,
-                   .traits = instanceProvider->traitsFor(call.returnType)},
+          .info = {.type = resultType,
+                   .category =
+                       borrowed ? ValueCategory::Place : ValueCategory::Value,
+                   .access =
+                       borrowed ? call.borrowAccess : AccessMode::ReadOnly,
+                   .traits = instanceProvider->traitsFor(resultType)},
           .operands = {argument},
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
+          .borrowOrigin = call.borrowOrigin,
+          .borrowArgument = call.borrowArgument,
+          .borrowAccess = call.borrowAccess,
+          .borrowArguments = call.borrowArguments,
+          .borrowFields = call.borrowFields,
           .dispatch = CallDispatch::Static,
           .callPlan =
               HirCallPlan{.receiver = std::nullopt,
@@ -5962,10 +6033,19 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
-    for (const auto &dependency : model.findBorrowDependencies(*raw)) {
+    if (const auto *complete = model.findBorrowDependencySet(*raw)) {
+      value.borrowDependencies = *complete;
+      value.borrowDependencies->dependencies.clear();
+      for (const auto &dependency : complete->dependencies) {
+        auto lowered = dependency;
+        lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+        value.borrowDependencies->dependencies.push_back(std::move(lowered));
+      }
+    }
+    for (const auto &dependency : model.findCaptureBorrowDependencies(*raw)) {
       auto lowered = dependency;
       lowered.place = qualifyPlace(dependency.place, body.placeDomain);
-      value.borrowDependencies.push_back(std::move(lowered));
+      value.captureBorrowDependencies.push_back(std::move(lowered));
     }
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&

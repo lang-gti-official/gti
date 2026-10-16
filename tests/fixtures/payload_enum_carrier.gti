@@ -1,0 +1,3 @@
+// Causes the production preamble to be emitted for its independent native
+// carrier lifetime test. Source-level enum failure tests run separately.
+int payload_carrier_test_anchor() { return 0; }
