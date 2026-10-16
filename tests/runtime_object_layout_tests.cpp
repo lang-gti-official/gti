@@ -99,7 +99,7 @@ int main() {
   expect(sizes == 9 && alignments == 9,
          "each concrete query retains two typed operations");
   const auto serialized = lang::MirPrinter().print(frontend.mir);
-  expect(serialized.starts_with("mir-v108 ") &&
+  expect(serialized.starts_with("mir-v109 ") &&
              serialized.find("object-layout-type=") != std::string::npos,
          "serialization retains query identity");
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
