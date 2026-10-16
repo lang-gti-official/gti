@@ -359,6 +359,9 @@ struct MirBorrowDependencySet {
 struct MirReferenceSelection {
   MirValueId value = 0;
   MirPlaceId carrier = 0;
+  // Independently matched to the consumed carrier's complete dependency
+  // group. Ending that shell does not end transferred external authority.
+  MirLoanId transferredFrom = 0;
   std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
