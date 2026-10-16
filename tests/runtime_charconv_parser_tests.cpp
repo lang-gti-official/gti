@@ -63,9 +63,12 @@ void check(std::string_view input, uint64_t offset, uint32_t format,
     require(allocations == 0, "floating parsing does not allocate");
     require(std::fegetround() == mode,
             "floating parsing preserves rounding mode");
+    // NaN representation (including sign and payload) varies between host
+    // parsers. The public contract requires NaN classification; all other
+    // values, including signed zero and infinity, must match bit for bit.
     const bool equal =
         std::isnan(expected)
-            ? std::isnan(value) && std::signbit(value) == std::signbit(expected)
+            ? std::isnan(value)
             : std::bit_cast<Bits<T>>(value) == std::bit_cast<Bits<T>>(expected);
     if (error != expectedError || position != expectedPosition || !equal) {
       std::cerr << "parser mismatch: width=" << sizeof(T) * 8
