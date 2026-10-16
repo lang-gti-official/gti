@@ -8502,6 +8502,17 @@ tests pass. This query alone grants no permission to use an expired group;
 incoming activity, independent complete origins, sealed field coverage and the
 transfer of abstract entry provenance remain mandatory before activation opens.
 
+The body verifier now replays that closed prefix as one local capability
+handoff: the exact retirement must observe a definitely active group, every
+successor must belong to that prefix, and each external origin retains its
+access and live earlier parents. A synthetic body with established external
+authority passes; earlier retirement, substituted owner, strengthened access
+and an invented parentless alias fail. The independent program check also
+requires every sealed field to be extracted and exact pre-retirement origins.
+This is prerequisite evidence, not public reference-payload admission: abstract
+formal provenance still needs the independently reconstructed entry fact, and
+real source construction/transport/runtime acceptance remains required.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are

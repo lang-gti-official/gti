@@ -2837,6 +2837,17 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     }
   }
 
+  std::vector<std::optional<mir_detail::MirSelectedReferenceHandoff>> handoffs(
+      body.loans.size());
+  std::unordered_map<MirInstructionId, MirLoanId> retiringHandoffs;
+  for (const auto &loan : body.loans) {
+    if (!loan.referenceSelection ||
+        loan.referenceSelection->transferredFrom == 0)
+      continue;
+    handoffs[loan.id - 1] = mir_detail::selectedReferenceHandoff(body, loan);
+    if (handoffs[loan.id - 1])
+      retiringHandoffs.emplace(handoffs[loan.id - 1]->retirement, loan.id);
+  }
   std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
   MirLoanState entryState(body.loans.size(), MirLoanFlowState::Inactive);
   for (const MirLoan &loan : body.loans) {
@@ -2853,6 +2864,10 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     pending.pop();
     const MirBlock &block = body.blocks[blockId - 1];
     MirLoanState active = *blockEntries[blockId - 1];
+    // A consuming arm is a closed local transition, not permission inherited
+    // from an arbitrary earlier EndBorrow. Record only successors whose exact
+    // group retirement is observed active while replaying this block.
+    std::unordered_set<MirLoanId> handedOffSelections;
     for (const auto &[range, loans] : materializedElementLoans) {
       if (block.id != range->conditionEntryBlock &&
           block.id != range->conditionBlock &&
@@ -3744,6 +3759,17 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                              " is ended before its carrier-shell loan",
                          block.id, instruction.id);
         }
+        if (const auto found = retiringHandoffs.find(instruction.id);
+            found != retiringHandoffs.end()) {
+          const auto &handoff = handoffs[found->second - 1];
+          if (before != MirLoanFlowState::Active || conditional || reserved)
+            return failure(body, owner,
+                           "selected reference handoff requires one definitely "
+                           "active dependency group",
+                           block.id, instruction.id);
+          handedOffSelections.insert(handoff->successors.begin(),
+                                     handoff->successors.end());
+        }
         active[loan - 1] = MirLoanFlowState::Inactive;
         if (record.referenceSelection) {
           // A selected scalar may retain independently borrowed owners just
@@ -3963,12 +3989,38 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           return failure(body, owner,
                          "selected reference lacks an exact local activation",
                          block.id, instruction.id);
+        const bool transferredProducer =
+            *extract->payloadExtractionKind ==
+                PayloadExtractionKind::TransferReference &&
+            selected.producedBy == extract->hirValue;
+        const MirLoan *transferredGroup = nullptr;
         if (*extract->payloadExtractionKind ==
-            PayloadExtractionKind::TransferReference)
-          return failure(body, owner,
-                         "selected reference transfer requires a verified "
-                         "whole-group arm handoff",
-                         block.id, instruction.id);
+                PayloadExtractionKind::TransferReference &&
+            !transferredProducer) {
+          const auto *parent = body.findLoan(selected.parent);
+          if (!parent ||
+              parent->referenceSelection != selected.referenceSelection ||
+              std::any_of(selected.additionalDependencies.begin(),
+                          selected.additionalDependencies.end(),
+                          [&](const auto &dependency) {
+                            return dependency.parent != parent->id;
+                          }))
+            return failure(body, owner,
+                           "selected reference alias lacks its exact live "
+                           "handoff successor parent",
+                           block.id, instruction.id);
+        }
+        if (transferredProducer) {
+          const auto &handoff = handoffs[selected.id - 1];
+          if (!handoff || handoff->block != block.id ||
+              !handedOffSelections.erase(selected.id) ||
+              active[handoff->group - 1] != MirLoanFlowState::Inactive)
+            return failure(body, owner,
+                           "selected reference transfer requires a verified "
+                           "whole-group arm handoff",
+                           block.id, instruction.id);
+          transferredGroup = body.findLoan(handoff->group);
+        }
         std::vector<MirLoanId> suspended;
         const auto checkOrigin =
             [&](MirPlaceId source, MirLoanId declared,
@@ -3976,6 +4028,13 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           const auto parent =
               declared ? declared : dependencyAuthority(body, source);
           auto origin = canonicalPlace(body, source, bindingLoans, active);
+          if (transferredGroup &&
+              !loanPermitsPlace(body, *transferredGroup, origin, access,
+                                bindingLoans, active))
+            return failure(body, owner,
+                           "selected reference handoff substitutes its "
+                           "previous group's external authority",
+                           block.id, instruction.id);
           if (parent) {
             if ((active[parent - 1] != MirLoanFlowState::Active &&
                  active[parent - 1] != MirLoanFlowState::Suspended) ||

@@ -12188,6 +12188,30 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
         !projected->possibleAlternatives.empty())
       return reject("selected reference lacks independently complete external "
                     "origin evidence");
+    const bool transferredProducer =
+        *extract->payloadExtractionKind ==
+            PayloadExtractionKind::TransferReference &&
+        loan.producedBy == extract->hirValue;
+    const auto *transferredGroup =
+        transferredProducer ? body.findLoan(selection.transferredFrom)
+                            : nullptr;
+    if (transferredProducer) {
+      const auto handoff = mir_detail::selectedReferenceHandoff(body, loan);
+      if (!handoff || !transferredGroup || handoff->block != block->id ||
+          handoff->group != transferredGroup->id)
+        return reject("selected reference lacks its exact whole-group handoff");
+      std::size_t extractedFields = 0;
+      for (const auto &instruction : block->instructions) {
+        if (instruction.tombstone)
+          continue;
+        if (instruction.id == handoff->retirement)
+          break;
+        ++extractedFields;
+      }
+      if (extractedFields != variant.payloadTypes.size())
+        return reject(
+            "selected reference handoff omits a sealed payload field");
+    }
     std::vector<MirLoanDependency> claimed{
         {.source = loan.source,
          .parent = loan.parent,
@@ -12212,6 +12236,19 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
             !actual.conditions.empty() || actual.access != loan.access ||
             !sameOrigin(actual.source, expected.source))
           continue;
+        if (transferredGroup) {
+          // The independent incoming fact, not a claim on the successor,
+          // identifies whether this is an abstract caller-owned referent.
+          // Only that exact entry ancestry is transferred into parentless
+          // local authority; concrete earlier parents remain live parents.
+          const auto parent = expected.parent == transferredGroup->id
+                                  ? MirLoanId{0}
+                                  : expected.parent;
+          if ((expected.parent == transferredGroup->id &&
+               !transferredGroup->entry) ||
+              actual.parent != parent)
+            continue;
+        }
         matched[index] = true;
         found = true;
         break;
