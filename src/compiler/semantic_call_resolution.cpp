@@ -7297,12 +7297,17 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // Complete dependency facts are body-derived, not overload properties.
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.
-  if (const auto complete = completeFunctionReturnBorrow(
-          function, resolved.typeArguments, resolved.valueArguments,
-          tokenSpan(expressionToken(call.callee())));
-      complete && complete->dependencies.empty()) {
-    semanticModel.recordBorrowDependencySet(
-        call, {.possibleAlternatives = complete->possibleAlternatives});
+  if (function.returnType.kind == SemanticType::Enum) {
+    const auto complete = completeFunctionReturnBorrow(
+        function, resolved.typeArguments, resolved.valueArguments,
+        tokenSpan(expressionToken(call.callee())));
+    const auto instantiated =
+        complete ? instantiateCompleteCallBorrow(call, resolved, *complete)
+                 : std::nullopt;
+    if (instantiated)
+      semanticModel.recordBorrowDependencySet(call, *instantiated);
+    else
+      semanticModel.clearBorrowDependencySet(call);
   }
   recordSelectedCallOccurrence(call, std::move(resolved));
 }

@@ -8376,10 +8376,16 @@ The MIR scaffold independently normalizes return places through typed
 formal/receiver paths, rather than trusting the semantic mapping. Semantic
 ancestry checking traverses primary, stored and every additional parent edge,
 including shared DAG ancestry; no primary entry may hide a local cleanup-bound
-secondary owner. These newly added nonempty paths are not yet validated or
-enabled. Final call substitution and malformed nonempty mapping tests remain
-open. Stable payload-string performance acceptance currently takes priority
-over enabling this follow-up.
+secondary owner. The internal call-substitution paths now independently select
+actual suppliers in semantics and MIR, distinguish physical reference arguments
+from external fields in by-value carriers, retain all supplying origins, and
+use one context-free OR/domain restriction rule. Unknown suppliers stay unknown;
+removing every possible result case is not a complete empty normal result.
+A further stored-reference crossing requires its own complete referent facts,
+not the lifetime of an intermediate object. Optimized focused regressions cover
+the existing slice and direct domain tables; executable nonempty call admission
+still requires combined constructor/entry/return evidence and malformed mapping,
+loan endpoint and consuming handoff tests. Source admission remains closed.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return

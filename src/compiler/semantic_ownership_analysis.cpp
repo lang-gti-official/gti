@@ -2149,6 +2149,205 @@ auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
   return summary;
 }
 
+auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
+    const Call &call, const ResolvedCallInfo &resolved,
+    const FunctionBorrowDependencySummary &summary)
+    -> std::optional<SemanticBorrowDependencySet> {
+  if (resolved.dispatch != CallDispatch::Static ||
+      resolved.intrinsic != IntrinsicKind::None || resolved.neverReturns)
+    return std::nullopt;
+  using Availability = BorrowSupplierAvailability;
+  std::vector<Availability> availability(summary.dependencies.size(),
+                                         Availability::Unknown);
+  std::vector<std::vector<SemanticLoanDependency>> supplying(
+      summary.dependencies.size());
+  const auto contains = [](const auto &all, const auto &required) {
+    return std::all_of(required.begin(), required.end(), [&](const auto &item) {
+      return std::find(all.begin(), all.end(), item) != all.end();
+    });
+  };
+  for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
+    const auto &mapping = summary.dependencies[index];
+    const ExprPtr *argument = nullptr;
+    SemanticType formal = SemanticType::Unknown;
+    bool physical = false;
+    if (mapping.origin == BorrowOriginKind::Argument &&
+        mapping.parameter < resolved.parameterTypes.size() &&
+        mapping.parameter < resolvedCallArgumentCount(call, &resolved)) {
+      argument = resolvedCallArgument(call, &resolved, mapping.parameter);
+      formal = resolved.parameterTypes[mapping.parameter];
+      if (formal.kind == SemanticType::Reference &&
+          formal.arguments.size() == 1) {
+        physical = true;
+        formal = SemanticType(formal.arguments.front());
+      }
+    } else if (mapping.origin == BorrowOriginKind::Receiver) {
+      if (const auto *member = exprAs<Get>(call.callee().get()))
+        argument = &member->object();
+      formal = resolved.dispatchOwner;
+      physical = resolved.receiverMode != CallReceiverMode::Consuming &&
+                 resolved.receiverMode != CallReceiverMode::None;
+    }
+    if (!argument || !*argument)
+      continue;
+    const auto inventory = storedReferenceInventory(formal);
+    if (!inventory)
+      continue;
+    const auto input = completeBorrowDependencySet(*argument);
+    std::optional<std::vector<SymbolId>> externalPrefix;
+    std::vector<BorrowDependencyCondition> externalConditions;
+    SemanticType externalType = SemanticType::Unknown;
+    bool ambiguous = false;
+    for (const auto &path : *inventory) {
+      const auto fields = storedFieldSymbols(formal, path.fields);
+      if (fields.size() != path.fields.size() || fields.empty()) {
+        ambiguous = true;
+        break;
+      }
+      if (mapping.sourceFields.size() < fields.size() ||
+          !std::equal(fields.begin(), fields.end(),
+                      mapping.sourceFields.begin()))
+        continue;
+      const auto conditions = storedConditionSymbols(formal, path.conditions);
+      if (externalPrefix || !conditions ||
+          path.reference.kind != SemanticType::Reference ||
+          path.reference.arguments.size() != 1) {
+        ambiguous = true;
+        break;
+      }
+      externalPrefix = fields;
+      externalConditions = *conditions;
+      externalType = path.reference.arguments.front();
+    }
+    if (ambiguous || (!physical && !externalPrefix))
+      continue;
+    const auto &inputGuard =
+        externalPrefix ? externalConditions : mapping.sourceConditions;
+    // Only an actual complete alternative domain can disprove a guard. A
+    // scalar reference's empty alternative list says nothing about its
+    // referent's tag, nor does a missing input fact prove an impossible case.
+    if (input && !inputGuard.empty() && !input->possibleAlternatives.empty() &&
+        std::none_of(input->possibleAlternatives.begin(),
+                     input->possibleAlternatives.end(), [&](const auto &path) {
+                       return contains(path.conditions, inputGuard);
+                     })) {
+      availability[index] = Availability::Impossible;
+      continue;
+    }
+    std::vector<SemanticLoanDependency> sources;
+    std::size_t prefix = 0;
+    SemanticType projectedType = formal;
+    if (externalPrefix) {
+      if (!input)
+        continue;
+      prefix = externalPrefix->size();
+      projectedType = externalType;
+      for (const auto &dependency : input->dependencies)
+        if (dependency.designatedFields == *externalPrefix &&
+            dependency.conditions == externalConditions)
+          sources.push_back(dependency);
+    } else {
+      if (!hasStableBorrowStorage(*argument))
+        continue;
+      const auto actualPlace = semanticPlace(*argument);
+      if (const auto selected = selectedReferenceDependencies(actualPlace)) {
+        sources = *selected;
+      } else if (const auto source = retainedLoanSource(*argument);
+                 source && actualPlace.root &&
+                 actualPlace.root->type.kind == SemanticType::Reference) {
+        const auto *loan = semanticModel.findLoan(source->loan);
+        if (!loan || loan->kind != SemanticLoanKind::Reference ||
+            !loan->designatedFields.empty() || !loan->conditions.empty())
+          continue;
+        sources.push_back({.place = loan->place,
+                           .access = loan->access,
+                           .protectsStorage = loan->protectsStorage,
+                           .parent = loan->id});
+        for (auto dependency : loan->additionalDependencies) {
+          dependency.parent = loan->id;
+          sources.push_back(std::move(dependency));
+        }
+      } else {
+        auto place = loanPlace(actualPlace);
+        const auto *info = semanticModel.findExpression(**argument);
+        if (!place.valid() || !info)
+          continue;
+        sources.push_back({.place = std::move(place),
+                           .access = info->access,
+                           .protectsStorage = true});
+      }
+    }
+    if (sources.empty())
+      continue;
+    // An ordinary subfield of a known referent retains that referent's owner.
+    // Crossing another stored reference needs its own complete producer fact;
+    // never pretend the intermediate object owns that second external target.
+    bool ordinarySuffix = true;
+    for (std::size_t field = prefix; field < mapping.sourceFields.size();
+         ++field) {
+      SemanticType next = SemanticType::Unknown;
+      if (const auto enumeration = enumTypeFor(projectedType);
+          enumeration && enumeration->payload) {
+        for (const auto &variant : enumeration->enumerators)
+          for (std::size_t payload = 0; payload < variant.payloadTypes.size();
+               ++payload)
+            if (payload < variant.payloadSymbols.size() &&
+                variant.payloadSymbols[payload] == mapping.sourceFields[field])
+              next = variant.payloadTypes[payload];
+      } else if (const auto *owner = classInfo(projectedType)) {
+        for (const auto &[_, member] : owner->members)
+          if (!member.symbol.staticMember &&
+              member.symbol.bindingKind == SemanticBindingKind::Field &&
+              toolingSymbolFor(member.symbol) == mapping.sourceFields[field])
+            next = substituteSymbol(member.symbol, projectedType).type;
+      }
+      if (next == SemanticType::Unknown ||
+          next.kind == SemanticType::Reference) {
+        ordinarySuffix = false;
+        break;
+      }
+      projectedType = std::move(next);
+    }
+    if (!ordinarySuffix)
+      continue;
+    bool complete = true;
+    for (auto dependency : sources) {
+      if (!dependency.place.valid() ||
+          (mapping.access == AccessMode::Mutable &&
+           dependency.access != AccessMode::Mutable) ||
+          (!externalPrefix && (!dependency.designatedFields.empty() ||
+                               !dependency.conditions.empty()))) {
+        complete = false;
+        break;
+      }
+      for (std::size_t field = prefix; field < mapping.sourceFields.size();
+           ++field)
+        dependency.place.projections.push_back(
+            {.kind = PlaceProjectionKind::Field,
+             .field = mapping.sourceFields[field]});
+      dependency.designatedFields = mapping.resultFields;
+      dependency.conditions = mapping.resultConditions;
+      dependency.access = mapping.access;
+      if (std::find(supplying[index].begin(), supplying[index].end(),
+                    dependency) == supplying[index].end())
+        supplying[index].push_back(std::move(dependency));
+    }
+    if (complete)
+      availability[index] = Availability::Available;
+  }
+  const auto domain = restrictCompleteBorrowResultDomain(summary, availability);
+  if (domain.status != BorrowResultDomainStatus::Known)
+    return std::nullopt;
+  SemanticBorrowDependencySet result{.possibleAlternatives =
+                                         domain.possibleAlternatives};
+  for (const auto index : domain.dependencies)
+    for (const auto &dependency : supplying[index])
+      if (std::find(result.dependencies.begin(), result.dependencies.end(),
+                    dependency) == result.dependencies.end())
+        result.dependencies.push_back(dependency);
+  return result;
+}
+
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
   // Reanalysis must not retain a primary/earlier body's complete fact when
