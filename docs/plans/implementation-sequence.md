@@ -8490,6 +8490,18 @@ These fixtures deliberately leave the sealed program's field owned: program
 verification rejects the forged reference interpretation. Public nonempty
 admission and real reference-payload runtime acceptance remain separate goals.
 
+A shared, non-permitting consuming-prefix query now recognizes the intended
+handoff schedule: a unique guarded switch edge over the exact carrier, every
+payload address cached first, the old Stored group retired, and each successor
+published into its exact binding before user code. Physical cleanup retirement
+is separate: a passive carrier need not have a drop obligation. Ten malformed
+shape fixtures reject reordered, omitted, duplicated and substituted staging,
+group, cached address, binding and tag identities. The optimized combined build
+and complete-borrow-summary, reference-payload semantic, backend and sum-type
+tests pass. This query alone grants no permission to use an expired group;
+incoming activity, independent complete origins, sealed field coverage and the
+transfer of abstract entry provenance remain mandatory before activation opens.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
