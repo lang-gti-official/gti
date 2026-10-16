@@ -10677,6 +10677,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->operands.front().place != selection.carrier ||
           !producer->payloadExtractionKind ||
           !isStoredReferenceExtraction(*producer->payloadExtractionKind) ||
+          ((*producer->payloadExtractionKind ==
+            PayloadExtractionKind::TransferReference) !=
+           (selection.transferredFrom != 0)) ||
+          (selection.transferredFrom != 0 &&
+           (!validLoan(selection.transferredFrom) ||
+            selection.transferredFrom == loan.id)) ||
           selected->info.category != ValueCategory::Place ||
           selected->info.type != selection.reference.arguments.front() ||
           (loan.access == AccessMode::Mutable &&
