@@ -3702,6 +3702,17 @@ private:
                                      .fields = selection.fields,
                                      .conditions = selection.conditions,
                                      .reference = selection.reference};
+      if (selection.transferredFrom != 0) {
+        const auto source = semanticLoans.find(selection.transferredFrom);
+        if (source == semanticLoans.end() || source->second == id ||
+            output.findLoan(source->second) == nullptr ||
+            *producer->payloadExtractionKind !=
+                PayloadExtractionKind::TransferReference) {
+          valid = false;
+          return;
+        }
+        selected.transferredFrom = source->second;
+      }
       if (lowered.referenceSelection &&
           *lowered.referenceSelection != selected) {
         valid = false;
