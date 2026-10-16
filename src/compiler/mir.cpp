@@ -2292,7 +2292,8 @@ additionalLoanAuthorities(const MirBody &body, const MirLoan &loan) {
   std::vector<MirLoanId> result;
   // Entry loans describe caller-proven dependencies; escaping publications
   // transfer them out of this body instead of retaining a local reborrow.
-  if (loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes)
+  if ((loan.kind != MirLoanKind::Stored && !loan.referenceSelection) ||
+      loan.entry || loan.escapes)
     return result;
   for (const auto &dependency : loan.additionalDependencies) {
     const auto authority = dependency.parent != 0
@@ -2987,12 +2988,10 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
       }
       return requireStoredDependency(loan, context, instruction);
     };
-    const auto checkPlace =
-        [&](MirPlaceId placeId, bool write, const char *context,
-            MirInstructionId instruction = 0,
+    const auto checkCanonicalPlace =
+        [&](MirPlaceId placeId, const MirCanonicalPlace &place, bool write,
+            const char *context, MirInstructionId instruction = 0,
             MirLoanId exemptLoan = 0) -> std::optional<MirVerificationResult> {
-      const MirCanonicalPlace place =
-          canonicalPlace(body, placeId, bindingLoans, active);
       const auto opaqueBorrowCarrierAccess = [&](const MirLoan &loan) {
         const MirPlace *accessed = body.findPlace(placeId);
         const bool storedEntryCarrier =
@@ -3262,6 +3261,50 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                            "loan " + std::to_string(loan.id) + " in " + context,
                        block.id, instruction);
       }
+      return std::nullopt;
+    };
+    const auto checkPlace =
+        [&](MirPlaceId placeId, bool write, const char *context,
+            MirInstructionId instruction = 0,
+            MirLoanId exemptLoan = 0) -> std::optional<MirVerificationResult> {
+      const MirCanonicalPlace place =
+          canonicalPlace(body, placeId, bindingLoans, active);
+      const auto *selected = body.findLoan(place.throughLoan);
+      if (!selected || !selected->referenceSelection)
+        return checkCanonicalPlace(placeId, place, write, context, instruction,
+                                   exemptLoan);
+      const auto primary =
+          canonicalPlace(body, selected->source, bindingLoans, active);
+      // A scalar selected reference has one evaluated address and several
+      // possible owners. Projecting that address needs an independently typed
+      // suffix applied to every owner; the root selection alone cannot prove
+      // it. Same-referent aliases retain the exact selection and are supported.
+      if (!sameCanonicalPlace(place, primary))
+        return failure(body, owner,
+                       "selected reference access lacks an exact all-origin "
+                       "projection",
+                       block.id, instruction);
+      const auto checkOrigin =
+          [&](MirPlaceId source,
+              AccessMode permission) -> std::optional<MirVerificationResult> {
+        if (write && permission != AccessMode::Mutable)
+          return failure(body, owner,
+                         "selected reference write exceeds an external "
+                         "origin's access",
+                         block.id, instruction);
+        auto origin = canonicalPlace(body, source, bindingLoans, active);
+        // This is one access through the selected loan, not separate accesses
+        // to its possible alternatives. In particular it must not conflict
+        // with its own other possible origins or bypass its parent state.
+        origin.throughLoan = selected->id;
+        return checkCanonicalPlace(placeId, origin, write, context, instruction,
+                                   exemptLoan);
+      };
+      if (auto invalid = checkOrigin(selected->source, selected->access))
+        return invalid;
+      for (const auto &dependency : selected->additionalDependencies)
+        if (auto invalid = checkOrigin(dependency.source, dependency.access))
+          return invalid;
       return std::nullopt;
     };
     const auto callInputDefinition =
@@ -3659,6 +3702,53 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                          block.id, instruction.id);
         }
         active[loan - 1] = MirLoanFlowState::Inactive;
+        if (record.referenceSelection) {
+          // A selected scalar may retain independently borrowed owners just
+          // as an aggregate can. Restore each suspended capability only after
+          // its last overlapping child ends; the first owner is not special.
+          auto parents = additionalLoanAuthorities(body, record);
+          if (record.parent)
+            parents.push_back(record.parent);
+          const auto suspends = [&](const MirLoan &child, MirLoanId parent) {
+            const auto &authority = body.loans[parent - 1];
+            const auto covers = [&](MirPlaceId source, MirLoanId declared) {
+              const auto originParent =
+                  declared ? declared : dependencyAuthority(body, source);
+              return originParent == parent &&
+                     loanPermitsPlace(
+                         body, authority,
+                         canonicalPlace(body, source, bindingLoans, active),
+                         AccessMode::Mutable, bindingLoans, active);
+            };
+            if (covers(child.source, child.parent))
+              return true;
+            return std::any_of(child.additionalDependencies.begin(),
+                               child.additionalDependencies.end(),
+                               [&](const auto &dependency) {
+                                 return covers(dependency.source,
+                                               dependency.parent);
+                               });
+          };
+          for (const auto parent : parents) {
+            const bool sibling = std::any_of(
+                children[parent - 1].begin(), children[parent - 1].end(),
+                [&](MirLoanId child) {
+                  return active[child - 1] != MirLoanFlowState::Inactive &&
+                         suspends(body.loans[child - 1], parent);
+                });
+            const bool suspended = suspends(record, parent);
+            if (active[parent - 1] != (suspended || sibling
+                                           ? MirLoanFlowState::Suspended
+                                           : MirLoanFlowState::Active))
+              return failure(body, owner,
+                             "selected reference ends with an inconsistent "
+                             "external parent state",
+                             block.id, instruction.id);
+            if (suspended && !sibling)
+              active[parent - 1] = MirLoanFlowState::Active;
+          }
+          continue;
+        }
         const MirLoanId parent = body.loans[loan - 1].parent;
         if (parent != 0) {
           if (before == MirLoanFlowState::Inactive && conditional)
@@ -3842,6 +3932,67 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           active[outer - 1] = MirLoanFlowState::Suspended;
         active[loan - 1] = MirLoanFlowState::Active;
         activatedForCommit = loan;
+        continue;
+      }
+
+      if (instruction.kind == MirInstructionKind::Borrow && instruction.loan &&
+          body.loans[*instruction.loan - 1].referenceSelection) {
+        const auto &selected = body.loans[*instruction.loan - 1];
+        const auto *extract = mir_detail::linearDefinition(
+            body, selected.referenceSelection->value);
+        if (!extract || !extract->payloadExtractionKind || selected.twoPhase ||
+            selected.entry || selected.escapes ||
+            selected.kind != MirLoanKind::Local ||
+            active[selected.id - 1] != MirLoanFlowState::Inactive)
+          return failure(body, owner,
+                         "selected reference lacks an exact local activation",
+                         block.id, instruction.id);
+        if (*extract->payloadExtractionKind ==
+            PayloadExtractionKind::TransferReference)
+          return failure(body, owner,
+                         "selected reference transfer requires a verified "
+                         "whole-group arm handoff",
+                         block.id, instruction.id);
+        std::vector<MirLoanId> suspended;
+        const auto checkOrigin =
+            [&](MirPlaceId source, MirLoanId declared,
+                AccessMode access) -> std::optional<MirVerificationResult> {
+          const auto parent =
+              declared ? declared : dependencyAuthority(body, source);
+          auto origin = canonicalPlace(body, source, bindingLoans, active);
+          if (parent) {
+            if ((active[parent - 1] != MirLoanFlowState::Active &&
+                 active[parent - 1] != MirLoanFlowState::Suspended) ||
+                !loanPermitsPlace(body, body.loans[parent - 1], origin, access,
+                                  bindingLoans, active))
+              return failure(body, owner,
+                             "selected reference lacks an active external "
+                             "parent with the required access",
+                             block.id, instruction.id);
+            if (auto invalid = requireStoredDependency(
+                    parent, "selected reference origin", instruction.id))
+              return invalid;
+            origin.throughLoan = parent;
+            if (loanPermitsPlace(body, body.loans[parent - 1], origin,
+                                 AccessMode::Mutable, bindingLoans, active) &&
+                std::find(suspended.begin(), suspended.end(), parent) ==
+                    suspended.end())
+              suspended.push_back(parent);
+          }
+          return checkCanonicalPlace(
+              source, origin, access == AccessMode::Mutable,
+              "selected reference activation", instruction.id, parent);
+        };
+        if (auto invalid =
+                checkOrigin(selected.source, selected.parent, selected.access))
+          return *invalid;
+        for (const auto &dependency : selected.additionalDependencies)
+          if (auto invalid = checkOrigin(dependency.source, dependency.parent,
+                                         dependency.access))
+            return *invalid;
+        for (const auto parent : suspended)
+          active[parent - 1] = MirLoanFlowState::Suspended;
+        active[selected.id - 1] = MirLoanFlowState::Active;
         continue;
       }
 
