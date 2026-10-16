@@ -11,6 +11,7 @@
 namespace lang {
 struct MirProgramTestAccess {
   static auto &functions(MirProgram &program) { return program.functions; }
+  static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
 };
 } // namespace lang
 
@@ -664,5 +665,117 @@ int main() { auto value = bounded<)gti" +
                           !diagnostic.hints.empty() && diagnostic.fixes.empty();
                  }),
          "resource exhaustion reports the established located diagnostic");
+  // Exercise the independent formal-entry proof before source admission. This
+  // deliberately artificial program must remain rejected by the full verifier;
+  // only its exact guarded entry contract is being established here.
+  const auto entryShape = analyze(R"gti(
+enum EntryShape { empty, both(int first, int second) };
+int inspect(EntryShape input) {
+  switch (input) {
+  case EntryShape::empty: return 0;
+  case EntryShape::both(first, second): return first + second;
+  }
+}
+int main() { return 0; }
+)gti");
+  if (entryShape.canGenerateCode()) {
+    auto shape = entryShape.mir;
+    const auto id = functionId(entryShape, "inspect");
+    auto &function = lang::MirProgramTestAccess::functions(shape)[id - 1];
+    auto &body = function.body;
+    auto &payloads = lang::MirProgramTestAccess::payloads(shape);
+    const auto payload =
+        std::find_if(payloads.begin(), payloads.end(), [&](const auto &item) {
+          return item.type == function.parameterTypes.front();
+        });
+    const auto carrier = std::find_if(
+        body.places.begin(), body.places.end(), [&](const auto &place) {
+          return place.root == lang::MirPlaceRootKind::Binding &&
+                 place.binding == function.parameterBindings.front() &&
+                 place.projections.empty();
+        });
+    expect(payload != payloads.end() && carrier != body.places.end() &&
+               payload->variants.size() == 2 && body.loans.empty(),
+           "guarded entry fixture has an exact unborrowed formal");
+    if (payload != payloads.end() && carrier != body.places.end() &&
+        payload->variants.size() == 2 && body.loans.empty()) {
+      const auto base = *carrier;
+      const auto first = payload->variants[1].payloadSymbols[0];
+      const auto second = payload->variants[1].payloadSymbols[1];
+      const lang::BorrowDependencyCondition guard{.enumeration = payload->type,
+                                                  .variant = 1};
+      for (std::size_t index = 0; index != 2; ++index) {
+        const auto access =
+            index == 0 ? lang::AccessMode::ReadOnly : lang::AccessMode::Mutable;
+        const auto field = index == 0 ? first : second;
+        auto &fieldType = payload->variants[1].payloadTypes[index];
+        fieldType = lang::SemanticType::referenceTo(fieldType, access);
+        auto external = base;
+        external.id = body.places.size() + 1;
+        external.type = fieldType.arguments.front();
+        external.access = access;
+        external.projections = {
+            {.kind = lang::MirProjectionKind::Field, .field = field},
+            {.kind = lang::MirProjectionKind::Dereference}};
+        body.places.push_back(std::move(external));
+      }
+      body.loans.push_back(
+          {.id = 1,
+           .kind = lang::MirLoanKind::Stored,
+           .source = base.id,
+           .additionalDependencies = {{.designatedFields = {second},
+                                       .access = lang::AccessMode::Mutable,
+                                       .conditions = {guard}}},
+           .access = lang::AccessMode::ReadOnly,
+           .carriers = {base.binding},
+           .designatedFields = {first},
+           .conditions = {guard},
+           .entry = true});
+      const auto entryFailure = [](const auto &verified) {
+        return std::any_of(verified.errors.begin(), verified.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find(
+                                        "conditional stored entry lacks") !=
+                                    std::string::npos;
+                           });
+      };
+      const auto verified = lang::verifyMirProgram(shape);
+      expect(!verified.valid() && !entryFailure(verified),
+             "exact guarded entry proof does not waive closed source/producer "
+             "admission");
+      for (int mutation = 0; mutation != 11; ++mutation) {
+        auto malformed = shape;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        auto &loan = changed.body.loans.front();
+        if (mutation == 0)
+          loan.conditions.front().variant = 0;
+        if (mutation == 1)
+          loan.designatedFields = {second};
+        if (mutation == 2)
+          loan.additionalDependencies.clear();
+        if (mutation == 3)
+          loan.access = lang::AccessMode::Mutable;
+        if (mutation == 4)
+          loan.parent = 1;
+        if (mutation == 5)
+          changed.body.places.back().projections.pop_back();
+        if (mutation == 6)
+          changed.parameterTypes.front() = lang::SemanticType::Int32;
+        if (mutation == 7)
+          changed.body.places[base.id - 1].initiallyAvailable = false;
+        if (mutation == 8)
+          changed.body.places[base.id - 1].foreignStorage = true;
+        if (mutation == 9)
+          loan.additionalDependencies.front().conditions.clear();
+        if (mutation == 10)
+          loan.additionalDependencies.front().parent = 1;
+        expect(entryFailure(lang::verifyMirProgram(malformed)),
+               "guarded entry rejects missing/substituted formal, path, "
+               "guard, access, parent or availability " +
+                   std::to_string(mutation));
+      }
+    }
+  }
   return failures ? 1 : 0;
 }
