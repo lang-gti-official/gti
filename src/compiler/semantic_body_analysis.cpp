@@ -2942,9 +2942,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                     "reference parameter name or 'this'.");
         }
       } else if (functionInfo == nullptr ||
-                 functionInfo->returnType.kind != SemanticType::Reference) {
+                 (functionInfo->returnType.kind != SemanticType::Reference &&
+                  !isConditionalBorrowResult(functionInfo->returnType))) {
         reportContract(attribute, "A borrowed_from contract requires a checked "
-                                  "reference return type.");
+                                  "reference or conditional reference-bearing "
+                                  "return type.");
       } else if (!contract.argument) {
         reportContract(attribute, "A borrowed_from contract requires one "
                                   "reference parameter name or 'this'.");
@@ -2952,7 +2954,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         reportContract(
             *contract.argument,
             "The selected borrow origin must name a reference parameter or "
-            "single-dependency carrier with sufficient access, or a "
+            "eligible borrowed carrier with sufficient access, or a "
             "non-static receiver.");
       }
       continue;
