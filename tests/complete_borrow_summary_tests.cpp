@@ -40,6 +40,56 @@ int main() {
         return function.id;
     return lang::HirFunctionInstanceId{0};
   };
+  const auto explicitConstraint = analyze(R"gti(
+[[borrowed_from(value)]] int& selected(int& value, int& other) {
+  return value;
+}
+int& inferred(int& value) { return value; }
+[[borrowed_from(value)]] T& selected_generic<T>(T& value) { return value; }
+[[borrowed_from(value)]] T copied_generic<T>(T value) { return value; }
+int main() {
+  int first = 1;
+  int second = 2;
+  int& chosen = selected(first, second);
+  int& automatic = inferred(first);
+  int& concrete = selected_generic<int>(first);
+  int copied = copied_generic<int>(first);
+  return chosen + automatic + concrete + copied - 4;
+}
+)gti");
+  if (explicitConstraint.canGenerateCode()) {
+    for (const auto &name : {"selected", "inferred", "selected_generic"}) {
+      const auto id = functionId(explicitConstraint, name);
+      const auto *hir = explicitConstraint.hir.findFunctionInstance(id);
+      const auto *mir = explicitConstraint.mir.findFunctionInstance(id);
+      const bool explicitOrigin = std::string(name) != "inferred";
+      expect(hir && mir && hir->explicitReturnBorrowOrigin == explicitOrigin &&
+                 mir->explicitReturnBorrowOrigin == explicitOrigin &&
+                 mir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+                 mir->returnBorrowParameter == 0,
+             "source and concrete lifetime constraints survive HIR and MIR");
+    }
+    auto missingOrigin = explicitConstraint.mir;
+    const auto *copied = explicitConstraint.mir.findFunctionInstance(
+        functionId(explicitConstraint, "copied_generic"));
+    expect(copied && copied->explicitReturnBorrowOrigin &&
+               copied->returnBorrowOrigin == lang::BorrowOriginKind::None,
+           "dependency-free concrete result retains vacuous explicit intent");
+    const auto selectedId = functionId(explicitConstraint, "selected");
+    lang::MirProgramTestAccess::functions(missingOrigin)[selectedId - 1]
+        .returnBorrowOrigin = lang::BorrowOriginKind::None;
+    expect(!lang::verifyMirProgram(missingOrigin).valid(),
+           "explicit constraint cannot lose its resolved origin");
+    auto substitutedOrigin = explicitConstraint.mir;
+    lang::MirProgramTestAccess::functions(substitutedOrigin)[selectedId - 1]
+        .returnBorrowParameter = 1;
+    expect(!lang::verifyMirProgram(substitutedOrigin).valid(),
+           "explicit formal substitution must disagree with actual return");
+    expect(lang::MirPrinter()
+                   .print(explicitConstraint.mir)
+                   .find("explicit-return-borrow=1") != std::string::npos,
+           "deterministic program serialization preserves explicit intent");
+  }
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";
