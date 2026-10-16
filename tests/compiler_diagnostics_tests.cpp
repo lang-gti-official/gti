@@ -609,18 +609,19 @@ int main() { return 0; }
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(recovered.sourceValid && !recovered.syntaxValid &&
              std::any_of(recovered.diagnostics.begin(),
-                         recovered.diagnostics.end(), [](const auto &item) {
+                         recovered.diagnostics.end(),
+                         [](const auto &item) {
                            return item.phase == lang::DiagnosticPhase::Parsing;
                          }) &&
              std::any_of(recovered.diagnostics.begin(),
-                         recovered.diagnostics.end(), [](const auto &item) {
+                         recovered.diagnostics.end(),
+                         [](const auto &item) {
                            return !item.missingIncludeName.empty();
                          }),
          "parser recovery retains both syntax and unresolved-name diagnostics");
   expect(!recovered.includeSuggestionsRequested &&
              recovered.includeSuggestionInputs.empty() &&
-             !hasDiagnosticHint(recovered.diagnostics,
-                                "#include <std/vector>"),
+             !hasDiagnosticHint(recovered.diagnostics, "#include <std/vector>"),
          "unrepairable syntax prevents speculative include discovery");
   const auto repaired = recoveredFrontend.analyze(
       "recovered-missing-include.gti",
