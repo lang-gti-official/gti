@@ -6293,6 +6293,33 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
                  : nullptr;
   }
   semanticModel.recordLoan(std::move(loan));
+  const auto inventory = storedReferenceInventory(type);
+  auto alternatives = storedBorrowAlternativeInventory(type);
+  if (inventory && alternatives &&
+      std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); })) {
+    SemanticBorrowDependencySet complete{.possibleAlternatives =
+                                             std::move(*alternatives)};
+    const auto *entry = semanticModel.findLoan(id);
+    const auto append = [&](SemanticLoanDependency dependency) {
+      // The declaration entry loan designates abstract external referents
+      // through field paths. A complete value fact names each exact external
+      // path explicitly, not the by-value carrier's local physical shell.
+      for (const auto field : dependency.designatedFields)
+        dependency.place.projections.push_back(
+            {.kind = PlaceProjectionKind::Field, .field = field});
+      dependency.parent = id;
+      complete.dependencies.push_back(std::move(dependency));
+    };
+    append({.place = entry->place,
+            .designatedFields = entry->designatedFields,
+            .access = entry->access,
+            .protectsStorage = entry->protectsStorage,
+            .conditions = entry->conditions});
+    for (const auto &dependency : entry->additionalDependencies)
+      append(dependency);
+    carrier.completeBorrowSet = std::move(complete);
+  }
   return id;
 }
 
@@ -6302,9 +6329,18 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   if (carrier == nullptr) {
     return;
   }
-  if (carrier->type.kind == SemanticType::Enum) {
-    const auto inventory = storedReferenceInventory(carrier->type);
-    auto alternatives = storedBorrowAlternativeInventory(carrier->type);
+  const bool referenceCarrier = carrier->type.kind == SemanticType::Reference &&
+                                carrier->type.arguments.size() == 1;
+  const auto &carrierValueType =
+      referenceCarrier ? carrier->type.arguments.front() : carrier->type;
+  const auto conditionalInventory = storedReferenceInventory(carrierValueType);
+  const bool conditionalCarrier =
+      conditionalInventory &&
+      std::any_of(conditionalInventory->begin(), conditionalInventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); });
+  if (!referenceCarrier && carrierValueType.kind == SemanticType::Enum) {
+    auto alternatives = storedBorrowAlternativeInventory(carrierValueType);
+    const auto &inventory = conditionalInventory;
     if (inventory && inventory->empty() && alternatives)
       carrier->completeBorrowSet = SemanticBorrowDependencySet{
           .possibleAlternatives = std::move(*alternatives)};
@@ -6377,8 +6413,6 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
     }
     return;
   }
-  const bool referenceCarrier = carrier->type.kind == SemanticType::Reference &&
-                                carrier->type.arguments.size() == 1;
   const FunctionInfo *function =
       currentLambdaReturn ? nullptr : currentFunctionInfo();
   const std::optional<ReturnBorrowContract> contract =
@@ -6397,8 +6431,9 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   const bool dynamicTextCarrier =
       carrier->type.kind == SemanticType::StringView ||
       carrier->type.kind == SemanticType::CString;
-  const bool storedValueCarrier =
-      isDirectStoredReferenceType(carrier->type) || dynamicTextCarrier;
+  const bool storedValueCarrier = isDirectStoredReferenceType(carrier->type) ||
+                                  dynamicTextCarrier ||
+                                  (!referenceCarrier && conditionalCarrier);
   if (!referenceCarrier && !storedValueCarrier) {
     return;
   }
@@ -6409,6 +6444,7 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   const bool borrowedShell =
       referenceCarrier &&
       (isDirectStoredReferenceType(carrier->type.arguments.front()) ||
+       conditionalCarrier ||
        carrier->type.arguments.front().kind == SemanticType::StringView ||
        carrier->type.arguments.front().kind == SemanticType::CString);
   if (referenceCarrier &&

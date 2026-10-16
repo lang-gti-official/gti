@@ -8436,18 +8436,6 @@ all-origin access checks and producer/entry seeding remain required. Optimized
 C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
 claimed for it.
 
-The MIR bridge now retains the selected extraction's exact SSA value and
-physical carrier place separately from its possible external owner places.
-Lowering requires the unique current-body producer and the structural stored
-reference extraction mode; malformed selections cannot turn an ordinary
-storage borrow into reference transfer. This identity scaffold still does not
-admit reference payloads. The next proof compares its projected complete owner
-set with executable carrier flow at the extraction point, verifies every
-owner's access/liveness, and preserves the cached address after shell retirement.
-Same-referent aliases retain the original selection plus their checked parent.
-Projected aliases additionally require an exact typed runtime projection applied
-to every possible owner; no projection is admitted by choosing the first owner.
-
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
@@ -8464,9 +8452,54 @@ consuming extraction keeps an exact owning shell's fact until its final
 `TransferOut`; ordinary whole-value moves still invalidate facts immediately.
 Tag dominance, unique field consumption and final shell retirement remain
 separate mandatory lifecycle proofs. Reordered, duplicate and missing exact
-retirement mutations accompany this seam. Syntax checks establish only that
-the scaffold compiles; focused semantic/MIR tests and reference-payload runtime
-evidence remain pending for this checkpoint.
+retirement mutations accompany this seam. After integration with the MIR
+selection identity, the optimized compiler rebuild and `sum_type_pipeline`,
+`complete_borrow_summaries`, `tryable_propagation`, `protocol_concepts`, and
+`cleanup_bound_borrow` pass. These are prerequisite/regression checks, not
+reference-payload runtime acceptance; nonempty publication remains closed.
+
+A shared payload-projection proof now selects the sealed variant and field,
+rebases nested field/alternative paths, and retains every possible external
+origin from the independently reconstructed carrier fact. Stored references
+may only narrow access to their resolved extraction result; their external
+referent is never moved. Missing borrowed-subobject alternatives remain
+unknown, whereas an entirely dependency-free child's alternatives may be
+conservatively recovered from its complete typed inventory. Extraction result
+annotations are checked against this projection, not used as its premise.
+The focused nested-enum fixture and forged tag/path/dependency mutations cover
+this prerequisite; reference-bearing publication still requires the selected
+loan, handoff and liveness proofs described below.
+
+Conditional parameter-entry preparation now expands every abstract stored
+reference path into its exact parameter-relative external place and keeps all
+typed alternative guards. The declaration entry loan itself remains the
+existing grouped authority; the complete set does not create a second liveness
+model. Conditional return checking uses the shared declaration-relative
+normalizer only after the ordinary local-child escape check. These paths still
+have no source-admission claim: nonempty MIR entry/constructor/call transport,
+all-parent escape proof, selected publication and their negative gates must be
+connected before that admission opens.
+
+An edit review rejected removing the selected-origin `protectsStorage` check:
+the bit's absence alone does not establish an external owner's lifetime. The
+guard remains in place. Abstract parameter reference fields legitimately do
+not protect their carrier's storage, so the next proof must distinguish those
+checked external dependencies from unproven or foreign storage using the exact
+entry loan, formal identity and typed guarded field path. Positive parameter
+ancestry and missing/substituted parent/path/foreign-storage negatives are
+required before revisiting that predicate; this is not permission to bypass it.
+
+The MIR bridge now retains the selected extraction's exact SSA value and
+physical carrier place separately from its possible external owner places.
+Lowering requires the unique current-body producer and the structural stored
+reference extraction mode; malformed selections cannot turn an ordinary
+storage borrow into reference transfer. This identity scaffold still does not
+admit reference payloads. The next proof compares its projected complete owner
+set with executable carrier flow at the extraction point, verifies every
+owner's access/liveness, and preserves the cached address after shell retirement.
+Same-referent aliases retain the original selection plus their checked parent.
+Projected aliases additionally require an exact typed runtime projection applied
+to every possible owner; no projection is admitted by choosing the first owner.
 
 The first follow-up checkpoint preserves alternative guards on primary as well
 as additional loans and introduces a strict optional MIR reference inventory.
