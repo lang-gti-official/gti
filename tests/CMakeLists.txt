@@ -153,7 +153,16 @@ add_executable(gti_runtime_filesystem_tests runtime_filesystem_tests.cpp)
 target_compile_features(gti_runtime_filesystem_tests PRIVATE cxx_std_20)
 target_link_libraries(gti_runtime_filesystem_tests PRIVATE gti_runtime)
 add_test(NAME filesystem_runtime_boundary COMMAND gti_runtime_filesystem_tests)
-add_executable(gti_runtime_charconv_tests runtime_charconv_tests.cpp)
+add_executable(gti_runtime_charconv_tests runtime_charconv_tests.cpp
+               runtime_charconv_parser_tests.cpp)
+if(GTI_HAS_STD_FLOAT_FROM_CHARS)
+  target_compile_definitions(gti_runtime_charconv_tests PRIVATE
+                             GTI_HAS_STD_FLOAT_FROM_CHARS=1)
+endif()
+if(NOT GTI_HAS_STD_FLOAT_FROM_CHARS OR GTI_FORCE_PORTABLE_CHARCONV)
+  target_compile_definitions(gti_runtime_charconv_tests PRIVATE
+                             GTI_TEST_PORTABLE_CHARCONV=1)
+endif()
 target_compile_features(gti_runtime_charconv_tests PRIVATE cxx_std_20)
 target_link_libraries(gti_runtime_charconv_tests PRIVATE gti_runtime)
 add_test(NAME charconv_runtime_boundary COMMAND gti_runtime_charconv_tests)
