@@ -1,3 +1,4 @@
+#include "../src/compiler/mir_verification_queries.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
@@ -93,6 +94,106 @@ int main() {
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";
+  {
+    // This is a shape-query fixture, not a well-typed admitted program. The
+    // separate program and live-flow proofs cannot be replaced by this query.
+    lang::MirBody body;
+    body.entry = 1;
+    body.blocks.resize(2);
+    body.blocks[0].id = 1;
+    body.blocks[1].id = 2;
+    body.places.resize(3);
+    body.places[0].id = 1;
+    body.places[0].root = lang::MirPlaceRootKind::Binding;
+    body.places[0].binding = 1;
+    body.places[0].type = lang::SemanticType::enumType(1);
+    body.places[1].id = 2;
+    body.places[1].root = lang::MirPlaceRootKind::Value;
+    body.places[1].value = 1;
+    body.places[2].id = 3;
+    body.places[2].root = lang::MirPlaceRootKind::Binding;
+    body.places[2].binding = 2;
+    body.values.push_back({.id = 1, .definitionBlock = 2, .definition = 1});
+    body.loans.resize(2);
+    body.loans[0].id = 1;
+    body.loans[0].kind = lang::MirLoanKind::Stored;
+    body.loans[0].carriers = {1};
+    body.loans[1].id = 2;
+    body.loans[1].producedBy = 1;
+    body.loans[1].carriers = {2};
+    body.loans[1].referenceSelection = lang::MirReferenceSelection{
+        .value = 1, .carrier = 1, .transferredFrom = 1};
+    auto &edge = body.blocks[0].terminator;
+    edge.kind = lang::MirTerminatorKind::Switch;
+    edge.value =
+        lang::MirOperand{.kind = lang::MirOperandKind::BorrowRead, .place = 1};
+    lang::SwitchCaseValue tag;
+    tag.enumOwner = 1;
+    edge.switchTargets.push_back({.value = tag, .target = 2});
+    auto &instructions = body.blocks[1].instructions;
+    instructions.resize(4);
+    auto &extract = instructions[0];
+    extract.id = 1;
+    extract.hirValue = 1;
+    extract.result = 1;
+    extract.operation = lang::MirOperation::PayloadExtract;
+    extract.enumOwner = 1;
+    extract.enumVariant = 0;
+    extract.payloadIndex = 0;
+    extract.payloadExtractionKind =
+        lang::PayloadExtractionKind::TransferReference;
+    extract.operands = {{.kind = lang::MirOperandKind::Move,
+                         .place = 1,
+                         .type = body.places[0].type}};
+    instructions[1].id = 2;
+    instructions[1].kind = lang::MirInstructionKind::EndBorrow;
+    instructions[1].loan = 1;
+    instructions[2].id = 3;
+    instructions[2].kind = lang::MirInstructionKind::Borrow;
+    instructions[2].loan = 2;
+    instructions[2].operands = {
+        {.kind = lang::MirOperandKind::BorrowRead, .place = 2}};
+    instructions[3].id = 4;
+    instructions[3].kind = lang::MirInstructionKind::Initialize;
+    instructions[3].destination = 3;
+    instructions[3].operands = {
+        {.kind = lang::MirOperandKind::Loan, .loan = 2}};
+    const auto proof =
+        lang::mir_detail::selectedReferenceHandoff(body, body.loans[1]);
+    expect(proof && proof->retirement == 2 && proof->endPosition == 4 &&
+               proof->successors == std::vector<lang::MirLoanId>{2},
+           "closed handoff shape caches before retirement and publishes before "
+           "use");
+    for (int mutation = 0; mutation != 10; ++mutation) {
+      auto malformed = body;
+      auto &prefix = malformed.blocks[1].instructions;
+      if (mutation == 0)
+        std::swap(prefix[0], prefix[1]);
+      if (mutation == 1)
+        prefix[1].kind = lang::MirInstructionKind::Call;
+      if (mutation == 2)
+        prefix[1].loan = 2;
+      if (mutation == 3)
+        prefix[2].operands[0].place = 3;
+      if (mutation == 4)
+        prefix.pop_back();
+      if (mutation == 5)
+        prefix[0].payloadIndex = 1;
+      if (mutation == 6)
+        malformed.blocks[0].terminator.switchTargets[0].value->value.magnitude =
+            1;
+      if (mutation == 7)
+        malformed.loans[0].carriers.clear();
+      if (mutation == 8)
+        malformed.places[2].binding = 3;
+      if (mutation == 9)
+        prefix.insert(prefix.begin() + 1, prefix.front());
+      expect(!lang::mir_detail::selectedReferenceHandoff(malformed,
+                                                         malformed.loans[1]),
+             "handoff rejects reordered/missing/substituted/duplicated setup "
+             "identities");
+    }
+  }
   for (const auto &declarations : {leaf + forwarding, forwarding + leaf}) {
     const auto result =
         analyze(token + declarations +
