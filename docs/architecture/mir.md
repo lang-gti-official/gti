@@ -355,6 +355,17 @@ Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.
 
+The shared context-free result-domain utility combines alternative suppliers
+for one exact result field/guard/access as an OR. It preserves every available
+supplier and treats an unresolved supplier as unknown even when another is
+available. Only independently impossible suppliers can eliminate a case; an
+empty required nested domain also eliminates its containing case. Eliminating
+every case is a distinct no-normal-result state, never a complete empty result.
+The utility only handles typed guard/domain relationships. Semantic analysis
+and MIR must independently establish the actual argument origins and supplier
+states; neither shares an origin interpreter or trusts the other's attached
+facts. Nonempty call substitution remains an integration prerequisite.
+
 Program schema 110 also preserves whether a function's resolved
 `borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
 function rows retain that bit alongside the formal/receiver origin; an explicit

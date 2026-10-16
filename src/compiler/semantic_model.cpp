@@ -7,6 +7,104 @@
 #include <utility>
 
 namespace lang {
+RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const BorrowSupplierAvailability> suppliers) {
+  if (suppliers.size() != summary.dependencies.size())
+    return {};
+  const auto contains = [](const auto &all, const auto &required) {
+    return std::all_of(required.begin(), required.end(), [&](const auto &item) {
+      return std::find(all.begin(), all.end(), item) != all.end();
+    });
+  };
+  RestrictedBorrowResultDomain result{.status = BorrowResultDomainStatus::Known,
+                                      .possibleAlternatives =
+                                          summary.possibleAlternatives};
+  const auto possible = [&](const auto &guard) {
+    return guard.empty() ||
+           std::any_of(result.possibleAlternatives.begin(),
+                       result.possibleAlternatives.end(),
+                       [&](const auto &path) {
+                         return contains(path.conditions, guard);
+                       });
+  };
+  const auto prune = [&](const auto &guard) {
+    if (guard.empty()) {
+      result.status = BorrowResultDomainStatus::NoNormalResult;
+      result.possibleAlternatives.clear();
+      return;
+    }
+    std::erase_if(result.possibleAlternatives, [&](const auto &path) {
+      return contains(path.conditions, guard);
+    });
+  };
+  const auto sameResult = [](const BorrowedFieldOrigin &left,
+                             const BorrowedFieldOrigin &right) {
+    return left.resultFields == right.resultFields &&
+           left.resultConditions == right.resultConditions &&
+           left.access == right.access;
+  };
+  for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
+    const auto &dependency = summary.dependencies[index];
+    if (!possible(dependency.resultConditions))
+      continue;
+    bool allImpossible = true;
+    for (std::size_t other = 0; other < summary.dependencies.size(); ++other)
+      if (sameResult(dependency, summary.dependencies[other]) &&
+          suppliers[other] != BorrowSupplierAvailability::Impossible)
+        allImpossible = false;
+    if (allImpossible)
+      prune(dependency.resultConditions);
+  }
+  // Removing the final alternative of a required nested enum makes its
+  // parent case impossible as well. Domain identity is the exact typed
+  // subobject; siblings of another enum type or field cannot satisfy it.
+  // Repeat because pruning a child may empty another ancestor's required
+  // domain.
+  bool changed = true;
+  while (result.status == BorrowResultDomainStatus::Known && changed) {
+    changed = false;
+    for (const auto &dependency : summary.dependencies)
+      for (std::size_t depth = 0; depth < dependency.resultConditions.size();
+           ++depth) {
+        const auto ancestors =
+            std::span(dependency.resultConditions).first(depth);
+        if (!possible(ancestors))
+          continue;
+        const auto &domain = dependency.resultConditions[depth];
+        const bool remains = std::any_of(
+            result.possibleAlternatives.begin(),
+            result.possibleAlternatives.end(), [&](const auto &path) {
+              return contains(path.conditions, ancestors) &&
+                     std::any_of(
+                         path.conditions.begin(), path.conditions.end(),
+                         [&](const auto &condition) {
+                           return condition.subobject == domain.subobject &&
+                                  condition.enumeration == domain.enumeration;
+                         });
+            });
+        if (!remains) {
+          const auto count = result.possibleAlternatives.size();
+          prune(ancestors);
+          changed |= result.possibleAlternatives.size() != count;
+        }
+      }
+  }
+  if (result.status == BorrowResultDomainStatus::NoNormalResult ||
+      (!summary.possibleAlternatives.empty() &&
+       result.possibleAlternatives.empty()))
+    return {.status = BorrowResultDomainStatus::NoNormalResult};
+  for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
+    if (!possible(summary.dependencies[index].resultConditions))
+      continue;
+    if (suppliers[index] == BorrowSupplierAvailability::Unknown)
+      return {};
+    if (suppliers[index] == BorrowSupplierAvailability::Available)
+      result.dependencies.push_back(index);
+  }
+  return result;
+}
+
 SemanticType substituteSemanticType(const SemanticType &type,
                                     const GenericSubstitution &substitution,
                                     const SemanticModel *model) {
