@@ -2008,6 +2008,11 @@ private:
   payloadBorrowDependencySet(const Call &call,
                              const EnumeratorRecord &enumerator);
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  selectedPayloadReferenceDependencies(
+      const ResolvedPayloadPatternInfo &pattern,
+      const PayloadBindingInfo &binding,
+      const SemanticBorrowDependencySet &source);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   joinedBorrowDependencySets(
       const std::optional<SemanticBorrowDependencySet> &left,
       const std::optional<SemanticBorrowDependencySet> &right) const;
@@ -2168,6 +2173,10 @@ private:
   // those origins at access evaluation; never choose its first dependency.
   [[nodiscard]] std::optional<std::vector<SemanticLoanDependency>>
   selectedReferenceDependencies(const SemanticPlace &place) const;
+  // Prove an external referent through exact checked entry paths and parent
+  // edges; a non-storage-protecting dependency is not itself lifetime proof.
+  [[nodiscard]] bool
+  hasCheckedExternalBorrowOrigin(const SemanticLoanDependency &dependency);
 
   [[nodiscard]] std::vector<SemanticLoanPlace>
   loanPlaces(const SemanticPlace &place);

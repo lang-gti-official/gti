@@ -5374,7 +5374,27 @@ private:
   }
 
   [[nodiscard]] std::optional<SemanticType>
-  borrowedFieldType(const SemanticType &type, SymbolId field) const {
+  borrowedFieldType(const SemanticType &type, SymbolId field,
+                    std::optional<std::size_t> variant = std::nullopt) const {
+    if (type.kind == SemanticType::Enum) {
+      // An abstract entry path describes a possible active alternative, not
+      // permission to search every alternative for a convenient field.
+      if (!variant)
+        return std::nullopt;
+      for (const auto &owner : program.enumDeclarations())
+        if (owner.type == type && owner.payload)
+          for (const auto &alternative : owner.enumerators)
+            if (alternative.variantIndex == *variant &&
+                alternative.payloadTypes.size() ==
+                    alternative.payloadSymbols.size())
+              for (std::size_t index = 0;
+                   index < alternative.payloadSymbols.size(); ++index)
+                if (alternative.payloadSymbols[index] == field)
+                  return alternative.payloadTypes[index];
+      return std::nullopt;
+    }
+    if (variant)
+      return std::nullopt;
     if (type.kind == SemanticType::Lambda) {
       for (const auto &owner : program.lambdaInstances())
         if (owner.type == type)
@@ -5391,8 +5411,9 @@ private:
     return std::nullopt;
   }
 
-  [[nodiscard]] MirPlaceId
-  projectBorrowFields(MirPlaceId base, const std::vector<SymbolId> &fields) {
+  [[nodiscard]] MirPlaceId projectBorrowFields(
+      MirPlaceId base, const std::vector<SymbolId> &fields,
+      std::span<const BorrowDependencyCondition> conditions = {}) {
     const auto *origin = output.findPlace(base);
     if (origin == nullptr)
       return 0;
@@ -5429,8 +5450,19 @@ private:
       }
     };
     dereference();
+    std::vector<SymbolId> prefix;
+    std::size_t usedConditions = 0;
     for (const auto field : fields) {
-      const auto member = borrowedFieldType(projected.type, field);
+      std::optional<std::size_t> variant;
+      for (const auto &condition : conditions)
+        if (condition.subobject == prefix) {
+          if (variant || condition.enumeration != projected.type ||
+              projected.type.kind != SemanticType::Enum)
+            return 0;
+          variant = condition.variant;
+          ++usedConditions;
+        }
+      const auto member = borrowedFieldType(projected.type, field, variant);
       if (!member)
         return 0;
       projected.projections.push_back(
@@ -5439,12 +5471,15 @@ private:
         projected.key->projections.push_back(
             {.kind = PlaceProjectionKind::Field, .field = field});
       projected.type = *member;
+      prefix.push_back(field);
       dereference();
       // Keep the typed prefix as well as the final referent. Independent
       // field-origin verification composes the carrier's stored reference
       // with the remainder of an accessor path without reconstructing types.
       (void)intern();
     }
+    if (usedConditions != conditions.size())
+      return 0;
     return intern();
   }
 
@@ -5739,7 +5774,8 @@ private:
           // must preserve each opaque entry identity independently.
           return loan->source;
         if (loan->entry && loan->kind == MirLoanKind::Stored)
-          return projectBorrowFields(loan->source, mapping.sourceFields);
+          return projectBorrowFields(loan->source, mapping.sourceFields,
+                                     mapping.sourceConditions);
         // A sole-path carrier may still use the compact single-origin loan
         // representation. Its selected field already denotes that source;
         // projecting the field onto the external owner would change meaning.
@@ -5777,7 +5813,8 @@ private:
       }
       if (sourceValue)
         return projectBorrowFields(placeForValue(*sourceValue),
-                                   mapping.sourceFields);
+                                   mapping.sourceFields,
+                                   mapping.sourceConditions);
     }
     // A returned reference protects the addressable carrier shell. A
     // by-value carrier instead forwards its external stored referents.
@@ -7199,10 +7236,12 @@ private:
             // those typed places so verification can replay each referent.
             const auto contract = *entry;
             (void)projectBorrowFields(contract.source,
-                                      contract.designatedFields);
+                                      contract.designatedFields,
+                                      contract.conditions);
             for (const auto &dependency : contract.additionalDependencies)
               (void)projectBorrowFields(contract.source,
-                                        dependency.designatedFields);
+                                        dependency.designatedFields,
+                                        dependency.conditions);
           }
           call.scopedThreadTasks.push_back(
               {.adapter = value.scopedThreadTasks[index], .dependency = loan});

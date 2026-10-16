@@ -8509,6 +8509,31 @@ have no source-admission claim: nonempty MIR entry/constructor/call transport,
 all-parent escape proof, selected publication and their negative gates must be
 connected before that admission opens.
 
+Semantic entry/selection producers now retain direct shared reference copies
+and exclusive reborrows from exact enum-parameter paths while the public
+admission diagnostics remain in place. An iterative ancestry query matches the
+current body's formal/receiver, strict reference inventory, alternative guards,
+access and active parent; `protectsStorage == false` alone is never authority.
+Same-referent aliases retain the original address selection plus their checked
+parent. External permission conflicts are separate from protection of the enum
+shell's bytes, so a live child suspends exclusive parent use without making two
+independent reference fields alias each other. Guard-qualified HIR-to-MIR field
+projection now requires the exact enum subobject and alternative and explicitly
+dereferences a stored reference while keeping its semantic overlap key
+transparent. That representation path still needs actual nonempty MIR producer
+coverage before admission.
+
+The optimized `reference_payload_semantics` test observes these source-rejected
+programs' semantic records without bypassing the gate: shared/exclusive entry
+selection, same-referent narrowing, independent fields, and mutation rejected
+while a child is live. Its positives require only the documented admission
+diagnostics, not arbitrary failing analysis. The optimized sum-type and tryable
+regressions also pass. Evidence is retained in
+`/private/tmp/gti-reference-entry-{build6,test6,sum6,tryable6}.log`.
+Consuming selection, projected aliases, nonempty constructor/entry MIR facts,
+and missing/substituted/expired ancestry mutations remain required; this is not
+runtime or completed reference-payload evidence.
+
 An edit review rejected removing the selected-origin `protectsStorage` check:
 the bit's absence alone does not establish an external owner's lifetime. The
 guard remains in place. Abstract parameter reference fields legitimately do
