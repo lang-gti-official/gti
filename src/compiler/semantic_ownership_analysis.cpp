@@ -2382,10 +2382,15 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     if (!info || info->type != cleared.returnType || !complete)
       return;
     const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete);
-    // Nonempty declaration transport remains gated on its independently
-    // verified MIR call/return mapping; normalization alone is not admission.
-    if (!normalized || !normalized->dependencies.empty())
+    // This source contract is still checked independently against executable
+    // MIR return/call facts. Collecting it does not bypass payload admission,
+    // ordinary escape checking, or the conditional loan proofs.
+    if (!normalized)
       return;
+    for (const auto &dependency : normalized->dependencies)
+      if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
+                    dependency) == summary.dependencies.end())
+        summary.dependencies.push_back(dependency);
     for (const auto &alternative : normalized->possibleAlternatives) {
       if (std::find(summary.possibleAlternatives.begin(),
                     summary.possibleAlternatives.end(),
@@ -3175,18 +3180,33 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   function.returnBorrowPlace = summary.place;
 }
 
+auto SemanticVisitor::Impl::isConditionalBorrowResult(
+    const SemanticType &type) const -> bool {
+  const auto inventory = storedReferenceInventory(type);
+  return inventory &&
+         std::any_of(inventory->begin(), inventory->end(),
+                     [](const auto &path) { return !path.conditions.empty(); });
+}
+
 auto SemanticVisitor::Impl::genericReturnBorrowContract(
     const FunctionDecl &syntax, const SemanticType &returnType,
     std::span<const SemanticType> parameterTypes, ClassId ownerClass,
     bool staticMember) const -> GenericReturnBorrowContract {
   GenericReturnBorrowContract contract;
   const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
-  if (attribute == nullptr || !attribute->argument ||
-      returnType.kind != SemanticType::Reference ||
-      returnType.arguments.size() != 1) {
+  if (attribute == nullptr || !attribute->argument)
+    return contract;
+  const bool reference = returnType.kind == SemanticType::Reference &&
+                         returnType.arguments.size() == 1;
+  const bool conditional = !reference && isConditionalBorrowResult(returnType);
+  if (!reference && !conditional) {
     return contract;
   }
-  contract.access = returnType.referenceAccess;
+  // Conditional results retain access per guarded reference path in their
+  // complete contract. This scalar compatibility field is not a proof of
+  // their individual permissions; normalization checks each actual mapping.
+  contract.access =
+      reference ? returnType.referenceAccess : AccessMode::ReadOnly;
   if (attribute->argument->kind == TokenKind::THIS) {
     if (ownerClass != 0 && !staticMember)
       contract.origin = BorrowOriginKind::Receiver;
@@ -3213,8 +3233,13 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         // A by-value carrier transfers its external dependency, never the
         // lifetime of its own parameter storage. The executable return proof
         // still requires the exact designated external referent.
-        const bool eligible = (type.kind == SemanticType::Reference ||
-                               storedReferencePath(type).has_value()) &&
+        const auto inventory =
+            conditional ? storedReferenceInventory(type) : std::nullopt;
+        const bool eligible =
+            conditional ? (type.kind == SemanticType::Reference ||
+                           (inventory && !inventory->empty()))
+                        : (type.kind == SemanticType::Reference ||
+                           storedReferencePath(type).has_value()) &&
                               (contract.access == AccessMode::ReadOnly ||
                                borrowAccess(type) == AccessMode::Mutable);
         if (!eligible)

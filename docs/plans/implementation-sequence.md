@@ -8386,6 +8386,17 @@ not the lifetime of an intermediate object. Optimized focused regressions cover
 the existing slice and direct domain tables; executable nonempty call admission
 still requires combined constructor/entry/return evidence and malformed mapping,
 loan endpoint and consuming handoff tests. Source admission remains closed.
+The semantic collection scaffold now unions normalized nonempty return
+mappings, and a structural conditional result may resolve an explicit
+`borrowed_from` constraint to an eligible parameter or receiver. Every actual
+nonempty result must obey that constraint; an empty alternative needs no
+invented dependency. Ordinary nonborrowed scalar results still reject this
+annotation (apart from the existing vacuous generic-instance rule). Staging
+tests check exact direct producer facts and explicit-origin resolution, plus
+typo and alternate-supplier rejection. An errored function still publishes no
+complete summary, so these tests are not factory/relay or nonempty call
+acceptance. Real end-to-end collection and call tests follow the structural
+semantic entry/constructor gates, with independent MIR proofs left intact.
 
 Focused optimized macOS evidence covers declaration order, exact generic
 substitution, unknown/mutated inputs, direct/indirect recursion, no-return
