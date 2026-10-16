@@ -8436,6 +8436,35 @@ all-origin access checks and producer/entry seeding remain required. Optimized
 C++ syntax checks pass for the scaffold; no new language/runtime acceptance is
 claimed for it.
 
+The extraction operation verifier distinguishes a stored field's reference type
+from the place-valued referent exposed by its binding, checks access narrowing,
+and recognizes exact selected-reference borrow/initialize steps in a consuming
+arm's closed setup prefix. This is a structural prerequisite, not admission:
+the complete dependency gate remains closed until independent owner, parent and
+group-transfer proofs pass. In particular a retired abstract parameter group
+cannot become a missing-parent exception; its transferred reference needs exact
+typed entry provenance and a verified handoff. The changed verifier translation
+unit passes optimized syntax checking; runtime admission is not yet claimed.
+
+The selected-reference origin check now compares the exact field/tag identity
+and every retained external place/access against the independent pre-extraction
+projection. A missing carrier fact is unknown, never an empty successful proof;
+the scalar result cannot omit, add, or substitute possible owners. Physical
+address selection remains distinct from this owner comparison. Active parents,
+abstract entry provenance and group handoff are separate required proofs, so
+the public reference-payload gate remains closed. The optimized combined build
+and focused backend, complete-borrow-summary and sum-type regressions pass;
+these do not yet constitute positive reference-payload runtime acceptance.
+
+The next body-flow prerequisite expands scalar selected-reference accesses to
+all possible external places as one access, retains every independent parent,
+and suspends/restores the capabilities used by local copies and reborrows.
+Exact same-referent aliases preserve their address identity; an unproven
+projection suffix is rejected. Consuming reference activation still rejects
+until the closed arm prefix proves its whole-group handoff, including abstract
+entry provenance. Optimized syntax checks pass for this draft; positive
+body-flow, forged/expired-parent and alias-negative tests remain required.
+
 The next access scaffold snapshots every external origin of a selected scalar
 reference at operand evaluation. Reads, mutations and call exclusivity compare
 all possible owners; one selected reference is one access, so alternatives are
