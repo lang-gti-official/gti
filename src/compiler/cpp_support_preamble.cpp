@@ -1175,8 +1175,6 @@ template <typename Callable>
 struct source_callable_result {
   using type = typename Callable::__gti_mir_source_result;
 };
-template <typename Result, typename... Args>
-struct source_callable_result<Result (*)(Args...)> { using type = Result; };
 
 template <typename T> std::false_type __gti_byte_transport_tag(T *);
 template <typename T>

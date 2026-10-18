@@ -384,6 +384,32 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
           instance.typeArguments, instance.valueArguments)) {
     return std::nullopt;
   }
+  // Native pointer types have no GTI metadata carrier. Their C result may
+  // be T* while the logical GTI result uses raw_address<T>. Resolve only
+  // these projections from exact instance substitution, never native type
+  // deduction. Keep ordinary parameters dependent so they remain deducible.
+  const auto resolveNativeProjections = [&](const auto &self,
+                                            SemanticType type) -> SemanticType {
+    if (type.kind == SemanticType::Class && type.arguments.size() == 1 &&
+        type.valueArguments.empty()) {
+      const auto *projection = program.findClassDeclaration(type.classId);
+      if (projection && projection->computedTypeProjection ==
+                            ComputedTypeProjectionKind::CallableReturn) {
+        const auto subject = substituteTemplateType(
+            type.arguments.front(), functionSubstitution, &program);
+        if (const auto *logicalResult = subject.nativeFunctionReturnType())
+          return *logicalResult;
+      }
+    }
+    for (auto &argument : type.arguments)
+      argument = self(self, std::move(argument));
+    return type;
+  };
+  result.returnType = resolveNativeProjections(resolveNativeProjections,
+                                               std::move(result.returnType));
+  for (auto &parameter : result.parameterTypes)
+    parameter = resolveNativeProjections(resolveNativeProjections,
+                                         std::move(parameter));
   if (substituteTemplateType(result.returnType, functionSubstitution,
                              &program) != instance.returnType) {
     return std::nullopt;
