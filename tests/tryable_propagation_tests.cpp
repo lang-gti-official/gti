@@ -267,6 +267,17 @@ int main() {
              "or omit the consumed group's retirement");
     }
   }
+  auto endedOwners = multipleOwners;
+  for (const auto *owner : {"first", "second"})
+    endedOwners.insert(endedOwners.find(std::string("  int ") + owner) + 2,
+                        "mut ");
+  endedOwners.replace(endedOwners.find("  return selected == 41 ? 0 : 1;"),
+                       std::string("  return selected == 41 ? 0 : 1;").size(),
+                       "  int saved = selected;\n"
+                       "  first = 19;\n  second = 20;\n"
+                       "  return saved == 41 ? 0 : 1;");
+  accepted(endedOwners,
+           "all scalar selection origins become writable after its last use");
   auto exclusiveConflict = exclusiveConditional;
   const auto successReturn = exclusiveConflict.find("return Status(value);");
   expect(successReturn != std::string::npos,
