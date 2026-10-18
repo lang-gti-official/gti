@@ -4726,8 +4726,9 @@ private:
                              .intrinsic = IntrinsicKind::Move});
       return id;
     };
-    const auto blockCall = [&](const ResolvedCallInfo &call,
-                               bool consumes) -> std::optional<HirValueId> {
+    const auto blockCall = [&](const ResolvedCallInfo &call, bool consumes,
+                               const SemanticBorrowDependencySet *dependencies)
+        -> std::optional<HirValueId> {
       const FunctionInfo *target = baseModel->findFunction(call.function);
       if (target == nullptr || call.parameterTypes.size() != 1) {
         lifecycleValid = false;
@@ -4807,14 +4808,22 @@ private:
                               .kind = kind}}},
           .functionTarget = instance,
       };
+      if (dependencies) {
+        value.borrowDependencies = *dependencies;
+        for (auto &dependency : value.borrowDependencies->dependencies)
+          dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+      }
       const HirValueId id = value.id;
       body.values.push_back(std::move(value));
       return id;
     };
 
-    const std::optional<HirValueId> test = blockCall(plan.test, false);
-    const std::optional<HirValueId> success = blockCall(plan.output, true);
-    const std::optional<HirValueId> residual = blockCall(plan.residual, true);
+    const std::optional<HirValueId> test = blockCall(plan.test, false, nullptr);
+    const auto *outputDependencies = model.findBorrowDependencySet(expression);
+    const std::optional<HirValueId> success = blockCall(
+        plan.output, true, outputDependencies);
+    const std::optional<HirValueId> residual =
+        blockCall(plan.residual, true, nullptr);
     if (!test || !success || !residual) {
       return std::nullopt;
     }
@@ -4877,6 +4886,11 @@ private:
                                .residual = *residual,
                                .residualReturn = residualReturnId,
                                .consumesOperand = plan.consumesOperand}});
+    if (outputDependencies) {
+      body.values.back().borrowDependencies = *outputDependencies;
+      for (auto &dependency : body.values.back().borrowDependencies->dependencies)
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+    }
     output.program.sourceValueIds[&expression].push_back(id);
     return id;
   }
