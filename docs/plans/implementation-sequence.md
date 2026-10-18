@@ -8973,6 +8973,71 @@ prerequisite checkpoints as full acceptance.
 - **Exit gate:** empty/engaged construction, move-only values, assignment,
   destruction, failure, generic constraints, and constexpr-safe constants.
 
+#### Source-defined expected release campaign (2026-10-18)
+
+The owner selected a prerequisite phase followed by a production migration.
+The next release phase must replace global `expected<T, E>` with a source
+class over ordinary payload-enum storage, not publish another experimental
+type in place of that outcome. Its spelling stays global/prelude, and the
+class retains the observer and combinator method API. Production expected is
+unchanged during prerequisite work.
+
+The first prerequisite slice implements exact callable-result type reflection:
+`std::meta::callable_return_type<F>` projects an already selected function,
+lambda, native callback or signature's declared result. Ordinary source
+wrappers can then spell mapped result types without expected-specific mapper
+analysis. This is a type fact, not overload resolution, invocation permission,
+or a borrow-origin contract. An unrelated `Box<T>` and an owned source-result
+fixture exercise it. Native pointer results preserve GTI's logical type, and
+annotated reference relays retain exact origin and aliasing checks. Focused
+semantic, malformed-MIR and 32 native runtime cases pass. Complete local
+validation exercised all 774 gates, followed by passing corrective reruns of
+four stale fixture/registration gates; production compiler code was unchanged
+between that complete run and the corrective reruns. This slice does not claim that
+every prerequisite in the release matrix below is complete.
+
+The release phase owns the following explicit acceptance matrix. These are
+requirements to implement and verify, not permission to drop old behavior:
+
+1. **Storage and type-dependent surface:** source classes and private enums
+   express owned, void-success and read-only-reference-success profiles.
+   Choose general type projection/selection or disjoint generic-definition
+   facilities as needed; do not add enum exceptions for expected. Preserve
+   structural copy/move eligibility and exact active-alternative cleanup.
+2. **Construction and bootstrap:** preserve `return value`,
+   `return unexpected(error)`, void-success `return;`, direct initialization
+   and global/prelude availability. Inventory the existing reserved syntax
+   and bootstrap dependencies before selecting ordinary constructors or a
+   narrowly specified source-construction protocol. Any retained language
+   sugar must resolve trusted declarations and ordinary constructor calls,
+   not own storage or rediscover policy in the backend.
+3. **Observers and combinators:** retain bool/has_value, shared and mutable
+   value/error access, consuming extraction, value_or, expect, transform,
+   transform_error and and_then. Cover void source/results, named and fresh
+   callbacks, skipped invocation but eager capture construction, exact error
+   types, caller locations and GTI-R0009/GTI-R0017 failure distinctions.
+4. **Borrowing and propagation:** use the ordinary tryable protocol and exact
+   external dependency sets for checked reference successes. The success
+   borrow survives consumption of its shell, not destruction of its owner.
+   Preserve alias rejection and deterministic residual/temporary cleanup.
+5. **Constant execution:** migrate admitted passive expected operations and
+   prefix propagation through ordinary verified-MIR class/enum/protocol
+   operations, preserving early semantic queries. Do not leave constexpr on
+   the builtin carrier while runtime uses source, or silently reject existing
+   constexpr programs.
+6. **Cutover and evidence:** differential old/new API, failure and lifetime
+   tests; malformed-MIR coverage for any changed proof; C++20/C++23 optimized
+   and sanitizer runs; LSP, installed prelude/module, examples and complete
+   local suite; representative scalar/string/borrowed results, allocations,
+   native code size and compile-time costs. Retire the obsolete expected
+   operation/representation path only after the source implementation serves
+   the production clients. A reference-class or void-profile prototype alone
+   is not completion.
+
+No production migration or completed prerequisite verification is claimed by
+this planning record. Historical optional-release validation exceptions do not
+apply to this campaign.
+
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
 - **State/role:** the staged MIR constexpr foundation is delivered; the original

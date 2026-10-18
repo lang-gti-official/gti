@@ -1,5 +1,59 @@
 # Compiler Verification
 
+## Callable-result projection prerequisites (0.447.0)
+
+`callable_return_type` covers exact result projection for signatures, function
+items, lambdas and native pointers, contextual item inference, void/reference
+metadata, invalid operands, retained unsafe-call requirements and confined
+callback escape rejection. It rejects malformed projection declarations,
+substituted MIR result types and incompatible class-publication destinations.
+Reference relay tests also reject substituted or missing MIR origins,
+unrelated callback arguments, dangling owners and overlapping mutation.
+`callable_return_type_lsp` checks the diagnostic's UTF-16 range and repair.
+`callable_return_type_runtime` runs example 167 and an owned source-class/result
+enum client with `transform`, `transform_error` and `and_then`, plus native
+pointer, read-only-pointer, scalar and void callback results in retained
+generic templates, and annotated shared-reference relays through lambdas and
+function items (including a void lambda invocation), under C++20/C++23,
+O0/O1/O3, disabled elision and ASan/UBSan. This is prerequisite evidence, not a
+replacement for production expected or proof of its complete migration matrix.
+
+A staged generic callback's class result can now use the existing exact
+`classValuePublicationSlot` query, matching the writer's established slot
+selection. In particular, direct local initialization is no longer rejected
+by a probe that admitted only the temporary-borrow subset. The producer,
+single consumer, destination type, Invoke success and cleanup proofs remain
+unchanged; this does not grant a new semantic lifetime or bypass MIR checking.
+Native callback projections resolve from exact GTI instance metadata: their
+logical pointer result cannot be reconstructed from a C function-pointer
+signature. The native fixture prevents that representation mismatch.
+Projected reference results select the failure-result pointer channel from the
+verified concrete MIR type, not the unresolved alias's syntactic kind. A
+resolved lambda call must undergo the ordinary return-origin proof even when
+its primary generic body retained a deferred-call record.
+
+The paired `benchmarks/callable-result-projection.gti` workload compares a
+projected result with `-D EXPLICIT_RESULT`, doing 20 million scalar mappings.
+On Apple Silicon, optimized native text was byte-identical (SHA-256
+`0acd832389e4b4b353da25becc508d32378e9183ea14468b558eb801ad702e6f`), and both
+executables were 125,040 bytes. Alternating 12 executions, excluding the first
+two per version, gave medians of 82.68 ms projected and 84.08 ms explicit;
+the identical machine code makes this timing difference noise, not a speedup.
+The projection adds type metadata, not runtime storage or allocation calls.
+One fresh build of each variant took 0.41 s / 79.53 MB maximum RSS projected
+and 0.39 s / 79.04 MB explicit. These short build samples are descriptive,
+not a statistically significant compile-time regression claim.
+
+Local acceptance on Apple Silicon used an optimized compiler and all 774
+registered gates. The complete run on `46a08b9f` passed 770; four existing
+fixture/registration mismatches were then corrected: optional's ordinary
+borrow diagnostic, optional's now-supported move replacement, canonical source
+identity in the reusable semantic-visitor fixture, and bounded-worker
+registration for enum replacement/selector matrices. Corrective reruns pass,
+including the full compiler-pipeline gate and all native optional/vector
+cases; no production compiler behavior changed after the complete run.
+The two earlier interrupted runs are not counted as complete-suite evidence.
+
 ## Class results of callable invocations (0.442.1)
 
 - **Defect.** A lambda call returning a class without a default constructor
@@ -61,11 +115,13 @@
 - **Out of scope.** Reading a nested field of a class call result, as in
   `build(1).inner.id`, and reading a field of a construction that takes a
   call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a
-  source function and a lambda alike. A lambda passed to a generic callable
+  source function and a lambda alike. At this release a lambda passed to a generic callable
   parameter whose class result initializes a variable or is passed by value,
   as in `int run<F>(F f) { Plain v = f(2); return v.id; }`, also still fails;
   the staged callable's transformed invocation admits a class result only as
-  a direct return, a borrowed receiver or an Expected payload.
+  a direct return, a borrowed receiver or an Expected payload. The later
+  callable-result prerequisite slice above extends that probe to the writer's
+  existing checked class-publication slots, including local initialization.
 
 ## Constructor text-view lifetimes (0.440.3)
 

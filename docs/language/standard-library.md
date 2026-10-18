@@ -500,6 +500,9 @@ The current implemented foundation includes:
   not as a failed copy inside the implementation. Other members remain
   available for move-only payloads. A move
   construction transfers an engaged payload and its cleanup obligation.
+  Move assignment uses ordinary owning-enum replacement: it cleans up the
+  destination's active value before transferring the source alternative.
+  Copy assignment remains unavailable; use `clone()` for explicit copying.
   Emplacement first resets the old value, constructs `T` through ordinary GTI,
   then moves the completed value into the inline slot. Constructor failure
   retains its original failure identity and partial-construction cleanup;

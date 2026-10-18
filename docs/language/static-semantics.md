@@ -2191,6 +2191,24 @@ metadata only: invoking a method or constructor through a metaobject is a
 separate capability that this slice does not provide. Indices out of range
 are rejected like field indices (`GTI-S2111`).
 
+`std::meta::callable_return_type<F>` is a computed type projecting the exact
+declared result of a function signature, a selected GTI function item, a native
+function pointer, or a lambda type. It preserves `void` and reference results.
+In a generic declaration the query remains dependent until `F` is concrete;
+for example a source wrapper can declare
+`Box<std::meta::callable_return_type<F>> map<F>(F& mapper) &&`.
+The operand of this query is metadata, not a stored or returned callback.
+It does not select an overloaded `operator()` on a class: use the declaration
+reflection above for that purpose. Unsupported concrete operands receive
+`GTI-S2023`.
+
+The query neither invokes the callable nor changes its calling contract.
+Native invocations still need `unsafe`, and projected reference results still
+need the same origin, access and lifetime proof as an explicitly spelled
+reference. It does not provide a reference origin or authorize capture escape.
+See `examples/167-callable-result-types.gti` for an unrelated source-defined
+container using the projection.
+
 Where the frontend retains a source position, metaobjects expose it as a
 constant: `line()` on type, field, enumerator, method and constructor
 metaobjects, and `file()` on a type (the path the compiler names the unit
