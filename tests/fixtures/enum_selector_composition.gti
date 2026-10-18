@@ -1,11 +1,15 @@
 #include <std/optional>
 
-namespace first { enum Event<T> { empty, item(T value) }; }
+namespace first { enum Event<T> { item(T value) }; }
 namespace second { enum Event<T> { empty, item(T value) }; }
 enum Counted<uint64_t N> { empty, item(int value) };
 enum Packet<T, Rest...> { item(T value) };
 enum Unused<T> { item(T value) };
-class UnusedOwner<T> { Unused<T> state; };
+class UnusedOwner<T> {
+  Unused<T> state;
+public:
+  UnusedOwner(T value) : state(Unused<T>::item(value)) {}
+};
 
 class Owner<T> {
   first::Event<T> state;
@@ -13,7 +17,6 @@ public:
   Owner(T value) : state(first::Event<T>::item(value)) {}
   T read() {
     switch (this.state) {
-    case first::Event<T>::empty: return T(0);
     case first::Event<T>::item(value): return value;
     }
   }

@@ -2263,7 +2263,6 @@ public:
              << family << ";\n";
     }
     std::unordered_set<std::string> selections;
-    std::vector<std::pair<EnumId, std::string>> nativeKeys;
     for (const auto &row : loweredProgram.declarations()) {
       const auto *enumeration =
           std::get_if<LoweredEnumDeclaration>(&row.payload);
@@ -2277,21 +2276,9 @@ public:
       if (!selections.insert(key).second)
         throw std::logic_error(
             "distinct enum instances share a native selector key");
-      // Native typedefs may spell one C++ type differently. Check equivalence
-      // as well as textual duplicates; never silently pick a different GTI
-      // instance because two source identities share one native ABI type.
-      const auto arguments =
-          cppEnumSelectorArguments(loweredProgram, standard, enumeration->type);
-      const auto nativeKey = "__gti_enum_types" + arguments;
-      for (const auto &[owner, prior] : nativeKeys) {
-        if (owner != enumeration->id)
-          continue;
-        writeIndent();
-        output << "static_assert(!std::is_same_v<" << prior << ", " << nativeKey
-               << ">, \"distinct verified enum instances have ambiguous native "
-                  "selector keys\");\n";
-      }
-      nativeKeys.emplace_back(enumeration->id, nativeKey);
+      // Full specializations also reject native-equivalent typedef keys as
+      // redefinitions. Do not add quadratic pairwise native type comparisons:
+      // no ambiguous key can silently select another GTI instance.
       writeIndent();
       output << "template <> struct " << key << " { using type = "
              << cppSemanticTypeSpelling(loweredProgram, standard,
