@@ -13020,6 +13020,34 @@ private:
   void retireConsumedSwitchSubject(const HirStatement &statement,
                                    const HirSwitchArm &arm,
                                    const ConsumedSwitchSubject &consumed) {
+    const auto retireDependency = [&] {
+      if (consumed.dependency == 0)
+        return;
+      const auto found = semanticLoans.find(consumed.dependency);
+      const auto *group = found == semanticLoans.end()
+                              ? nullptr
+                              : output.findLoan(found->second);
+      if (!group || group->kind != MirLoanKind::Stored || group->escapes ||
+          group->lifecycleBound ||
+          std::find(group->carriers.begin(), group->carriers.end(),
+                    consumed.binding) == group->carriers.end() ||
+          !loanIsActive(scopes, group->id) ||
+          lifecycleRetainedLoans({}).contains(group->id) ||
+          containsLoan(constructorPublishedLoans, group->id)) {
+        valid = false;
+        return;
+      }
+      // The subject's physical owner has already been consumed. Its entry
+      // group is not the capability returned to the caller: the exact arm
+      // prefix publishes new scalar selections after retiring this group.
+      // Ordinary endpoint heuristics retain summarized entry loans until
+      // return and therefore cannot implement this explicit handoff.
+      const auto id = group->id;
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirStatement = statement.id,
+                               .loan = id});
+      removeLoanFromState(id, scopes, bindingLoans);
+    };
     const MirPlace *subjectPlace = output.findPlace(consumed.place);
     if (subjectPlace == nullptr) {
       valid = false;
@@ -13032,8 +13060,7 @@ private:
             scopeDropLifecycle(consumed.obligation), {consumed.obligation}, {});
         appendNormalCleanupBoundary({consumed.obligation});
       }
-      if (consumed.dependency != 0)
-        endSemanticLoans({consumed.dependency}, statement.id);
+      retireDependency();
       return;
     }
     std::vector<std::size_t> deferredBindings;
@@ -13131,7 +13158,7 @@ private:
       // Evaluate all exact field addresses while the old group is active,
       // retire it once, then publish its successor capabilities. No user
       // operation or potentially failing instruction belongs in this prefix.
-      endSemanticLoans({consumed.dependency}, statement.id);
+      retireDependency();
       for (const auto index : deferredBindings)
         initializePayload(index);
     }
