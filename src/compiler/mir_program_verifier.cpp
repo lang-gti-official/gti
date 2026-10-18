@@ -1957,6 +1957,24 @@ uniqueMirClassInstanceForType(const MirProgram &program,
              (functionTarget->returnType.kind == SemanticType::Reference &&
               functionTarget->returnType.referenceAccess ==
                   AccessMode::ReadOnly));
+        const bool externalConsumingReference =
+            functionTarget && borrowedCarrier && mutableInput &&
+            functionTarget->receiverMutability ==
+                ReceiverMutability::Consuming &&
+            functionTarget->returnType.kind == SemanticType::Reference &&
+            functionTarget->returnType.referenceAccess ==
+                AccessMode::ReadOnly &&
+            functionTarget->completeReturnBorrow &&
+            !functionTarget->completeReturnBorrow->dependencies.empty() &&
+            std::all_of(
+                functionTarget->completeReturnBorrow->dependencies.begin(),
+                functionTarget->completeReturnBorrow->dependencies.end(),
+                [](const auto &dependency) {
+                  return dependency.origin == BorrowOriginKind::Receiver &&
+                         dependency.resultFields.empty() &&
+                         !dependency.sourceFields.empty() &&
+                         dependency.access == AccessMode::ReadOnly;
+                });
         const bool ownedResult =
             functionTarget != nullptr &&
             functionTarget->returnType.kind != SemanticType::Reference &&
@@ -1975,9 +1993,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             instruction.dispatch != exactDispatch || receiverClass == nullptr ||
             !inheritsOwner(inheritsOwner, *receiverClass, 0) ||
             !exactReceiverQualifier || !exactProducer ||
-            receiverObligations != 1 || (!readObservation && !ownedResult) ||
-            (borrowedCarrier && !supportsEphemeralBorrowResult(
-                                    functionTarget, instruction.info))) {
+            receiverObligations != 1 ||
+            (!readObservation && !ownedResult && !externalConsumingReference) ||
+            (borrowedCarrier && !externalConsumingReference &&
+             !supportsEphemeralBorrowResult(functionTarget,
+                                            instruction.info))) {
           return verificationFailure(
               body, owner,
               "temporary receiver input does not match its exact "
@@ -2578,6 +2598,22 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
            definition->kind == MirInstructionKind::Load ||
            definition->kind == MirInstructionKind::Move) &&
           definition->operands.size() == 1) {
+        if (fields && definition->kind == MirInstructionKind::CallInput &&
+            definition->callInputRole == MirCallInputRole::Receiver &&
+            (definition->callInputKind ==
+                 HirCallInputKind::ReadTemporaryBorrow ||
+             definition->callInputKind ==
+                 HirCallInputKind::MutableTemporaryBorrow)) {
+          const auto *place =
+              body.findPlace(definition->operands.front().place);
+          const auto carrier =
+              place ? findMirTemporaryCarrierDependency(body, *place)
+                    : MirTemporaryCarrierDependency{};
+          const auto *shell = body.findLoan(definition->loan.value_or(0));
+          if (carrier && shell && shell->source == place->id &&
+              shell->storedDependency == carrier.loan->id)
+            return concreteDependencies(*carrier.loan, projectEntryFields);
+        }
         return self(self, definition->operands.front(), depth + 1, fields,
                     projectEntryFields);
       }
@@ -12699,7 +12735,11 @@ completeBorrowSourcePath(const MirProgram &program,
     } else if (instruction.kind == MirInstructionKind::CallInput &&
                instruction.callInputRole == MirCallInputRole::Receiver &&
                (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
-                instruction.callInputKind == HirCallInputKind::MutableBorrow) &&
+                instruction.callInputKind == HirCallInputKind::MutableBorrow ||
+                instruction.callInputKind ==
+                    HirCallInputKind::ReadTemporaryBorrow ||
+                instruction.callInputKind ==
+                    HirCallInputKind::MutableTemporaryBorrow) &&
                instruction.operands.size() == 1 &&
                instruction.info.type == instruction.operands.front().type &&
                (instruction.operands.front().kind ==
@@ -13916,6 +13956,34 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
                 loan.producedBy == producer.hirValue && fact &&
                 loanDependencies(loan) == fact->dependencies;
+        if (valid)
+          evidence = fact;
+      } else if (producer.kind == MirInstructionKind::CallInput &&
+                 producer.callInputRole == MirCallInputRole::Receiver &&
+                 (producer.callInputKind ==
+                      HirCallInputKind::ReadTemporaryBorrow ||
+                  producer.callInputKind ==
+                      HirCallInputKind::MutableTemporaryBorrow) &&
+                 producer.operands.size() == 1 && producer.result &&
+                 *producer.result <= flow.values.size()) {
+        const auto *place = body.findPlace(producer.operands.front().place);
+        const auto carrier =
+            place ? findMirTemporaryCarrierDependency(body, *place)
+                  : MirTemporaryCarrierDependency{};
+        const auto &fact = flow.values[*producer.result - 1];
+        // The staged value carries the object's contents, but its loan is
+        // only the physical shell borrow. Prove the retained complete group
+        // independently instead of treating the shell as a new conditional
+        // origin group or discarding the staged contents' guards.
+        valid = carrier && fact && carrier.loan->id != loan.id &&
+                loan.kind == MirLoanKind::CallArgument && !loan.escapes &&
+                loan.parent == 0 && loan.source == place->id &&
+                loan.storedDependency == carrier.loan->id &&
+                loan.producedBy == producer.callSite &&
+                loan.designatedFields.empty() && loan.conditions.empty() &&
+                loan.additionalDependencies.empty() &&
+                self(self, *carrier.loan) &&
+                *fact == provenFacts.at(carrier.loan->id);
         if (valid)
           evidence = fact;
       } else if (producer.kind == MirInstructionKind::Borrow &&

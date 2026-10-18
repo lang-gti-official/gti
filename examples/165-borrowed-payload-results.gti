@@ -148,7 +148,7 @@ enum ReadingSlot { ready(int& value), empty };
 class StoredReading {
   mut ReadingSlot slot;
 public:
-  StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
+  implicit StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
   StoredReading() : slot(ReadingSlot::empty) {}
   bool has_value() {
     switch (this.slot) {
@@ -164,6 +164,14 @@ public:
   }
 };
 
+StoredReading store_reading(int& owner) {
+  return owner; // Implicit construction retains the external owner.
+}
+
+int& relay_reading(int& owner) {
+  return store_reading(owner).take(); // Only the temporary wrapper is consumed.
+}
+
 int main(int argc, std::vector<std::string> argv) {
   // Run with an extra argument to observe the accessor's defined failure.
   // The empty alternative has no owner; no dummy reference is manufactured.
@@ -175,7 +183,8 @@ int main(int argc, std::vector<std::string> argv) {
   mut auto stored = StoredReading(owner);
   auto empty = StoredReading();
   int& retained = std::move(stored).take();
-  if (empty.has_value() || retained != owner) return 1;
+  if (empty.has_value() || retained != owner || relay_reading(owner) != owner)
+    return 1;
   std::println(std::to_string(inspect(owner, false).code));
   std::println(std::to_string(inspect(owner, true).code));
   mut int changing = 8;

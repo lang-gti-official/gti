@@ -1685,6 +1685,54 @@ int main() { return 0; }
       expect(tested != 0, "borrowed constructor has an independently checked summary");
     }
     if (result.canGenerateCode()) {
+      std::size_t freshConsumingProofs = 0;
+      for (const auto &function : result.hir.functionInstances()) {
+        if (!function.source || function.source->name().lexeme != "relay")
+          continue;
+        const auto *original = result.mir.findFunctionInstance(function.id);
+        if (!original)
+          continue;
+        for (const auto &block : original->body.blocks)
+          for (const auto &input : block.instructions) {
+            if (input.kind != lang::MirInstructionKind::CallInput ||
+                input.callInputRole != lang::MirCallInputRole::Receiver ||
+                input.callInputKind !=
+                    lang::HirCallInputKind::MutableTemporaryBorrow ||
+                !input.info.traits.containsBorrowedState || !input.loan)
+              continue;
+            ++freshConsumingProofs;
+            for (int mutation = 0; mutation < 8; ++mutation) {
+              auto malformed = result.mir;
+              auto &body = lang::MirProgramTestAccess::functions(
+                               malformed)[function.id - 1]
+                               .body;
+              auto &shell = body.loans[*input.loan - 1];
+              const auto group = shell.storedDependency;
+              if (mutation == 0)
+                shell.storedDependency = 0;
+              if (mutation == 1)
+                shell.storedDependency = shell.id;
+              if (mutation == 2)
+                shell.source = 0;
+              if (mutation == 3)
+                shell.access = lang::AccessMode::ReadOnly;
+              if (mutation == 4)
+                body.loans[group - 1].designatedFields.clear();
+              if (mutation == 5)
+                body.loans[group - 1].conditions.clear();
+              if (mutation == 6)
+                body.loans[group - 1].parent = shell.id;
+              if (mutation == 7)
+                body.loans[group - 1].access = lang::AccessMode::Mutable;
+              expect(!lang::verifyMirProgram(malformed).valid(),
+                     "fresh consuming borrowed receiver preserves exact shell "
+                     "and stored dependency authority " +
+                         std::to_string(mutation));
+            }
+          }
+      }
+      expect(freshConsumingProofs == 1,
+             "ordinary reference relay consumes one fresh borrowed wrapper");
       lang::HirFunctionInstanceId takeId = 0;
       for (const auto &function : result.hir.functionInstances()) {
         const auto *candidate = result.mir.findFunctionInstance(function.id);
@@ -1754,6 +1802,20 @@ int main() { return 0; }
                "constructor cannot retire the published field group before "
                "normal exit");
       }
+    }
+    for (const std::string extra :
+         {"int& dangling_relay() { int local = 3; return relay(local); }",
+          "int alias_relay() { mut int owner = 3; int& view = relay(owner); "
+          "owner = 4; return view; }"}) {
+      const auto rejected = lang::Frontend().analyze(
+          root / "tests/reference-relay-rejection.gti", source + "\n" + extra,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(!rejected.canGenerateCode() &&
+                 std::none_of(
+                     rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-B0001"; }),
+             "reference relay rejects expired owner or mutable overlap in "
+             "semantics");
     }
   }
   return failures ? 1 : 0;

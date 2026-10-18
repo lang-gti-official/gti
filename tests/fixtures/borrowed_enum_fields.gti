@@ -32,11 +32,16 @@ public:
   return Reading(owner);
 }
 
+int& relay(int& owner) {
+  return read(owner, false).take();
+}
+
 int main() {
   int owner = 42;
   auto value = read(owner, false);
   auto missing = read(owner, true);
   mut auto consumed = read(owner, false);
   int& retained = std::move(consumed).take();
-  return value.view() == 42 && missing.empty() && retained == 42 ? 0 : 1;
+  return value.view() == 42 && missing.empty() && retained == 42 &&
+         relay(owner) == 42 ? 0 : 1;
 }

@@ -2655,6 +2655,16 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                            ? semanticModel.findExpression(*returned->value())
                            : nullptr;
     const auto complete = completeBorrowDependencySet(returned->value());
+    const auto *contextual =
+        returned->value()
+            ? semanticModel.findContextualConstruction(*returned->value())
+            : nullptr;
+    // A contextual constructor preserves its source expression as the exact
+    // input. The selected construction, not that input's type, describes the
+    // returned object; its complete facts remain separate from input facts.
+    const bool contextualResult =
+        contextual && contextual->contextualBorrowDependencies &&
+        contextual->constructedType == cleared.returnType;
     const bool directReference =
         cleared.returnType.kind == SemanticType::Reference &&
         cleared.returnType.arguments.size() == 1;
@@ -2664,7 +2674,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                 info->category != ValueCategory::Place ||
                 (cleared.returnType.referenceAccess == AccessMode::Mutable &&
                  info->access != AccessMode::Mutable))
-             : info->type != cleared.returnType))
+             : (!contextualResult && info->type != cleared.returnType)))
       return;
     const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete);
     // This source contract is still checked independently against executable

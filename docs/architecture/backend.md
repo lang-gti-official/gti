@@ -4080,11 +4080,42 @@ moved or copied into its exact prepared argument slot. The outer and nested
 calls share one prepared-slot proof: the slot's activation, its sole
 TransferOut to the consuming call, and a Drop of the slot on every failure edge
 between preparation and that call. No prepared slot is the borrowed place.
+An ordinary safe source method may also consume a separately rooted local
+receiver and publish an owned class result into that exact prepared argument.
+The bounded zero-argument method shape reuses the moved receiver's full-expression
+slot proof and the result's exact activation/reparent/sole-handoff proof. Only
+the linked move, receiver stage, method call and result stage are admitted;
+neither receiver nor result carries borrowed state. Both checked Invoke-success
+publication and a failure-free producer's unconditional activation retain their
+existing cleanup schedules. This rule depends on storage and call facts, not a
+library result spelling.
 Whether the receiver is a method object or a local lambda does not change
 this proof. Other user-call shapes, other owning transfers, raw memory, loans,
 and arbitrary stores remain outside this proof. Thus the deferred local
 address denotes the same object that was selected before argument evaluation;
 the backend does not reorder an observable address computation across a branch.
+
+A cleanup-free source class call result assigned into a fixed-array element
+uses its existing representation-only result slot until the adjacent assignment.
+Admission requires the exact mutable array/field element, generated failure-free
+move/assignment, and the checked write's exact bounds origin and status edge (or
+its independently verified discharge). The native checked-array write consumes
+the staged result only after producer success; bounds failure follows the MIR
+failure edge and cannot publish to the array. Its moved-from passive shell is
+retired without inventing a source cleanup obligation. A failed producer leaves
+the destination untouched, and unrelated active owners retain normal MIR cleanup.
+The MIR routing rule also covers bounds-only class assignments with no lifecycle
+transition: lexical-drop type traits alone do not suppress that required edge.
+Owning replacement still checks bounds at its separate `CleanupBeforeAssign`
+operation; this routing rule does not authorize an unproved owning transfer.
+
+The same cleanup-free result slot can feed one exact payload-enum field.
+Constructors and ordinary source calls share the proof: the selected variant's
+field type and sole operand use match, there is no semantic value-root/drop,
+and the producer's successful continuation dominates publication. A generated
+failure-free move transfers the completed value into the payload, then retires
+the passive representation shell. Failed production cannot publish the enum;
+borrowed or owning results retain their separate checked loan/drop transport.
 
 An owned class result returned directly from an erased virtual call or a stored
 lambda invocation may use the caller's placement output. Admission requires the
