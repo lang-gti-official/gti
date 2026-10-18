@@ -8990,8 +8990,10 @@ analysis. This is a type fact, not overload resolution, invocation permission,
 or a borrow-origin contract. An unrelated `Box<T>` and an owned source-result
 fixture exercise it. Native pointer results preserve GTI's logical type, and
 annotated reference relays retain exact origin and aliasing checks. Focused
-semantic, malformed-MIR and 32 native runtime cases pass; complete-suite
-verification and publication remain pending. This slice does not claim that
+semantic, malformed-MIR and 32 native runtime cases pass. Complete local
+validation exercised all 774 gates, followed by passing corrective reruns of
+four stale fixture/registration gates; production compiler code was unchanged
+between that complete run and the corrective reruns. This slice does not claim that
 every prerequisite in the release matrix below is complete.
 
 The release phase owns the following explicit acceptance matrix. These are
