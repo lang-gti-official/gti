@@ -486,6 +486,9 @@ T& identity<T>(T& value) {
 This is implicit single-origin lifetime inference, not a general lifetime
 parameter system. Other parameters may contribute ordinary values, but a
 returned borrow may not choose between owners or combine dependencies.
+Explicit complete dependency contracts for reference-bearing payload enums,
+described below, extend this beyond the implicit single-origin form; they do
+not infer an unspecified lifetime relation from an ambiguous signature.
 
 `expected<T&, E>` applies this same inference to a checked read-only borrow.
 The success path publishes the referent together with the receiver, argument,
@@ -843,6 +846,14 @@ lifetime as well as its external owners. Shared access at any layer cannot be
 upgraded by a mutable outer adapter. Constructor failure releases these loans
 only after rolling back already-initialized fields.
 
+An observing enum pattern that borrows an ordinary owned payload (for example,
+an error string beside a reference-valued success alternative) protects the
+enum's physical storage. The enum's external dependency group is not its
+parent authority. A reference to the enum itself remains the normal parent
+when matching through that reference. The live payload borrow prevents moving
+or replacing the enum; selecting a stored reference instead retains its exact
+external owners under the separate checked selection rule.
+
 Reference access and stored-field access are independent. A mutable reference
 to a shared view can mutate its own eligible fields, but cannot turn a stored
 read-only reference into a mutable one. A read-only reference to an exclusive
@@ -865,6 +876,11 @@ ends. A live overlapping child borrow is not exempted by this rule. Ordinary
 accessors and operators preserve the selected stored field's permission and
 origin rather than using the carrier's first dependency. Caller metadata is
 checked against the callee's actual returned origins before backend entry.
+A scalar reference result that can select between several external owners
+retains every possible owner, even though the reference itself has no stored
+field layout. Its local aliases preserve that full origin set. Conflicting
+writes to either owner are rejected while the reference is live; ordinary
+last-use analysis releases those protections after its final use.
 See [`109-borrowed-aggregates.gti`](../../examples/109-borrowed-aggregates.gti)
 for an application context borrowing four different service types and moving
 through a generic relay, then composing the same dependencies through fresh
@@ -930,7 +946,18 @@ remains live. Moving the carrier transfers the same loan identity; creating a
 read-only alias, including copy construction of a shared carrier, adds a
 carrier to that identity. Dropping one shared copy ends only that shell's
 lifetime; owner protection remains until the final reachable use of every
-alias. An exclusive carrier has only one transferable shell. HIR carries
+alias. An exclusive carrier has only one transferable shell.
+The same alias rule applies to a named local shared payload-enum copy when
+the complete origin, access, field-path and alternative-tag set is unchanged.
+It preserves every external owner, including additional owners, after the
+original carrier's last use; it does not permit assignment or copying an
+exclusive or cleanup-bound capability.
+This does not remove child-loan ancestry: an enum carrying a class constructed
+from a local child reborrow still cannot return that dependency under a
+conditional borrowed-result contract, with or without an intervening copy.
+Direct reference alternatives can retain an eligible caller-owned reference
+through a copied return under their verified result contract.
+HIR carries
 proven straight-line, nested-merge, and conditional branch-entry endpoints,
 along with bounded switch-exit and same-path immediate-break endpoints. MIR
 records every carrier on one loan and emits an explicit borrow ending only
@@ -1365,6 +1392,16 @@ is rejected. Consuming or destroying the carrier does not destroy its external
 owner. This same declaration-relative contract is available to protocol
 operations; it is not special treatment of any standard-library wrapper.
 
+For a reference-bearing payload enum, the named parameter may carry several
+checked external dependencies. Its complete contract preserves every active
+field path, alternative guard and access mode. Selecting one reference may
+leave several possible external origins at the call site; all remain protected
+until that scalar reference's endpoint. A consuming match retires the old
+carrier group only after the exact selected references acquire their successor
+authority. This does not authorize a reference to the consumed shell or an
+ordinary owned payload, nor does it infer a lambda lifetime contract beyond
+the lambda rules above.
+
 Two general facilities support this ordinary source wrapper:
 
 - `std::erase_ref(object)` and `std::erase_mut(object)` return checked
@@ -1705,10 +1742,42 @@ spelling. Finite nested enum payloads and fixed arrays of supported payload
 elements retain these construction and cleanup obligations. Passive native
 records and unions may be payloads when their C ABI layout is validated.
 Polymorphic enum callable transport, direct owning-enum lambda capture, arrays
-whose elements are directly owning enums, stored-reference owners, unsupported
+whose elements are directly owning enums, stored-reference class owners, unsupported
 compiler-private payloads, native-layout owners containing owning enum fields,
 and polymorphic bases remain diagnosed rather than inventing indirect cleanup
 state.
+
+Reference-bearing payload enums retain a complete dependency set rather than
+one unconditional owner: each entry records an external origin, access mode,
+field path and active-alternative guards. Nested enum values preserve those
+paths during construction, calls, movement and return. A reference-free
+alternative has a known empty set; it must not borrow an unrelated argument
+just because another alternative needs one. This also applies after generic
+reference substitution and when multiple other alternatives contain borrows:
+the selected typed alternative, not the type-wide number of reference paths,
+determines whether initialization needs external owners. Source-bodied empty
+factories establish that complete fact through their return expressions; a bare
+declaration or missing dependency metadata does not establish an empty proof.
+A shared-reference enum may be copied when its other fields permit copying. An exclusive-reference field makes
+the complete enum move-only, including when nested in another enum.
+
+Selecting a direct reference field proves the active tag and retains all of
+that field's possible external owners. Consuming the enum retires its old
+dependency group before activating the selected references; moving the enum
+does not move their referents. A returned selection publishes a separate return
+capability and retires the local selection at the same boundary. MIR verifies
+the executable selection, origin set, access and retirement, rather than
+accepting matching return annotations as proof. Source-defined propagation can
+therefore consume a borrowed-success/owned-error enum and forward the selected
+success reference while preserving ordinary residual cleanup. A `has_value`
+predicate alone grants no permission to project an unchecked alternative.
+
+Construction and transport of nested reference-bearing enums do not yet permit
+consuming an outer alternative into a new reference-bearing *value* pattern
+binding. That nested value handoff remains a diagnosed structural goal, separate
+from selecting a direct reference field; it needs its own transfer/retirement
+proof. Neither this boundary nor the source-defined propagation protocol is a
+special rule for a standard-library type.
 
 The semantic `GTI-S2061` check implements the recursive active-cleanup
 restriction after the more-specific unique-owner, private-storage, and

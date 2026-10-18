@@ -1,0 +1,15 @@
+#include "enum_replacement_support.gti"
+
+ReplacementEvent prepare(int32_t divisor) {
+  ReplacementResource pending{2, 1};
+  int32_t checked = int32_t(1) / divisor;
+  return ReplacementEvent::held(std::move(pending));
+}
+
+int main() {
+  ReplacementGuard guard{};
+  mut ReplacementEvent current = ReplacementEvent::held(ReplacementResource(1, 1));
+  current = prepare(0);
+  std::println(99);
+  return 0;
+}

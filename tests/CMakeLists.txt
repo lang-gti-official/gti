@@ -1197,6 +1197,12 @@ add_executable(gti_tryable_propagation_tests
   "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
 target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend)
 add_test(NAME tryable_propagation COMMAND gti_tryable_propagation_tests)
+add_executable(gti_complete_borrow_summary_tests complete_borrow_summary_tests.cpp)
+target_link_libraries(gti_complete_borrow_summary_tests PRIVATE gti_compiler)
+add_test(NAME complete_borrow_summaries COMMAND gti_complete_borrow_summary_tests)
+add_executable(gti_reference_payload_semantic_tests reference_payload_semantic_tests.cpp)
+target_link_libraries(gti_reference_payload_semantic_tests PRIVATE gti_compiler)
+add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime
@@ -1445,6 +1451,23 @@ add_test(NAME consuming_owned_pointee COMMAND gti_consuming_owned_pointee_tests)
 add_executable(gti_optional_empty_prefix_tests optional_empty_prefix_tests.cpp)
 target_link_libraries(gti_optional_empty_prefix_tests PRIVATE gti_cpp_backend)
 add_test(NAME optional_empty_prefix COMMAND gti_optional_empty_prefix_tests)
+add_executable(gti_enum_replacement_tests enum_replacement_tests.cpp)
+target_link_libraries(gti_enum_replacement_tests PRIVATE gti_cpp_backend)
+add_test(NAME enum_replacement COMMAND gti_enum_replacement_tests)
+add_test(NAME enum_replacement_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/enum_replacement_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(enum_replacement_runtime PROPERTIES TIMEOUT 600)
+
+add_executable(gti_borrowed_payload_copy_tests borrowed_payload_copy_tests.cpp)
+target_link_libraries(gti_borrowed_payload_copy_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrowed_payload_copy COMMAND gti_borrowed_payload_copy_tests)
+
+add_executable(gti_enum_selector_tests enum_selector_tests.cpp)
+target_link_libraries(gti_enum_selector_tests PRIVATE gti_cpp_backend)
+add_test(NAME enum_selector COMMAND gti_enum_selector_tests)
+add_test(NAME enum_selector_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/enum_selector_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(enum_selector_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_field_array_empty_state_tests field_array_empty_state_tests.cpp)
 target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend)
 add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
@@ -2109,6 +2132,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(experimental_optional_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME source_optional_protocol_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/experimental_optional_runtime_test.py"
+            "$<TARGET_FILE:gti>" --stable
+  )
+  set_tests_properties(source_optional_protocol_runtime PROPERTIES TIMEOUT 900)
   add_test(
     NAME payload_enum_carrier_runtime
     COMMAND "${Python3_EXECUTABLE}"

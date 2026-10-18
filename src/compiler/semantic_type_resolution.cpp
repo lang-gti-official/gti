@@ -4476,6 +4476,43 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
   }
   const bool fallibleBorrowFromCall =
       isFallibleBorrowType(type) && transientBorrowProduction(initializer);
+  // A complete producer fact can prove that this value has no external
+  // owners even when other alternatives of its type store several borrows.
+  // Absence of evidence is not an empty set: check the concrete alternative
+  // inventory and every applicable reference path before accepting it.
+  if (const auto complete = completeBorrowDependencySet(initializer);
+      complete && complete->dependencies.empty() &&
+      !complete->possibleAlternatives.empty()) {
+    const auto inventory = storedReferenceInventory(type);
+    const auto alternatives = storedBorrowAlternativeInventory(type);
+    bool ownerless = inventory && alternatives;
+    if (ownerless)
+      for (const auto &alternative : complete->possibleAlternatives) {
+        if (std::find(alternatives->begin(), alternatives->end(),
+                      alternative) == alternatives->end()) {
+          ownerless = false;
+          break;
+        }
+        for (const auto &path : *inventory) {
+          const auto conditions = storedConditionSymbols(type, path.conditions);
+          if (!conditions ||
+              std::all_of(conditions->begin(), conditions->end(),
+                          [&](const auto &condition) {
+                            return std::find(alternative.conditions.begin(),
+                                             alternative.conditions.end(),
+                                             condition) !=
+                                   alternative.conditions.end();
+                          })) {
+            ownerless = false;
+            break;
+          }
+        }
+        if (!ownerless)
+          break;
+      }
+    if (ownerless)
+      return;
+  }
   if (storedReferencePaths(type).size() > 1) {
     const auto dependencies = storedBorrowDependencies(initializer);
     if (dependencies.empty()) {
@@ -4678,6 +4715,28 @@ auto SemanticVisitor::Impl::validateStoredBorrowReturn(
   // particular, a rejected confined callable result must not cascade into
   // an unrelated owner-origin diagnostic for the enclosing return type.
   if (valueType == SemanticType::Unknown) {
+    return;
+  }
+  const auto inventory = storedReferenceInventory(returnType);
+  const bool conditionalResult =
+      inventory &&
+      std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); });
+  if (conditionalResult) {
+    if (valueType != returnType)
+      return;
+    if (rejectEscapingLocalChildLoan(value, "a conditional borrowed return"))
+      return;
+    const auto complete = completeBorrowDependencySet(value);
+    const auto *function =
+        currentLambdaReturn ? nullptr : currentFunctionInfo();
+    if (complete && function &&
+        normalizedCompleteReturnBorrow(*function, *complete))
+      return;
+    report(expressionToken(value),
+           "A borrowed return requires a complete dependency set preserving "
+           "every caller-owned origin, access mode and active alternative.",
+           "GTI-S2045");
     return;
   }
   if (isFallibleBorrowType(returnType)) {
@@ -4973,6 +5032,33 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
           "receiver's lifetime.");
       diagnostics.emplace_back(std::move(diagnostic));
       return;
+    }
+  }
+  // A selected payload reference can carry an exact external dependency even
+  // when the input carrier has several conditional paths. Prove the complete
+  // scalar result against the declared parameter inventory before consulting
+  // the older single-path carrier relay. This does not authorize the local
+  // carrier shell: its storage check above remains independent.
+  if (function != nullptr &&
+      conditionalReferenceReturn(function->returnType,
+                                 function->parameterTypes) &&
+      valueInfo->category == ValueCategory::Place) {
+    auto dependencies = storedBorrowDependencies(value);
+    if (!dependencies.empty() &&
+        std::all_of(dependencies.begin(), dependencies.end(),
+                    [&](const auto &dependency) {
+                      return dependency.place.valid() &&
+                             dependency.designatedFields.empty() &&
+                             dependency.conditions.empty() &&
+                             (function->returnType.referenceAccess ==
+                                  AccessMode::ReadOnly ||
+                              dependency.access == AccessMode::Mutable);
+                    })) {
+      for (auto &dependency : dependencies)
+        dependency.access = function->returnType.referenceAccess;
+      if (normalizedCompleteReturnBorrow(
+              *function, {.dependencies = std::move(dependencies)}))
+        return;
     }
   }
   // A lambda's contract is one read-only reference parameter: beyond the

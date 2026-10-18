@@ -74,6 +74,18 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+Guarded enum reference inventories include abstract referent paths that are
+provenance, not unconditional reads of native fields in possibly inactive
+alternatives. The backend omits a path's physical alias only after checking its
+exact typed enum-field/dereference chain and absence of runtime storage/address
+uses. Stored loans carry no native pointer; selected-reference extraction,
+reference-returning calls and exact return-pointer transfers supply their own
+runtime addresses. Generic Borrow or entry-address uses cannot hide behind this
+classification. Fresh owning enum returns may cross their verified erased
+Stored-to-Return borrow publication and EndBorrow markers without inventing a
+second result slot; all actual cleanup and success-only initialization remains
+in the original MIR order.
+
 Payload alternatives construct in place from their already selected MIR
 operands. The native enum's in-place alternative constructor avoids temporary
 alternative and whole-enum transfers. List initialization preserves operand
@@ -1129,10 +1141,32 @@ private constructor even when the originating GTI member can. The selected
 MIR constructor, staged arguments, destination, success activation, and
 rollback remain unchanged; source visibility is never widened.
 
-Empty-field admission for a containing owner of the sealed optional slot retains
+Legacy empty-field admission for a containing owner of the sealed optional slot retains
 the exact selected private constructor's instruction-free, nonborrowed void
 `Return` witness. A recursive fields-only aggregate proof cannot substitute the
 slot's shape for that witness after the selected constructor has been corrupted.
+The promoted standard optional no longer instantiates this capability: its
+state is an ordinary payload enum and uses the general constructor, active-tag,
+assignment and cleanup proofs. Legacy capability implementation code is retained
+but is not declared by `<std/optional>`.
+
+The declaration-bound `fail_empty_owner` terminal operation takes no arguments,
+never returns, and selects the existing `EmptyOwnerAccess`/`MemberAccess`
+failure. Semantics establishes those facts; HIR preserves them and MIR checks
+arity, termination, caller tracking and the exact failure identity independently.
+The backend publishes that verified failure using ordinary failure cleanup. It
+does not recognize `std::optional`, inspect its tag or grant access to its value.
+
+Owning enum replacement is admitted from an exact paired cleanup recipe,
+source slot and lifecycle transfer. It uses payload move construction even
+when payload assignment is unavailable; borrowed-state assignment rules do not
+change. After checked replacement cleanup, the backend retires the drained
+native alternative and leaves a vacant shell until commit or lexical drop.
+An enum nested in a containing class also retires its drained alternative on a
+first cleanup failure, preventing the containing failure edge from repeating
+child cleanup. Secondary-failure abandonment does not retire incompletely
+drained storage. Failure-free movement and raw relocation eligibility remain
+independent proofs, including for address-stable mutex storage.
 
 The existing MIR double-failure contract also has an inherited dynamic component:
 an ordinary source destructor or helper called by a failure-cleanup `Drop` cannot
@@ -2589,6 +2623,23 @@ return fails admission rather than assigning into uninitialized caller
 storage. A cleanup-free enum's value-rooted place, which a call borrows for a
 fresh temporary, is the SSA value itself and has no separate local.
 Constructor arguments use the same proof, including fresh unit variants.
+A fallible ordinary source call may also construct its owning enum result
+directly in a binding when its sole executable value use is the first
+instruction on the Invoke success edge: an exact unconditional Initialize
+reparent from the result obligation to the initially inactive binding
+obligation. The original value-rooted MIR storage and drop identities remain
+verified metadata. Emission marks the binding's native representation engaged
+only on call success and erases only that matching Initialize's redundant
+representation move/retirement. Non-immediate or non-unique publication keeps
+the ordinary value-rooted representation. The admission and emission paths
+share the same publication query; no source lifetime or cleanup is removed.
+The analogous exact `Move` value-to-binding publication preserves the original
+source object, its move, and its scheduled moved-from-shell cleanup. Only the
+intermediate value-rooted native object is omitted: its sole use must be an
+adjacent Initialize in the same block, with distinct source/value/binding drop
+identities and an identical cleanup type. Temporary destinations, intervening
+instructions, multiple consumers, and incomplete transfer evidence retain the
+existing representation path.
 A fresh cleanup-free class construction that is one alternative field fuses
 into the variant braces only when it is adjacent to its `PayloadConstruct`.
 Otherwise, when its constructor ends the block at an Invoke or sibling field
@@ -2621,13 +2672,25 @@ visitor-table dispatch from retirement without changing which GTI cleanup
 obligations run. Native copy/move/assignment availability follows the member
 representations; it cannot admit an operation absent from GTI's sealed traits.
 
+For private passive SSA and binding transport, a construction-only member
+such as a class containing a reference still needs native copy transport.
+When every alternative is trivially destructible and nothrow copy-constructible,
+but at least one is not copy-assignable, the carrier's private native copy
+assignment reconstructs the selected alternative instead. Self-copy is inert;
+the source tag, including the private vacant state, is preserved. This does not
+enable GTI assignment: semantic traits and MIR admission still reject assignment
+of a construction-only source type. Throwing-copy or nontrivially destructible
+alternatives do not receive this passive fallback.
+
 The carrier starts with only its private empty alternative active. Construction
 starts the selected union-member lifetime, then publishes its tag; an exception
 before publication leaves no complete alternative to destroy. Recursive empty
 union tails contain no resource. Native moves retain a valid moved-from member
 until MIR's scheduled shell retirement. Cross-alternative assignment retires
 the old member before constructing and publishing the replacement; same-tag
-assignment retains its member lifetime, and self-assignment is inert. A failed
+assignment retains its member lifetime where member assignment is available;
+construction-only transport uses the guarded reconstruction above. Self-assignment
+is inert. A failed
 cross-alternative native construction leaves a private vacant tag, which can
 only be retired or reconstructed, not exposed as a GTI value. GTI defined
 failure remains governed by MIR's explicit success/rollback edges, not native
@@ -3788,6 +3851,23 @@ instance of a generic active-drop class defines its cleanup adapter and
 destructor failure entries in its own deferred concrete row; the primary's
 lifecycle pass leaves that instance alone and emits explicit specializations
 only for instances that remain specializations of the primary.
+
+Dependent generic enum fields and signatures in these native carriers use a
+closed selector catalog. Its key retains the GTI enum family, expanded type
+arguments, and separate checked uint64 value arguments; trailing packs and
+namespace-distinct families remain distinct. Each specialization names an
+already-verified concrete enum representation. The native compiler does not
+instantiate payload semantics or invent a layout. An unused dependent family
+may have only an undefined selector primary; an executable concrete application
+must have its exact lowered/MIR instance. Missing concrete instances never
+become `void` fields. The catalog is emitted only for dependently referenced
+families, and rejects textual duplicate keys. Full native specializations also
+reject typedef-equivalent duplicate keys as redefinitions, without quadratic
+pairwise comparisons or silently selecting another GTI identity. Such a native
+representation collision remains a backend limitation, not a source legality
+rule; exact-only applications do not demand a selector catalog.
+Enum declaration parameter metadata is serialized and validated for exact
+argument kind/count and consistency across the family's concrete rows.
 
 Generated constructors have no source member declaration row. For a retained
 native primary, their exact ordinary and status-form specialization declarations

@@ -7,6 +7,104 @@
 #include <utility>
 
 namespace lang {
+RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const BorrowSupplierAvailability> suppliers) {
+  if (suppliers.size() != summary.dependencies.size())
+    return {};
+  const auto contains = [](const auto &all, const auto &required) {
+    return std::all_of(required.begin(), required.end(), [&](const auto &item) {
+      return std::find(all.begin(), all.end(), item) != all.end();
+    });
+  };
+  RestrictedBorrowResultDomain result{.status = BorrowResultDomainStatus::Known,
+                                      .possibleAlternatives =
+                                          summary.possibleAlternatives};
+  const auto possible = [&](const auto &guard) {
+    return guard.empty() ||
+           std::any_of(result.possibleAlternatives.begin(),
+                       result.possibleAlternatives.end(),
+                       [&](const auto &path) {
+                         return contains(path.conditions, guard);
+                       });
+  };
+  const auto prune = [&](const auto &guard) {
+    if (guard.empty()) {
+      result.status = BorrowResultDomainStatus::NoNormalResult;
+      result.possibleAlternatives.clear();
+      return;
+    }
+    std::erase_if(result.possibleAlternatives, [&](const auto &path) {
+      return contains(path.conditions, guard);
+    });
+  };
+  const auto sameResult = [](const BorrowedFieldOrigin &left,
+                             const BorrowedFieldOrigin &right) {
+    return left.resultFields == right.resultFields &&
+           left.resultConditions == right.resultConditions &&
+           left.access == right.access;
+  };
+  for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
+    const auto &dependency = summary.dependencies[index];
+    if (!possible(dependency.resultConditions))
+      continue;
+    bool allImpossible = true;
+    for (std::size_t other = 0; other < summary.dependencies.size(); ++other)
+      if (sameResult(dependency, summary.dependencies[other]) &&
+          suppliers[other] != BorrowSupplierAvailability::Impossible)
+        allImpossible = false;
+    if (allImpossible)
+      prune(dependency.resultConditions);
+  }
+  // Removing the final alternative of a required nested enum makes its
+  // parent case impossible as well. Domain identity is the exact typed
+  // subobject; siblings of another enum type or field cannot satisfy it.
+  // Repeat because pruning a child may empty another ancestor's required
+  // domain.
+  bool changed = true;
+  while (result.status == BorrowResultDomainStatus::Known && changed) {
+    changed = false;
+    for (const auto &dependency : summary.dependencies)
+      for (std::size_t depth = 0; depth < dependency.resultConditions.size();
+           ++depth) {
+        const auto ancestors =
+            std::span(dependency.resultConditions).first(depth);
+        if (!possible(ancestors))
+          continue;
+        const auto &domain = dependency.resultConditions[depth];
+        const bool remains = std::any_of(
+            result.possibleAlternatives.begin(),
+            result.possibleAlternatives.end(), [&](const auto &path) {
+              return contains(path.conditions, ancestors) &&
+                     std::any_of(
+                         path.conditions.begin(), path.conditions.end(),
+                         [&](const auto &condition) {
+                           return condition.subobject == domain.subobject &&
+                                  condition.enumeration == domain.enumeration;
+                         });
+            });
+        if (!remains) {
+          const auto count = result.possibleAlternatives.size();
+          prune(ancestors);
+          changed |= result.possibleAlternatives.size() != count;
+        }
+      }
+  }
+  if (result.status == BorrowResultDomainStatus::NoNormalResult ||
+      (!summary.possibleAlternatives.empty() &&
+       result.possibleAlternatives.empty()))
+    return {.status = BorrowResultDomainStatus::NoNormalResult};
+  for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
+    if (!possible(summary.dependencies[index].resultConditions))
+      continue;
+    if (suppliers[index] == BorrowSupplierAvailability::Unknown)
+      return {};
+    if (suppliers[index] == BorrowSupplierAvailability::Available)
+      result.dependencies.push_back(index);
+  }
+  return result;
+}
+
 SemanticType substituteSemanticType(const SemanticType &type,
                                     const GenericSubstitution &substitution,
                                     const SemanticModel *model) {
@@ -1859,6 +1957,7 @@ void SemanticModel::clear() {
   payloadBindings.clear();
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
+  captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
   constexprBranches.clear();
@@ -2111,12 +2210,27 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   for (const auto &[_, unit] : semanticDatabase.occurrencesByUnit)
     occurrences += unit.size();
   std::size_t borrowedDependencies = 0;
-  for (const auto &[_, complete] : expressionBorrowDependencies) {
-    borrowedDependencies += complete.dependencies.size();
-    for (const auto &dependency : complete.dependencies)
+  for (const auto &loan : retainedLoans) {
+    borrowedDependencies += loan.conditions.size();
+    if (loan.referenceSelection)
+      borrowedDependencies += loan.referenceSelection->fields.size() +
+                              loan.referenceSelection->conditions.size();
+    for (const auto &dependency : loan.additionalDependencies)
       borrowedDependencies += dependency.conditions.size();
-    for (const auto &alternative : complete.possibleAlternatives)
+  }
+  for (const auto &[_, complete] : expressionBorrowDependencies) {
+    if (!complete)
+      continue;
+    borrowedDependencies += complete->dependencies.size();
+    for (const auto &dependency : complete->dependencies)
+      borrowedDependencies += dependency.conditions.size();
+    for (const auto &alternative : complete->possibleAlternatives)
       borrowedDependencies += alternative.conditions.size();
+  }
+  for (const auto &[_, captures] : captureBorrowDependencies) {
+    borrowedDependencies += captures.size();
+    for (const auto &dependency : captures)
+      borrowedDependencies += dependency.conditions.size();
   }
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
@@ -2133,7 +2247,9 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           fullExpressionOrder.size()) *
              96 +
          (retainedLoans.size() + borrowedDependencies) * 256 +
-         expressionBorrowDependencies.size() * 96 +
+         (expressionBorrowDependencies.size() +
+          captureBorrowDependencies.size()) *
+             96 +
          semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
          (resolvedSymbols.size() + definedFailures.size() +
           placeSelections.size() + implicitReturnMoves.size()) *
@@ -2329,7 +2445,7 @@ const SemanticBorrowDependencySet *
 SemanticModel::findBorrowDependencySet(const Expr &expression) const {
   if (const auto found = expressionBorrowDependencies.find(&expression);
       found != expressionBorrowDependencies.end())
-    return &found->second;
+    return found->second ? &*found->second : nullptr;
   return base == nullptr ? nullptr : base->findBorrowDependencySet(expression);
 }
 
@@ -2337,8 +2453,23 @@ std::span<const SemanticLoanDependency>
 SemanticModel::findBorrowDependencies(const Expr &expression) const {
   const auto *complete = findBorrowDependencySet(expression);
   return complete == nullptr
-             ? std::span<const SemanticLoanDependency>{}
+             ? findCaptureBorrowDependencies(expression)
              : std::span<const SemanticLoanDependency>{complete->dependencies};
+}
+
+std::span<const SemanticLoanDependency>
+SemanticModel::findCaptureBorrowDependencies(const Expr &expression) const {
+  if (const auto found = captureBorrowDependencies.find(&expression);
+      found != captureBorrowDependencies.end())
+    return found->second;
+  return base == nullptr ? std::span<const SemanticLoanDependency>{}
+                         : base->findCaptureBorrowDependencies(expression);
+}
+
+void SemanticModel::recordCaptureBorrowDependencies(
+    const Expr &expression, std::vector<SemanticLoanDependency> dependencies) {
+  captureBorrowDependencies.insert_or_assign(&expression,
+                                             std::move(dependencies));
 }
 
 void SemanticModel::recordBorrowDependencies(
@@ -2351,6 +2482,10 @@ void SemanticModel::recordBorrowDependencySet(
     const Expr &expression, SemanticBorrowDependencySet dependencies) {
   expressionBorrowDependencies.insert_or_assign(&expression,
                                                 std::move(dependencies));
+}
+
+void SemanticModel::clearBorrowDependencySet(const Expr &expression) {
+  expressionBorrowDependencies.insert_or_assign(&expression, std::nullopt);
 }
 
 void SemanticModel::recordLoan(SemanticLoanInfo info) {
@@ -2476,6 +2611,7 @@ void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
+  captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
   switchArmLoanEnds.clear();
@@ -2623,9 +2759,9 @@ void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   if (const FunctionInfo *target = findFunction(info.function)) {
     info.neverReturns = target->neverReturns;
     info.tracksCaller = target->tracksCaller;
-  } else if (info.intrinsic == IntrinsicKind::Panic) {
+  } else if (intrinsicTerminalFailureOutcome(info.intrinsic)) {
     info.neverReturns = true;
-    info.tracksCaller = true;
+    info.tracksCaller = info.intrinsic == IntrinsicKind::Panic;
   }
   suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));

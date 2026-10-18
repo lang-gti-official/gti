@@ -6,6 +6,7 @@
 #include "gti/semantic_core.h"
 
 #include <functional>
+#include <span>
 
 namespace lang {
 
@@ -93,6 +94,20 @@ struct SemanticBorrowDependencySet {
                          const SemanticBorrowDependencySet &) = default;
 };
 
+// The evaluated address of a stored reference is independent of the complete
+// set of external places that may own its referent. In particular a branch
+// join must not select the first dependency as though it were that address.
+struct SemanticReferenceSelection {
+  const Expr *source = nullptr;
+  const Expr *carrier = nullptr;
+  // Exact consumed dependency group whose authority is handed off by the
+  // closed arm-entry prefix. This is provenance, not a live reborrow parent.
+  SemanticLoanId transferredFrom = 0;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -122,7 +137,11 @@ struct SemanticLoanInfo {
   // For a StoredValue parameter loan, this exact nominal field path ends at
   // the reference designating its external referent. Empty for other loans.
   std::vector<SymbolId> designatedFields;
+  // The primary dependency has the same typed alternative qualification as
+  // additionalDependencies. An empty list denotes an unconditional path.
+  std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
+  std::optional<SemanticReferenceSelection> referenceSelection;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -410,6 +429,7 @@ enum class IntrinsicKind {
   RequireKey,
   RequireContainerArgument,
   Panic,
+  FailEmptyOwner,
   SharedOwnerEmpty,
   SharedOwnerFromUnique,
   SharedOwnerClone,
@@ -509,6 +529,21 @@ enum class IntrinsicKind {
   ThreadScope,
   Count,
 };
+
+// Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] inline std::optional<DefinedFailureOutcome>
+intrinsicTerminalFailureOutcome(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::Panic:
+    return DefinedFailureOutcome{DefinedFailureCode::Panic,
+                                 DefinedFailureDetail::ExplicitPanic};
+  case IntrinsicKind::FailEmptyOwner:
+    return DefinedFailureOutcome{DefinedFailureCode::EmptyOwnerAccess,
+                                 DefinedFailureDetail::MemberAccess};
+  default:
+    return std::nullopt;
+  }
+}
 
 // These checks consume a source-computed condition, not a storage object.
 // The declaration-bound intrinsic selects the failure family; neither MIR
@@ -702,6 +737,37 @@ struct BorrowedFieldOrigin {
                          const BorrowedFieldOrigin &) = default;
 };
 
+// A complete caller-visible result contract. Origins are declaration-relative
+// parameters/receiver projections, never a callee's local places or loan IDs.
+// Absence means unknown; an empty dependency list still requires the exact
+// typed alternative inventory proved by every reachable normal return.
+struct FunctionBorrowDependencySummary {
+  std::vector<BorrowedFieldOrigin> dependencies;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+
+  friend bool operator==(const FunctionBorrowDependencySummary &,
+                         const FunctionBorrowDependencySummary &) = default;
+};
+
+// Context-free result-domain restriction. Each caller independently proves
+// supplier availability from its own typed actual-argument facts; this helper
+// neither establishes origins nor interprets loans, producers, or signatures.
+enum class BorrowSupplierAvailability { Available, Impossible, Unknown };
+enum class BorrowResultDomainStatus { Known, Unknown, NoNormalResult };
+struct RestrictedBorrowResultDomain {
+  BorrowResultDomainStatus status = BorrowResultDomainStatus::Unknown;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+  std::vector<std::size_t> dependencies;
+};
+
+// Requires an independently validated typed declaration contract. Mappings for
+// one result field/guard/access are alternative suppliers (OR), not independent
+// prerequisites. An unresolved supplier never becomes an impossible supplier;
+// pruning every alternative is not a dependency-free normal result.
+[[nodiscard]] RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const BorrowSupplierAvailability> suppliers);
+
 // A restored referent's abstract checked field dependency. The unsafe exact-T
 // restoration contract certifies these fields belong to the original object;
 // every dependency remains bounded by the input opaque reference witness.
@@ -802,6 +868,7 @@ struct FunctionInfo {
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   // Body-proven restoration of a checked referent from the single opaque
   // return-borrow argument. Never inferred from a signature or public name.
@@ -1045,11 +1112,43 @@ struct ResolvedPayloadConstructionInfo {
   std::vector<SemanticType> parameterTypes;
 };
 
+// The pattern selects ownership/borrowing semantics before HIR. A stored
+// reference designates an external object; extracting it must never move that
+// object or reinterpret the reference as borrowing the carrier's own storage.
+enum class PayloadExtractionKind {
+  CopyValue,
+  MoveValue,
+  BorrowValue,
+  CopyReference,
+  TransferReference,
+  ReborrowReference,
+};
+
+[[nodiscard]] constexpr bool
+isStoredReferenceExtraction(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::CopyReference ||
+         kind == PayloadExtractionKind::TransferReference ||
+         kind == PayloadExtractionKind::ReborrowReference;
+}
+
+[[nodiscard]] constexpr bool
+isConsumingPayloadExtraction(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::MoveValue ||
+         kind == PayloadExtractionKind::TransferReference;
+}
+
+[[nodiscard]] constexpr bool
+isReferencePayloadBinding(PayloadExtractionKind kind) {
+  return kind == PayloadExtractionKind::BorrowValue ||
+         isStoredReferenceExtraction(kind);
+}
+
 struct PayloadBindingInfo {
   const Token *name = nullptr;
   const Expr *source = nullptr;
   BindingInfo binding;
   std::size_t payloadIndex = 0;
+  PayloadExtractionKind extractionKind = PayloadExtractionKind::CopyValue;
 };
 
 struct ResolvedPayloadPatternInfo {
@@ -2082,6 +2181,10 @@ public:
   findBorrowDependencySet(const Expr &expression) const;
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findBorrowDependencies(const Expr &expression) const;
+  // Constructor inputs for the separately checked closure-loan producer.
+  // These are not a complete value fact, even when the input vector is empty.
+  [[nodiscard]] std::span<const SemanticLoanDependency>
+  findCaptureBorrowDependencies(const Expr &expression) const;
 
   [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
 
@@ -2510,6 +2613,11 @@ private:
                            std::vector<SemanticLoanDependency> dependencies);
   void recordBorrowDependencySet(const Expr &expression,
                                  SemanticBorrowDependencySet dependencies);
+  // Explicitly unknown in this analysis, including when a base snapshot had
+  // a fact for the same syntax in a different concrete instance.
+  void clearBorrowDependencySet(const Expr &expression);
+  void recordCaptureBorrowDependencies(
+      const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
 
@@ -2741,8 +2849,10 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
-  std::unordered_map<const Expr *, SemanticBorrowDependencySet>
+  std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
+  std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
+      captureBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;

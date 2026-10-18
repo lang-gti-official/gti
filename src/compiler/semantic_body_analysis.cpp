@@ -424,6 +424,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     return scope.finish();
   }
   FunctionInfo concreteFunction = *function;
+  concreteFunction.completeReturnBorrow.reset();
   concreteFunction.restoresReferenceResult = false;
   concreteFunction.restoredBorrowFields.clear();
   const GenericSubstitution substitution{.types = instanceTypeSubstitution,
@@ -2941,9 +2942,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                     "reference parameter name or 'this'.");
         }
       } else if (functionInfo == nullptr ||
-                 functionInfo->returnType.kind != SemanticType::Reference) {
+                 (functionInfo->returnType.kind != SemanticType::Reference &&
+                  !isConditionalBorrowResult(functionInfo->returnType))) {
         reportContract(attribute, "A borrowed_from contract requires a checked "
-                                  "reference return type.");
+                                  "reference or conditional reference-bearing "
+                                  "return type.");
       } else if (!contract.argument) {
         reportContract(attribute, "A borrowed_from contract requires one "
                                   "reference parameter name or 'this'.");
@@ -2951,7 +2954,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         reportContract(
             *contract.argument,
             "The selected borrow origin must name a reference parameter or "
-            "single-dependency carrier with sufficient access, or a "
+            "eligible borrowed carrier with sufficient access, or a "
             "non-static receiver.");
       }
       continue;
@@ -3045,6 +3048,18 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
+  // A source body can establish a complete conditional return contract without
+  // a single unconditional origin (for example, a dependency-free variant).
+  // Each return and each call still requires its independently checked complete
+  // dependency set; a declaration alone cannot supply this authority.
+  const bool completeConditionalReturn =
+      stmt.body() && declaredReturnType.kind == SemanticType::Enum && [&] {
+        const auto inventory = storedReferenceInventory(declaredReturnType);
+        return inventory && std::any_of(inventory->begin(), inventory->end(),
+                                        [](const auto &path) {
+                                          return !path.conditions.empty();
+                                        });
+      }();
   validateOwningPayloadEnumByValueBoundary(
       declaredReturnType, stmt.returnType().name.last(), "function return",
       directOwningPayloadTransport);
@@ -3064,7 +3079,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             functionInfo != nullptr &&
+             !completeConditionalReturn && functionInfo != nullptr &&
              !stmt.hasFunctionAttribute("borrowed_from")) {
     reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   }
@@ -3390,6 +3405,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   finalizeLoanFlow();
   if (functionInfo != nullptr && !functionErrors()) {
     recordRestoredReferenceResult(*functionInfo);
+    recordCompleteFunctionReturnBorrow(*functionInfo);
   }
   endScope();
   if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
@@ -4461,6 +4477,31 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    // Snapshot scalar-reference origins at this return point, before arm
+    // cleanup or a subsequent body demand changes its local loan state.
+    // Selection already discharged the tag guard; a scalar result must not
+    // inherit a carrier's conditional field layout as if it were its own.
+    const auto *function = currentFunctionInfo();
+    auto dependencies =
+        function && conditionalReferenceReturn(currentReturnType,
+                                               function->parameterTypes)
+            ? storedBorrowDependencies(stmt.value())
+            : std::vector<SemanticLoanDependency>{};
+    if (!dependencies.empty() &&
+        std::all_of(dependencies.begin(), dependencies.end(),
+                    [&](const auto &dependency) {
+                      return dependency.place.valid() &&
+                             dependency.designatedFields.empty() &&
+                             dependency.conditions.empty() &&
+                             (currentReturnType.referenceAccess ==
+                                  AccessMode::ReadOnly ||
+                              dependency.access == AccessMode::Mutable);
+                    })) {
+      for (auto &dependency : dependencies)
+        dependency.access = currentReturnType.referenceAccess;
+      semanticModel.recordBorrowDependencySet(
+          *stmt.value(), {.dependencies = std::move(dependencies)});
+    }
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -4554,11 +4595,41 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   const bool consumedSubject = subjectInfo != nullptr &&
                                subjectInfo->category == ValueCategory::Value &&
                                subjectInfo->type == subjectType;
+  // Snapshot the selected operand's complete external owners before arm-local
+  // moves or replacement can change the source binding's current value fact.
+  const auto subjectDependencies =
+      completeBorrowDependencySet(stmt.expression());
+  const auto subjectSource = retainedLoanSource(stmt.expression());
+  SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
+  if (const auto *loan = semanticModel.findLoan(subjectDependency);
+      loan && loan->kind == SemanticLoanKind::Reference)
+    subjectDependency = loan->storedDependency;
+  bool consumesDependency = false;
+  if (consumedSubject && subjectDependencies &&
+      !subjectDependencies->dependencies.empty()) {
+    const auto *group = semanticModel.findLoan(subjectDependency);
+    const auto flow = loanFlow.records.find(subjectDependency);
+    const auto *carrier = subjectSource && subjectSource->carrier
+                              ? resolve(subjectSource->carrier->name())
+                              : nullptr;
+    consumesDependency =
+        group && group->kind == SemanticLoanKind::StoredValue &&
+        !group->lifecycleBound && flow != loanFlow.records.end() &&
+        flow->second.active && flow->second.carriers.size() == 1 && carrier &&
+        flow->second.carriers.contains(toolingSymbolFor(*carrier));
+    if (!consumesDependency)
+      report(stmt.keyword(),
+             "A consuming borrowed payload requires one exact active carrier "
+             "with independently transferable dependencies.",
+             "GTI-S2067");
+  }
   if (consumedSubject) {
     // Like an immutable local initialized from the subject: arms move its
     // fields out, but no source code can name or assign it.
-    semanticModel.recordConsumedSwitchSubject(
-        stmt, bindingInfo(subjectType, AccessMode::ReadOnly));
+    auto hidden = bindingInfo(subjectType, AccessMode::ReadOnly);
+    if (consumesDependency)
+      hidden.retainedLoan = subjectDependency;
+    semanticModel.recordConsumedSwitchSubject(stmt, std::move(hidden));
   }
   const bool validSubject = isInteger(subjectType) ||
                             subjectType == SemanticType::Char ||
@@ -4711,6 +4782,49 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
     beginScope();
     loanFlow.activeSwitchArms.push_back(
         {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
+    std::unordered_map<const Expr *, SemanticBorrowDependencySet>
+        transferredPayloadDependencies;
+    bool validHandoff = consumesDependency;
+    if (consumesDependency) {
+      // Analyze mutually exclusive arms from the same incoming authority.
+      // Capture every selected external path before retiring that authority;
+      // later bindings must not rediscover it through an already moved shell.
+      loanFlow.records.at(subjectDependency).active = true;
+      for (const auto &[_, pattern] : payloadPatterns)
+        for (const auto &payload : pattern.bindings) {
+          if (payload.extractionKind !=
+              PayloadExtractionKind::TransferReference) {
+            if (typeTraits(payload.binding.type).containsBorrowedState)
+              validHandoff = false;
+            continue;
+          }
+          auto projected = selectedPayloadReferenceDependencies(
+              pattern, payload, *subjectDependencies);
+          if (!projected) {
+            validHandoff = false;
+            continue;
+          }
+          // Concrete groups already name their earlier external ancestors.
+          // An abstract formal has no earlier body-local parent: retain its
+          // exact identity through transferredFrom, not an expired parent.
+          for (const auto &dependency : projected->dependencies)
+            if (dependency.parent == subjectDependency) {
+              const auto *group = semanticModel.findLoan(subjectDependency);
+              if (!group || !group->entry ||
+                  !hasCheckedExternalBorrowOrigin(dependency)) {
+                validHandoff = false;
+                break;
+              }
+            }
+          transferredPayloadDependencies.emplace(payload.source,
+                                                 std::move(*projected));
+        }
+      if (validHandoff) {
+        loanFlow.records.at(subjectDependency).active = false;
+        semanticModel.recordLoanEndAtSwitchArmEntry(subjectDependency, stmt,
+                                                    armIndex);
+      }
+    }
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -4744,7 +4858,85 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               carrier->rawPointerFields = fields;
             }
           }
-        if (payload.binding.type.kind == SemanticType::Reference) {
+        if (isStoredReferenceExtraction(payload.extractionKind)) {
+          const auto transferred =
+              transferredPayloadDependencies.find(payload.source);
+          auto dependencies =
+              consumedSubject
+                  ? (validHandoff &&
+                             transferred != transferredPayloadDependencies.end()
+                         ? std::optional{transferred->second}
+                         : std::nullopt)
+                  : (subjectDependencies
+                         ? selectedPayloadReferenceDependencies(
+                               pattern, payload, *subjectDependencies)
+                         : std::nullopt);
+          if (!dependencies || (payload.extractionKind ==
+                                    PayloadExtractionKind::ReborrowReference &&
+                                subjectDependency == 0)) {
+            report(*payload.name,
+                   "A stored reference selection requires a complete checked "
+                   "external dependency set and its exact active carrier "
+                   "authority; consuming handoff is not yet verified.",
+                   "GTI-S2067");
+          } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            // The extraction observes incoming authority before handoff.
+            // Its value fact is distinct from the successor loan published
+            // after retirement of the old group.
+            const auto extractedDependencies = *dependencies;
+            if (consumedSubject)
+              for (auto &dependency : dependencies->dependencies)
+                if (dependency.parent == subjectDependency)
+                  dependency.parent = 0;
+            const auto enumeration = enumTypeFor(pattern.type);
+            const auto variant = std::find_if(
+                enumeration->enumerators.begin(),
+                enumeration->enumerators.end(), [&](const auto &candidate) {
+                  return candidate.variantIndex == pattern.variantIndex;
+                });
+            const bool reborrow = payload.extractionKind ==
+                                  PayloadExtractionKind::ReborrowReference;
+            if (reborrow)
+              for (auto &dependency : dependencies->dependencies)
+                dependency.parent = subjectDependency;
+            for (const auto &dependency : dependencies->dependencies)
+              reportBorrowConflict(
+                  *payload.name,
+                  conflictingLoans(dependency.place, dependency.access,
+                                   dependency.parent),
+                  "Cannot select this reference while an overlapping "
+                  "external borrow may still be live.");
+            const auto &primary = dependencies->dependencies.front();
+            payload.binding.retainedLoan = createRetainedLoan(
+                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
+                primary.place, primary.place.root, primary.place.receiver,
+                primary.access, primary.protectsStorage, primary.parent);
+            if (payload.binding.retainedLoan != 0) {
+              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
+              loan.additionalDependencies.assign(
+                  dependencies->dependencies.begin() + 1,
+                  dependencies->dependencies.end());
+              loan.referenceSelection = SemanticReferenceSelection{
+                  .source = payload.source,
+                  .carrier = stmt.expression().get(),
+                  .transferredFrom = consumedSubject ? subjectDependency : 0,
+                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
+                  .conditions = {{.enumeration = pattern.type,
+                                  .variant = pattern.variantIndex}},
+                  .reference = variant->payloadTypes[payload.payloadIndex]};
+              semanticModel.recordLoan(std::move(loan));
+              for (const auto &dependency : dependencies->dependencies)
+                if (dependency.protectsStorage)
+                  registerStorageLoan(dependency.place.root,
+                                      dependency.place.receiver,
+                                      payload.binding.retainedLoan);
+              loanFlow.records.at(payload.binding.retainedLoan)
+                  .confinedToRegion = false;
+              semanticModel.recordBorrowDependencySet(*payload.source,
+                                                      extractedDependencies);
+            }
+          }
+        } else if (payload.binding.type.kind == SemanticType::Reference) {
           const AccessMode access = payload.binding.type.referenceAccess;
           const ExpressionInfo *subject =
               semanticModel.findExpression(*stmt.expression());
@@ -4779,7 +4971,13 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             }
             SemanticLoanId parent = 0;
             if (const auto source = retainedLoanSource(stmt.expression()))
-              parent = source->loan;
+              if (const auto *loan = semanticModel.findLoan(source->loan);
+                  loan && loan->kind != SemanticLoanKind::StoredValue)
+                parent = source->loan;
+            // This pattern borrows physical payload storage, not a stored
+            // reference's external owner. A dependency group carried by an
+            // owned enum cannot authorize a child loan into that enum's shell.
+            // A reference to the enum itself still supplies its normal parent.
             reportBorrowConflict(
                 *payload.name, conflictingLoans(place, access, parent),
                 "Cannot borrow this payload while an overlapping enum borrow "
@@ -4790,6 +4988,12 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             payload.binding.retainedLoan = createRetainedLoan(
                 *carrier, symbol, SemanticLoanKind::Reference, payload.source,
                 place, place.root, place.receiver, access, true, parent);
+            if (const auto *ancestor = semanticModel.findLoan(parent);
+                ancestor && ancestor->storedDependency != 0) {
+              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
+              loan.storedDependency = ancestor->storedDependency;
+              semanticModel.recordLoan(std::move(loan));
+            }
             // The binding is born at this arm's entry, not at the switch
             // subject's full expression. Keep its endpoint lexical until
             // arm-local NLL creation/endpoint plans are represented.
@@ -4818,6 +5022,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
+  if (consumesDependency)
+    loanFlow.records.at(subjectDependency).active = false;
   const bool exhaustivePayload =
       payloadEnum != nullptr && !invalidPayloadPattern &&
       coveredPayloadVariants.size() == payloadEnum->enumerators.size();
@@ -8987,7 +9193,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentType = SemanticType::lambdaType(
       id, returnType, parameterTypes, captureTypes, classTypeArguments,
       functionTypeArguments, classValueArguments, functionValueArguments);
-  semanticModel.recordBorrowDependencies(expr, std::move(captureDependencies));
+  semanticModel.recordCaptureBorrowDependencies(expr,
+                                                std::move(captureDependencies));
   semanticModel.record(
       expr,
       LambdaInfo{.id = id,
@@ -13200,14 +13407,16 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
   return false;
 }
 
-auto SemanticVisitor::Impl::summarizeFlow(const StmtList &statements) const
-    -> FlowSummary {
+auto SemanticVisitor::Impl::summarizeFlow(
+    const StmtList &statements, std::vector<const ReturnStmt *> *normalReturns,
+    bool structural) const -> FlowSummary {
   FlowSummary result;
   for (const StmtPtr &statement : statements) {
     if (!result.canFallThrough) {
       break;
     }
-    const FlowSummary next = summarizeFlow(statement.get());
+    const FlowSummary next =
+        summarizeFlow(statement.get(), normalReturns, structural);
     result.canFallThrough = next.canFallThrough;
     result.breaksEnclosingControl =
         result.breaksEnclosingControl || next.breaksEnclosingControl;
@@ -13220,16 +13429,18 @@ auto SemanticVisitor::Impl::summarizeFlow(const StmtList &statements) const
   return result;
 }
 
-auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
-    -> FlowSummary {
+auto SemanticVisitor::Impl::summarizeFlow(
+    const Stmt *statement, std::vector<const ReturnStmt *> *normalReturns,
+    bool structural) const -> FlowSummary {
   if (statement == nullptr) {
     return {};
   }
   if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
+    const bool returns = !expressionNeverReturns(returned->value().get());
+    if (returns && normalReturns)
+      normalReturns->push_back(returned);
     return {.canFallThrough = false,
-            .normalReturn = expressionNeverReturns(returned->value().get())
-                                ? nullptr
-                                : returned};
+            .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
     return {.canFallThrough =
@@ -13247,11 +13458,13 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
                 control->keyword().kind == TokenKind::CONTINUE};
   }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
-    return summarizeFlow(block->statements());
+    return summarizeFlow(block->statements(), normalReturns, structural);
   }
   if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
     const StmtList *branch = conditional->activeBranch(target);
-    return branch == nullptr ? FlowSummary{} : summarizeFlow(*branch);
+    return branch == nullptr
+               ? FlowSummary{}
+               : summarizeFlow(*branch, normalReturns, structural);
   }
   if (const auto *ifStatement = stmtAs<IfStmt>(statement)) {
     if (expressionNeverReturns(ifStatement->condition().get())) {
@@ -13260,18 +13473,25 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     if (ifStatement->isConstexpr()) {
       if (const std::optional<bool> selected =
               semanticModel.findConstexprBranch(*ifStatement)) {
-        return *selected ? summarizeFlow(ifStatement->thenBranch().get())
-                         : summarizeFlow(ifStatement->elseBranch().get());
+        return *selected ? summarizeFlow(ifStatement->thenBranch().get(),
+                                         normalReturns, structural)
+                         : summarizeFlow(ifStatement->elseBranch().get(),
+                                         normalReturns, structural);
       }
       return {};
     }
     if (const std::optional<bool> condition =
-            constantBoolean(ifStatement->condition())) {
-      return *condition ? summarizeFlow(ifStatement->thenBranch().get())
-                        : summarizeFlow(ifStatement->elseBranch().get());
+            constantBoolean(ifStatement->condition());
+        condition && !structural) {
+      return *condition ? summarizeFlow(ifStatement->thenBranch().get(),
+                                        normalReturns, structural)
+                        : summarizeFlow(ifStatement->elseBranch().get(),
+                                        normalReturns, structural);
     }
-    const FlowSummary thenFlow = summarizeFlow(ifStatement->thenBranch().get());
-    const FlowSummary elseFlow = summarizeFlow(ifStatement->elseBranch().get());
+    const FlowSummary thenFlow = summarizeFlow(ifStatement->thenBranch().get(),
+                                               normalReturns, structural);
+    const FlowSummary elseFlow = summarizeFlow(ifStatement->elseBranch().get(),
+                                               normalReturns, structural);
     return {.canFallThrough =
                 thenFlow.canFallThrough || elseFlow.canFallThrough,
             .breaksEnclosingControl = thenFlow.breaksEnclosingControl ||
@@ -13296,7 +13516,8 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
       for (const SwitchLabel &label : arm.labels) {
         coversEveryValue = coversEveryValue || label.isDefault();
       }
-      const FlowSummary armFlow = summarizeFlow(arm.statements);
+      const FlowSummary armFlow =
+          summarizeFlow(arm.statements, normalReturns, structural);
       if (normalReturn == nullptr) {
         normalReturn = armFlow.normalReturn;
       }
@@ -13310,25 +13531,27 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
             .normalReturn = normalReturn};
   }
   if (const auto *forStatement = stmtAs<ForStmt>(statement)) {
-    const FlowSummary initializer =
-        summarizeFlow(forStatement->initializer().get());
+    const FlowSummary initializer = summarizeFlow(
+        forStatement->initializer().get(), normalReturns, structural);
     if (!initializer.canFallThrough) {
       return initializer;
     }
     if (expressionNeverReturns(forStatement->condition().get())) {
       return {.canFallThrough = false};
     }
-    const FlowSummary body = summarizeFlow(forStatement->body().get());
+    const bool skipsBody =
+        !structural && constantBoolean(forStatement->condition()) == false;
+    const FlowSummary body =
+        summarizeFlow(forStatement->body().get(),
+                      skipsBody ? nullptr : normalReturns, structural);
     const bool repeatsForever =
         !forStatement->condition() ||
-        constantBoolean(forStatement->condition()) == true;
+        (!structural && constantBoolean(forStatement->condition()) == true);
     return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl,
-            .normalReturn = constantBoolean(forStatement->condition()) == false
-                                ? nullptr
-                                : body.normalReturn};
+            .normalReturn = skipsBody ? nullptr : body.normalReturn};
   }
   if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
-    return summarizeFlow(rangeFor->lowered().get());
+    return summarizeFlow(rangeFor->lowered().get(), normalReturns, structural);
   }
   if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
     const ConstexprForExpansion *expansion =
@@ -13343,31 +13566,34 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     for (const ConstexprForIteration &iteration : expansion->iterations) {
       blocks.push_back(iteration.block);
     }
-    return summarizeFlow(blocks);
+    return summarizeFlow(blocks, normalReturns, structural);
   }
   if (const auto *doWhile = stmtAs<DoWhileStmt>(statement)) {
-    const FlowSummary body = summarizeFlow(doWhile->body().get());
+    const FlowSummary body =
+        summarizeFlow(doWhile->body().get(), normalReturns, structural);
     const bool reachesCondition =
         body.canFallThrough || body.continuesEnclosingLoop;
     return {.canFallThrough =
                 body.breaksEnclosingControl ||
                 (reachesCondition &&
                  !expressionNeverReturns(doWhile->condition().get()) &&
-                 constantBoolean(doWhile->condition()) != true),
+                 (structural || constantBoolean(doWhile->condition()) != true)),
             .normalReturn = body.normalReturn};
   }
   if (const auto *whileStatement = stmtAs<WhileStmt>(statement)) {
     if (expressionNeverReturns(whileStatement->condition().get())) {
       return {.canFallThrough = false};
     }
-    const FlowSummary body = summarizeFlow(whileStatement->body().get());
+    const bool skipsBody =
+        !structural && constantBoolean(whileStatement->condition()) == false;
+    const FlowSummary body =
+        summarizeFlow(whileStatement->body().get(),
+                      skipsBody ? nullptr : normalReturns, structural);
     return {.canFallThrough =
+                structural ||
                 constantBoolean(whileStatement->condition()) != true ||
                 body.breaksEnclosingControl,
-            .normalReturn =
-                constantBoolean(whileStatement->condition()) == false
-                    ? nullptr
-                    : body.normalReturn};
+            .normalReturn = skipsBody ? nullptr : body.normalReturn};
   }
   return {};
 }

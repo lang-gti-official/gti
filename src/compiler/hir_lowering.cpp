@@ -1,6 +1,7 @@
 #include "gti/hir.h"
 
 #include "diagnostic_registry.h"
+#include "gti/generic_instantiation_limits.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -239,8 +240,10 @@ private:
   // These are compilation resource bounds, not a termination proof or a
   // semantic restriction on exact recursive calls. Existing canonical
   // instances never consume another step in the discovery chain.
-  static constexpr std::size_t maximumDiscoveryDepth = 64;
-  static constexpr std::size_t maximumDiscoveredInstances = 16384;
+  static constexpr std::size_t maximumDiscoveryDepth =
+      GenericInstantiationLimits::maximumDepth;
+  static constexpr std::size_t maximumDiscoveredInstances =
+      GenericInstantiationLimits::maximumDistinctInstances;
 
   struct InstanceDiscovery {
     std::size_t depth;
@@ -622,10 +625,12 @@ private:
          .parameterTypes = std::move(parameterTypes),
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
+         .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
          .returnBorrowParameters = declaration.returnBorrowParameters,
          .returnBorrowFields = declaration.returnBorrowFields,
+         .completeReturnBorrow = declaration.completeReturnBorrow,
          .returnBorrowPlace = declaration.returnBorrowPlace,
          .restoresReferenceResult = declaration.restoresReferenceResult,
          .restoredBorrowFields = declaration.restoredBorrowFields,
@@ -2060,12 +2065,16 @@ private:
     if (concrete != nullptr) {
       output.program.functions[index].returnBorrowOrigin =
           concrete->returnBorrowOrigin;
+      output.program.functions[index].explicitReturnBorrowOrigin =
+          concrete->explicitReturnBorrowOrigin;
       output.program.functions[index].returnBorrowParameter =
           concrete->returnBorrowParameter;
       output.program.functions[index].returnBorrowParameters =
           concrete->returnBorrowParameters;
       output.program.functions[index].returnBorrowFields =
           concrete->returnBorrowFields;
+      output.program.functions[index].completeReturnBorrow =
+          concrete->completeReturnBorrow;
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
@@ -2686,11 +2695,15 @@ private:
               [&](SymbolId carrier) { return bindings.contains(carrier); }))
         pending.push_back(loan.id);
     }
-    for (const auto &value : body.values)
+    for (const auto &value : body.values) {
       if (value.borrowDependencies)
         for (const auto &dependency : value.borrowDependencies->dependencies)
           if (dependency.parent != 0)
             pending.push_back(dependency.parent);
+      for (const auto &dependency : value.captureBorrowDependencies)
+        if (dependency.parent != 0)
+          pending.push_back(dependency.parent);
+    }
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -2715,11 +2728,39 @@ private:
                       .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .designatedFields = loan.designatedFields,
+                      .conditions = loan.conditions,
                       .additionalDependencies = loan.additionalDependencies,
                       .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
       for (auto &dependency : lowered.additionalDependencies) {
         dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+      }
+      if (loan.referenceSelection) {
+        const auto &selection = *loan.referenceSelection;
+        HirReferenceSelection resolved{.transferredFrom =
+                                           selection.transferredFrom,
+                                       .fields = selection.fields,
+                                       .conditions = selection.conditions,
+                                       .reference = selection.reference};
+        std::size_t matches = 0;
+        for (const auto &value : body.values) {
+          if (value.source != selection.source ||
+              value.kind != HirValueKind::PayloadExtraction ||
+              value.operands.size() != 1)
+            continue;
+          const auto *carrier = body.findValue(value.operands.front());
+          if (carrier == nullptr || carrier->source != selection.carrier)
+            continue;
+          ++matches;
+          resolved.value = value.id;
+          resolved.carrier = carrier->id;
+        }
+        // Never resolve through the program-wide source index: repeated
+        // generic instances have distinct local values for the same syntax.
+        if (matches != 1 || selection.source == nullptr ||
+            selection.carrier == nullptr)
+          lifecycleValid = false;
+        lowered.referenceSelection = std::move(resolved);
       }
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);
@@ -3571,7 +3612,7 @@ private:
                   lowerPayloadBinding(*payload.name, payload.binding, body);
               const HirValueId extraction = nextValueId++;
               const bool borrowed =
-                  payload.binding.type.kind == SemanticType::Reference;
+                  isReferencePayloadBinding(payload.extractionKind);
               const SemanticType extractedType =
                   borrowed ? payload.binding.type.arguments.front()
                            : payload.binding.type;
@@ -3590,7 +3631,8 @@ private:
                    .operands = {*subject},
                    .enumOwner = payloadPattern->owner,
                    .enumVariant = payloadPattern->variantIndex,
-                   .payloadIndex = payload.payloadIndex});
+                   .payloadIndex = payload.payloadIndex,
+                   .payloadExtractionKind = payload.extractionKind});
               output.program.sourceValueIds[payload.source].push_back(
                   extraction);
               loweredArm.payloadBindings.push_back(
@@ -3950,7 +3992,8 @@ private:
       } else if (!orderedOwningParameterType(parameter) ||
                  input->info.type != parameter ||
                  (input->info.traits.containsBorrowedState &&
-                  parameter.kind != SemanticType::Class)) {
+                  parameter.kind != SemanticType::Class &&
+                  parameter.kind != SemanticType::Enum)) {
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
                  input->info.traits.copyable) {
@@ -4684,8 +4727,9 @@ private:
                              .intrinsic = IntrinsicKind::Move});
       return id;
     };
-    const auto blockCall = [&](const ResolvedCallInfo &call,
-                               bool consumes) -> std::optional<HirValueId> {
+    const auto blockCall = [&](const ResolvedCallInfo &call, bool consumes,
+                               const SemanticBorrowDependencySet *dependencies)
+        -> std::optional<HirValueId> {
       const FunctionInfo *target = baseModel->findFunction(call.function);
       if (target == nullptr || call.parameterTypes.size() != 1) {
         lifecycleValid = false;
@@ -4765,14 +4809,22 @@ private:
                               .kind = kind}}},
           .functionTarget = instance,
       };
+      if (dependencies) {
+        value.borrowDependencies = *dependencies;
+        for (auto &dependency : value.borrowDependencies->dependencies)
+          dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+      }
       const HirValueId id = value.id;
       body.values.push_back(std::move(value));
       return id;
     };
 
-    const std::optional<HirValueId> test = blockCall(plan.test, false);
-    const std::optional<HirValueId> success = blockCall(plan.output, true);
-    const std::optional<HirValueId> residual = blockCall(plan.residual, true);
+    const std::optional<HirValueId> test = blockCall(plan.test, false, nullptr);
+    const auto *outputDependencies = model.findBorrowDependencySet(expression);
+    const std::optional<HirValueId> success =
+        blockCall(plan.output, true, outputDependencies);
+    const std::optional<HirValueId> residual =
+        blockCall(plan.residual, true, nullptr);
     if (!test || !success || !residual) {
       return std::nullopt;
     }
@@ -4835,6 +4887,12 @@ private:
                                .residual = *residual,
                                .residualReturn = residualReturnId,
                                .consumesOperand = plan.consumesOperand}});
+    if (outputDependencies) {
+      body.values.back().borrowDependencies = *outputDependencies;
+      for (auto &dependency :
+           body.values.back().borrowDependencies->dependencies)
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+    }
     output.program.sourceValueIds[&expression].push_back(id);
     return id;
   }
@@ -6000,6 +6058,11 @@ private:
         value.borrowDependencies->dependencies.push_back(std::move(lowered));
       }
     }
+    for (const auto &dependency : model.findCaptureBorrowDependencies(*raw)) {
+      auto lowered = dependency;
+      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+      value.captureBorrowDependencies.push_back(std::move(lowered));
+    }
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&
         model.typeOf(*call->callee()).kind != SemanticType::FunctionItem &&
@@ -6847,6 +6910,30 @@ private:
           value.callPlan =
               HirCallPlan{.receiver = receiverPlan, .arguments = *planned};
         }
+      }
+    }
+    if (value.kind == HirValueKind::PayloadConstruction) {
+      const auto *call = exprAs<Call>(raw);
+      const auto *payload =
+          call ? model.findPayloadConstruction(*call) : nullptr;
+      if (payload &&
+          std::any_of(
+              payload->parameterTypes.begin(), payload->parameterTypes.end(),
+              [&](const SemanticType &field) {
+                return field.kind == SemanticType::Reference ||
+                       instanceProvider->traitsFor(field).containsBorrowedState;
+              })) {
+        // Borrowed aggregate fields require ordinary ordered argument
+        // protection across later field evaluation. The sealed variant owns
+        // this signature; neither a backend nor an aggregate spelling may
+        // rediscover it. Dependency-free variants keep their value transport.
+        value.parameterTypes = payload->parameterTypes;
+        if (auto planned =
+                orderedArguments(value.operands, value.parameterTypes, body))
+          value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                       .arguments = std::move(*planned)};
+        else
+          lifecycleValid = false;
       }
     }
     if ((value.intrinsic == IntrinsicKind::TextViewFromAddress ||

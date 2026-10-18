@@ -126,6 +126,19 @@ public:
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
+        .payloadReferences = std::any_of(
+            mir.payloadEnums().begin(), mir.payloadEnums().end(),
+            [](const auto &enumeration) {
+              return std::any_of(
+                  enumeration.variants.begin(), enumeration.variants.end(),
+                  [](const auto &variant) {
+                    return std::any_of(
+                        variant.payloadTypes.begin(),
+                        variant.payloadTypes.end(), [](const auto &field) {
+                          return field.kind == SemanticType::Reference;
+                        });
+                  });
+            }),
     };
     CppProgramEmissionPlan plan;
     capture(plan, CppProgramTextRole::SupportPreamble, [&] {
@@ -2166,6 +2179,114 @@ public:
     }
   }
 
+  void emitLoweredEnumSelectorCatalog() {
+    std::set<EnumId> needed;
+    const auto dependent = [&](const auto &self,
+                               const SemanticType &type) -> bool {
+      return type.kind == SemanticType::TypeParameter ||
+             (type.kind == SemanticType::TypePack && !type.concretePack) ||
+             type.arrayLengthParameterId != 0 ||
+             std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                         [](const auto &value) {
+                           return value.kind != CompileTimeValue::UInt64;
+                         }) ||
+             std::any_of(
+                 type.arguments.begin(), type.arguments.end(),
+                 [&](const auto &argument) { return self(self, argument); });
+    };
+    const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+      if (type.kind == SemanticType::Enum && dependent(dependent, type))
+        needed.insert(type.enumId);
+      for (const auto &argument : type.arguments)
+        self(self, argument);
+    };
+    for (const auto &row : loweredProgram.declarations()) {
+      // Reuse the planner's existing representation decision. Concrete class
+      // instances and concrete free functions never spell their dependent
+      // source declaration types, so they must not demand a native catalog.
+      if (row.ownerClass != 0) {
+        const auto *owner = loweredProgram.findClassDeclaration(row.ownerClass);
+        if (owner && !owner->genericParameters.empty() &&
+            !loweredClassNeedsNativePrimary(*owner))
+          continue;
+      }
+      if (const auto *owner =
+              std::get_if<LoweredClassDeclaration>(&row.payload);
+          owner && !owner->genericParameters.empty() &&
+          !loweredClassNeedsNativePrimary(*owner))
+        continue;
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&row.payload);
+          function && function->ownerClass == 0 &&
+          !function->genericParameters.empty() &&
+          function->definitionKind == MirDefinitionKind::Source) {
+        const auto instances = loweredFunctionInstances(function->id);
+        const bool overlay = std::any_of(
+            instances.begin(), instances.end(), [&](const auto *instance) {
+              const auto *concrete = loweredFunctionInstance(instance->id);
+              return concrete &&
+                     cppCallableFreeFunctionSpelling(
+                         loweredProgram, row, *function, *concrete, *instance)
+                         .has_value();
+            });
+        if (!overlay)
+          continue;
+      }
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&row.payload))
+        visit(visit, storage->type);
+      else if (const auto *alias =
+                   std::get_if<LoweredTypeAliasDeclaration>(&row.payload))
+        visit(visit, alias->type);
+      else if (const auto *function =
+                   std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
+        visit(visit, function->returnType);
+        for (const auto &parameter : function->parameters)
+          visit(visit, parameter.type);
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(&row.payload)) {
+        for (const auto &parameter : constructor->parameters)
+          visit(visit, parameter.type);
+      } else if (const auto *owner =
+                     std::get_if<LoweredClassDeclaration>(&row.payload)) {
+        for (const auto &base : owner->bases)
+          visit(visit, base.type);
+      }
+    }
+    if (needed.empty())
+      return;
+    writeIndent();
+    output << "template <typename...> struct __gti_enum_types;\n";
+    for (const auto family : needed) {
+      writeIndent();
+      output << "template <typename, typename> struct __gti_enum_selector_"
+             << family << ";\n";
+    }
+    std::unordered_set<std::string> selections;
+    for (const auto &row : loweredProgram.declarations()) {
+      const auto *enumeration =
+          std::get_if<LoweredEnumDeclaration>(&row.payload);
+      if (!enumeration || !needed.contains(enumeration->id))
+        continue;
+      const auto family =
+          "__gti_enum_selector_" + std::to_string(enumeration->id);
+      const auto key =
+          family +
+          cppEnumSelectorArguments(loweredProgram, standard, enumeration->type);
+      if (!selections.insert(key).second)
+        throw std::logic_error(
+            "distinct enum instances share a native selector key");
+      // Full specializations also reject native-equivalent typedef keys as
+      // redefinitions. Do not add quadratic pairwise native type comparisons:
+      // no ambiguous key can silently select another GTI instance.
+      writeIndent();
+      output << "template <> struct " << key << " { using type = "
+             << cppSemanticTypeSpelling(loweredProgram, standard,
+                                        enumeration->type)
+             << "; };\n";
+    }
+  }
+
   void emitLoweredEnumDefinition(const LoweredDeclaration &row,
                                  const LoweredEnumDeclaration &enumeration) {
     const std::string name =
@@ -2184,11 +2305,28 @@ public:
           writeIndent();
           const bool byteTransport = cppRequiresBytePreservingTransport(
               mir, variant.payloadTypes[index]);
-          if (byteTransport)
-            output << "::gti_internal::backend::representation_cell<";
-          emitSemanticType(variant.payloadTypes[index]);
-          if (byteTransport)
-            output << '>';
+          const auto &field = variant.payloadTypes[index];
+          const bool reference = field.kind == SemanticType::Reference;
+          // A source reference retains an address, not an assignable C++
+          // reference data member. This private carrier lets MIR's passive
+          // SSA staging copy that address without changing the referent or
+          // granting source-level assignment/copy permissions.
+          if (reference) {
+            if (field.arguments.size() != 1)
+              throw std::logic_error(
+                  "verified payload reference lost its referent");
+            output << "std::reference_wrapper<";
+            if (field.referenceAccess == AccessMode::ReadOnly)
+              output << "const ";
+            emitSemanticType(field.arguments.front());
+            output << ">";
+          } else {
+            if (byteTransport)
+              output << "::gti_internal::backend::representation_cell<";
+            emitSemanticType(field);
+            if (byteTransport)
+              output << '>';
+          }
           output << " __gti_field_" << index << ";\n";
         }
         writeIndent();
@@ -7562,6 +7700,7 @@ public:
       emitLoweredTypeForwardDeclarations(0);
       emitLoweredConcreteClassForwardDeclarations();
       emitLoweredExactClassSpecializationForwardDeclarations();
+      emitLoweredEnumSelectorCatalog();
       emitLoweredAliasForwardDeclarations(0);
       emitLoweredFunctionForwardDeclarations(0);
     });

@@ -961,18 +961,18 @@
       }
     },
     "066-managed-threads.gti": {
-      "declarations": 929,
-      "bodies": 129,
-      "generated_items": 80,
+      "declarations": 1282,
+      "bodies": 206,
+      "generated_items": 130,
       "generated_kinds": {
-        "program_initialization": 0,
+        "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 12,
+        "structural_operator_adapter": 27,
         "callable_adapter": 21,
-        "lifecycle_cleanup": 3,
+        "lifecycle_cleanup": 5,
         "native_interop_adapter": 0,
         "thread_task_adapter": 6,
-        "concrete_instance_adapter": 37
+        "concrete_instance_adapter": 69
       }
     },
     "067-forward-iterators.gti": {
@@ -1202,17 +1202,17 @@
     },
     "084-optional-values.gti": {
       "declarations": 145,
-      "bodies": 33,
-      "generated_items": 18,
+      "bodies": 28,
+      "generated_items": 16,
       "generated_kinds": {
-        "program_initialization": 0,
+        "program_initialization": 1,
         "hosted_entry": 1,
         "structural_operator_adapter": 1,
         "callable_adapter": 0,
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 16
+        "concrete_instance_adapter": 13
       }
     },
     "085-payload-enum-fields.gti": {
@@ -1306,7 +1306,7 @@
       }
     },
     "091-json-documents.gti": {
-      "declarations": 1926,
+      "declarations": 1925,
       "bodies": 471,
       "generated_items": 273,
       "generated_kinds": {
@@ -1321,8 +1321,8 @@
       }
     },
     "092-json-codecs.gti": {
-      "declarations": 1932,
-      "bodies": 447,
+      "declarations": 1930,
+      "bodies": 449,
       "generated_items": 255,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1336,8 +1336,8 @@
       }
     },
     "093-http-json-client.gti": {
-      "declarations": 2074,
-      "bodies": 555,
+      "declarations": 2072,
+      "bodies": 557,
       "generated_items": 272,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1441,8 +1441,8 @@
       }
     },
     "100-owned-error-pipelines.gti": {
-      "declarations": 1920,
-      "bodies": 327,
+      "declarations": 1918,
+      "bodies": 329,
       "generated_items": 173,
       "generated_kinds": {
         "program_initialization": 1,
@@ -1906,8 +1906,8 @@
       }
     },
     "131-inferred-references.gti": {
-      "declarations": 1911,
-      "bodies": 379,
+      "declarations": 1909,
+      "bodies": 381,
       "generated_items": 218,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2041,9 +2041,9 @@
       }
     },
     "140-environment-configuration.gti": {
-      "declarations": 1215,
-      "bodies": 131,
-      "generated_items": 92,
+      "declarations": 1214,
+      "bodies": 130,
+      "generated_items": 91,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2052,11 +2052,11 @@
         "lifecycle_cleanup": 4,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 40
+        "concrete_instance_adapter": 39
       }
     },
     "141-reflected-json.gti": {
-      "declarations": 1934,
+      "declarations": 1933,
       "bodies": 519,
       "generated_items": 299,
       "generated_kinds": {
@@ -2146,8 +2146,8 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3237,
-      "bodies": 389,
+      "declarations": 3235,
+      "bodies": 391,
       "generated_items": 224,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2161,8 +2161,8 @@
       }
     },
     "148-nested-configuration.gti": {
-      "declarations": 1929,
-      "bodies": 430,
+      "declarations": 1927,
+      "bodies": 432,
       "generated_items": 235,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2400,21 +2400,6 @@
         "concrete_instance_adapter": 50
       }
     },
-    "164-payload-composition.gti": {
-      "declarations": 1251,
-      "bodies": 137,
-      "generated_items": 97,
-      "generated_kinds": {
-        "program_initialization": 1,
-        "hosted_entry": 1,
-        "structural_operator_adapter": 27,
-        "callable_adapter": 19,
-        "lifecycle_cleanup": 3,
-        "native_interop_adapter": 0,
-        "thread_task_adapter": 0,
-        "concrete_instance_adapter": 46
-      }
-    },
     "163-payload-enum-propagation.gti": {
       "declarations": 1217,
       "bodies": 134,
@@ -2430,9 +2415,24 @@
         "concrete_instance_adapter": 39
       }
     },
+    "164-payload-composition.gti": {
+      "declarations": 1251,
+      "bodies": 137,
+      "generated_items": 97,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 46
+      }
+    },
     "165-borrowed-payload-results.gti": {
-      "declarations": 1194,
-      "bodies": 146,
+      "declarations": 1250,
+      "bodies": 157,
       "generated_items": 86,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2444,11 +2444,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 36
       }
+    },
+    "166-source-optional.gti": {
+      "declarations": 1211,
+      "bodies": 147,
+      "generated_items": 102,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 51
+      }
     }
   },
   "totals": {
-    "declarations": 126065,
-    "bodies": 18465,
-    "generated_items": 11683
+    "declarations": 127670,
+    "bodies": 18706,
+    "generated_items": 11832
   }
 }

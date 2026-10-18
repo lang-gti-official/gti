@@ -220,7 +220,7 @@ void testTarget(std::string_view os) {
              lang::verifyMirProgram(result.mir).valid(),
          "classified HIR and MIR verify");
   const auto dump = lang::MirPrinter().print(result.mir);
-  expect(dump.starts_with("mir-v106 ") &&
+  expect(dump.starts_with("mir-v110 ") &&
              dump.find(windows
                            ? "process-memory-operation=8"
                            : "process-memory-operation=6") != std::string::npos,

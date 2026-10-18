@@ -502,6 +502,8 @@ void writeCppSupportPreamble(std::ostream &output,
             "#include <type_traits>\n"
             "#include <utility>\n"
             "#include <variant>\n";
+  if (features.payloadReferences)
+    output << "#include <functional>\n";
   const bool usesExpected = features.expected;
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
@@ -676,6 +678,20 @@ public:
     }
     return *this;
   }
+  // Private SSA/binding transport can copy-construct a passive representation
+  // even when its source type deliberately forbids assignment. This does not
+  // grant GTI assignment: verified source traits still govern that operation.
+  payload_variant &operator=(const payload_variant &other) noexcept
+      requires ((std::is_nothrow_copy_constructible_v<Values> && ...) &&
+                (std::is_trivially_destructible_v<Values> && ...) &&
+                !(std::is_copy_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    destroy_active();
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(other.storage_.template get<Index>());
+    });
+    return *this;
+  }
   payload_variant &operator=(payload_variant &&)
       requires ((std::is_trivially_move_constructible_v<Values> && ...) &&
                 (std::is_trivially_move_assignable_v<Values> && ...) &&
@@ -701,8 +717,29 @@ public:
     }
     return *this;
   }
+  // GTI owning-enum replacement has already run the destination's checked
+  // source cleanup. Nonassignable payloads need only move construction here:
+  // retire the now-clean native shell and publish the new tag after construction.
+  // This overload is not a source cleanup mechanism or permission to relocate
+  // the payload bytes (for example, a mutex recreates its native mutex).
+  payload_variant &operator=(payload_variant &&other)
+      noexcept((std::is_nothrow_move_constructible_v<Values> && ...))
+      requires ((std::is_move_constructible_v<Values> && ...) &&
+                !(std::is_move_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    destroy_active();
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(std::move(other.storage_.template get<Index>()));
+    });
+    return *this;
+  }
   ~payload_variant() requires (std::is_trivially_destructible_v<Values> && ...) = default;
   ~payload_variant() noexcept { destroy_active(); }
+  // Only verified enum cleanup calls this, after its complete source cleanup
+  // recipe has drained the alternative. Retire the
+  // native shell on success and failure so a later lexical drop cannot run
+  // the same source cleanup twice. No GTI value observes the vacant interval.
+  void retire_cleaned_alternative() noexcept { destroy_active(); }
   std::size_t index() const noexcept {
     return std::size_t(tag_);
   }
@@ -2260,7 +2297,13 @@ public:
   }
 
   template <typename Cleanup>
-  [[nodiscard]] bool destroy_cleanup_with_failure(
+  [[nodiscard]]
+#if defined(_MSC_VER)
+  __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  bool destroy_cleanup_with_failure(
       ::gti_failure_record_v2 *record, bool conditional, bool unwinding,
       Cleanup cleanup) {
     if (!engaged_) {

@@ -110,6 +110,7 @@ public:
     for (const HirValue &consumer : source.values) {
       if (!consumer.callPlan ||
           !(consumer.functionTarget ||
+            consumer.kind == HirValueKind::PayloadConstruction ||
             (consumer.constructorTarget &&
              consumer.constructorKind == ConstructorKind::Ordinary))) {
         continue;
@@ -122,6 +123,12 @@ public:
     }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
+      for (const SemanticLoanId loan : statement.endedLoans) {
+        const auto [entry, inserted] =
+            uniqueSemanticLoanEndpoints.emplace(loan, statement.id);
+        if (!inserted && entry->second != statement.id)
+          entry->second = 0;
+      }
       if (statement.kind == HirStatementKind::Return) {
         ++exitCount;
       }
@@ -3295,26 +3302,136 @@ private:
     }
   }
 
+  [[nodiscard]] std::optional<MirLoanDependency>
+  lowerCompleteBorrowDependency(const SemanticLoanDependency &dependency) {
+    if (!dependency.place.valid())
+      return std::nullopt;
+    MirLoanId parent = 0;
+    MirPlaceId selected = 0;
+    bool ambiguous = false;
+    const auto consider = [&](MirPlaceId candidate, AccessMode authority) {
+      const auto *place = output.findPlace(candidate);
+      if (!place || place->key != dependency.place ||
+          (dependency.access == AccessMode::Mutable &&
+           authority != AccessMode::Mutable))
+        return;
+      if (selected != 0 && !sameBorrowSource(selected, candidate))
+        ambiguous = true;
+      else
+        selected = candidate;
+    };
+    if (dependency.parent != 0) {
+      const auto mapped = semanticLoans.find(dependency.parent);
+      const auto *semantic = source.findLoan(dependency.parent);
+      if (mapped == semanticLoans.end() || !semantic)
+        return std::nullopt;
+      parent = mapped->second;
+      const auto *loan = output.findLoan(parent);
+      if (!loan)
+        return std::nullopt;
+      if (loan->entry && loan->kind == MirLoanKind::Stored) {
+        const auto base = loan->source;
+        const auto project = [&](const auto &fields, const auto &conditions,
+                                 AccessMode access) {
+          auto external = semantic->place;
+          for (const auto field : fields)
+            external.projections.push_back(
+                {.kind = PlaceProjectionKind::Field, .field = field});
+          if (external == dependency.place)
+            consider(projectBorrowFields(base, fields, conditions), access);
+        };
+        project(semantic->designatedFields, semantic->conditions,
+                semantic->access);
+        for (const auto &extra : semantic->additionalDependencies)
+          project(extra.designatedFields, extra.conditions, extra.access);
+      } else {
+        consider(loan->source, loan->access);
+        for (const auto &extra : loan->additionalDependencies)
+          consider(extra.source, extra.access);
+      }
+    } else {
+      // A direct physical owner can be materialized from its existing typed
+      // binding and field path. Dynamic projections must already have their
+      // evaluated MIR place; a semantic overlap key is not an index value.
+      if (const auto binding = localSymbols.find(dependency.place.root);
+          !dependency.place.receiver && binding != localSymbols.end()) {
+        const auto base = placeForBinding(binding->second);
+        std::vector<SymbolId> fields;
+        bool fieldPath = true;
+        for (const auto &projection : dependency.place.projections) {
+          if (projection.kind != PlaceProjectionKind::Field) {
+            fieldPath = false;
+            break;
+          }
+          fields.push_back(projection.field);
+        }
+        if (fieldPath) {
+          const auto projected = projectBorrowFields(base, fields);
+          if (const auto *place = output.findPlace(projected))
+            consider(projected, place->access);
+        }
+      }
+      if (selected == 0)
+        for (const auto &place : output.places)
+          if (place.root != MirPlaceRootKind::Value &&
+              place.root != MirPlaceRootKind::Temporary)
+            consider(place.id, place.access);
+    }
+    if (selected == 0 || ambiguous)
+      return std::nullopt;
+    return MirLoanDependency{.source = selected,
+                             .parent = parent,
+                             .designatedFields = dependency.designatedFields,
+                             .access = dependency.access,
+                             .conditions = dependency.conditions};
+  }
+
   MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info) {
     const MirValueId id = output.values.size() + 1;
     output.values.push_back(
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
     if (const auto *source = findValue(sourceValue);
         source && source->info.type == output.values.back().info.type &&
-        source->borrowDependencies &&
-        !source->borrowDependencies->possibleAlternatives.empty()) {
+        source->borrowDependencies) {
       // Transport source-established complete sets, including known-empty
       // alternatives. MIR independently reconstructs their value/storage flow;
       // absence is never upgraded to an empty proof by lowering.
-      if (!source->borrowDependencies->dependencies.empty()) {
-        valid = false;
-      } else {
-        output.values.back().borrowDependencies = MirBorrowDependencySet{
-            .possibleAlternatives =
-                source->borrowDependencies->possibleAlternatives};
+      MirBorrowDependencySet complete{
+          .possibleAlternatives =
+              source->borrowDependencies->possibleAlternatives};
+      for (const auto &dependency : source->borrowDependencies->dependencies) {
+        const auto lowered = lowerCompleteBorrowDependency(dependency);
+        if (!lowered) {
+          valid = false;
+          return id;
+        }
+        complete.dependencies.push_back(*lowered);
       }
+      output.values[id - 1].borrowDependencies = std::move(complete);
     }
     return id;
+  }
+
+  [[nodiscard]] bool completeEmptyBorrowValue(HirValueId source,
+                                              const MirOperand &operand,
+                                              const SemanticType &type) const {
+    const auto *value = findValue(source);
+    const auto *lowered = operand.kind == MirOperandKind::Value
+                              ? output.findValue(operand.value)
+                              : nullptr;
+    // No loan is needed only when both representations preserve the same
+    // complete, typed dependency-free alternative. A missing loan or missing
+    // dependency set is not evidence of emptiness; the program verifier still
+    // independently reconstructs the producer and storage flow.
+    return type.kind == SemanticType::Enum && value &&
+           value->info.type == type && value->borrowDependencies &&
+           value->borrowDependencies->dependencies.empty() &&
+           !value->borrowDependencies->possibleAlternatives.empty() &&
+           lowered && lowered->info.type == type &&
+           lowered->borrowDependencies &&
+           lowered->borrowDependencies->dependencies.empty() &&
+           lowered->borrowDependencies->possibleAlternatives ==
+               value->borrowDependencies->possibleAlternatives;
   }
 
   [[nodiscard]] MirValueId mirValueFor(const HirValue &value) {
@@ -3440,6 +3557,56 @@ private:
     if (const auto found = semanticLoanPlaces.find(loan.semanticLoan);
         found != semanticLoanPlaces.end()) {
       return found->second;
+    }
+
+    if (loan.referenceSelection) {
+      const auto authority = loan.parent != 0
+                                 ? loan.parent
+                                 : loan.referenceSelection->transferredFrom;
+      const auto *entry = source.findLoan(authority);
+      const auto mapped = semanticLoans.find(authority);
+      if (entry && entry->entry &&
+          entry->kind == SemanticLoanKind::StoredValue) {
+        if (mapped == semanticLoans.end()) {
+          valid = false;
+          return 0;
+        }
+        const auto *lowered = output.findLoan(mapped->second);
+        if (!lowered) {
+          valid = false;
+          return 0;
+        }
+        const auto base = lowered->source;
+        const auto project = [&](const auto &fields, const auto &conditions) {
+          auto external = entry->place;
+          for (const auto field : fields)
+            external.projections.push_back(
+                {.kind = PlaceProjectionKind::Field, .field = field});
+          if (external != loan.place)
+            return MirPlaceId{0};
+          return projectBorrowFields(base, fields, conditions);
+        };
+        auto exact = project(entry->designatedFields, entry->conditions);
+        for (const auto &dependency : entry->additionalDependencies)
+          if (auto projected =
+                  project(dependency.designatedFields, dependency.conditions)) {
+            if (exact != 0 && exact != projected) {
+              valid = false;
+              return 0;
+            }
+            exact = projected;
+          }
+        const auto *place = output.findPlace(exact);
+        if (!place || place->key != loan.place ||
+            (resultValue && place->type != resultValue->info.type) ||
+            (loan.access == AccessMode::Mutable &&
+             place->access != AccessMode::Mutable)) {
+          valid = false;
+          return 0;
+        }
+        semanticLoanPlaces.emplace(loan.semanticLoan, exact);
+        return exact;
+      }
     }
 
     MirPlace lowered;
@@ -3667,6 +3834,62 @@ private:
       return;
     }
     lowered.semanticLoan = loan.semanticLoan;
+    if (loan.referenceSelection) {
+      const auto &selection = *loan.referenceSelection;
+      const auto *value = findValue(selection.value);
+      const auto found = loweredValues.find(selection.value);
+      const auto *resolved = found == loweredValues.end()
+                                 ? nullptr
+                                 : output.findValue(found->second);
+      const auto *block = resolved == nullptr
+                              ? nullptr
+                              : output.findBlock(resolved->definitionBlock);
+      const MirInstruction *producer = nullptr;
+      if (block != nullptr)
+        for (const auto &instruction : block->instructions)
+          if (instruction.id == resolved->definition)
+            producer = &instruction;
+      if (value == nullptr || resolved == nullptr || producer == nullptr ||
+          value->kind != HirValueKind::PayloadExtraction ||
+          value->operands.size() != 1 ||
+          value->operands.front() != selection.carrier ||
+          producer->kind != MirInstructionKind::Compute ||
+          producer->operation != MirOperation::PayloadExtract ||
+          producer->hirValue != selection.value ||
+          producer->result != resolved->id || producer->operands.size() != 1 ||
+          output.findPlace(producer->operands.front().place) == nullptr ||
+          !producer->payloadExtractionKind ||
+          !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
+        valid = false;
+        return;
+      }
+      MirReferenceSelection selected{.value = resolved->id,
+                                     .carrier =
+                                         producer->operands.front().place,
+                                     .fields = selection.fields,
+                                     .conditions = selection.conditions,
+                                     .reference = selection.reference};
+      if (selection.transferredFrom != 0) {
+        const auto source = semanticLoans.find(selection.transferredFrom);
+        if (source == semanticLoans.end() || source->second == id ||
+            output.findLoan(source->second) == nullptr ||
+            *producer->payloadExtractionKind !=
+                PayloadExtractionKind::TransferReference) {
+          valid = false;
+          return;
+        }
+        selected.transferredFrom = source->second;
+      }
+      if (lowered.referenceSelection &&
+          *lowered.referenceSelection != selected) {
+        valid = false;
+        return;
+      }
+      lowered.referenceSelection = std::move(selected);
+    } else if (lowered.referenceSelection) {
+      valid = false;
+      return;
+    }
     if (loan.storedDependency != 0) {
       const auto dependency = semanticLoans.find(loan.storedDependency);
       if (dependency == semanticLoans.end() ||
@@ -3691,14 +3914,20 @@ private:
       return;
     }
     lowered.designatedFields = loan.designatedFields;
+    if (!lowered.conditions.empty() && lowered.conditions != loan.conditions) {
+      valid = false;
+      return;
+    }
+    lowered.conditions = loan.conditions;
     const auto previousDependencies = lowered.additionalDependencies;
     std::erase_if(lowered.additionalDependencies, [](const auto &dependency) {
       return dependency.source == 0;
     });
-    if (!loan.entry && !loan.designatedFields.empty())
+    if (!loan.entry &&
+        (!loan.designatedFields.empty() || loan.referenceSelection))
       lowered.additionalDependencies.clear();
     for (const auto &dependency : loan.additionalDependencies) {
-      if (!dependency.designatedFields.empty()) {
+      if (!dependency.designatedFields.empty() || loan.referenceSelection) {
         MirPlaceId concreteSource = 0;
         if (!loan.entry) {
           const auto matches = [&](MirPlaceId id) {
@@ -3712,6 +3941,17 @@ private:
               concreteSource = previous.source;
               break;
             }
+          // A selected scalar reference can have several alternative owners
+          // even though it no longer contains a reference-bearing field path.
+          // Its carrier has already materialized every external origin. Map
+          // those existing places; never use the selected runtime address as
+          // a replacement for an omitted owner.
+          if (concreteSource == 0 && loan.referenceSelection)
+            for (const auto &place : output.places)
+              if (place.root != MirPlaceRootKind::Value && matches(place.id)) {
+                concreteSource = place.id;
+                break;
+              }
           if (concreteSource == 0) {
             valid = false;
             return;
@@ -3724,7 +3964,8 @@ private:
                            ? semanticLoans.at(dependency.parent)
                            : 0,
              .designatedFields = dependency.designatedFields,
-             .access = dependency.access});
+             .access = dependency.access,
+             .conditions = dependency.conditions});
         if (dependency.parent != 0 &&
             lowered.additionalDependencies.back().parent == 0)
           valid = false;
@@ -5300,7 +5541,27 @@ private:
   }
 
   [[nodiscard]] std::optional<SemanticType>
-  borrowedFieldType(const SemanticType &type, SymbolId field) const {
+  borrowedFieldType(const SemanticType &type, SymbolId field,
+                    std::optional<std::size_t> variant = std::nullopt) const {
+    if (type.kind == SemanticType::Enum) {
+      // An abstract entry path describes a possible active alternative, not
+      // permission to search every alternative for a convenient field.
+      if (!variant)
+        return std::nullopt;
+      for (const auto &owner : program.enumDeclarations())
+        if (owner.type == type && owner.payload)
+          for (const auto &alternative : owner.enumerators)
+            if (alternative.variantIndex == *variant &&
+                alternative.payloadTypes.size() ==
+                    alternative.payloadSymbols.size())
+              for (std::size_t index = 0;
+                   index < alternative.payloadSymbols.size(); ++index)
+                if (alternative.payloadSymbols[index] == field)
+                  return alternative.payloadTypes[index];
+      return std::nullopt;
+    }
+    if (variant)
+      return std::nullopt;
     if (type.kind == SemanticType::Lambda) {
       for (const auto &owner : program.lambdaInstances())
         if (owner.type == type)
@@ -5317,8 +5578,9 @@ private:
     return std::nullopt;
   }
 
-  [[nodiscard]] MirPlaceId
-  projectBorrowFields(MirPlaceId base, const std::vector<SymbolId> &fields) {
+  [[nodiscard]] MirPlaceId projectBorrowFields(
+      MirPlaceId base, const std::vector<SymbolId> &fields,
+      std::span<const BorrowDependencyCondition> conditions = {}) {
     const auto *origin = output.findPlace(base);
     if (origin == nullptr)
       return 0;
@@ -5355,8 +5617,19 @@ private:
       }
     };
     dereference();
+    std::vector<SymbolId> prefix;
+    std::size_t usedConditions = 0;
     for (const auto field : fields) {
-      const auto member = borrowedFieldType(projected.type, field);
+      std::optional<std::size_t> variant;
+      for (const auto &condition : conditions)
+        if (condition.subobject == prefix) {
+          if (variant || condition.enumeration != projected.type ||
+              projected.type.kind != SemanticType::Enum)
+            return 0;
+          variant = condition.variant;
+          ++usedConditions;
+        }
+      const auto member = borrowedFieldType(projected.type, field, variant);
       if (!member)
         return 0;
       projected.projections.push_back(
@@ -5365,12 +5638,15 @@ private:
         projected.key->projections.push_back(
             {.kind = PlaceProjectionKind::Field, .field = field});
       projected.type = *member;
+      prefix.push_back(field);
       dereference();
       // Keep the typed prefix as well as the final referent. Independent
       // field-origin verification composes the carrier's stored reference
       // with the remainder of an accessor path without reconstructing types.
       (void)intern();
     }
+    if (usedConditions != conditions.size())
+      return 0;
     return intern();
   }
 
@@ -5665,7 +5941,8 @@ private:
           // must preserve each opaque entry identity independently.
           return loan->source;
         if (loan->entry && loan->kind == MirLoanKind::Stored)
-          return projectBorrowFields(loan->source, mapping.sourceFields);
+          return projectBorrowFields(loan->source, mapping.sourceFields,
+                                     mapping.sourceConditions);
         // A sole-path carrier may still use the compact single-origin loan
         // representation. Its selected field already denotes that source;
         // projecting the field onto the external owner would change meaning.
@@ -5703,7 +5980,8 @@ private:
       }
       if (sourceValue)
         return projectBorrowFields(placeForValue(*sourceValue),
-                                   mapping.sourceFields);
+                                   mapping.sourceFields,
+                                   mapping.sourceConditions);
     }
     // A returned reference protects the addressable carrier shell. A
     // by-value carrier instead forwards its external stored referents.
@@ -6800,13 +7078,14 @@ private:
     std::vector<MirLoanId> movedArgumentLoans;
     for (std::size_t index = 0;
          !construction && !value.constructorTarget &&
-         (!value.borrowFields.empty() || exactCarrierRelay) &&
-         index < arguments.size() && index < value.parameterTypes.size();
+         (!value.borrowFields.empty() || exactCarrierRelay ||
+          value.borrowDependencies.has_value()) &&
+         index < arguments.size() && index < call.parameterTypes.size();
          ++index) {
-      if (value.parameterTypes[index].kind == SemanticType::Reference)
+      if (call.parameterTypes[index].kind == SemanticType::Reference)
         continue;
       const auto *argument = findValue(arguments[index]);
-      if (argument == nullptr || argument->info.traits.copyable)
+      if (argument == nullptr)
         continue;
       const auto moved = movedBorrowCarrierBinding(arguments[index]);
       const auto found = bindingLoans.find(moved);
@@ -6826,7 +7105,9 @@ private:
     call.borrowPlace = value.borrowPlace;
     call.restoresReferenceResult = value.restoresReferenceResult;
     call.restoredBorrowFields = value.restoredBorrowFields;
-    if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
+    if (value.borrowOrigin != BorrowOriginKind::None && origin != 0 &&
+        (!value.borrowDependencies ||
+         !value.borrowDependencies->dependencies.empty())) {
       const bool shellReference = borrowsCarrierStorage(value);
       const MirLoanKind kind =
           value.info.traits.containsBorrowedState && !shellReference
@@ -7049,6 +7330,76 @@ private:
                .access = mapping.access});
         }
       }
+      if (value.borrowDependencies) {
+        std::vector<MirLoanDependency> complete;
+        for (const auto &dependency : value.borrowDependencies->dependencies) {
+          const auto lowered = lowerCompleteBorrowDependency(dependency);
+          if (!lowered) {
+            valid = false;
+            return;
+          }
+          auto selected = *lowered;
+          // A consumed carrier's complete external permission is transferred
+          // through the call. The result must not remain a child of the group
+          // that the successful invocation retires below.
+          if (std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
+                        selected.parent) != movedArgumentLoans.end()) {
+            const auto *previous = output.findLoan(selected.parent);
+            if (!previous) {
+              valid = false;
+              return;
+            }
+            std::optional<MirLoanId> externalParent;
+            bool ambiguous = false;
+            const auto consider = [&](MirPlaceId source, AccessMode access,
+                                      MirLoanId parent) {
+              if (!sameBorrowSource(source, selected.source) ||
+                  (selected.access == AccessMode::Mutable &&
+                   access != AccessMode::Mutable))
+                return;
+              if (externalParent && *externalParent != parent)
+                ambiguous = true;
+              else
+                externalParent = parent;
+            };
+            consider(previous->source, previous->access, previous->parent);
+            for (const auto &extra : previous->additionalDependencies)
+              consider(extra.source, extra.access, extra.parent);
+            if (!externalParent || ambiguous) {
+              valid = false;
+              return;
+            }
+            if (kind == MirLoanKind::CallResult) {
+              auto &transfers = callResultTransferredFrom[loan];
+              if (std::find(transfers.begin(), transfers.end(), previous->id) ==
+                  transfers.end())
+                transfers.push_back(previous->id);
+            }
+            selected.parent = *externalParent;
+          }
+          complete.push_back(std::move(selected));
+        }
+        if (complete.empty()) {
+          valid = false; // No origin may be invented for a borrowed result.
+          return;
+        }
+        const auto &primary = complete.front();
+        auto &published = output.loans[loan - 1];
+        published.source = primary.source;
+        published.access = primary.access;
+        published.parent = primary.parent;
+        published.designatedFields = primary.designatedFields;
+        published.conditions = primary.conditions;
+        published.additionalDependencies.assign(complete.begin() + 1,
+                                                complete.end());
+        if (!call.result ||
+            !output.values[*call.result - 1].borrowDependencies) {
+          valid = false;
+          return;
+        }
+        output.values[*call.result - 1].borrowDependencies->dependencies =
+            std::move(complete);
+      }
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -7125,10 +7476,12 @@ private:
             // those typed places so verification can replay each referent.
             const auto contract = *entry;
             (void)projectBorrowFields(contract.source,
-                                      contract.designatedFields);
+                                      contract.designatedFields,
+                                      contract.conditions);
             for (const auto &dependency : contract.additionalDependencies)
               (void)projectBorrowFields(contract.source,
-                                        dependency.designatedFields);
+                                        dependency.designatedFields,
+                                        dependency.conditions);
           }
           call.scopedThreadTasks.push_back(
               {.adapter = value.scopedThreadTasks[index], .dependency = loan});
@@ -7160,6 +7513,7 @@ private:
     const bool transferableBorrowedResult =
         call.loan &&
         (value.info.type.kind == SemanticType::Class ||
+         value.info.type.kind == SemanticType::Enum ||
          mirFallibleBorrowReferent(value.info.type).has_value()) &&
         value.info.category == ValueCategory::Value &&
         value.info.traits.movable && value.info.traits.containsBorrowedState;
@@ -7224,7 +7578,8 @@ private:
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = loan});
       removeLoanFromState(loan, scopes, bindingLoans);
-      // HIR can also end this consumed capability at the enclosing statement.
+      // HIR can also end this consumed capability at a later last-use statement
+      // when a result retains its external origins under a new identity.
       // The call has already emitted its exact executable endpoint; remember
       // only that statement's acknowledgement rather than accepting arbitrary
       // inactive loans (or emitting a second EndBorrow).
@@ -7246,9 +7601,17 @@ private:
                                  found->second == loan;
                         });
         if (!endsHere) {
-          const auto enclosing = enclosingTransferredLoanEndpoints.find(loan);
-          if (enclosing != enclosingTransferredLoanEndpoints.end())
-            endpoint = enclosing->second;
+          const auto exact =
+              previous == nullptr
+                  ? uniqueSemanticLoanEndpoints.end()
+                  : uniqueSemanticLoanEndpoints.find(previous->semanticLoan);
+          if (exact != uniqueSemanticLoanEndpoints.end() && exact->second != 0)
+            endpoint = exact->second;
+          else {
+            const auto enclosing = enclosingTransferredLoanEndpoints.find(loan);
+            if (enclosing != enclosingTransferredLoanEndpoints.end())
+              endpoint = enclosing->second;
+          }
         }
         callTransferredLoanEndpoints.insert_or_assign(loan, endpoint);
       }
@@ -9698,21 +10061,22 @@ private:
       }
     }
 
-    MirInstruction instruction{.kind = MirInstructionKind::Compute,
-                               .hirValue = value->id,
-                               .operation = computeOperation(*value),
-                               .literal = value->literal,
-                               .enumOwner = value->enumOwner,
-                               .enumValue = value->enumValue,
-                               .enumVariant = value->enumVariant,
-                               .payloadIndex = value->payloadIndex,
-                               .intrinsic = value->intrinsic,
-                               .definedFailure = value->definedFailure,
-                               .functionTarget = value->functionTarget,
-                               .nativeCallbackAdapter =
-                                   value->nativeCallbackAdapter,
-                               .lambdaTarget = value->lambdaTarget,
-                               .info = value->info};
+    MirInstruction instruction{
+        .kind = MirInstructionKind::Compute,
+        .hirValue = value->id,
+        .operation = computeOperation(*value),
+        .literal = value->literal,
+        .enumOwner = value->enumOwner,
+        .enumValue = value->enumValue,
+        .enumVariant = value->enumVariant,
+        .payloadIndex = value->payloadIndex,
+        .payloadExtractionKind = value->payloadExtractionKind,
+        .intrinsic = value->intrinsic,
+        .definedFailure = value->definedFailure,
+        .functionTarget = value->functionTarget,
+        .nativeCallbackAdapter = value->nativeCallbackAdapter,
+        .lambdaTarget = value->lambdaTarget,
+        .info = value->info};
     if (instruction.operation == MirOperation::Literal) {
       instruction.literalProvenance.kind = MirLiteralProvenanceKind::Source;
     }
@@ -9738,7 +10102,65 @@ private:
     if (instruction.operation == MirOperation::None) {
       valid = false;
     }
+    std::vector<MirDropObligationId> payloadPreparedDrops;
+    std::vector<MirLoanId> payloadTemporaryLoans;
+    std::vector<MirLoanId> payloadConsumedGroups;
+    const bool stagedPayload =
+        value->kind == HirValueKind::PayloadConstruction && value->callPlan;
+    if (stagedPayload) {
+      if (value->callPlan->receiver ||
+          value->callPlan->arguments.size() != value->operands.size()) {
+        valid = false;
+        return;
+      }
+      instruction.callSite = value->id;
+      for (const auto &argument : value->callPlan->arguments) {
+        const auto previousFailure = preparedCallArgumentFailure;
+        if (!payloadPreparedDrops.empty() || !payloadTemporaryLoans.empty())
+          preparedCallArgumentFailure =
+              PreparedCallArgumentFailure{.argument = argument.value};
+        auto operand =
+            argument.kind == HirCallInputKind::CopyValue
+                ? copyArgumentOperand(argument.value, argument.parameterType)
+                : argumentOperand(argument.value, argument.parameterType);
+        preparedCallArgumentFailure = previousFailure;
+        if (terminated())
+          return;
+        auto prepared = prepareCallInput(
+            value->id, argument.value, argument.parameterType, argument.kind,
+            MirCallInputRole::Argument, argument.parameterIndex,
+            std::move(operand), true, argument.defaultArgument);
+        instruction.parameterTypes.push_back(argument.parameterType);
+        instruction.operands.push_back(std::move(prepared.operand));
+        if (prepared.parameterDrop)
+          payloadPreparedDrops.push_back(prepared.parameterDrop);
+        if (prepared.loan)
+          payloadTemporaryLoans.push_back(prepared.loan);
+        const auto *source = findValue(argument.value);
+        if (source && source->kind == HirValueKind::PayloadConstruction &&
+            argument.kind == HirCallInputKind::Value &&
+            source->info.traits.movable &&
+            source->info.traits.containsBorrowedState) {
+          const auto group = loanForValue(source->id);
+          const auto *retained = output.findLoan(group);
+          if (retained && retained->kind == MirLoanKind::Stored &&
+              !retained->entry && !retained->escapes &&
+              retained->producedBy == source->id) {
+            if (retained->access == AccessMode::Mutable ||
+                std::any_of(retained->additionalDependencies.begin(),
+                            retained->additionalDependencies.end(),
+                            [](const auto &dependency) {
+                              return dependency.access == AccessMode::Mutable;
+                            }))
+              payloadConsumedGroups.push_back(group);
+          } else
+            valid = false;
+        }
+      }
+    }
     for (std::size_t index = 0; index < value->operands.size(); ++index) {
+      if (stagedPayload)
+        break;
       const HirValueId operand = value->operands[index];
       if (instruction.operation == MirOperation::Closure &&
           index < instruction.closureCaptureModes.size() &&
@@ -9791,20 +10213,31 @@ private:
     instruction.result = resultFor(*value);
     if (value->kind == HirValueKind::PayloadConstruction &&
         instruction.result && value->borrowDependencies) {
-      // Empty sets already have exact constructor-alternative evidence.
-      // Nonempty conditional sets will be bound to real MIR loans by the
-      // borrowed-construction path, never by manufacturing an empty loan.
-      if (!value->borrowDependencies->dependencies.empty()) {
+      // appendValue transports the complete semantic fact; independently
+      // checked ordered inputs establish its origins at program verification.
+      const auto &complete =
+          output.values[*instruction.result - 1].borrowDependencies;
+      if (!complete || (!complete->dependencies.empty() && !stagedPayload)) {
         valid = false;
         return;
       }
-      output.values[*instruction.result - 1].borrowDependencies =
-          MirBorrowDependencySet{
-              .possibleAlternatives =
-                  value->borrowDependencies->possibleAlternatives};
+      if (!complete->dependencies.empty()) {
+        const auto &primary = complete->dependencies.front();
+        const auto loan =
+            createLoan(MirLoanKind::Stored, primary.source, primary.access,
+                       value->id, 0, 0, primary.parent);
+        output.loans[loan - 1].designatedFields = primary.designatedFields;
+        output.loans[loan - 1].conditions = primary.conditions;
+        output.loans[loan - 1].additionalDependencies.assign(
+            complete->dependencies.begin() + 1, complete->dependencies.end());
+        instruction.loan = loan;
+        valueLoans.insert_or_assign(value->id, loan);
+        if (!scopes.empty())
+          scopes.back().loans.push_back(loan);
+      }
     }
     if (value->kind == HirValueKind::ArrayInitializer ||
-        value->kind == HirValueKind::PayloadConstruction ||
+        (value->kind == HirValueKind::PayloadConstruction && !stagedPayload) ||
         value->kind == HirValueKind::Unexpected ||
         value->kind == HirValueKind::Lambda) {
       for (std::size_t index = 0; index < value->operands.size(); ++index) {
@@ -9817,15 +10250,20 @@ private:
         transferTemporaryOut(instruction, operand);
       }
     }
+    for (const auto drop : payloadPreparedDrops) {
+      if (!removeTemporary(drop))
+        valid = false;
+      appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
+                                    .source = drop});
+    }
     if (value->kind != HirValueKind::PayloadExtraction ||
         value->info.category != ValueCategory::Place)
       (void)initializeValueLifecycle(instruction, *value);
     if (instruction.operation == MirOperation::Closure &&
-        value->borrowDependencies &&
-        !value->borrowDependencies->dependencies.empty()) {
+        !value->captureBorrowDependencies.empty()) {
       const auto *target = program.findLambda(*instruction.lambdaTarget);
       std::vector<MirLoanDependency> dependencies;
-      for (const auto &dependency : value->borrowDependencies->dependencies) {
+      for (const auto &dependency : value->captureBorrowDependencies) {
         const auto capture = target == nullptr ? 0 : [&] {
           for (std::size_t index = 0; index < target->captures.size(); ++index)
             if (!dependency.designatedFields.empty() &&
@@ -9904,6 +10342,18 @@ private:
       }
     }
     (void)appendInstruction(std::move(instruction));
+    for (const auto group : payloadConsumedGroups) {
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirValue = value->id,
+                               .loan = group});
+      removeLoanFromState(group, scopes, bindingLoans);
+    }
+    for (auto loan = payloadTemporaryLoans.rbegin();
+         loan != payloadTemporaryLoans.rend(); ++loan) {
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+      removeLoanFromState(*loan, scopes, bindingLoans);
+    }
     endConsumedCallResultLoans(value->operands, *value);
     emittedValues.insert(id);
   }
@@ -9926,7 +10376,17 @@ private:
         valid = false;
         return {};
       }
-      output.places[field - 1].key = desired->place;
+      // Ordinary payload borrowing protects the enum's field storage. A
+      // stored-reference extraction instead protects external owners and
+      // retains its evaluated address separately in referenceSelection.
+      const MirPlaceId origin =
+          desired->referenceSelection ? placeForLoan(*desired, value) : field;
+      if (origin == 0) {
+        valid = false;
+        return {};
+      }
+      if (!desired->referenceSelection)
+        output.places[field - 1].key = desired->place;
       MirLoanId parent = 0;
       if (desired->parent != 0) {
         const auto found = semanticLoans.find(desired->parent);
@@ -9937,7 +10397,7 @@ private:
         parent = found->second;
       }
       const MirLoanId loan =
-          createLoan(MirLoanKind::Local, field, desired->access, valueId,
+          createLoan(MirLoanKind::Local, origin, desired->access, valueId,
                      binding, 0, parent);
       recordLoanIdentity(loan, *desired, binding);
       (void)appendInstruction(
@@ -10067,6 +10527,25 @@ private:
       };
       MirLoanId parent = 0;
       if (desired->parent != 0) {
+        const auto transferred = callResultTransferredFrom.find(existing);
+        const auto oldParent = semanticLoans.find(desired->parent);
+        const auto *published = output.findLoan(existing);
+        if (transferred != callResultTransferredFrom.end() &&
+            oldParent != semanticLoans.end() &&
+            std::find(transferred->second.begin(), transferred->second.end(),
+                      oldParent->second) != transferred->second.end() &&
+            published != nullptr && !loanIsActive(scopes, oldParent->second) &&
+            retainableCallResultChain(existing, published->parent, valueId,
+                                      desired->access)) {
+          // This expression's checked consuming call published the exact
+          // address, transferred its external ancestry and retired the old
+          // group. Keep that executable publication rather than recreating a
+          // child of the already-ended semantic input identity.
+          recordLoanIdentity(existing, *desired, binding);
+          return {.kind = MirOperandKind::Loan,
+                  .loan = existing,
+                  .type = value->info.type};
+        }
         if (const auto retainedParent = semanticLoans.find(desired->parent);
             (!exactRangeElement || desired->access == AccessMode::ReadOnly) &&
             retainedParent != semanticLoans.end() &&
@@ -10549,12 +11028,31 @@ private:
       const MirLoanId lowered = createLoan(kind, sourcePlace, loan.access);
       output.loans[lowered - 1].entry = true;
       recordLoanIdentity(lowered, loan);
+      if (kind == MirLoanKind::Stored &&
+          (!loan.conditions.empty() ||
+           std::any_of(loan.additionalDependencies.begin(),
+                       loan.additionalDependencies.end(), [](const auto &item) {
+                         return !item.conditions.empty();
+                       }))) {
+        // Materialize every exact abstract external path, including later
+        // fields, before a selected scalar loan needs it. The guarded path
+        // includes explicit reference dereferences; these are not aliases of
+        // the parameter's physical enum shell.
+        if (projectBorrowFields(sourcePlace, loan.designatedFields,
+                                loan.conditions) == 0)
+          valid = false;
+        for (const auto &dependency : loan.additionalDependencies)
+          if (projectBorrowFields(sourcePlace, dependency.designatedFields,
+                                  dependency.conditions) == 0)
+            valid = false;
+      }
       const MirPlace *place = output.findPlace(sourcePlace);
       if (kind == MirLoanKind::Stored && place &&
           place->root == MirPlaceRootKind::Binding &&
           place->projections.empty() && place->initiallyAvailable &&
           (place->type.kind == SemanticType::Class ||
-           place->type.kind == SemanticType::Lambda)) {
+           place->type.kind == SemanticType::Lambda ||
+           place->type.kind == SemanticType::Enum)) {
         // Semantic carrier membership describes the completed flow and may
         // name only a later local. At entry the formal is the sole physical
         // carrier; lowering each subsequent transfer records its recipient.
@@ -11884,7 +12382,10 @@ private:
         }
       }
     } else if (binding != nullptr &&
-               binding->info.traits.containsBorrowedState && statement.value) {
+               binding->info.traits.containsBorrowedState && statement.value &&
+               !(operands.size() == 1 &&
+                 completeEmptyBorrowValue(*statement.value, operands.front(),
+                                          binding->info.type))) {
       valid = false;
     }
     MirInstruction initialize{
@@ -12562,6 +13063,7 @@ private:
     MirPlaceId place = 0;
     MirDropObligationId obligation = 0;
     SemanticType type = SemanticType::Unknown;
+    SemanticLoanId dependency = 0;
   };
 
   [[nodiscard]] std::optional<ConsumedSwitchSubject>
@@ -12606,11 +13108,32 @@ private:
       valid = false;
     }
     (void)appendInstruction(std::move(initialize));
+    if (binding->info.retainedLoan != 0) {
+      const auto mapped = semanticLoans.find(binding->info.retainedLoan);
+      const auto retained = loanForValue(*statement.value);
+      const auto *group = output.findLoan(retained);
+      if (mapped == semanticLoans.end() || mapped->second != retained ||
+          !group || group->kind != MirLoanKind::Stored ||
+          !loanIsActive(scopes, retained)) {
+        valid = false;
+        return std::nullopt;
+      }
+      // This real value initialization acquires the existing dependency
+      // group, exactly as a named carrier initialized by a move would. It
+      // does not alter the formal's immutable external provenance or make
+      // the new physical shell initially available at function entry.
+      bindingLoans.insert_or_assign(*statement.binding, retained);
+      auto &carriers = output.loans[retained - 1].carriers;
+      if (std::find(carriers.begin(), carriers.end(), *statement.binding) ==
+          carriers.end())
+        carriers.push_back(*statement.binding);
+    }
     registerDrop(*statement.binding, destination);
     return ConsumedSwitchSubject{.binding = *statement.binding,
                                  .place = destination,
                                  .obligation = target,
-                                 .type = binding->info.type};
+                                 .type = binding->info.type,
+                                 .dependency = binding->info.retainedLoan};
   }
 
   // Every path leaving the subject's evaluation retires the hidden owner
@@ -12630,6 +13153,34 @@ private:
   void retireConsumedSwitchSubject(const HirStatement &statement,
                                    const HirSwitchArm &arm,
                                    const ConsumedSwitchSubject &consumed) {
+    const auto retireDependency = [&] {
+      if (consumed.dependency == 0)
+        return;
+      const auto found = semanticLoans.find(consumed.dependency);
+      const auto *group = found == semanticLoans.end()
+                              ? nullptr
+                              : output.findLoan(found->second);
+      if (!group || group->kind != MirLoanKind::Stored || group->escapes ||
+          group->lifecycleBound ||
+          std::find(group->carriers.begin(), group->carriers.end(),
+                    consumed.binding) == group->carriers.end() ||
+          !loanIsActive(scopes, group->id) ||
+          lifecycleRetainedLoans({}).contains(group->id) ||
+          containsLoan(constructorPublishedLoans, group->id)) {
+        valid = false;
+        return;
+      }
+      // The subject's physical owner has already been consumed. Its entry
+      // group is not the capability returned to the caller: the exact arm
+      // prefix publishes new scalar selections after retiring this group.
+      // Ordinary endpoint heuristics retain summarized entry loans until
+      // return and therefore cannot implement this explicit handoff.
+      const auto id = group->id;
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirStatement = statement.id,
+                               .loan = id});
+      removeLoanFromState(id, scopes, bindingLoans);
+    };
     const MirPlace *subjectPlace = output.findPlace(consumed.place);
     if (subjectPlace == nullptr) {
       valid = false;
@@ -12642,22 +13193,75 @@ private:
             scopeDropLifecycle(consumed.obligation), {consumed.obligation}, {});
         appendNormalCleanupBoundary({consumed.obligation});
       }
+      retireDependency();
       return;
     }
+    std::vector<std::size_t> deferredBindings;
+    const auto initializePayload = [&](std::size_t index) {
+      const auto &payload = arm.payloadBindings[index];
+      const auto *binding = findBinding(payload.binding);
+      const auto *extraction = findValue(payload.value);
+      const auto destination = placeForBinding(payload.binding);
+      const bool referenceTransfer = extraction->payloadExtractionKind ==
+                                     PayloadExtractionKind::TransferReference;
+      MirInstruction initialize{
+          .kind = MirInstructionKind::Initialize,
+          .hirStatement = statement.id,
+          .destination = destination,
+          .operands = {referenceTransfer
+                           ? referenceOperand(payload.value, payload.binding)
+                           : valueOperand(payload.value)},
+          .info = {.type = binding->info.type,
+                   .category = ValueCategory::Place,
+                   .access = binding->info.access,
+                   .traits = binding->info.traits}};
+      if (binding->info.traits.drop == DropKind::Lexical) {
+        const auto obligation = dropObligationForBinding(payload.binding);
+        if (obligation != 0)
+          appendLifecycle(initialize,
+                          {.kind = MirLifecycleEventKind::Initialize,
+                           .target = obligation});
+      }
+      (void)appendInstruction(std::move(initialize));
+      registerDrop(payload.binding, destination);
+    };
     for (std::size_t index = 0; index < arm.payloadBindings.size(); ++index) {
       const HirSwitchArm::PayloadBinding &payload = arm.payloadBindings[index];
       const HirBinding *binding = findBinding(payload.binding);
       const HirValue *extraction = findValue(payload.value);
       const MirPlaceId destination = placeForBinding(payload.binding);
+      const bool referenceTransfer =
+          extraction != nullptr && extraction->payloadExtractionKind ==
+                                       PayloadExtractionKind::TransferReference;
+      const bool exactBinding =
+          binding != nullptr && extraction != nullptr &&
+          (referenceTransfer
+               ? binding->info.type.kind == SemanticType::Reference &&
+                     binding->info.type.arguments.size() == 1 &&
+                     binding->info.type.arguments.front() ==
+                         extraction->info.type &&
+                     extraction->info.category == ValueCategory::Place &&
+                     binding->info.type.referenceAccess ==
+                         extraction->info.access
+               : binding->info.type.kind != SemanticType::Reference &&
+                     binding->info.type == extraction->info.type &&
+                     extraction->info.category == ValueCategory::Value &&
+                     extraction->payloadExtractionKind ==
+                         PayloadExtractionKind::MoveValue);
       if (binding == nullptr || extraction == nullptr || destination == 0 ||
           extraction->kind != HirValueKind::PayloadExtraction ||
-          extraction->info.category != ValueCategory::Value ||
-          binding->info.type.kind == SemanticType::Reference ||
-          binding->info.type != extraction->info.type ||
-          !extraction->enumOwner || !extraction->enumVariant ||
+          !exactBinding || !extraction->enumOwner || !extraction->enumVariant ||
           !extraction->payloadIndex) {
         valid = false;
         continue;
+      }
+      if (referenceTransfer) {
+        const auto *loan = source.findLoan(binding->info.retainedLoan);
+        if (consumed.dependency == 0 || !loan || !loan->referenceSelection ||
+            loan->referenceSelection->transferredFrom != consumed.dependency) {
+          valid = false;
+          continue;
+        }
       }
       MirInstruction extract{.kind = MirInstructionKind::Compute,
                              .hirValue = extraction->id,
@@ -12665,6 +13269,8 @@ private:
                              .enumOwner = extraction->enumOwner,
                              .enumVariant = extraction->enumVariant,
                              .payloadIndex = extraction->payloadIndex,
+                             .payloadExtractionKind =
+                                 extraction->payloadExtractionKind,
                              .info = extraction->info};
       extract.operands.push_back({.kind = MirOperandKind::Move,
                                   .place = consumed.place,
@@ -12676,25 +13282,18 @@ private:
       }
       (void)appendInstruction(std::move(extract));
       emittedValues.insert(extraction->id);
-      MirInstruction initialize{.kind = MirInstructionKind::Initialize,
-                                .hirStatement = statement.id,
-                                .destination = destination,
-                                .operands = {valueOperand(payload.value)},
-                                .info = {.type = binding->info.type,
-                                         .category = ValueCategory::Place,
-                                         .access = binding->info.access,
-                                         .traits = binding->info.traits}};
-      if (binding->info.traits.drop == DropKind::Lexical) {
-        const MirDropObligationId obligation =
-            dropObligationForBinding(payload.binding);
-        if (obligation != 0) {
-          appendLifecycle(initialize,
-                          {.kind = MirLifecycleEventKind::Initialize,
-                           .target = obligation});
-        }
-      }
-      (void)appendInstruction(std::move(initialize));
-      registerDrop(payload.binding, destination);
+      if (consumed.dependency != 0)
+        deferredBindings.push_back(index);
+      else
+        initializePayload(index);
+    }
+    if (consumed.dependency != 0) {
+      // Evaluate all exact field addresses while the old group is active,
+      // retire it once, then publish its successor capabilities. No user
+      // operation or potentially failing instruction belongs in this prefix.
+      retireDependency();
+      for (const auto index : deferredBindings)
+        initializePayload(index);
     }
   }
 
@@ -12857,8 +13456,14 @@ private:
         forgetConsumedSwitchSubject(scopes, consumed->place);
       }
       scopes.push_back({});
-      endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
-                       statement.id);
+      auto entryEnded = statement.switchArms[armIndex].entryEndedLoans;
+      if (consumed && consumed->dependency != 0) {
+        if (std::find(entryEnded.begin(), entryEnded.end(),
+                      consumed->dependency) == entryEnded.end())
+          valid = false;
+        std::erase(entryEnded, consumed->dependency);
+      }
+      endSemanticLoans(entryEnded, statement.id);
       if (consumed) {
         retireConsumedSwitchSubject(statement, statement.switchArms[armIndex],
                                     *consumed);
@@ -13241,7 +13846,8 @@ private:
             }
           }
           if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
-               output.loans[borrow.loan - 1].kind == MirLoanKind::Stored) &&
+               output.loans[borrow.loan - 1].kind == MirLoanKind::Stored ||
+               output.loans[borrow.loan - 1].referenceSelection) &&
               output.loans[borrow.loan - 1].producedBy != 0) {
             // A returned reference binding may alias the producing call's
             // own result loan, or the Stored loan of the carrier it was
@@ -13249,6 +13855,9 @@ private:
             // a fresh Return loan from it, exactly as a nested
             // reference-returning call and a returned carrier do above, and
             // retires the body-local capability at this boundary.
+            // A payload selection likewise retains its local activation and
+            // tag proof; changing that loan into an escaping Return would
+            // erase the distinction between selection and publication.
             const MirLoan source = output.loans[borrow.loan - 1];
             const HirValue *returned = findValue(*statement.value);
             const MirLoanId published =
@@ -13304,7 +13913,15 @@ private:
       } else {
         result = valueOperand(*statement.value);
         const HirValue *value = findValue(*statement.value);
-        if (value != nullptr && value->info.traits.containsBorrowedState) {
+        // A known dependency-free active alternative has no authority to
+        // export. Preserve its complete typed fact for independent program
+        // verification rather than inventing a loan or inferring emptiness
+        // from loanForValue returning zero.
+        const bool completeEmpty =
+            result && completeEmptyBorrowValue(*statement.value, *result,
+                                               output.returnType);
+        if (value != nullptr && value->info.traits.containsBorrowedState &&
+            !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
           if (retained == 0 &&
               (output.returnType.kind == SemanticType::Class ||
@@ -13356,6 +13973,7 @@ private:
                 retainedLoan.additionalDependencies;
             output.loans[published - 1].designatedFields =
                 retainedLoan.designatedFields;
+            output.loans[published - 1].conditions = retainedLoan.conditions;
             if (retainedLoan.entry &&
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.additionalDependencies.empty() &&
@@ -13619,6 +14237,8 @@ private:
   bool exitsJoined = false;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
+  std::unordered_map<SemanticLoanId, HirStatementId>
+      uniqueSemanticLoanEndpoints;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;
@@ -13641,6 +14261,8 @@ private:
   std::unordered_map<HirValueId, HirValueId> forwardedBorrowValues;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_set<HirBindingId> referenceAccessorBindings;
+  std::unordered_map<MirLoanId, std::vector<MirLoanId>>
+      callResultTransferredFrom;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
   std::unordered_map<MirLoanId, HirStatementId> callTransferredLoanEndpoints;

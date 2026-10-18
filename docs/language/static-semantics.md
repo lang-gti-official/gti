@@ -1385,8 +1385,9 @@ fold from actual fields, not from whether their outer type is a class:
 `Message<expected<Resource, Error>>` use the same ordered field publication
 and recursive cleanup contract. A `void` success alternative in a result
 carrier contains no object. Owning indirection may break a layout cycle;
-an inline enum/class/array cycle is still ill-formed. Stored borrowed state
-and direct lexical closure payloads remain outside this owning slice.
+an inline enum/class/array cycle is still ill-formed. Conditional stored
+borrows follow the separate checked-reference rules below; direct lexical
+closure payloads remain outside this owning slice.
 The temporary `unexpected(...)` error-construction adapter is not itself an
 admitted field; construct an `expected` error alternative before storing it.
 Closure fields need a concrete closure-field representation before admission;
@@ -1422,10 +1423,31 @@ direct field may be replaced from an explicit move; the old active alternative
 is dropped before the replacement obligation is published. Recursive owning
 class containment is permitted when its by-value layout is finite, including
 an alternative holding a vector of enclosing nodes. A direct enum/class
-by-value cycle remains ill-formed. This does not authorize reference payloads,
-stored-reference classes,
+by-value cycle remains ill-formed. This owning containment rule does not itself
+authorize stored-reference classes,
 compiler-private capabilities, polymorphic bases, or native-layout
 declarations.
+
+A payload enum may contain `T&`, `mut T&`, and nested reference-bearing enum
+values. Construction retains the exact owner, access and field path for each
+active alternative, including nested guards. Earlier argument borrows remain
+protected while later field expressions evaluate. Reference-free alternatives
+have a known empty dependency set, not an invented owner. Shared dependencies
+permit whole-value copying when every ordinary payload is copyable; any
+exclusive reference path makes the enum non-copyable. Movement transports the
+dependency authority without moving the referent.
+
+Pattern selection proves the active alternative before exposing its reference
+fields. A direct reference selected from a consumed enum may retain its exact
+external owner after the enum shell ends. A function returning that reference
+must establish its declared `borrowed_from` contract from the checked selection;
+a boolean predicate does not establish a tag proof. Nested enum construction
+and complete dependency transport do not yet authorize consuming an outer
+alternative into a new *borrowed-value* pattern binding and then consuming that
+inner value. That handoff remains a structural `GTI-S2067` diagnostic until it
+has its own exact transfer/retirement proof; it must not reach an internal
+compiler error. Reference-field selection and borrowed-value extraction are
+distinct operations.
 
 Concrete generic free functions, methods, and constructors use that same
 ordered transport contract. A type argument mentioning the enum does not by

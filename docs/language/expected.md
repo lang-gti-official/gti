@@ -228,11 +228,18 @@ is copied whole, and a named move-only operand needs `std::move`. A
 evaluation and cleanup.
 
 `value_type` may be a checked reference when the operation's declared
-`borrowed_from` contract relays the operand's single stored external
-dependency. This keeps the success reference tied to its actual owner even
+`borrowed_from` contract relays the operand's exact stored external
+dependency. For a payload enum, the checked operation body selects its active
+reference field and supplies the complete conditional input-to-result mapping.
+This keeps the success reference tied to its actual owner even
 after the wrapper is consumed. The residual may own resources such as an
-error string. The current protocol propagation slice still requires a class
-or struct wrapper and an owned residual.
+error string. Classes, structs and payload enums use ordinary checked call
+transport; the residual must remain owned. A consuming exclusive success
+cannot duplicate its input's permission, and a named non-copyable result
+requires explicit `std::move`. `has_value` is an ordinary function, not a
+compiler-recognized tag assertion. The body of `take_value` must independently
+prove its return. An input proved to have only an error alternative cannot
+manufacture a success origin from missing metadata.
 
 ## Requiring a successful result
 

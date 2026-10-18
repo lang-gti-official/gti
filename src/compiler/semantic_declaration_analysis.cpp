@@ -1828,6 +1828,11 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   case SemanticType::RawPointer:
   case SemanticType::NativeFunction:
     return true;
+  case SemanticType::Reference:
+    return type.arguments.size() == 1 &&
+           type.arguments.front() != SemanticType::Unknown &&
+           type.arguments.front() != SemanticType::Void &&
+           type.arguments.front().kind != SemanticType::Reference;
   case SemanticType::Enum:
     // Exact concrete layout validation, not the primary declaration ID,
     // distinguishes a finite nested instance from a recursive inline value.
@@ -1959,7 +1964,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                      "' in variant '" + enumerator.name.lexeme + "'.",
                  "GTI-S2067");
         }
-        if (parameter.mutability == Mutability::Mutable) {
+        if (parameter.mutability == Mutability::Mutable &&
+            type.kind != SemanticType::Reference) {
           report(location,
                  "Payload enum fields are values and do not take 'mut'.",
                  "GTI-S2067");
@@ -1968,12 +1974,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
           report(*parameter.pack, "Payload enum fields cannot be variadic.",
                  "GTI-S2067");
         }
-        if (parameter.type.reference) {
-          report(location, "Payload enums do not yet store reference fields.",
-                 "GTI-S2067");
-        } else if (type != SemanticType::Unknown &&
-                   !containsOpenTypeParameter(type) &&
-                   !payloadTypeAllowed(type, info.id)) {
+        if (type != SemanticType::Unknown && !containsOpenTypeParameter(type) &&
+            !payloadTypeAllowed(type, info.id)) {
           report(location,
                  "Payload field type '" + typeSpelling(type) +
                      "' is outside the supported payload field family.",
@@ -2066,8 +2068,7 @@ auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
             if (containsOpenTypeParameter(payload) ||
                 payload == SemanticType::Unknown)
               continue;
-            if (!payloadTypeAllowed(payload, current.enumId) ||
-                typeTraits(payload).containsBorrowedState) {
+            if (!payloadTypeAllowed(payload, current.enumId)) {
               auto diagnostic = makeDiagnostic(
                   "GTI-S2067", DiagnosticPhase::Semantics, site,
                   "Payload field type '" + typeSpelling(payload) +

@@ -32,6 +32,7 @@ struct CppSupportPreambleFeatures {
   bool definedFailure = true;
   bool runtimeBinding = false;
   bool cAbiTextView = false;
+  bool payloadReferences = false;
 };
 
 void writeCppSupportPreamble(std::ostream &output,
