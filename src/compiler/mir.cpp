@@ -2468,7 +2468,8 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
           source->type.kind == SemanticType::Reference &&
           source->type.arguments.size() == 1 &&
           (source->type.arguments.front().kind == SemanticType::Class ||
-           source->type.arguments.front().kind == SemanticType::Lambda) &&
+           source->type.arguments.front().kind == SemanticType::Lambda ||
+           source->type.arguments.front().kind == SemanticType::Enum) &&
           std::find(loan.carriers.begin(), loan.carriers.end(),
                     source->binding) == loan.carriers.end());
 }
