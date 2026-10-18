@@ -9,17 +9,21 @@ from unique_class_allocation_runtime_test import run
 from shared_failure_cleanup_runtime_test import SITES, expected_report
 
 CASES = [
-    (0, 0, [1, -1, 2, 3, -2, -3, 4, 5, -5, -4, 6, -6, 7, -7, 8, -8], None),
+    (0, 0, [1, -1, 2, 3, -2, -3, 4, 5, -5, -4, 6, -6, 7, -7, 8, -8,
+            9, 10, 11, -11, -10, -9], None),
     (1, 70, [20, -20], ("ordinary", "construction")),
     (2, 70, [30, 31, -31, -30], ("ordinary", "destructor")),
     (3, 70, [40, 41, -41, -40], ("emergency", "destructor", "destructor")),
     (4, 70, [50, -50], ("emergency", "partial", "destructor")),
+    (5, 70, [60, -60], ("ordinary", "destructor")),
+    (6, 70, [70, -70], ("emergency", "wrapper_unwind", "destructor")),
 ]
 
 SITES["composed_payloads.gti"] = {
     "construction": "Packet<Resource>::item(Resource(20)), 1 / zero);",
     "partial": "Packet<Resource>::item(Resource(50, zero)), 1 / zero);",
     "destructor": "int checked = 1 / this.divisor;",
+    "wrapper_unwind": "return 1 / zero;",
 }
 
 

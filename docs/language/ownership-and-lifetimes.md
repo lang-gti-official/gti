@@ -1701,10 +1701,14 @@ before its first statement.
 Concrete generic callable instances and owning wrappers retain the same
 obligations, including enum elements in storage-backed collections and inline
 optional storage. No ownership rule follows merely from a generic argument's
-spelling. Polymorphic enum callable transport, direct enum lambda capture, direct array
-payloads, stored-reference class owners, compiler-private or native
-layout records, and polymorphic bases remain diagnosed rather than inventing
-indirect cleanup state.
+spelling. Finite nested enum payloads and fixed arrays of supported payload
+elements retain these construction and cleanup obligations. Passive native
+records and unions may be payloads when their C ABI layout is validated.
+Polymorphic enum callable transport, direct owning-enum lambda capture, arrays
+whose elements are directly owning enums, stored-reference class owners, unsupported
+compiler-private payloads, native-layout owners containing owning enum fields,
+and polymorphic bases remain diagnosed rather than inventing indirect cleanup
+state.
 
 Reference-bearing payload enums retain a complete dependency set rather than
 one unconditional owner: each entry records an external origin, access mode,

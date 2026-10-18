@@ -122,18 +122,32 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
     const auto *enumeration = program.findPayloadEnum(type.type);
     if (enumeration == nullptr)
       throw std::logic_error("MIR payload cleanup lost its variant table");
-    // A nested sequence must not shadow the sequence whose record/unwinding
-    // expressions initialize it: C++ puts the new name in scope before its
-    // initializer. Each recursive scope therefore needs a distinct name.
-    const std::string sequence = "__gti_sum_sequence_" + std::to_string(depth);
-    std::string expression =
-        "([&]() { ::gti_internal::backend::mir_cleanup_sequence_v1 " +
-        sequence + "(" + arguments +
-        ", &::gti_internal::backend::__gti_failure_artifact_descriptor_v1); ";
+    std::vector<std::size_t> activeChildren(enumeration->variants.size());
     for (const auto &child : type.aggregate) {
       if (!child.payloadVariant || !child.payloadField ||
           *child.payloadVariant >= enumeration->variants.size())
         throw std::logic_error("MIR payload cleanup lost its field selection");
+      ++activeChildren[*child.payloadVariant];
+    }
+    // A selected alternative with at most one cleanup action cannot acquire a
+    // second failure. Before its first step a cleanup sequence only stores the
+    // incoming record/unwinding values; it establishes no failure context.
+    // Tail-forward that one action (or success for an empty alternative),
+    // leaving sequencing inside the child and native retirement to its caller.
+    const bool singleAction =
+        std::all_of(activeChildren.begin(), activeChildren.end(),
+                    [](std::size_t count) { return count <= 1; });
+    // A nested sequence must not shadow the sequence whose record/unwinding
+    // expressions initialize it: C++ puts the new name in scope before its
+    // initializer. Each recursive scope therefore needs a distinct name.
+    const std::string sequence = "__gti_sum_sequence_" + std::to_string(depth);
+    std::string expression = "([&]() { ";
+    if (!singleAction)
+      expression += "::gti_internal::backend::mir_cleanup_sequence_v1 " +
+                    sequence + "(" + arguments +
+                    ", &::gti_internal::backend::"
+                    "__gti_failure_artifact_descriptor_v1); ";
+    for (const auto &child : type.aggregate) {
       const std::string alternative = std::to_string(*child.payloadVariant + 1);
       std::string field = "::gti_internal::backend::payload_get<" +
                           alternative + ">(" + receiver +
@@ -141,6 +155,14 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                           std::to_string(*child.payloadField);
       if (cppRequiresBytePreservingTransport(program, child.type))
         field += ".get()";
+      if (singleAction) {
+        expression += "if (" + receiver +
+                      ".__gti_value.index() == " + alternative + ") return " +
+                      cleanupValueExpression(program, child, field, record,
+                                             unwinding, depth + 1) +
+                      "; ";
+        continue;
+      }
       expression +=
           "if (" + receiver + ".__gti_value.index() == " + alternative +
           " && !" + sequence + ".step(" +
@@ -148,7 +170,8 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                                  sequence + ".unwinding()", depth + 1) +
           ")) return false; ";
     }
-    return expression + "return " + sequence + ".success(); }())";
+    return expression + "return " +
+           (singleAction ? "true" : sequence + ".success()") + "; }())";
   }
   if (type.type.kind == SemanticType::Expected ||
       type.type.kind == SemanticType::Unexpected) {
