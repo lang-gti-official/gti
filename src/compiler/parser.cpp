@@ -1661,7 +1661,7 @@ private:
     return name;
   }
 
-  // The signature's '(' distinguishes a headerless patterned primary from
+  // A signature, void argument or reference distinguishes a patterned primary from
   // the existing parameter declaration grammar. In particular, stop at '=':
   // a default such as <S = void()> is still an ordinary generic parameter.
   // This lookahead never resolves identifiers or edits/splits lexer tokens.
@@ -1674,10 +1674,11 @@ private:
         return false;
       }
       if (depth == 0) {
-        if (kind == TokenKind::LEFT_PAREN) {
+        if (kind == TokenKind::LEFT_PAREN || kind == TokenKind::VOID ||
+            kind == TokenKind::AMPERSAND) {
           return true;
         }
-        if (kind == TokenKind::COMMA || kind == TokenKind::EQUAL ||
+        if (kind == TokenKind::EQUAL ||
             kind == TokenKind::GREATER || kind == TokenKind::GREATER_EQUAL ||
             kind == TokenKind::SHIFT_RIGHT ||
             kind == TokenKind::SHIFT_RIGHT_EQUAL) {

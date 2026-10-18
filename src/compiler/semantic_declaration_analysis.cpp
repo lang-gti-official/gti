@@ -38,6 +38,69 @@ signatureClassKey(const ClassDecl &owner) {
                                !pattern.arguments.empty() &&
                                pattern.arguments.back().reference.has_value()};
 }
+
+// An argument-profile family has an ordinary type-parameter fallback and
+// mutually disjoint void/reference profiles. This is source type selection:
+// each definition has its own class identity and ordinary member semantics.
+// It does not change reference access, lifetime, or constructor eligibility.
+enum class ArgumentProfile { Any, Void, ReadOnlyReference, MutableReference };
+using ClassProfile = std::vector<ArgumentProfile>;
+
+[[nodiscard]] std::optional<ClassProfile>
+classArgumentProfile(const ClassDecl &owner) {
+  if (owner.isForwardDeclaration() || owner.isExactSpecialization() ||
+      (owner.kind() != ClassKind::Class && owner.kind() != ClassKind::Struct))
+    return std::nullopt;
+  ClassProfile profile;
+  if (owner.genericArgumentPatterns().empty()) {
+    if (owner.genericParameters().empty())
+      return std::nullopt;
+    for (const auto &parameter : owner.genericParameters()) {
+      if (parameter.pack || parameter.valueType || parameter.defaultType ||
+          parameter.defaultValue)
+        return std::nullopt;
+      profile.push_back(ArgumentProfile::Any);
+    }
+    return profile;
+  }
+  for (const auto &pattern : owner.genericArgumentPatterns()) {
+    if (pattern.isFunctionSignature() || pattern.isNativeFunction() ||
+        pattern.qualifiedOwner || pattern.name.segments.size() != 1 ||
+        !pattern.arguments.empty() || !pattern.pointers.empty() ||
+        !pattern.arrayExtents.empty() || pattern.packExpansion)
+      return std::nullopt;
+    if (pattern.name.last().kind == TokenKind::VOID && !pattern.reference) {
+      profile.push_back(ArgumentProfile::Void);
+    } else if (pattern.name.last().kind == TokenKind::IDENTIFIER) {
+      profile.push_back(!pattern.reference ? ArgumentProfile::Any
+                       : pattern.referenceMutability
+                           ? ArgumentProfile::MutableReference
+                           : ArgumentProfile::ReadOnlyReference);
+    } else {
+      return std::nullopt;
+    }
+  }
+  return profile;
+}
+
+[[nodiscard]] bool fallbackProfile(const ClassProfile &profile) {
+  return std::all_of(profile.begin(), profile.end(), [](ArgumentProfile item) {
+    return item == ArgumentProfile::Any;
+  });
+}
+
+[[nodiscard]] bool compatibleProfiles(const ClassProfile &left,
+                                      const ClassProfile &right) {
+  if (left.size() != right.size())
+    return false;
+  if (fallbackProfile(left) || fallbackProfile(right))
+    return fallbackProfile(left) != fallbackProfile(right);
+  for (std::size_t index = 0; index < left.size(); ++index)
+    if (left[index] != ArgumentProfile::Any &&
+        right[index] != ArgumentProfile::Any && left[index] != right[index])
+      return true;
+  return false;
+}
 } // namespace
 
 auto SemanticVisitor::Impl::collectRootNativeStorageSymbols(
@@ -2575,14 +2638,26 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         if (key && signatureClassKey(*first.declaration) &&
             first.kind == classDecl->kind() &&
             samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit) &&
-            std::none_of(first.signatureFamilyMembers.begin(),
-                         first.signatureFamilyMembers.end(),
+            std::none_of(first.definitionFamilyMembers.begin(),
+                         first.definitionFamilyMembers.end(),
                          [&](ClassId member) {
                            return signatureClassKey(
                                       *classInfo(member).declaration) == key;
                          }) &&
             signatureClassKey(*first.declaration) != key) {
           familyPrimary = existing->second;
+        }
+        if (const auto profile = classArgumentProfile(*classDecl);
+            profile && first.kind == classDecl->kind() &&
+            samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit)) {
+          const auto compatible = [&](ClassId member) {
+            const auto other = classArgumentProfile(*classInfo(member).declaration);
+            return other && compatibleProfiles(*profile, *other);
+          };
+          if (compatible(existing->second) &&
+              std::all_of(first.definitionFamilyMembers.begin(),
+                          first.definitionFamilyMembers.end(), compatible))
+            familyPrimary = existing->second;
         }
       }
       if (namespaces.contains(qualified) ||
@@ -2758,7 +2833,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .enclosingClass = enclosingClass,
           .enclosingAccess = enclosingAccess == nullptr ? AccessModifier::Public
                                                         : *enclosingAccess,
-          .signatureFamilyPrimary = familyPrimary,
+          .definitionFamilyPrimary = familyPrimary,
           .genericParameters = std::move(genericParameters),
           .cAbiRecord = capabilityPolicies.cAbiRecord,
           .cAbiAttribute = capabilityPolicies.cAbiSource,
@@ -2796,7 +2871,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         }
       }
       if (familyPrimary != 0) {
-        auto &members = classInfo(familyPrimary).signatureFamilyMembers;
+        auto &members = classInfo(familyPrimary).definitionFamilyMembers;
         if (members.empty()) {
           members.push_back(familyPrimary);
         }
@@ -2892,20 +2967,49 @@ auto SemanticVisitor::Impl::canonicalExactSpecializationType(
       owner.exactValueArguments));
 }
 
-auto SemanticVisitor::Impl::selectSignatureClassDefinition(
+auto SemanticVisitor::Impl::selectClassDefinition(
     ClassId id, const std::vector<SemanticType> &arguments) const -> ClassId {
-  if (id == 0 || id > classes.size() || arguments.size() != 1 ||
-      arguments.front().kind != SemanticType::FunctionSignature) {
+  if (id == 0 || id > classes.size()) {
     return id;
   }
-  const auto primary = classInfo(id).signatureFamilyPrimary;
+  const auto primary = classInfo(id).definitionFamilyPrimary;
   const auto &family = classInfo(primary == 0 ? id : primary);
+  ClassId fallback = 0;
+  for (ClassId member : family.definitionFamilyMembers) {
+    const auto profile = classArgumentProfile(*classInfo(member).declaration);
+    if (!profile || profile->size() != arguments.size())
+      continue;
+    if (fallbackProfile(*profile)) {
+      fallback = member;
+      continue;
+    }
+    bool matches = true;
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const auto &argument = arguments[index];
+      const auto shape = argument.kind == SemanticType::Void
+                             ? ArgumentProfile::Void
+                         : argument.kind != SemanticType::Reference
+                             ? ArgumentProfile::Any
+                         : argument.referenceAccess == AccessMode::Mutable
+                             ? ArgumentProfile::MutableReference
+                             : ArgumentProfile::ReadOnlyReference;
+      matches = matches && ((*profile)[index] == ArgumentProfile::Any ||
+                            (*profile)[index] == shape);
+    }
+    if (matches)
+      return member;
+  }
+  if (fallback != 0)
+    return fallback;
+  if (arguments.size() != 1 ||
+      arguments.front().kind != SemanticType::FunctionSignature)
+    return id;
   const SignatureClassKey requested{
       .receiver = arguments.front().signatureReceiver,
       .referenceResult =
           !arguments.front().arguments.empty() &&
           arguments.front().arguments.front().kind == SemanticType::Reference};
-  for (ClassId member : family.signatureFamilyMembers) {
+  for (ClassId member : family.definitionFamilyMembers) {
     const auto &candidate = classInfo(member);
     if (signatureClassKey(*candidate.declaration) == requested) {
       return member;
@@ -4006,7 +4110,7 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
       classInfo(type.classId).exactSpecializationPrimary != 0) {
     return type;
   }
-  type.classId = selectSignatureClassDefinition(type.classId, type.arguments);
+  type.classId = selectClassDefinition(type.classId, type.arguments);
   // The root is already a primary, so only its own recorded specializations
   // can match; skip canonicalizing the full key for every nested class.
   if (std::none_of(exactClassSpecializations.begin(),
@@ -4215,7 +4319,7 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
     if (!resolved.valid) {
       continue;
     }
-    primaryId = selectSignatureClassDefinition(*primaryId, resolved.types);
+    primaryId = selectClassDefinition(*primaryId, resolved.types);
     std::vector<SemanticType> typeArguments = resolved.types;
     for (SemanticType &argument : typeArguments) {
       argument = canonicalExactSpecializationType(std::move(argument));
@@ -4766,7 +4870,7 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
       }
       if (const auto found = classDeclIds.find(classDecl);
           found != classDeclIds.end()) {
-        const auto family = classInfo(found->second).signatureFamilyPrimary;
+        const auto family = classInfo(found->second).definitionFamilyPrimary;
         if (family != 0) {
           publishNamespaceSymbol(qualifiedName(scope, classDecl->name().lexeme),
                                  Symbol{.type = SemanticType::typeName(family),

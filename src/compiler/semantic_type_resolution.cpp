@@ -1157,7 +1157,8 @@ auto SemanticVisitor::Impl::resolveClassArguments(
   if (arguments.size() < classInfo(classId).genericParameters.size())
     resolveClassGenericDefaults(classId);
   const ClassInfo &owner = classInfo(classId);
-  if (!owner.declaration->genericArgumentPatterns().empty()) {
+  if (!owner.declaration->genericArgumentPatterns().empty() ||
+      !owner.definitionFamilyMembers.empty() || owner.definitionFamilyPrimary != 0) {
     resolveClassArgumentPatterns(classId);
     for (const TypeRef &argument : arguments) {
       const std::size_t before = diagnostics.size();
@@ -1171,7 +1172,7 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       result.valid = result.valid && diagnostics.size() == before;
     }
     const ClassId selected =
-        selectSignatureClassDefinition(classId, result.types);
+        selectClassDefinition(classId, result.types);
     resolveClassArgumentPatterns(selected);
     if (sourceGraph != nullptr && currentSourceUnit != 0 &&
         !sourceGraph->isDeclarationVisible(currentSourceUnit,
@@ -1181,6 +1182,13 @@ auto SemanticVisitor::Impl::resolveClassArguments(
                                  classInfo(selected).name,
                                  classInfo(selected).sourceUnit);
       result.valid = false;
+    }
+    if (classInfo(selected).declaration->genericArgumentPatterns().empty()) {
+      auto ordinary = resolveNominalArguments(classInfo(selected).genericParameters,
+                                             classInfo(selected).name, arguments, site,
+                                             std::move(diagnosticCode));
+      ordinary.valid = ordinary.valid && result.valid;
+      return ordinary;
     }
     if (!classArgumentPatternsMatch(classInfo(selected), result.types)) {
       Diagnostic diagnostic =
@@ -4090,6 +4098,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (!validateNestedClassAccess(*classId, type.name.last()))
     return;
   if (!declaration.declaration->genericArgumentPatterns().empty() ||
+      !declaration.definitionFamilyMembers.empty() ||
+      declaration.definitionFamilyPrimary != 0 ||
       (!declaration.genericParameters.empty() &&
        declaration.genericParameters.back().pack)) {
     (void)resolveClassArguments(*classId, type.arguments, type.name.last(),
