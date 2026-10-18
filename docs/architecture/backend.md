@@ -2611,6 +2611,13 @@ only on call success and erases only that matching Initialize's redundant
 representation move/retirement. Non-immediate or non-unique publication keeps
 the ordinary value-rooted representation. The admission and emission paths
 share the same publication query; no source lifetime or cleanup is removed.
+The analogous exact `Move` value-to-binding publication preserves the original
+source object, its move, and its scheduled moved-from-shell cleanup. Only the
+intermediate value-rooted native object is omitted: its sole use must be an
+adjacent Initialize in the same block, with distinct source/value/binding drop
+identities and an identical cleanup type. Temporary destinations, intervening
+instructions, multiple consumers, and incomplete transfer evidence retain the
+existing representation path.
 A fresh cleanup-free class construction that is one alternative field fuses
 into the variant braces only when it is adjacent to its `PayloadConstruct`.
 Otherwise, when its constructor ends the block at an Invoke or sibling field
