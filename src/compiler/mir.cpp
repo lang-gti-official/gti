@@ -9945,7 +9945,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              (info.type.kind == SemanticType::Enum &&
               info.traits.drop == DropKind::Lexical);
     };
-    const auto validClassCopyInput = [&](const MirInstruction &input,
+    const auto validOwnedCopyInput = [&](const MirInstruction &input,
                                          const MirOperand &operand) {
       const MirPlace *place = body.findPlace(operand.place);
       // Entry-owned pack elements have one canonical lifetime place shared
@@ -9969,7 +9969,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const bool exactSource =
           validOwnedValueInputType(input.info) && input.info.traits.copyable &&
           (!input.info.traits.containsBorrowedState ||
-           input.info.type.kind == SemanticType::Class) &&
+           input.info.type.kind == SemanticType::Class ||
+           input.info.type.kind == SemanticType::Enum) &&
           operand.kind == MirOperandKind::Copy && place != nullptr &&
           place->type == input.info.type &&
           (place->sourceValue == input.hirValue || entryPackElement) &&
@@ -9993,11 +9994,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              input.lifecycle.front().source == 0 &&
              input.lifecycle.front().target == prepared->id;
     };
-    const auto validClassMoveInput = [&](const MirInstruction &input,
+    const auto validOwnedMoveInput = [&](const MirInstruction &input,
                                          const MirOperand &operand) {
       if (!validOwnedValueInputType(input.info) || !input.info.traits.movable ||
           (input.info.traits.containsBorrowedState &&
-           input.info.type.kind != SemanticType::Class) ||
+           input.info.type.kind != SemanticType::Class &&
+           input.info.type.kind != SemanticType::Enum) ||
           operand.kind != MirOperandKind::Value) {
         return false;
       }
@@ -10629,9 +10631,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                instruction.lifecycle.empty() &&
                operand.kind == MirOperandKind::Value;
       case HirCallInputKind::CopyValue:
-        return validClassCopyInput(instruction, operand);
+        return validOwnedCopyInput(instruction, operand);
       case HirCallInputKind::MoveValue:
-        return validClassMoveInput(instruction, operand);
+        return validOwnedMoveInput(instruction, operand);
       case HirCallInputKind::MoveBorrowedTemporary:
         return validBorrowedTemporaryMoveInput(instruction, operand);
       case HirCallInputKind::ReadBorrow:
@@ -12598,6 +12600,47 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  *retire.loan == source.loan &&
                  retire.hirValue == instruction.hirValue;
         }();
+        // A selected scalar reference keeps its local activation proof until
+        // publication. Returning it transfers the same evaluated address and
+        // complete dependency inventory into a fresh escaping capability; it
+        // does not reclassify the tag-checked local selection as an entry loan.
+        const bool selectedReferenceReturnTransfer = [&] {
+          if (body.returnType.kind != SemanticType::Reference ||
+              body.returnType.arguments.size() != 1 ||
+              source.type != body.returnType.arguments.front() ||
+              instruction.info.type != source.type ||
+              produced.kind != MirLoanKind::Return || produced.entry ||
+              !produced.escapes || produced.parent != 0 ||
+              source.kind != MirOperandKind::Loan || source.place != 0 ||
+              source.value != 0 || instruction.hirValue == 0 ||
+              instruction.hirValue != produced.producedBy)
+            return false;
+          const MirLoan *retained = body.findLoan(source.loan);
+          if (retained == nullptr || retained->id == produced.id ||
+              retained->kind != MirLoanKind::Local ||
+              !retained->referenceSelection || retained->entry ||
+              retained->escapes || retained->producedBy == 0 ||
+              retained->producedBy != instruction.hirValue ||
+              retained->source != produced.source ||
+              retained->storedDependency != produced.storedDependency ||
+              retained->additionalDependencies != produced.additionalDependencies ||
+              retained->designatedFields != produced.designatedFields ||
+              (retained->access != produced.access &&
+               retained->access != AccessMode::Mutable))
+            return false;
+          const auto current = std::find_if(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const MirInstruction &candidate) {
+                return candidate.id == instruction.id;
+              });
+          if (current == block.instructions.end() ||
+              std::next(current) == block.instructions.end())
+            return false;
+          const MirInstruction &retire = *std::next(current);
+          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
+                 *retire.loan == retained->id &&
+                 retire.hirValue == instruction.hirValue;
+        }();
         // A reference parameter's entry loan is seeded at the body entry and
         // has no producing instruction, so it cannot become the escaping
         // Return loan by reclassification: nothing would ever name the address
@@ -12660,6 +12703,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
              !storedCarrierReturnTransfer && !callResultReturnTransfer &&
+             !selectedReferenceReturnTransfer &&
              !parameterEntryReturnTransfer && !fallibleBorrowReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
