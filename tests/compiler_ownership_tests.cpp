@@ -3723,13 +3723,12 @@ int main() {
   return int(gti_internal::optional_storage_read(values));
 }
 )");
-  expect(
-      !optionalMisuse.canGenerateCode() &&
-          hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019") &&
-          hasDiagnostic(
-              optionalMisuse.diagnostics,
-              "Optional storage operations require the exact trusted"),
-      "optional private operations reject an unrelated ordinary source owner");
+  expect(!optionalMisuse.canGenerateCode() &&
+             hasDiagnostic(optionalMisuse.diagnostics,
+                           "Undefined qualified name") &&
+             !hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-B0001"),
+         "retired optional private operations are no longer declared by the "
+         "standard library");
 
   const auto retired =
       analyzeTrustedMemoryFixture("retired-prefix-operations.gti", R"(

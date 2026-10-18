@@ -83,6 +83,37 @@ int main() {
                                    "bool result = value.has_value();")
             change(3, valid)
             assert not diagnostics(3)
+            promoted = '''import std;
+std::optional<int> find(bool available) {
+  if (available) { return std::optional<int>(7); }
+  std::optional<int> none = std::nullopt;
+  return none;
+}
+std::optional<int> relay(bool available) {
+  int value = ?find(available);
+  return std::optional<int>(value + 1);
+}
+int main() {
+  mut std::optional<int> value = relay(true);
+  value = relay(false);
+  return value.has_value() ? 1 : 0;
+}
+'''
+            change(4, promoted)
+            assert not diagnostics(4)
+            broken = promoted.replace("return value.has_value() ? 1 : 0;",
+                                      "return value.;")
+            change(5, broken)
+            assert diagnostics(5)
+            offset = broken.index("value.;") + len("value.")
+            completion = request("textDocument/completion", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(broken, offset)})
+            items = completion["items"] if isinstance(completion, dict) else completion
+            assert {"value", "has_value", "reset"} <= {
+                item["label"] for item in items}, items
+            change(6, promoted)
+            assert not diagnostics(6)
         finally:
             session.close()
 

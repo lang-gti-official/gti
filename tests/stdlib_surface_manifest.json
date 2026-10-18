@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "1b4d80faba181081a9003ce292c54c613b65023a0986dc522685106a80a971c5",
+    "stdlib/prelude.gti": "73952e55d2ffc163d44025b8c31c0fd98bfba667da85fea702d58b6e70fe3906",
     "stdlib/std/algorithm.gti": "ca85de188a5b770453de0cbf1942015c64b364b001f8a58e06823b40f1313e7c",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
     "stdlib/std/atomic.gti": "c7edcd7882161c47b5a6de827025181621df547bfaaedbed5cbcafe9a7f89d2b",
@@ -16,7 +16,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/optional.gti": "acb499fe668d3d6c6999a37a1b18b48ed6d049e1f505e3757c17864097bbf89b",
+    "stdlib/std/experimental/optional.gti": "b33a5c8f5249d0099cfd6624babb7891919c2b1256135a8cda834c7fe4dd19d2",
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
@@ -31,7 +31,7 @@
     "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
-    "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
+    "stdlib/std/optional.gti": "0c8a00539429e37eeff64d1a76fc7fd69adf0dd29b126e8c53c5d55929d936cd",
     "stdlib/std/paired_span.gti": "cc4ebd074bb8149a2accc863df73d845ca16451e6f23fdc0e64249da566b72f1",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/polymorphic.gti": "a2194db76d6e36b30e813e6fa46baf4a31937b8362c49764f20ed7f9589a8a77",
@@ -1020,6 +1020,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "optional-promoted",
+      "mode": "run",
+      "source": "examples/166-source-optional.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "5\nmissing\nready\n", "stderr": ""}
+    },
+    {
       "id": "optional-value-or-contract",
       "mode": "run",
       "source": "tests/fixtures/optional_value_or_contract.gti",
@@ -1454,7 +1461,7 @@
       "mode": "run",
       "source": "examples/165-borrowed-payload-results.gti",
       "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "42\n3\n9\n3\n9\n12\n", "stderr": ""}
+      "expected": {"exit_code": 0, "stdout": "42\n3\n9\n3\n9\n12\n42\n3\n", "stderr": ""}
     },
     {
       "id": "tryable-propagation",
@@ -3164,8 +3171,8 @@
       "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
       "status": "executable",
-      "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract"],
+      "operations": ["std::nullopt", "std::nullopt_t", "std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
+      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "optional-promoted", "vector-construction-only", "optional-value-or-contract"],
       "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
       "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
     },

@@ -729,11 +729,17 @@ arming the enum value. A failure before publication cleans the produced
 operand through its existing construction obligation; a failure after
 publication, ordinary fallthrough, `return`, `break`, and `continue` all drop
 the enum exactly once. Whole-enum move construction transfers the active
-alternative and disarms the source. When the payloads permit assignment,
-whole-enum move assignment drops the old destination alternative exactly once,
-transfers the source alternative, and
-later destroys only the moved-from staging shell. A unit alternative has no
-payload cleanup to run.
+alternative and disarms the source. For sums without borrowed state, movable
+payloads permit whole-enum move replacement even if an individual payload is
+not assignable. Replacement prepares the right-hand side, drops the old
+destination alternative exactly once, and constructs the new alternative in
+the cleared destination. A preparation failure preserves the destination; a
+destination-cleanup failure prevents publication and cleans the prepared
+right-hand side. The native staging shell is retired only after checked cleanup.
+Borrow-carrying sums retain their separate dependency and assignment rules.
+A unit alternative has no payload cleanup to run. Failure-free move
+construction does not confer permission to relocate an address-stable object:
+raw relocation independently requires the type's relocation capability.
 
 Owning payload enums may remain direct local values, cross a top-level checked
 reference for non-consuming observation, or cross an admitted ordinary

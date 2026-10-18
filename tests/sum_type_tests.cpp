@@ -565,7 +565,8 @@ int main() {
 )");
   expect(borrowedPayload.canGenerateCode() &&
              lang::verifyMirProgram(borrowedPayload.mir).valid(),
-         "a passive borrowed class payload retains its exact owner through verified MIR");
+         "a passive borrowed class payload retains its exact owner through "
+         "verified MIR");
 
   const auto danglingPayload = analyze("payload-borrowed-class-escape.gti", R"(
 class carrier {
@@ -587,7 +588,8 @@ int main() {
 )");
   expect(danglingPayload.syntaxValid && !danglingPayload.semanticValid &&
              !hasCode(danglingPayload, "GTI-B0001"),
-         "a borrowed class payload cannot substitute a dead local for its declared caller origin");
+         "a borrowed class payload cannot substitute a dead local for its "
+         "declared caller origin");
 
   const lang::FrontendResult moveOnlyBinding =
       analyze("payload-move-only-binding.gti", R"(

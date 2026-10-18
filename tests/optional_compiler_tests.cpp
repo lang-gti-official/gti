@@ -68,16 +68,21 @@ int main() {
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions) {
         ordinaryStorage &= !isOptionalIntrinsic(instruction.intrinsic);
-        constructedPayload |= instruction.operation == lang::MirOperation::PayloadConstruct;
-        extractedPayload |= instruction.operation == lang::MirOperation::PayloadExtract;
-        terminalFailure |= instruction.intrinsic == lang::IntrinsicKind::FailEmptyOwner;
+        constructedPayload |=
+            instruction.operation == lang::MirOperation::PayloadConstruct;
+        extractedPayload |=
+            instruction.operation == lang::MirOperation::PayloadExtract;
+        terminalFailure |=
+            instruction.intrinsic == lang::IntrinsicKind::FailEmptyOwner;
       }
   }
-  expect(ordinaryStorage && constructedPayload && extractedPayload && terminalFailure &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "optional uses ordinary enum construction/extraction and checked terminal failure, not private storage");
+  expect(ordinaryStorage && constructedPayload && extractedPayload &&
+             terminalFailure && lang::verifyMirProgram(frontend.mir).valid(),
+         "optional uses ordinary enum construction/extraction and checked "
+         "terminal failure, not private storage");
   const auto artifact = gti_test::emitCpp(frontend);
-  expect(!artifact.contents.empty(), "source optional reaches production native emission");
+  expect(!artifact.contents.empty(),
+         "source optional reaches production native emission");
 
   // The terminal primitive only chooses the failure category. It grants no
   // owner, value, storage or caller-location authority.
@@ -88,20 +93,27 @@ int main() {
       auto *body = lang::findMirBody(forged, address);
       for (auto &block : body->blocks)
         for (auto &instruction : block.instructions) {
-          if (changed || instruction.intrinsic != lang::IntrinsicKind::FailEmptyOwner)
+          if (changed ||
+              instruction.intrinsic != lang::IntrinsicKind::FailEmptyOwner)
             continue;
-          if (mutation == 0) instruction.neverReturns = false;
-          if (mutation == 1) instruction.tracksCaller = true;
-          if (mutation == 2) instruction.parameterTypes.push_back(lang::SemanticType::Bool);
-          if (mutation == 3) instruction.definedFailure.localOrigins.clear();
+          if (mutation == 0)
+            instruction.neverReturns = false;
+          if (mutation == 1)
+            instruction.tracksCaller = true;
+          if (mutation == 2)
+            instruction.parameterTypes.push_back(lang::SemanticType::Bool);
+          if (mutation == 3)
+            instruction.definedFailure.localOrigins.clear();
           if (mutation == 4)
-            instruction.definedFailure.localOrigins.front().outcomes.front().code =
-                lang::DefinedFailureCode::Panic;
+            instruction.definedFailure.localOrigins.front()
+                .outcomes.front()
+                .code = lang::DefinedFailureCode::Panic;
           changed = true;
         }
     }
     expect(changed && !lang::verifyMirProgram(forged).valid(),
-           "terminal owner failure rejects altered arity, termination, caller or failure identity");
+           "terminal owner failure rejects altered arity, termination, caller "
+           "or failure identity");
   }
 
   // General enum proof replaces private optional publication proof. A
@@ -113,17 +125,24 @@ int main() {
       auto *body = lang::findMirBody(forged, address);
       for (auto &block : body->blocks)
         for (auto &instruction : block.instructions) {
-          if (changed || instruction.operation != lang::MirOperation::PayloadConstruct ||
-              instruction.operands.empty() || instruction.lifecycle.empty()) continue;
-          if (mutation == 0) instruction.operands.clear();
-          if (mutation == 1) instruction.enumOwner = 0;
-          if (mutation == 2) instruction.enumVariant = 999;
-          if (mutation == 3) instruction.lifecycle.clear();
+          if (changed ||
+              instruction.operation != lang::MirOperation::PayloadConstruct ||
+              instruction.operands.empty() || instruction.lifecycle.empty())
+            continue;
+          if (mutation == 0)
+            instruction.operands.clear();
+          if (mutation == 1)
+            instruction.enumOwner = 0;
+          if (mutation == 2)
+            instruction.enumVariant = 999;
+          if (mutation == 3)
+            instruction.lifecycle.clear();
           changed = true;
         }
     }
     expect(changed && !lang::verifyMirProgram(forged).valid(),
-           "optional enum publication rejects missing values, wrong alternatives and missing lifecycle proof");
+           "optional enum publication rejects missing values, wrong "
+           "alternatives and missing lifecycle proof");
   }
 
   const auto invalidEmplacement = lang::Frontend().analyze(
@@ -299,8 +318,8 @@ void destroy(int divisor) {
     for (const auto &block : lang::findMirBody(frontend.mir, address)->blocks)
       for (const auto &instruction : block.instructions)
         ordinaryReset &= !isOptionalIntrinsic(instruction.intrinsic);
-  expect(ordinaryReset,
-         "source reset emits without any instantiated private optional storage or operation");
+  expect(ordinaryReset, "source reset emits without any instantiated private "
+                        "optional storage or operation");
 }
 
 void testNestedOptionalConstruction() {
@@ -361,16 +380,15 @@ public:
              "its declared element constraint, without a private handle rule");
       continue;
     }
-    if (declaration == "std::optional<View> item{};") {
-      expect(frontend.canGenerateCode() &&
-                 lang::verifyMirProgram(frontend.mir).valid(),
-             "an empty source optional retains a complete dependency-free alternative");
-    } else {
-      expect(!frontend.canGenerateCode() &&
-                 hasDiagnosticCode(frontend.diagnostics, "GTI-S2045") &&
-                 !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
-             "a value constructor cannot invent a retained reference contract");
-    }
+    // View is a user class containing int&, not std::string_view. Both empty
+    // and engaged optional<View> were rejected before promotion. Keep that
+    // boundary until this wrapper can express its retained field contract.
+    // Empty optional<string_view> remains positively tested below.
+    expect(!frontend.canGenerateCode() &&
+               hasDiagnosticCode(frontend.diagnostics, "GTI-S2045") &&
+               !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
+           "a source wrapper cannot invent its field's retained reference "
+           "contract");
   }
 
   const std::string constructorSource = R"(
@@ -474,13 +492,16 @@ int main() {
         "#include <std/optional>\nint main() { std::optional<" + type +
             "> item{}; return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    std::cerr << "optional payload " << type << ": "
-              << frontend.canGenerateCode() << '\n';
-    for (const auto &diagnostic : frontend.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    if (type == "int*") {
+      expect(frontend.canGenerateCode() &&
+                 lang::verifyMirProgram(frontend.mir).valid(),
+             "source optional admits ordinary raw pointer values without "
+             "dereferencing them");
+      continue;
+    }
     expect(!frontend.canGenerateCode() &&
                hasDiagnosticCode(frontend.diagnostics,
-                                 type == "void" ? "GTI-S2029" : "GTI-S2019") &&
+                                 type == "void" ? "GTI-S2029" : "GTI-S2045") &&
                !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
            "unsupported optional payload shapes must fail at source instead "
            "of reaching the MIR/backend contract");
@@ -526,13 +547,39 @@ int main() {
         "return std::optional<std::string_view>(" +
             argument + "); }\nint main() { auto result = escape(); return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(!text.canGenerateCode() &&
-               hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
-               hasDiagnostic(text.diagnostics, "stored in a payload-enum field") &&
-               !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
-           "optional publication cannot store a potentially owner-dependent "
-           "text parameter; literal arguments do not bypass that generic "
-           "parameter boundary");
+    expect(
+        !text.canGenerateCode() &&
+            hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
+            hasDiagnostic(text.diagnostics, "stored in a payload-enum field") &&
+            !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
+        "optional publication cannot store a potentially owner-dependent "
+        "text parameter; literal arguments do not bypass that generic "
+        "parameter boundary");
+  }
+
+  const auto literalPayload = lang::Frontend().analyze(
+      "literal-text-payload.gti", R"(
+enum Text { empty, value(std::string_view text) };
+int main() { auto text = Text::value("static"); return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(literalPayload.canGenerateCode() &&
+             lang::verifyMirProgram(literalPayload.mir).valid(),
+         "a directly literal-backed text payload needs no external owner loan");
+  for (const std::string expression : {"owner.view()", "std::move(view)"}) {
+    const auto dynamicPayload = lang::Frontend().analyze(
+        "dynamic-text-payload.gti",
+        "#include <std/string>\nenum Text { empty, value(std::string_view "
+        "text) };\n"
+        "int main() { std::string owner{\"owned\"}; "
+        "std::string_view view = owner.view(); auto text = Text::value(" +
+            expression + "); return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!dynamicPayload.canGenerateCode() &&
+               hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-S2045") &&
+               !hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-B0001"),
+           "ordinary enum storage rejects dynamic text, including moved views, "
+           "before MIR");
   }
 
   for (const std::string storage :
@@ -625,27 +672,33 @@ int main() {
   if (!frontend.canGenerateCode())
     return;
   const auto payload = std::find_if(
-      frontend.mir.classInstances().begin(), frontend.mir.classInstances().end(),
-      [&](const auto &instance) {
+      frontend.mir.classInstances().begin(),
+      frontend.mir.classInstances().end(), [&](const auto &instance) {
         return std::any_of(frontend.hir.classInstances().begin(),
-                           frontend.hir.classInstances().end(), [&](const auto &hir) {
-          return hir.id == instance.id && hir.source &&
-                 hir.source->name().lexeme == "Payload";
-        });
+                           frontend.hir.classInstances().end(),
+                           [&](const auto &hir) {
+                             return hir.id == instance.id && hir.source &&
+                                    hir.source->name().lexeme == "Payload";
+                           });
       });
   expect(payload != frontend.mir.classInstances().end(),
          "ordinary payload identity is retained independently of optional");
-  if (payload == frontend.mir.classInstances().end()) return;
+  if (payload == frontend.mir.classInstances().end())
+    return;
   for (int mutation = 0; mutation != 3; ++mutation) {
     auto forged = frontend.mir;
     auto *changed = const_cast<lang::MirClassInstance *>(
         forged.findClassInstance(payload->id));
-    if (mutation == 0) changed->traits.movable = false;
-    else if (mutation == 1) changed->traits.containsBorrowedState = true;
-    else changed->declaredFields.front().type =
-        lang::SemanticType::referenceTo(lang::SemanticType::Int32);
+    if (mutation == 0)
+      changed->traits.movable = false;
+    else if (mutation == 1)
+      changed->traits.containsBorrowedState = true;
+    else
+      changed->declaredFields.front().type =
+          lang::SemanticType::referenceTo(lang::SemanticType::Int32);
     expect(!lang::verifyMirProgram(forged).valid(),
-           "ordinary class and enum verification rejects forged relocation or borrow facts");
+           "ordinary class and enum verification rejects forged relocation or "
+           "borrow facts");
   }
 }
 

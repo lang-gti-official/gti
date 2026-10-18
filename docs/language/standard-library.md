@@ -456,7 +456,8 @@ The current implemented foundation includes:
 - `<std/optional>` source-defined move-only `std::optional<T>` for
   `std::move_constructible T`, including nested optionals whose payloads
   cannot be assigned. Payloads cannot contain borrowed state and cannot be
-  void, references, or raw pointers. An empty `optional<string_view>` is valid,
+  void or references. Raw pointers are ordinary stored values, not implicitly
+  dereferenced or made safe by optional ownership. An empty `optional<string_view>` is valid,
   but storing a by-value text-view parameter is rejected because this storage
   does not carry its external-owner dependency. This includes literal callers
   of that parameterized constructor until a static-lifetime contract can
@@ -482,13 +483,18 @@ The current implemented foundation includes:
   duplicate according to their element contracts, while shared values retain
   their sharing policy. This does not enable implicit optional copying.
   An empty checked access raises `GTI-R0008` after ordinary cleanup. Copy
-  construction and copy/move assignment are unavailable in this slice;
-  replacement uses `reset()` or `emplace()`, and a moved source cannot be used
-  under GTI's ordinary ownership rules; and
+  construction and copy assignment remain unavailable. Move assignment retires
+  the old payload before taking the new one. A consuming `value() &&` moves
+  the payload out, `std::nullopt` constructs an empty optional, and the ordinary
+  `std::tryable` implementation enables `?` propagation. A moved source cannot
+  be used under GTI's ordinary ownership rules. Storage is now an ordinary
+  private payload enum, not a compiler-private optional capability. The narrow
+  declaration-bound terminal failure operation selects `empty_owner_access`;
+  it neither implements optional policy nor grants storage/lifetime authority;
 - `<std/experimental/optional>` `std::experimental::optional<T>`, the
-  candidate successor of `std::optional`, defined entirely in GTI source over
+  compatibility implementation of the former candidate, defined in GTI source over
   a private payload enum with no compiler-private storage. It has the same
-  surface as `std::optional`, plus:
+  promoted surface now also available from `std::optional`:
   - a consuming `T value() &&` that moves the value out;
   - move assignment, which destroys the current value, if any, first;
   - `implicit optional(std::experimental::nullopt_t)` and the
@@ -497,8 +503,9 @@ The current implemented foundation includes:
     returns an empty optional from a function returning one.
 
   An empty access panics (`GTI-R0017`) rather than raising
-  `empty_owner_access`. It is excluded from `import std;` and is promoted
-  once its surface, failure behaviour and performance match;
+  `empty_owner_access`. It remains excluded from `import std;` so existing
+  experimental imports retain their failure behavior. New code should use
+  `<std/optional>` and `std::optional`; the two classes are distinct types;
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and

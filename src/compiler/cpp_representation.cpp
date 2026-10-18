@@ -889,20 +889,9 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
   return inspect(inspect, type, false);
 }
 
-std::string cppSemanticTypeSpelling(const LoweredProgram &program,
-                                    CppStandard standard,
-                                    const SemanticType &type) {
-  if (type.nativeCScalar != NativeCScalarKind::None) {
-    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
-        type) {
-      throw std::logic_error(
-          "invalid native C scalar identity reached C++ representation");
-    }
-    return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
-  }
-  const auto spell = [&](const SemanticType &inner) {
-    return cppSemanticTypeSpelling(program, standard, inner);
-  };
+namespace {
+std::string cppValueExpressionSpelling(const LoweredProgram &program,
+                                       const GenericValueExpression &value) {
   // Spell declaration-bound dependent metadata; never evaluate it here.
   // Executable concrete instances already carry checked literal arguments.
   const auto spellValueExpression =
@@ -959,6 +948,24 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     }
     return '(' + self(self, *expression.left) + ' ' + std::string(operation) +
            ' ' + self(self, *expression.right) + ')';
+  };
+  return spellValueExpression(spellValueExpression, value);
+}
+} // namespace
+
+std::string cppSemanticTypeSpelling(const LoweredProgram &program,
+                                    CppStandard standard,
+                                    const SemanticType &type) {
+  if (type.nativeCScalar != NativeCScalarKind::None) {
+    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+        type) {
+      throw std::logic_error(
+          "invalid native C scalar identity reached C++ representation");
+    }
+    return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+  }
+  const auto spell = [&](const SemanticType &inner) {
+    return cppSemanticTypeSpelling(program, standard, inner);
   };
   const auto dependent = [&](const auto &self,
                              const SemanticType &inner) -> bool {
@@ -1232,8 +1239,7 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
               program.findGenericParameter(argument.parameterId);
           result += parameter == nullptr ? "0" : parameter->name;
         } else if (argument.expression) {
-          result +=
-              spellValueExpression(spellValueExpression, *argument.expression);
+          result += cppValueExpressionSpelling(program, *argument.expression);
         } else {
           result += '0';
         }
@@ -1245,8 +1251,21 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   }
   case SemanticType::Enum: {
     const LoweredEnumDeclaration *enumInfo = program.findEnumDeclaration(type);
-    if (enumInfo == nullptr)
-      return "void";
+    if (enumInfo == nullptr) {
+      // A native overlay may name a dependent application, but never creates
+      // its own payload layout. Select from the exact closed GTI catalog.
+      if (type.enumId == 0 ||
+          (!dependent(dependent, type) &&
+           std::all_of(type.valueArguments.begin(), type.valueArguments.end(),
+                       [](const auto &value) {
+                         return value.kind == CompileTimeValue::UInt64;
+                       })))
+        throw std::logic_error("enum representation lacks an exact verified "
+                               "instance or dependent family");
+      return "typename ::__gti_program::__gti_enum_selector_" +
+             std::to_string(type.enumId) +
+             cppEnumSelectorArguments(program, standard, type) + "::type";
+    }
     if (const auto name = cppConcreteEnumName(program, type)) {
       const auto separator = enumInfo->qualifiedName.rfind("::");
       return cppLoweredQualifiedName(
@@ -1331,6 +1350,49 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   default:
     return "void";
   }
+}
+
+std::string cppEnumSelectorArguments(const LoweredProgram &program,
+                                     CppStandard standard,
+                                     const SemanticType &type) {
+  if (type.kind != SemanticType::Enum || type.enumId == 0)
+    throw std::logic_error("enum selector lacks an exact family identity");
+  std::string result = "<::__gti_program::__gti_enum_types<";
+  bool separator = false;
+  const auto append = [&](const auto &self,
+                          const SemanticType &argument) -> void {
+    if (argument.kind == SemanticType::TypePack && argument.concretePack) {
+      for (const auto &element : argument.arguments)
+        self(self, element);
+      return;
+    }
+    if (separator)
+      result += ", ";
+    result += cppSemanticTypeSpelling(program, standard, argument);
+    if (argument.kind == SemanticType::TypePack)
+      result += "...";
+    separator = true;
+  };
+  for (const auto &argument : type.arguments)
+    append(append, argument);
+  result += ">, std::integer_sequence<std::uint64_t";
+  for (const auto &argument : type.valueArguments) {
+    result += ", ";
+    if (argument.kind == CompileTimeValue::UInt64)
+      result += std::to_string(argument.value) + "ULL";
+    else if (argument.kind == CompileTimeValue::Parameter) {
+      const auto *parameter =
+          program.findGenericParameter(argument.parameterId);
+      if (!parameter || !parameter->value)
+        throw std::logic_error(
+            "enum selector lost its value parameter identity");
+      result += parameter->name;
+    } else if (argument.expression)
+      result += cppValueExpressionSpelling(program, *argument.expression);
+    else
+      throw std::logic_error("enum selector has an unresolved value argument");
+  }
+  return result + ">>";
 }
 
 std::optional<std::string> cppConcreteEnumName(const LoweredProgram &program,

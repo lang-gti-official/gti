@@ -289,7 +289,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsUnknownMemory = true,
                     .invokesRuntime = true,
                     .mayTrap = true},          // Panic
-    MirEffectTraits{.mayTrap = true}, // FailEmptyOwner
+    MirEffectTraits{.mayTrap = true},          // FailEmptyOwner
     MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
     // Promotion consumes the unique owner. Exhaustion aborts before cleanup;
     // successful publication does not execute the pointee's source body.
@@ -2029,8 +2029,10 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
       // Every admitted polymorphic payload has failure-free relocation.
       const bool safe = owner->compilerCapability ==
                             CompilerCapabilityTypeKind::PolymorphicStorage ||
-                        (owner->compilerCapability ==
-                             CompilerCapabilityTypeKind::OptionalStorage &&
+                        ((owner->compilerCapability ==
+                              CompilerCapabilityTypeKind::OptionalStorage ||
+                          owner->compilerCapability ==
+                              CompilerCapabilityTypeKind::MutexStorage) &&
                          candidate.arguments.size() == 1 &&
                          self(self, candidate.arguments.front()));
       classes.erase(owner->id);

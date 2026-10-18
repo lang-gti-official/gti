@@ -8952,7 +8952,8 @@ prerequisite checkpoints as full acceptance.
   direct inline publication and immovable wrapper eligibility are
   `L-UP-12/18`; broader assignment, borrowed combinators and constant-execution
   profiles retain distinct lifecycle/origin requirements. The production
-  move-only optional uses declaration-bound inline one-slot storage; do not
+  move-only optional promotion replaces declaration-bound inline one-slot
+  storage with an ordinary source payload enum; do not
   repeat foundational value utilities as an unfinished whole-module slice.
 - **Scope:** Implement `optional<T>` over checked one-slot storage, then
   complete pair, comparison, swap/exchange, limits, and `expected` observers
@@ -8960,10 +8961,12 @@ prerequisite checkpoints as full acceptance.
 - **Implemented optional boundary:** empty and engaged construction,
   observation, checked read-only/exclusive access, reset, variadic emplacement,
   move-only payload transfer, deterministic wrong-state failure, and
-  exactly-once cleanup are complete. The private representation is inline and
-  allocation-free. Copy construction and both assignment forms fail closed;
-  source-defined conditional special-member assignment remains a later
-  prerequisite, while `reset`/`emplace` provide explicit replacement now.
+  exactly-once cleanup are complete. The source enum representation is inline
+  and allocation-free. Promotion adds move assignment, consuming access,
+  `std::nullopt` and source-defined `std::tryable`, retaining GTI-R0008 for
+  empty access. Copy construction and copy assignment remain unavailable.
+  Promotion validation is in progress on PR #223; the previous full-suite
+  result is not evidence for the promoted implementation.
 - **Exit gate:** empty/engaged construction, move-only values, assignment,
   destruction, failure, generic constraints, and constexpr-safe constants.
 
