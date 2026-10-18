@@ -245,7 +245,7 @@ int main() { return 0; }
 #include <std/meta>
 std::meta::callable_return_type<F> bad<F>(F& fn) { return true; }
 int mapper() { return 1; }
-int main() { return bad(mapper); }
+int main() { auto selected = mapper; return bad(selected); }
 )",
            "GTI-S2003", "return");
   const auto projected = analyze(R"(
