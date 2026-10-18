@@ -202,6 +202,13 @@ int main() {
     conflicting.insert(conflicting.find("  return selected =="),
                        std::string("  ") + owner + " = 19;\n");
     rejected(conflicting, "GTI-S2017", "borrow");
+    auto aliased = conflicting;
+    const auto write = aliased.find(std::string("  ") + owner + " = 19;");
+    aliased.insert(write, "  int& alias = selected;\n");
+    aliased.replace(aliased.find("return selected =="),
+                    std::string("return selected ==").size(),
+                    "return alias ==");
+    rejected(aliased, "GTI-S2017", "borrow");
   }
   const auto multipleOwnerProof = analyze(multipleOwners);
   if (multipleOwnerProof.canGenerateCode()) {
