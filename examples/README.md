@@ -197,7 +197,7 @@ is a teaching helper, not a production server.
 | `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
 | `113-erased-addresses.gti` | explicit const-preserving typed/erased address conversion and separate owner-witness borrowing |
 | `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
-| `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use and storage insertion |
+| `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use, storage/vector insertion and optional replacement |
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
 | `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |

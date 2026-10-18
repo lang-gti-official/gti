@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.446.0 — One-step declared return initialization
+## 0.447.0 — One-step declared return initialization
 
 - Explicitly declared value returns use the same single implicit constructor or
   conversion operator as typed declarations. Calls and assignments keep exact
@@ -18,6 +18,22 @@ for what minor and patch releases mean.
 - `std::optional<T>` accepts one exact payload through `implicit optional(T)`.
   Return `std::nullopt` or `std::string("ready")` directly from an optional-string
   function; named move-only payloads still require `std::move`.
+
+## 0.446.1 — Quiet internal include checks
+
+- Keep missing-include probes and proposed-fix checks out of the CLI progress
+  stream. Failed builds and checks retain their include suggestions without
+  repeated internal loading, parsing and checking output.
+
+## 0.446.0 — Optional standard-library mutation results
+
+- Apply `[[discardable]]` to emplacement, associative insertion and erasure,
+  linked-list removal counts, `for_each`, and scalar atomic fetch/exchange
+  operations. Their results remain available when needed, while ordinary
+  mutation no longer requires a redundant call-site `[[discard]]`.
+- Remove redundant discards inside the standard library. Queries, recoverable
+  errors, conditional atomic updates and ownership-transfer results remain
+  explicit. Ignoring a result preserves all normal lifetime and failure checks.
 
 ## 0.444.0 — Checked reference payloads and complete borrowed results
 

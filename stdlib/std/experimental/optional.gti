@@ -134,6 +134,7 @@ public:
   }
 
   /// Replaces the current value from `args`, remaining empty on failure.
+  [[discardable]]
   mut T& emplace<Args...>(Args... args) mut {
     this.reset();
     this.state = detail::optional_state<T>::engaged(T(args...));

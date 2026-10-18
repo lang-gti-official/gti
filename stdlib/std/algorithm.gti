@@ -72,6 +72,7 @@ bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
   return true;
 }
 
+[[discardable]]
 Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
                                                 Sentinel last,
                                                 mut Function function)
@@ -531,6 +532,7 @@ ptrdiff_t count_if<Range, Predicate>(Range& values,
   return result;
 }
 
+[[discardable]]
 Function for_each<Range, Function>(Range& values, mut Function function)
   requires std::input_range<Range> &&
            std::range_operation<Function, Range, void> {

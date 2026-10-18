@@ -130,7 +130,7 @@ class list<T> {
     return node;
   }
 
-  size_t install(mut unique_ptr<detail::list_node<T>> owned, size_t before) mut {
+  [[discardable]] size_t install(mut unique_ptr<detail::list_node<T>> owned, size_t before) mut {
     mut size_t slot = this.free;
     if (slot == 0) {
       this.slots.push_back(detail::list_slot<T>());
@@ -196,17 +196,17 @@ public:
     return this.slots[this.tail - 1].get();
   }
   void push_front(T value) mut requires std::movable<T> {
-    [[discard]] this.install(std::make_unique<detail::list_node<T>>(std::move(value)), this.head);
+    this.install(std::make_unique<detail::list_node<T>>(std::move(value)), this.head);
   }
   void push_back(T value) mut requires std::movable<T> {
-    [[discard]] this.install(std::make_unique<detail::list_node<T>>(std::move(value)), size_t(0));
+    this.install(std::make_unique<detail::list_node<T>>(std::move(value)), size_t(0));
   }
-  mut T& emplace_front<Args...>(Args... args) mut {
+  [[discardable]] mut T& emplace_front<Args...>(Args... args) mut {
     size_t node = this.install(std::make_unique<detail::list_node<T>>(
         detail::list_in_place::value, args...), this.head);
     return this.slots[node - 1].get();
   }
-  mut T& emplace_back<Args...>(Args... args) mut {
+  [[discardable]] mut T& emplace_back<Args...>(Args... args) mut {
     size_t node = this.install(std::make_unique<detail::list_node<T>>(
         detail::list_in_place::value, args...), size_t(0));
     return this.slots[node - 1].get();
@@ -221,7 +221,7 @@ public:
   void insert(size_t position, T value) mut requires std::movable<T> {
     if (position == this.length) { this.push_back(std::move(value)); return; }
     size_t before = this.locate(position);
-    [[discard]] this.install(std::make_unique<detail::list_node<T>>(std::move(value)), before);
+    this.install(std::make_unique<detail::list_node<T>>(std::move(value)), before);
   }
   void erase(size_t position) mut {
     size_t node = this.locate(position);
@@ -230,7 +230,7 @@ public:
   void clear() mut { while (!this.empty()) { this.pop_front(); } }
   void resize(size_t requested) mut requires std::default_initializable<T> {
     while (this.length > requested) { this.pop_back(); }
-    while (this.length < requested) { [[discard]] this.emplace_back(); }
+    while (this.length < requested) { this.emplace_back(); }
   }
   void resize(size_t requested, T value) mut requires std::copyable<T> {
     while (this.length > requested) { this.pop_back(); }
@@ -264,7 +264,7 @@ public:
     this.head = this.tail;
     this.tail = head;
   }
-  size_t remove(T& value) mut requires std::equality_comparable<T> {
+  [[discardable]] size_t remove(T& value) mut requires std::equality_comparable<T> {
     mut size_t node = this.head;
     mut size_t removed = 0;
     while (node != 0) {
@@ -277,7 +277,7 @@ public:
     }
     return removed;
   }
-  size_t unique() mut requires std::equality_comparable<T> {
+  [[discardable]] size_t unique() mut requires std::equality_comparable<T> {
     if (this.empty()) { return 0; }
     mut size_t previous = this.head;
     mut size_t node = this.slots[previous - 1].next();
@@ -298,7 +298,7 @@ public:
       while (before != 0 && !(other.front() < this.read_node(before))) {
         before = this.slots[before - 1].next();
       }
-      [[discard]] this.install(other.detach(other.head), before);
+      this.install(other.detach(other.head), before);
     }
   }
   /// Stable mergesort of indexes: O(n log n), O(n) auxiliary indexes, no T moves.
