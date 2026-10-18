@@ -950,5 +950,40 @@ int main() { discard(Message::Value(Resource(1))); return 0; }
                  owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
                  [](const auto &item) { return item.code == "GTI-B0001"; }),
          "unsupported owning-enum packs retain their source diagnostic");
+  const auto referenceEntry = lang::Frontend().analyze(
+      "enum-reference-entry.gti", R"gti(
+enum Reading { empty, value(int& owner) };
+bool is_ready(Reading& reading) {
+  switch (reading) {
+  case Reading::empty: return false;
+  case Reading::value: return true;
+  }
+}
+int main() {
+  int owner = 7;
+  auto reading = Reading::value(owner);
+  return is_ready(reading) ? 0 : 1;
+}
+)gti", {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(referenceEntry.canGenerateCode(),
+         "reference enum formal has independently verified guarded inventory");
+  if (referenceEntry.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      expect(!gti_test::emitCpp(referenceEntry, standard).contents.empty(),
+             "abstract enum reference inventory does not require native class fields");
+    auto forged = referenceEntry.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged))
+      for (auto &place : function.body.places)
+        if (!changed && place.sourceValue == 0 &&
+            place.root == lang::MirPlaceRootKind::Binding &&
+            place.projections.size() == 3 &&
+            place.projections[1].kind == lang::MirProjectionKind::Field) {
+          place.projections[1].field = 0;
+          changed = true;
+        }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "provenance-only enum path still requires an exact typed payload field");
+  }
   return failures == 0 ? 0 : 1;
 }

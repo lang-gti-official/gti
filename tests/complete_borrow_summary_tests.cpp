@@ -433,11 +433,19 @@ enum Forwarded { empty, value(int& owner) };
 [[borrowed_from(owner)]] Forwarded relay(int& owner) {
   return make(owner, false);
 }
+int inspect_forwarded(int& owner) {
+  auto held = make(owner, false);
+  return 0;
+}
 int main() { return 0; }
 )gti");
-    const auto id = functionId(result, "relay");
+    const auto id = functionId(result, "inspect_forwarded");
     const auto *function = result.mir.findFunctionInstance(id);
     if (result.canGenerateCode() && function) {
+      expect(std::none_of(function->body.loans.begin(),
+                          function->body.loans.end(),
+                          [](const auto &loan) { return loan.entry; }),
+             "forwarding-only formal fixture uses exact places, not entry loans");
       for (int mutation = 0; mutation < 6; ++mutation) {
         auto malformed = result.mir;
         auto &changed =
@@ -458,7 +466,8 @@ int main() { return 0; }
           changed.parameterTypes.front() = lang::SemanticType::Int32;
         expect(!lang::verifyMirProgram(malformed).valid(),
                "forwarded formal reference requires exact typed, available, "
-               "same-identity referent with no strengthened access");
+               "same-identity referent with no strengthened access " +
+                   std::to_string(mutation));
       }
     }
   }
