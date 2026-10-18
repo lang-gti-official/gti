@@ -5506,6 +5506,10 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
 }
 
 [[nodiscard]] bool
+independentlyVerifiedConditionalReturn(const MirProgram &program,
+                                        const MirFunctionInstance &function);
+
+[[nodiscard]] bool
 independentlyEmptyConditionalReturn(const MirProgram &program,
                                     const MirFunctionInstance &function,
                                     MirBlockId block);
@@ -5514,6 +5518,12 @@ independentlyEmptyConditionalReturn(const MirProgram &program,
 verifyMirFunctionBorrowSummary(const MirProgram &program,
                                const MirFunctionInstance &instance) {
   const MirBody &body = instance.body;
+  // A guarded aggregate has permissions per dependency, not one permission
+  // for its entire value. Only the independently reconstructed complete
+  // contract may replace the legacy scalar access comparison below.
+  const bool completeConditionalResult =
+      instance.returnType.kind == SemanticType::Enum &&
+      independentlyVerifiedConditionalReturn(program, instance);
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
   for (const MirLoan &loan : body.loans) {
     for (const HirBindingId carrier : loan.carriers) {
@@ -5643,7 +5653,8 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
       const bool exactReference =
           parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1 &&
-          parameter.referenceAccess == instance.returnBorrowAccess;
+          (completeConditionalResult ||
+           parameter.referenceAccess == instance.returnBorrowAccess);
       const bool exactCarrier =
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
@@ -5813,7 +5824,9 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
     }
     const MirLoan *loan = body.findLoan(*block.terminator.returnLoan);
     if (loan == nullptr || loan->kind != MirLoanKind::Return ||
-        !loan->escapes || loan->access != instance.returnBorrowAccess) {
+        !loan->escapes ||
+        (!completeConditionalResult &&
+         loan->access != instance.returnBorrowAccess)) {
       return verificationFailure(
           body, instance.id,
           "owner-dependent return loan does not match the function "
@@ -12605,6 +12618,15 @@ private:
     return summary;
   }
 };
+
+[[nodiscard]] bool
+independentlyVerifiedConditionalReturn(const MirProgram &program,
+                                        const MirFunctionInstance &function) {
+  if (!function.completeReturnBorrow)
+    return false;
+  CompleteBorrowSummaryVerification summaries(program);
+  return summaries.query(function.id) != nullptr;
+}
 
 [[nodiscard]] bool
 independentlyEmptyConditionalReturn(const MirProgram &program,
