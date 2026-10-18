@@ -403,9 +403,9 @@ Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list, and a class may declare
 conversion operators to other types (section 3.9.2). Neither defines an
-implicit conversion for calls, returns, or assignment; only the declaration
-rule below selects one, declared `implicit`, for an initializer of another
-type.
+implicit conversion for calls or assignment. The initialization rule below
+selects one, declared `implicit`, for a declaration initializer or an explicitly
+declared value return type.
 
 The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
 ownership conversion, not an overload conversion. Its trusted private step is
@@ -441,8 +441,20 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Function arguments, returns, and
-assignment never use it. A class assignment from another type requires an
+contextually typed call, or a function name. Function arguments and assignment never use it.
+
+The same one-step selection initializes an explicitly declared value return
+type from a return operand. For example, `Celsius read() { return 21; }` uses
+`implicit Celsius(int)`. This includes functions, methods and explicitly typed
+lambdas; a type-parameter destination is checked during concrete generic
+reanalysis. The destination is a fresh result, while the constructor argument
+keeps its ordinary ownership checks: returning a named move-only source of a
+different type requires `std::move(source)`. Existing exact-type named return
+movement is unchanged. Reference returns do not construct temporaries, and
+borrow-carrying target exclusions remain in force. An implicit constructor
+whose parameter is exactly `nullptr_t` may initialize a return; the separate
+non-implicit nullable-declaration exception above does not apply to returns.
+No constructor/operator or numeric conversion chain is added. A class assignment from another type requires an
 exact member `operator=`, such as `std::string`'s
 `operator=(std::string_view)`.
 
@@ -1648,8 +1660,8 @@ like any member; an override has the same target and receiver.
 A conversion operator is explicit by default. Only `Target(value)` calls it,
 including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
 `bool(value)`, and an alias of a numeric, raw pointer, or class target.
-`implicit operator Target()` also admits the declaration conversion of
-section 3.5. No other context converts: function arguments, returns,
+`implicit operator Target()` also admits the declaration and declared-value
+return conversions of section 3.5. No other context converts: function arguments,
 assignment, operator operands, and `auto` inference keep exact types, and brace
 construction `Target{value}` considers only constructors.
 

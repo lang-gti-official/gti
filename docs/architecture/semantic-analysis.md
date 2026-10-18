@@ -105,7 +105,7 @@ ordinary producer validity, unsafe obligations and escape checking remain
 mandatory. Tooling retains a selected construction occurrence whose hover
 explicitly explains that no additional copy/move is selected.
 
-## Declaration construction
+## Declaration and return construction
 
 An explicitly typed class or struct declaration may have an initializer of
 another type that no assignment rule admits. `analyzeDeclarationConstruction`
@@ -128,11 +128,17 @@ and conservative raw-pointer field origins, at the declaration, as the direct
 initializer's expression would.
 
 The rule runs where the exact `nullptr_t` construction does, for declarations
-and field constructor initializers. It does not run for `constexpr` or
+and field constructor initializers, and explicitly declared value returns
+through `visitReturnStmt`. A selected contextual construction/conversion
+already produces a fresh destination, so return checking does not reinterpret
+the original argument place as a copy of that destination. A type-parameter
+return destination defers selection to concrete semantic reanalysis. Ordinary
+exact-type implicit return movement is unchanged.
+It does not run for `constexpr` or
 range-element bindings, reference fields, unions, abstract classes,
 borrow-carrying declared types, or initializers typed by their destination
-(brace lists, contextually typed calls and function names). Calls, returns and
-assignment never consult it.
+(brace lists, contextually typed calls and function names). Reference returns,
+calls and assignment never consult it.
 
 ## Conversion operators
 
@@ -159,8 +165,8 @@ and raw-pointer effects are therefore those of any operator call. An explicit
 conversion, `Target(source)`, `int(source)` or `bool(source)`, records the
 operator on its `Call` or `Conversion` node; `explicitConversionReceiver`
 names the receiver for the ownership, constexpr and HIR consumers that
-otherwise locate an operator receiver by node shape. A declaration records a
-contextual conversion on its initializer, in the map that holds a condition's
+otherwise locate an operator receiver by node shape. A declaration or declared value return records a
+contextual conversion on its initializer or operand, in the map that holds a condition's
 `operator bool`, and the declaration's sites accept the initializer through
 `recordsDeclarationConversion`. Every contextual conversion now records its
 target's program effect edge, so a condition's `operator bool` contributes to

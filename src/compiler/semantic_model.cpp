@@ -1704,6 +1704,15 @@ SemanticModel::findContextualConstruction(const Expr &initializer) const {
                          : base->findContextualConstruction(initializer);
 }
 
+std::optional<SemanticContextualConstructionProof>
+SemanticModel::contextualConstructionProof(const Expr &initializer) const {
+  const auto *construction = findContextualConstruction(initializer);
+  if (construction == nullptr)
+    return std::nullopt;
+  return SemanticContextualConstructionProof(initializer, *construction,
+                                             analysisSeal().programSnapshot);
+}
+
 [[nodiscard]] bool
 SemanticModel::recordsContextualConstruction(const Expr &initializer) const {
   return contextualConstructions.contains(&initializer);

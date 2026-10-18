@@ -1178,6 +1178,12 @@ add_executable(gti_initialization_and_native_identity_tests
   "${PROJECT_SOURCE_DIR}/tests/initialization_and_native_identity_tests.cpp")
 target_link_libraries(gti_initialization_and_native_identity_tests PRIVATE gti_cpp_backend)
 add_test(NAME initialization_and_native_identity COMMAND gti_initialization_and_native_identity_tests)
+if(TARGET gti_lsp)
+  add_test(NAME implicit_return_construction_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/implicit_return_construction_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(implicit_return_construction_lsp PROPERTIES TIMEOUT 60)
+endif()
 add_executable(gti_conversion_operator_tests
   "${PROJECT_SOURCE_DIR}/tests/conversion_operator_tests.cpp")
 target_link_libraries(gti_conversion_operator_tests PRIVATE gti_cpp_backend)
@@ -2097,6 +2103,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(declaration_construction_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME implicit_return_construction_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/implicit_return_construction_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(implicit_return_construction_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME conversion_operators_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -48,6 +48,21 @@ void check(const std::string &name, const std::string &source, bool definite) {
 } // namespace
 
 int main() {
+  check("implicit return construction retains unresolved raw-field origins",
+        R"gti(
+struct Handle {
+  const int* pointer;
+  implicit Handle(const int* input) : pointer(input) {}
+};
+Handle handle(const int* pointer) { return pointer; }
+int inspect() {
+  int local = 7;
+  Handle result = handle(&local);
+  unsafe { return *result.pointer; }
+}
+int main() { return 0; }
+)gti",
+        false);
   const std::string start = R"(
 int inspect(bool choice) {
   int live = 1;
