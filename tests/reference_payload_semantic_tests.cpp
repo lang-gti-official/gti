@@ -1,8 +1,16 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static auto &functions(MirProgram &program) { return program.functions; }
+};
+} // namespace lang
 
 int main() {
   int failures = 0;
@@ -251,6 +259,14 @@ enum Reading { empty, value(int& owner) };
 int main() { mut int owner = 3; auto result = read(owner); return 0; }
 )gti",
            R"gti(
+enum Reading { empty, value(int& owner) };
+[[borrowed_from(owner)]] Reading read(int& owner, bool fail) {
+  if (fail) return Reading::empty;
+  return Reading::value(owner);
+}
+int main() { mut int owner = 3; auto result = read(owner, true); return 0; }
+)gti",
+           R"gti(
 enum Reading { empty, value(mut int& owner) };
 [[borrowed_from(owner)]] Reading read(mut int& owner) {
   return Reading::value(owner);
@@ -289,6 +305,97 @@ int main() {
     expect(result.syntaxValid && !result.semanticValid,
            "constructor rejects dangling owners, mutable aliases and later "
            "field mutation");
+  }
+  const auto constructed = lang::Frontend().analyze(
+      root / "tests" / "reference-payload-constructor.gti", R"gti(
+enum Reading { empty, value(int& owner, int sequence) };
+[[borrowed_from(owner)]] Reading make(int& owner) {
+  return Reading::value(owner, 7);
+}
+int main() { return 0; }
+)gti",
+      {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  if (!constructed.canGenerateCode())
+    for (const auto &diagnostic : constructed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(constructed.canGenerateCode(),
+         "reference constructor reaches independently verified MIR");
+  if (constructed.canGenerateCode()) {
+    lang::HirFunctionInstanceId owner = 0;
+    lang::MirInstructionId constructor = 0;
+    lang::MirInstructionId firstStage = 0;
+    for (const auto &function : constructed.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.operation == lang::MirOperation::PayloadConstruct &&
+              instruction.operands.size() == 2) {
+            owner = function.id;
+            constructor = instruction.id;
+            const auto *value =
+                function.body.findValue(instruction.operands.front().value);
+            if (value)
+              firstStage = value->definition;
+          }
+        }
+    expect(owner && constructor && firstStage,
+           "constructor fixture exposes its exact first field stage");
+    for (int mutation = 0; owner && constructor && firstStage && mutation != 6;
+         ++mutation) {
+      auto malformed = constructed.mir;
+      auto &body =
+          lang::MirProgramTestAccess::functions(malformed)[owner - 1].body;
+      lang::MirInstructionId next = 1;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          next = std::max(next, instruction.id + 1);
+      bool changed = false;
+      for (auto &block : body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.id == constructor) {
+            if (mutation == 0) {
+              instruction.callSite = 0;
+              changed = true;
+            } else if (mutation == 1) {
+              instruction.parameterTypes.front() = lang::SemanticType::Int32;
+              changed = true;
+            } else if (mutation == 2 && instruction.result) {
+              body.values[*instruction.result - 1].borrowDependencies.reset();
+              changed = true;
+            } else if (mutation == 3 && instruction.loan) {
+              body.loans[*instruction.loan - 1].conditions.clear();
+              changed = true;
+            }
+          }
+          if (instruction.id == firstStage && mutation == 4) {
+            instruction.callInputIndex = 1;
+            changed = true;
+          }
+        }
+        if (mutation == 5) {
+          const auto stage =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.id == firstStage;
+                           });
+          if (stage != block.instructions.end() &&
+              stage->operands.size() == 1 &&
+              stage->operands.front().kind == lang::MirOperandKind::Loan) {
+            const auto parent = stage->operands.front().loan;
+            block.instructions.insert(
+                std::next(stage), {.id = next,
+                                   .kind = lang::MirInstructionKind::EndBorrow,
+                                   .loan = parent});
+            changed = true;
+          }
+        }
+      }
+      expect(lang::rebuildMirValueUses(body),
+             "constructor mutation retains well-formed SSA use records");
+      expect(changed, "each constructor proof mutation changes its target");
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "constructor rejects substituted signature/stage/domain/group "
+             "and retirement between argument capture and publication");
+    }
   }
   return failures == 0 ? 0 : 1;
 }
