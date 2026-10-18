@@ -1,0 +1,29 @@
+#include <std/meta>
+using PointerGetter = () -> int32_t*;
+using ReadOnlyGetter = () -> const int32_t*;
+using ScalarGetter = () -> int32_t;
+using VoidGetter = () -> void;
+extern "C" {
+  PointerGetter projection_pointer_getter();
+  ReadOnlyGetter projection_readonly_getter();
+  ScalarGetter projection_scalar_getter();
+  VoidGetter projection_void_getter();
+}
+
+// The second parameter forces retention of a native callable template. Its
+// first parameter's C result representation is not necessarily its GTI result.
+std::meta::callable_return_type<F> invoke<F, G>(F function, G& observer) {
+  observer();
+  unsafe { return function(); }
+}
+
+int main() {
+  auto observer = []() -> void {};
+  unsafe {
+    auto pointer = invoke(projection_pointer_getter(), observer);
+    auto readonly = invoke(projection_readonly_getter(), observer);
+    int value = invoke(projection_scalar_getter(), observer);
+    invoke(projection_void_getter(), observer);
+    return *pointer == 19 && *readonly == 23 && value == 42 ? 0 : 1;
+  }
+}

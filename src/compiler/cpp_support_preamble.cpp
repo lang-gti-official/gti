@@ -72,6 +72,8 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Value",
       "__gti_invoke",
       "__gti_mir_lambda_identity",
+      "__gti_mir_source_result",
+      "source_callable_result",
       "__gti_simd_vector",
       "__gti_simd_width",
       "__gti_simd_left",
@@ -1164,8 +1166,15 @@ template <typename T>
 struct mir_empty_state_factory_v1;
 template <std::uint64_t Constructor>
 struct mir_failure_constructor_tag_v1;
-template <std::uint64_t Function>
-struct function_item final {};
+template <std::uint64_t Function, typename Result>
+struct function_item final { using __gti_mir_source_result = Result; };
+
+// Native callable signatures may use status/out-result channels. Preserve
+// GTI's verified logical result as metadata instead of inspecting operator().
+template <typename Callable>
+struct source_callable_result {
+  using type = typename Callable::__gti_mir_source_result;
+};
 
 template <typename T> std::false_type __gti_byte_transport_tag(T *);
 template <typename T>

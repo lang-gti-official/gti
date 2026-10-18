@@ -1152,7 +1152,7 @@ int main() { auto value = identity(Token::empty); return 0; }
       }
   }
 
-  for (const std::string &source :
+  for (const std::string source :
        {"Token unknown() { return unknown(); }",
         "Token other() { return unknown(); } Token unknown() { return other(); "
         "}",

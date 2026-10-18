@@ -163,7 +163,8 @@
     "163-payload-enum-propagation.gti": 134,
     "164-payload-composition.gti": 137,
     "165-borrowed-payload-results.gti": 157,
-    "166-source-optional.gti": 147
+    "166-source-optional.gti": 147,
+    "167-callable-result-types.gti": 16
   },
-  "total": 18814
+  "total": 18830
 }

@@ -777,6 +777,28 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     if (const auto *payload =
             std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
       recordIdentity(classDeclarations, payload->id, "class");
+      switch (payload->computedTypeProjection) {
+      case ComputedTypeProjectionKind::None:
+        break;
+      case ComputedTypeProjectionKind::CallableReturn:
+        if (payload->genericParameters.size() != 1 ||
+            payload->genericParameters.front().value ||
+            payload->genericParameters.front().pack ||
+            payload->exactSpecializationPrimary != 0 ||
+            !payload->bases.empty() || payload->cAbiRecord ||
+            payload->cOpaqueHandle || payload->polymorphic ||
+            payload->compilerCapability != CompilerCapabilityTypeKind::None)
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "callable result projection must have one ordinary type "
+                   "parameter and no runtime representation capability",
+                   std::nullopt, declaration.id);
+        break;
+      default:
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "unknown computed type projection", std::nullopt,
+                 declaration.id);
+        break;
+      }
     } else if (std::holds_alternative<LoweredTypeAliasDeclaration>(
                    declaration.payload)) {
       recordIdentity(aliasDeclarations, declaration.semanticIdentity,

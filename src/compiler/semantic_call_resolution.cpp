@@ -2847,11 +2847,20 @@ auto SemanticVisitor::Impl::containsClosureObjectType(const SemanticType &type)
                      containsClosureObjectType);
 }
 
-auto SemanticVisitor::Impl::containsExactType(const SemanticType &type,
-                                              const SemanticType &candidate)
-    -> bool {
+auto SemanticVisitor::Impl::containsExactType(
+    const SemanticType &type, const SemanticType &candidate) const -> bool {
   if (candidate != SemanticType::Unknown && type == candidate) {
     return true;
+  }
+  if (type.kind == SemanticType::Class && type.classId != 0 &&
+      type.classId <= classes.size() &&
+      classInfo(type.classId).compilerType ==
+          CompilerTypeKind::MetaCallableReturnType) {
+    // A query's operand is not stored in its result. Concrete substitution
+    // rewrites the projection before escape/use checks; an open projection
+    // must not falsely claim to return the callable environment itself.
+    const SemanticType resolved = rewriteCompilerType(type);
+    return resolved != type && containsExactType(resolved, candidate);
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      [&](const SemanticType &argument) {

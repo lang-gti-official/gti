@@ -470,6 +470,7 @@ private:
     output << "class(id=" << value.id << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName)
            << ";kind=" << number(value.kind)
+           << ";type-projection=" << number(value.computedTypeProjection)
            << ";exact-primary=" << value.exactSpecializationPrimary
            << ";exact-types=[";
     for (std::size_t index = 0; index < value.exactTypeArguments.size();
@@ -820,7 +821,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v21\n";
+  output << "lowered-program-v22\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

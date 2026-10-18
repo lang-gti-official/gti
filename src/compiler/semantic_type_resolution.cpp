@@ -504,6 +504,17 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
           continue;
         }
         GenericSubstitution substitution = baseSubstitution;
+        // The candidate's exact item type is known before checking a result
+        // projection which may itself depend on that callable parameter.
+        // Bind it first, then compare the fully substituted contract. This
+        // does not infer a callable from its desired return type.
+        const SemanticType candidateItem = SemanticType::functionItemType(
+            candidate.id, candidate.returnType, candidate.parameterTypes);
+        if (!target.parameterPack && index < target.parameterTypes.size() &&
+            !inferOuter(inferOuter, target.parameterTypes[index], candidateItem,
+                        substitution)) {
+          continue;
+        }
         bool matchesContract = true;
         if (threadTask) {
           SemanticType result = contract->ownedTransport->destinationType;
@@ -517,7 +528,8 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
                 (!signature.inferResultFromInstantiation &&
-                 !exactMatch(exactMatch, signature.returnType,
+                 !exactMatch(exactMatch,
+                             substituteType(signature.returnType, substitution),
                              candidate.returnType, substitution))) {
               matchesContract = false;
               break;
@@ -4058,6 +4070,21 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.arguments.size() < classInfo(*classId).genericParameters.size())
     resolveClassGenericDefaults(*classId);
   const ClassInfo &declaration = classInfo(*classId);
+  if (declaration.compilerType == CompilerTypeKind::MetaCallableReturnType &&
+      type.arguments.size() == 1) {
+    const SemanticType subject = typeOf(type.arguments.front());
+    if (subject != SemanticType::Unknown &&
+        !containsOpenTypeParameter(subject) && !subject.hasLambdaShape() &&
+        !subject.hasFunctionItemShape() && !subject.hasNativeFunctionShape() &&
+        subject.kind != SemanticType::FunctionSignature) {
+      report(type.name.last(),
+             "Callable return-type reflection requires a function signature, "
+             "a selected function item, a native function pointer, or a lambda "
+             "type; it does not select an overloaded operator().",
+             "GTI-S2023");
+      return;
+    }
+  }
   if (!validateClassPathAliases(type.name, type.name.last()))
     return;
   if (!validateNestedClassAccess(*classId, type.name.last()))
@@ -4297,7 +4324,16 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
     validateReferenceReferent(resolved, type.reference ? *type.reference
                                                        : type.name.last());
   const auto nominalKind = baseTypeOf(type, currentNamespace).kind;
-  if (nominalKind != SemanticType::Class && nominalKind != SemanticType::Enum) {
+  // A checked projected reference result is the resolved referent, not a
+  // container for the syntactic projection operands. A callable operand may
+  // itself mention reference parameters/results without storing any of them.
+  // The ordinary referent validation above and exact borrowed_from proof
+  // still apply; uncontracted bindings and parameters retain their rules.
+  const bool projectedReferenceResult =
+      contractedReferenceResult && resolved.kind == SemanticType::Reference &&
+      !type.reference;
+  if (!projectedReferenceResult && nominalKind != SemanticType::Class &&
+      nominalKind != SemanticType::Enum) {
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       const TypeRef &argument = type.arguments[index];
       if (containsReference(argument)) {
@@ -4974,6 +5010,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       candidate = group->expression().get();
     if (const auto *call = exprAs<Call>(candidate);
         call != nullptr && semanticModel.findCall(*call) == nullptr &&
+        semanticModel.findLambdaCall(*call) == nullptr &&
         semanticModel.findDeferredCallableCall(*call) != nullptr)
       return;
   }

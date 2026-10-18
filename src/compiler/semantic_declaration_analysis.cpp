@@ -2969,6 +2969,7 @@ auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
       {"meta_parameter_list", CompilerTypeKind::MetaParameterList},
       {"meta_parameter_type", CompilerTypeKind::MetaParameterType},
       {"meta_return_type", CompilerTypeKind::MetaReturnType},
+      {"meta_callable_return_type", CompilerTypeKind::MetaCallableReturnType},
       {"meta_constructor_list", CompilerTypeKind::MetaConstructorList},
       {"meta_constructor_parameter_list",
        CompilerTypeKind::MetaConstructorParameterList},
@@ -3353,6 +3354,18 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     return SemanticType::classType(
         list,
         std::vector<SemanticType>(elements->begin() + 1, elements->end()));
+  }
+  case CompilerTypeKind::MetaCallableReturnType: {
+    if (type.arguments.size() != 1 || !type.valueArguments.empty()) {
+      return type;
+    }
+    // This is signature metadata, not invocation selection or permission.
+    // Preserve references and void exactly; the use site still owns every
+    // reference-placement, call, unsafe and borrow-origin obligation.
+    const SemanticType &callable = type.arguments.front();
+    if (const auto *result = callable.callableReturnType())
+      return *result;
+    return type;
   }
   case CompilerTypeKind::MetaReturnType: {
     if (type.arguments.size() != 1 || type.valueArguments.size() != 1 ||
@@ -9126,6 +9139,10 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
             .reflectPrivate = owner.reflectPrivate,
+            .computedTypeProjection =
+                owner.compilerType == CompilerTypeKind::MetaCallableReturnType
+                    ? ComputedTypeProjectionKind::CallableReturn
+                    : ComputedTypeProjectionKind::None,
             .compilerCapability = owner.compilerCapability});
   }
 }
@@ -9239,6 +9256,10 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .shareCondition = owner.shareCondition,
             .compilerPrivate = owner.compilerPrivate,
             .reflectPrivate = owner.reflectPrivate,
+            .computedTypeProjection =
+                owner.compilerType == CompilerTypeKind::MetaCallableReturnType
+                    ? ComputedTypeProjectionKind::CallableReturn
+                    : ComputedTypeProjectionKind::None,
             .compilerCapability = owner.compilerCapability});
   }
   for (const ExactClassSpecialization &specialization :
