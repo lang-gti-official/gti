@@ -53,6 +53,36 @@ explicit non-retained `gti_c_string_view` counted record. The runtime ABI is not
 the ABI of public GTI classes. The legacy compiler-owned `@runtime` allowlist is
 a compatibility mechanism rather than a requirement for new host entries.
 
+### Optional mutation results
+
+The library uses the ordinary declaration-level `[[discardable]]` contract
+when an operation is useful independently of its returned reference, position,
+flag or count. Both ignoring the result and using it remain supported:
+
+```gti
+mut std::optional<std::string> slot{};
+slot.emplace("old");
+slot.emplace("new");
+```
+
+The policy applies to emplacement in optional, vector, deque, list,
+forward-list and queue; associative insertion, `get_or_insert` and erasure;
+list/forward-list removal counts; both `for_each` overloads; and every scalar
+atomic `exchange` and `fetch_add/sub/and/or/xor` overload. Storage and
+resource-storage emplacement and `construct_at` also have optional results.
+For `for_each`, callers may retain the returned callable to inspect its state.
+Atomic read-modify-write operations retain their checked arithmetic and memory
+ordering even when the old value is ignored.
+
+Queries and accessors, conditional atomic compare/exchange, resource acquisition
+and recoverable errors retain required results. Ownership-transfer operations
+such as `take`, `replace` and `std::exchange` also require the caller to use or
+explicitly discard the returned owner. Resource-vector emplacement already
+returns `void`; its `try_` variants still require handling the allocation result.
+Ignored emplacement references do not extend a borrow or destroy the stored
+object. See [execution semantics](execution.md#optional-api-results) and
+[`115-discardable-results.gti`](../../examples/115-discardable-results.gti).
+
 ## 7.2 Prelude
 
 The prelude is implicitly visible to every ordinary source unit. Its current

@@ -943,6 +943,11 @@ add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
 add_executable(gti_discardable_result_tests "${PROJECT_SOURCE_DIR}/tests/discardable_result_tests.cpp")
 target_link_libraries(gti_discardable_result_tests PRIVATE gti_compiler)
 add_test(NAME discardable_result COMMAND gti_discardable_result_tests)
+add_test(NAME stdlib_discardable
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/stdlib_discardable_test.py"
+          "$<TARGET_FILE:gti>")
+set_tests_properties(stdlib_discardable PROPERTIES TIMEOUT 300)
 if(TARGET gti_lsp)
   add_test(NAME aggregate_std_lsp
     COMMAND "${Python3_EXECUTABLE}"

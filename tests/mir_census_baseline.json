@@ -111,7 +111,7 @@
     "112-raw-owner-witness.gti": 42,
     "113-erased-addresses.gti": 44,
     "114-owning-storage-view.gti": 149,
-    "115-discardable-results.gti": 83,
+    "115-discardable-results.gti": 200,
     "116-optional-raw-audit.gti": 38,
     "117-unsafe-member-contracts.gti": 19,
     "118-cleanup-bound-guards.gti": 18,
@@ -165,5 +165,5 @@
     "165-borrowed-payload-results.gti": 157,
     "166-source-optional.gti": 152
   },
-  "total": 18702
+  "total": 18819
 }
