@@ -1741,7 +1741,10 @@ one unconditional owner: each entry records an external origin, access mode,
 field path and active-alternative guards. Nested enum values preserve those
 paths during construction, calls, movement and return. A reference-free
 alternative has a known empty set; it must not borrow an unrelated argument
-just because another alternative needs one. A shared-reference enum may be
+just because another alternative needs one. This also applies after generic
+reference substitution and when multiple other alternatives contain borrows:
+the selected typed alternative, not the type-wide number of reference paths,
+determines whether initialization needs external owners. A shared-reference enum may be
 copied when its other fields permit copying. An exclusive-reference field makes
 the complete enum move-only, including when nested in another enum.
 

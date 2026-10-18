@@ -193,7 +193,6 @@ void testInvalidDeclarations() {
   for (const auto source :
        {"enum class Event<T, T> { item(T value) };",
         "enum class Event<T> { item(Missing value) };",
-        "enum class Event<T> { item(T& value) };",
         "enum class Event<T> { item(mut T value) };",
         "enum class Event<T> { empty };",
         "enum class Event<T> { empty, item(T value) }; "
@@ -206,6 +205,47 @@ void testInvalidDeclarations() {
                !result.canGenerateCode(),
            "invalid generic enum declarations or uninstantiated values fail "
            "before executable lowering");
+  }
+}
+
+void testReferenceSubstitutionsAndEmptyAlternatives() {
+  for (
+      const auto source :
+      {"enum class Event<T> { item(T& value) };",
+       "enum Event<T, U = T> { idle, item(T value), pair(T first, U second) }; "
+       "int main() { auto value = Event<int&>::idle; return 0; }",
+       "enum Event<T, U = T> { idle, item(T value), pair(T first, U second) }; "
+       "Event<int&> empty() { return Event<int&>::idle; } "
+       "int main() { auto value = empty(); auto copy = value; return 0; }",
+       "enum Event { idle, first(int& value), second(int& value) }; "
+       "int main() { Event value = Event::idle; return 0; }",
+       "enum Event<T> { idle, item(T& value) }; "
+       "int main() { int owner = 3; auto value = Event<int>::item(owner); "
+       "return 0; }"}) {
+    const auto result = lang::Frontend().analyze("reference-enum.gti", source);
+    expect(result.canGenerateCode(),
+           "concrete reference substitutions and proven empty alternatives "
+           "retain complete typed dependencies");
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  for (const auto source :
+       {"enum Event<T> { idle, item(T value) }; "
+        "int main() { auto value = Event<int&>::item(3); return 0; }",
+        "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
+        "Event<int&> dangling() { int local = 3; "
+        "return Event<int&>::pair(local, local); } int main() { return 0; }"}) {
+    const auto result =
+        lang::Frontend().analyze("bad-reference-enum.gti", source);
+    expect(!result.semanticValid && std::none_of(result.diagnostics.begin(),
+                                                 result.diagnostics.end(),
+                                                 [](const auto &diagnostic) {
+                                                   return diagnostic.code ==
+                                                          "GTI-B0001";
+                                                 }),
+           "known empty alternatives do not excuse missing or expired "
+           "reference-bearing payload owners");
   }
 }
 
@@ -486,6 +526,7 @@ int main() {
   testDependentPayloads();
   testOptionalClassSpelling();
   testInvalidDeclarations();
+  testReferenceSubstitutionsAndEmptyAlternatives();
   testExactTypeIdentity();
   testInstanceCatalogReset();
   testForwardDefaultsAndLatePayloadValidation();
