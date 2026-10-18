@@ -7,6 +7,7 @@
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <variant>
@@ -94,6 +95,18 @@ int main() {
   lang::MirProgramTestAccess::enums(badMir)[1].type = left.type;
   expect(!lang::verifyMirProgram(badMir).valid(),
          "MIR rejects duplicated or cross-instance enum metadata");
+  auto cyclicMir = frontend.mir;
+  auto &cyclicEnum = lang::MirProgramTestAccess::enums(cyclicMir).front();
+  cyclicEnum.variants[1].payloadTypes[0] = cyclicEnum.type;
+  const auto cyclicVerification = lang::verifyMirProgram(cyclicMir);
+  expect(!cyclicVerification.valid() &&
+             std::any_of(cyclicVerification.errors.begin(),
+                         cyclicVerification.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("inline layout") !=
+                                  std::string::npos;
+                         }),
+         "MIR rejects forged recursive enum layout before deriving cleanup");
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto leftName = lang::cppConcreteEnumName(lowered, left.type);
@@ -102,7 +115,7 @@ int main() {
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v20") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v105"),
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v106"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
@@ -115,6 +128,25 @@ int main() {
   }
   expect(!lang::verifyLoweredProgram(badLowered).empty(),
          "sealed declarations reject a forged concrete enum identity");
+  for (const bool changeCleanup : {false, true}) {
+    auto changedCarrier = lowered;
+    for (auto &row :
+         lang::LoweredProgramTestAccess::declarations(changedCarrier)) {
+      if (auto *enumeration =
+              std::get_if<lang::LoweredEnumDeclaration>(&row.payload);
+          enumeration && enumeration->type == right.type) {
+        if (changeCleanup)
+          enumeration->requiresActiveCleanup =
+              !enumeration->requiresActiveCleanup;
+        else
+          enumeration->traits.copyable = !enumeration->traits.copyable;
+        break;
+      }
+    }
+    expect(!lang::verifyLoweredProgram(changedCarrier).empty(),
+           "tagged carrier selection cannot forge cleanup or native operation "
+           "availability independently of sealed MIR traits");
+  }
   auto rows =
       lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
   expect(rows.enums.size() == 2 && rows.enums[0].type != rows.enums[1].type,
@@ -141,6 +173,158 @@ int main() {
                artifact.contents.find("struct " + *rightName) !=
                    std::string::npos,
            "production verified-MIR emission defines both concrete layouts");
+  }
+  const auto compositionLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto composed = lang::Frontend().analyze(
+      "composed-payload-move.gti", R"(
+class Resource {
+  int id;
+public:
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+  int read() { return this.id; }
+};
+enum Packet<T> { empty, item(T value) };
+int main() {
+  Resource[2] values = {Resource(3), Resource(4)};
+  auto packet = Packet<Resource[2]>::item(std::move(values));
+  switch (std::move(packet)) {
+  case Packet<Resource[2]>::empty: return 1;
+  case Packet<Resource[2]>::item(items):
+    return items[0].read() + items[1].read() - 7;
+  }
+}
+)",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(composed.canGenerateCode(),
+         "an owning array payload retains verified move/drop identities");
+  if (!composed.canGenerateCode())
+    for (const auto &diagnostic : composed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (composed.canGenerateCode()) {
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto invalid = composed.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(invalid)) {
+        auto &body = function.body;
+        for (const auto &block : body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Move ||
+                instruction.info.type.kind != lang::SemanticType::Array ||
+                instruction.lifecycle.size() != 1)
+              continue;
+            const auto target = instruction.lifecycle.front().target;
+            for (auto &drop : body.dropObligations) {
+              if (drop.id != target)
+                continue;
+              if (mutation == 0)
+                drop.value = 0;
+              else if (mutation == 1)
+                drop.value = instruction.hirValue + 10000;
+              else if (mutation == 2)
+                drop.generatedValue = 10000;
+              else
+                drop.place = instruction.operands.front().place;
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(invalid).valid(),
+             "array payload move rejects missing/substituted drop identity or "
+             "slot");
+    }
+  }
+  const auto cleanupForwarding = lang::Frontend().analyze(
+      "single-action-cleanup.gti", R"(
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+class Single {
+  Resource child;
+public:
+  Single() : child(Resource()) {}
+};
+class Multiple {
+  Resource first;
+  Resource second;
+public:
+  Multiple() : first(Resource()), second(Resource()) {}
+};
+class WithDestructor {
+  Resource child;
+public:
+  WithDestructor() : child(Resource()) {}
+  ~WithDestructor() {}
+};
+enum Choice { none, left(Resource value), right(Resource value) };
+enum Pair { none, both(Resource first, Resource second) };
+int main() {
+  Single single{};
+  Multiple multiple{};
+  WithDestructor destructor{};
+  auto choice = Choice::right(Resource());
+  auto pair = Pair::both(Resource(), Resource());
+  return 0;
+}
+)",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(
+      cleanupForwarding.canGenerateCode(),
+      "unrelated single/multiple-action cleanup wrappers reach verified MIR");
+  if (!cleanupForwarding.canGenerateCode())
+    for (const auto &diagnostic : cleanupForwarding.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (cleanupForwarding.canGenerateCode()) {
+    const auto text = gti_test::emitCpp(cleanupForwarding).contents;
+    for (const auto &instance : cleanupForwarding.hir.classInstances()) {
+      const auto name = instance.source->name().lexeme;
+      if (name != "Single" && name != "Multiple" && name != "WithDestructor")
+        continue;
+      const auto start = text.find("constexpr (__gti_cleanup_instance == " +
+                                   std::to_string(instance.id) + ")");
+      const auto end = text.find("else { static_assert", start);
+      expect(start != std::string::npos && end != std::string::npos,
+             "each exact class cleanup descriptor has an emitted adapter");
+      if (start == std::string::npos || end == std::string::npos)
+        continue;
+      const auto adapter = text.substr(start, end - start);
+      expect((adapter.find("mir_cleanup_sequence_v1 sequence") ==
+              std::string::npos) == (name == "Single"),
+             "only a destructor-free singleton class recipe tail-forwards");
+      if (name == "Single")
+        expect(
+            adapter.find("(record, unwinding);") != std::string::npos,
+            "singleton cleanup forwards the original record and unwind mode");
+    }
+    for (const auto &enumeration : cleanupForwarding.mir.payloadEnums()) {
+      const auto cleanup =
+          lang::mirUniqueCleanupType(cleanupForwarding.mir, enumeration.type);
+      expect(cleanup.has_value(),
+             "an owned enum has a complete cleanup recipe");
+      if (!cleanup)
+        continue;
+      const auto expression = lang::cppMirCleanupValueExpression(
+          cleanupForwarding.mir, *cleanup, "value", "record", "unwinding");
+      const bool singletonAlternatives = enumeration.variants.size() == 3;
+      expect((expression.find("mir_cleanup_sequence_v1") ==
+              std::string::npos) == singletonAlternatives,
+             "distinct singleton alternatives forward, but two simultaneous "
+             "children retain ordered secondary-failure handling");
+      if (singletonAlternatives)
+        expect(
+            expression.find("(record, unwinding)") != std::string::npos &&
+                expression.find("return true;") != std::string::npos,
+            "enum forwarding retains incoming failure state and empty success");
+    }
   }
   const auto projected =
       lang::Frontend().analyze("projected-enum-borrow.gti", R"(

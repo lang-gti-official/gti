@@ -81,8 +81,12 @@ def main() -> int:
             )
         schedules.extend((
             r"mir_checked_convert_v1<std::int8_t>\(__gti_mir_v_\d+, &__gti_mir_v_\d+\)",
-            r"(?P<value>__gti_mir_v_\d+) = ::__gti_program::payload_t\{::__gti_program::payload_t::__gti_variant_\d+\{\}\};\s*\(\*this\)\.empty = std::move\((?P=value)\);",
-            r"(?P<value>__gti_mir_v_\d+) = ::__gti_program::payload_t\{::__gti_program::payload_t::__gti_variant_\d+\{__gti_mir_v_\d+\}\};\s*\(\*this\)\.valued = std::move\((?P=value)\);",
+            r"std::destroy_at\(std::addressof\(\(\*this\)\.empty\)\);\s*"
+            r"::new \(static_cast<void \*>\(std::addressof\(\(\*this\)\.empty\)\)\) "
+            r"::__gti_program::payload_t\{std::in_place_index<2>\};",
+            r"std::destroy_at\(std::addressof\(\(\*this\)\.valued\)\);\s*"
+            r"::new \(static_cast<void \*>\(std::addressof\(\(\*this\)\.valued\)\)\) "
+            r"::__gti_program::payload_t\{std::in_place_index<1>, __gti_mir_v_\d+\};",
         ))
         if any(re.search(pattern, generated) is None for pattern in schedules):
             sys.stderr.write(

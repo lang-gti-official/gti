@@ -445,6 +445,22 @@ int main() {
   negative("last use cannot release cleanup dependency", R"gti(
 int main() { mut Resource owner{}; Guard guard{owner}; owner.reset(); return 0; }
 )gti");
+
+  positive("unrelated owning error does not retain an extracted success",
+           R"gti(
+struct Error {
+  ~Error() { observed += 1; }
+};
+expected<Resource&, Error> lookup(Resource& owner) { return owner; }
+int main() {
+  mut Resource owner{};
+  auto carrier = lookup(owner);
+  Resource& extracted = std::move(carrier).expect("resource");
+  int result = extracted.value;
+  owner.reset();
+  return result - 7;
+}
+)gti");
   negative("movement cannot release cleanup dependency", R"gti(
 int main() { mut Resource owner{}; Guard guard{owner}; auto moved = std::move(guard);
   owner.reset(); return 0; }

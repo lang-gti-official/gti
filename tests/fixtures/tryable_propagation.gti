@@ -34,7 +34,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  T take_value(Checked<T> result) { return result.value; }
+  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 

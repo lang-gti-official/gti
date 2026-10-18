@@ -74,6 +74,22 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+Payload alternatives construct in place from their already selected MIR
+operands. The native enum's in-place alternative constructor avoids temporary
+alternative and whole-enum transfers. List initialization preserves operand
+evaluation order. An owning fresh alternative followed immediately by its
+constructor-field `Initialize` may use the final field storage directly: the
+existing publication proof establishes the observation-free empty field shell,
+unique result consumer, result activation, field rollback obligation and exact
+`Reparent`. Adjacency excludes intervening failures or observations. Non-adjacent
+and returned/moved inputs retain their original staged publication. MIR cleanup
+and lifetime events are not removed or rescheduled by this representation choice.
+
+A switch over a payload-enum place observes that place's discriminant even
+when all payloads are passive. It does not first copy the complete enum. Arm
+bindings independently retain their selected copy, borrow or consuming-transfer
+semantics; an ordinary integral enum still uses the scalar switch path.
+
 A staged call receiver can cross the existing scalar conditional-argument
 control flow when its exact origin remains unchanged. The receiver place may be
 a bare local, the exact full-expression slot, or a binding-rooted path of field
@@ -266,13 +282,19 @@ Checked references to raw pointers remain outside the current language slice;
 the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
 Failure-free passive C-compatible call results share one consumer proof for
-bare assignment, discard, and unchanged return. The exact record/type/signature
+bare assignment, a single enum payload field, discard, and unchanged return.
+The exact record/type/signature
 must agree, no result cleanup obligation may be invented, and return permits
 only the existing passive cleanup tail. A return writes caller-provided result
 storage at its Call; discard still executes the foreign call. Assignment and
 discard use byte-preserving representation transfer rather than native
 memberwise pointer reads. Neither source default construction nor owning-result
 transport is inferred from this passive representation rule.
+The payload consumer additionally proves the exact typed alternative/field,
+sole SSA use without value-rooted storage, and producer dominance/order. The
+call executes into its passive representation at its original MIR position;
+later payload operands cannot reorder it. Missing or duplicated uses, changed
+tags/types, and newly fallible payload publication fail representation admission.
 
 Checked class-payload extraction can construct a function's exact return result
 at its existing MIR Call, without an intermediate object or a second source
@@ -1760,6 +1782,18 @@ out at the call, so in a plain body their slots end the moved-from
 representation at C++ scope exit, after the returned object is initialized. A
 targetless default construction never takes that route; it spells `return T{}`
 itself.
+
+Generated native destructors test their class's initialized active-drop flag
+before calling its cleanup adapter. This is the same guard the adapter already
+checks, not a new assumption that moved-from cleanup is harmless. MIR-directed
+move/drop operations disarm the flag; a false flag therefore bypasses only an
+effect-free adapter path (emergency-state observation and an empty failure
+record, with no source cleanup). A true flag still enters the unchanged adapter,
+including emergency handling, failure propagation and exact source destructor
+order. Native base/member destructors still run after either branch. Exposing
+the guard at this boundary lets native optimization remove retired-shell calls
+without inlining the cold defined-failure machinery or weakening GTI cleanup.
+
 When cleanup such as the drop of a moved-from parameter runs between the call
 and the Return, the result stays in its value-rooted slot and the Return takes
 it out. A fallible cleanup in between reparents the result to its return-result
@@ -2520,13 +2554,13 @@ initializer shortcut. The representation snapshot copies the exact MIR enum
 traits, enum-wide active-cleanup bit, dense variants, field types, and
 per-field cleanup facts. Admission exact-compares every row with MIR.
 `PayloadConstruct` consumes only operands carrying the matching `TransferOut`
-events, constructs the selected `std::variant` alternative in an enum lifetime
+events, constructs the selected tagged-carrier alternative in an enum lifetime
 slot, and publishes that slot only through the matching enum lifecycle event.
 Whole-enum move and tag-only switch observation use the exact MIR places and
 obligations. The exact adjacent Move -> Replace -> Drop schedule also admits
 whole-enum move assignment: native assignment replaces the destination's
 active alternative, then MIR destroys only the moved-from staging shell.
-Generated C++ names and `std::variant` are representation choices; neither
+Generated C++ names and native tagged storage are representation choices; neither
 selects ownership behavior or identifies a source enum. Owning enum
 call/return is admitted only through an exact verified-MIR transport shape.
 Named and fresh arguments are moved from their one lifetime slot into the
@@ -2563,6 +2597,79 @@ representation-only storage. Its success edge must dominate the sole
 `PayloadConstruct` use, the class must move without defined failure, and MIR
 must record no value-rooted place or drop for it. The alternative moves the
 completed value, and the moved-from shell is destroyed immediately afterward.
+
+The same exact transfer proof stages owning array and result operands
+into their value-rooted slots. Empty-slot relocation must be defined-failure
+free; this is distinct from assignment into a live destination, whose old
+value may have a fallible destructor. Consuming `PayloadExtract` initializes
+its one pattern binding directly for every admitted value family, including
+nested enums, instead of reading an uninitialized intermediate slot.
+Recursive enum cleanup emits distinct local sequence names at each depth:
+an inner sequence's initializer must read the outer record/unwinding state,
+not a shadowing, not-yet-initialized local. Both ordinary and secondary failure
+reports are checked by the composition runtime matrix.
+
+Payload enum rows use backend-private `payload_variant`: a recursive native
+union and compact active tag, with direct tag-dispatched native retirement.
+Constrained-default special members preserve trivial copy/move/assignment and
+destruction for passive members, including inert byte transport. Ordinary
+integer enums are unchanged. Payload enums are accessed through
+`payload_get<Index>` selected from the sealed variant inventory, under the
+existing MIR active-tag proof. This is not a public layout/ABI guarantee or
+a source-visible unchecked access operation. It removes standard-library
+visitor-table dispatch from retirement without changing which GTI cleanup
+obligations run. Native copy/move/assignment availability follows the member
+representations; it cannot admit an operation absent from GTI's sealed traits.
+
+The carrier starts with only its private empty alternative active. Construction
+starts the selected union-member lifetime, then publishes its tag; an exception
+before publication leaves no complete alternative to destroy. Recursive empty
+union tails contain no resource. Native moves retain a valid moved-from member
+until MIR's scheduled shell retirement. Cross-alternative assignment retires
+the old member before constructing and publishing the replacement; same-tag
+assignment retains its member lifetime, and self-assignment is inert. A failed
+cross-alternative native construction leaves a private vacant tag, which can
+only be retired or reconstructed, not exposed as a GTI value. GTI defined
+failure remains governed by MIR's explicit success/rollback edges, not native
+exceptions. Independent emitted-carrier tests cover empty/unit alternatives,
+equal payload types at different indices, alignment, nested carriers/arrays,
+native construction/move/assignment failures and exact retirement counts;
+source runtime tests retain failure-cleanup and sanitizer coverage.
+
+Cleanup-free enum fields use the same destination-construction policy through
+their existing MIR initializer-record publication. The exact source constructor,
+declared field, root value, unique initializer and immediately following full-
+expression boundary must agree; an explicit `Initialize` takes precedence over
+that record route. The enum must be borrow-free, trivial to drop and free of
+relocation failure, with no other runtime use or value-rooted place. Its native
+empty field shell is replaced directly at the producer, preserving operand
+order and avoiding a whole-enum temporary assignment. Substituted fields,
+duplicated roots, borrowed state, effects and mismatched boundaries retain the
+ordinary staged path or fail representation admission.
+
+A bounded closed-tag-domain proof exposes an exhaustive switch's impossible
+default edge to the native optimizer. It independently matches the exact
+payload enum/type/traits and copied dense alternative inventory, each unique
+typed enumerator case, and an empty `Unreachable` default block. The source
+must be an initialized entry reference parameter dereference or an exact
+immediate enum field of an ordinary read-only source-method receiver. Only
+inert full-expression/read metadata may precede it, and entry cannot have a
+backedge. The receiver rule relies on verified call-boundary availability of
+the complete object, not merely the method's read-only declaration. Semantics
+rejects calls after a projected field move; MIR independently checks receiver
+operands against its solved projected-place availability. Constructor bodies
+begin after required fields are initialized, and destructor bodies precede
+automatic field retirement. The focused moved-enum-field/observer regression
+retains that invariant alongside the general projected-field ownership tests.
+Constructor/destructor bodies, local/value roots, consuming or mutable
+receivers, moved state, intervening effects and incomplete/substituted rows do
+not qualify. This distinction excludes the carrier's private empty/vacant
+shells; an exhaustive-case count alone is never sufficient. The proof emits
+`mir_closed_enum_unreachable_v1` only on that switch edge. Ordinary MIR
+`Unreachable`, explicit defaults and defined-failure paths retain their existing
+abort/diagnostic behavior. Mutation tests cover omitted, duplicate, substituted
+and mistyped cases, unavailable sources, wrong fields/formals, effectful entry,
+changed defaults and backedges.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened

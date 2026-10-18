@@ -445,6 +445,14 @@ to `mut T&`, local or stored bindings, explicit moves, compound or native
 producers, borrowed-state values, or a callable result that can retain the
 loan.
 
+A concrete payload-enum construction with copyable, movable, trivial-drop
+value traits and no stored borrows supports the same ordinary call-only
+read borrow. Its selected alternative remains in the existing temporary
+value storage, and its exact full-expression lifetime is checked even though
+destruction does no runtime work. Enum factories, owning alternatives and
+borrowed alternatives do not yet use this temporary-argument family. This is
+an ordinary argument rule; protocol-generated observations use it too.
+
 An unqualified non-static field denotes the same receiver-rooted place as an
 explicit `this` projection. Consequently, both `return field;` and
 `return this.field;` preserve receiver-tied reference provenance, and a
@@ -888,9 +896,9 @@ stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
 or an independently escaping child reference.
 
-An ordinary borrowed class may declare a destructor. A borrowed class with
-active cleanup (including cleanup inherited from owned fields) retains its
-dependencies until cleanup finishes, not just its last explicit read. Moving
+An ordinary borrowed class may declare a destructor. A borrowed class whose
+source destructor or nested borrowed field/base can use or release a dependency
+retains that dependency until cleanup finishes, not just its last explicit read. Moving
 it transfers the cleanup obligation and the same dependency protection. It may
 be passed by value or moved into another direct field under the existing
 constructor origin contract. Failed construction rolls back initialized fields
@@ -900,6 +908,15 @@ resource thread-safe. Intermediate borrowed carrier shells and their external
 owners must also outlive that cleanup. Existing bounded structured last-use
 rules still apply; a narrower scope can make the complete dependency endpoint
 explicit. See [cleanup-bound guards](../../examples/118-cleanup-bound-guards.gti).
+
+Generated cleanup of an unrelated owning field is not a dependency-release
+operation. A record containing `int& value` and an owning error string may
+relay `value` after consuming the record; destroying the string does not end
+the external integer's lifetime. A source destructor, a declaration-bound
+resource capability, or a nested cleanup-bound borrowed field/base still
+retains its dependencies until destruction. Unknown or recursive release
+shapes are conservative. Semantics records this structural distinction and MIR
+independently verifies it; it is not a special case for result or view names.
 
 The compiler-trusted mutex guard retains its separate direct exclusive-access
 capability. Wrapping it in another carrier remains outside the supported
@@ -1335,6 +1352,19 @@ reference element of the expanded pack in that instance owns the result.
 `std::function_ref` and `std::function_ptr` declare their call operators this
 way.
 
+A return type obtained from an associated type may itself be a reference.
+With an explicit, verified `borrowed_from` contract, that exact reference type
+does not require appending a second `&` to the projection spelling. The same
+instance checks prove its origin and access; generic locals and parameters
+retain their existing explicit reference-declarator rules.
+
+The named parameter may also be a by-value carrier with exactly one stored
+checked dependency. In that case the result must relay that external owner:
+returning the carrier's own fields, a different parameter's owner, or a local
+is rejected. Consuming or destroying the carrier does not destroy its external
+owner. This same declaration-relative contract is available to protocol
+operations; it is not special treatment of any standard-library wrapper.
+
 Two general facilities support this ordinary source wrapper:
 
 - `std::erase_ref(object)` and `std::erase_mut(object)` return checked
@@ -1671,10 +1701,14 @@ before its first statement.
 Concrete generic callable instances and owning wrappers retain the same
 obligations, including enum elements in storage-backed collections and inline
 optional storage. No ownership rule follows merely from a generic argument's
-spelling. Polymorphic enum callable transport, direct enum lambda capture, direct array
-payloads, stored-reference owners, compiler-private or native
-layout records, and polymorphic bases remain diagnosed rather than inventing
-indirect cleanup state.
+spelling. Finite nested enum payloads and fixed arrays of supported payload
+elements retain these construction and cleanup obligations. Passive native
+records and unions may be payloads when their C ABI layout is validated.
+Polymorphic enum callable transport, direct owning-enum lambda capture, arrays
+whose elements are directly owning enums, stored-reference owners, unsupported
+compiler-private payloads, native-layout owners containing owning enum fields,
+and polymorphic bases remain diagnosed rather than inventing indirect cleanup
+state.
 
 The semantic `GTI-S2061` check implements the recursive active-cleanup
 restriction after the more-specific unique-owner, private-storage, and

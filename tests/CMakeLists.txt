@@ -2109,6 +2109,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(experimental_optional_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME payload_enum_carrier_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(payload_enum_carrier_runtime PROPERTIES TIMEOUT 900)
+
+  add_test(
+    NAME composed_payload_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/composed_payload_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(composed_payload_runtime PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME payload_enum_propagation_runtime

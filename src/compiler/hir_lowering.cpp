@@ -935,7 +935,8 @@ private:
       HirEnumerator variant{.source = enumerator.declaration,
                             .value = enumerator.value,
                             .variantIndex = enumerator.variantIndex,
-                            .payloadTypes = enumerator.payloadTypes};
+                            .payloadTypes = enumerator.payloadTypes,
+                            .payloadSymbols = enumerator.payloadSymbols};
       for (const SemanticType &payload : enumerator.payloadTypes) {
         variant.payloadRequiresActiveCleanup.push_back(
             instanceProvider->requiresActiveCleanupFor(payload));
@@ -2686,9 +2687,10 @@ private:
         pending.push_back(loan.id);
     }
     for (const auto &value : body.values)
-      for (const auto &dependency : value.borrowDependencies)
-        if (dependency.parent != 0)
-          pending.push_back(dependency.parent);
+      if (value.borrowDependencies)
+        for (const auto &dependency : value.borrowDependencies->dependencies)
+          if (dependency.parent != 0)
+            pending.push_back(dependency.parent);
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -3254,6 +3256,7 @@ private:
                   .borrowAccess = implicitMove->borrowAccess,
                   .place = ownership.place,
                   .ownership = ownership};
+    move.borrowDependencies = found->borrowDependencies;
     const HirValueId moveId = move.id;
     body.values.push_back(std::move(move));
     output.program.sourceValueIds[expression.get()].push_back(moveId);
@@ -4717,15 +4720,41 @@ private:
       } else if (plan.consumesOperand) {
         kind = HirCallInputKind::ReadTemporaryBorrow;
       }
+      if (!consumes && kind == HirCallInputKind::ReadBorrow) {
+        const auto source = std::find_if(body.values.begin(), body.values.end(),
+                                         [&](const HirValue &candidate) {
+                                           return candidate.id == argument;
+                                         });
+        if (source == body.values.end() || !source->place) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        // The protocol test reads the wrapper's storage before either arm
+        // consumes it. Give this synthetic occurrence the exact checked
+        // place, rather than inheriting the later move's ownership event.
+        source->ownership = OwnershipEvent{.kind = OwnershipEventKind::Read,
+                                           .place = *source->place};
+      }
+      const bool borrowed = call.returnType.kind == SemanticType::Reference &&
+                            call.returnType.arguments.size() == 1;
+      const SemanticType resultType =
+          borrowed ? call.returnType.arguments.front() : call.returnType;
       HirValue value{
           .id = nextValueId++,
           .kind = HirValueKind::Call,
-          .info = {.type = call.returnType,
-                   .category = ValueCategory::Value,
-                   .access = AccessMode::ReadOnly,
-                   .traits = instanceProvider->traitsFor(call.returnType)},
+          .info = {.type = resultType,
+                   .category =
+                       borrowed ? ValueCategory::Place : ValueCategory::Value,
+                   .access =
+                       borrowed ? call.borrowAccess : AccessMode::ReadOnly,
+                   .traits = instanceProvider->traitsFor(resultType)},
           .operands = {argument},
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
+          .borrowOrigin = call.borrowOrigin,
+          .borrowArgument = call.borrowArgument,
+          .borrowAccess = call.borrowAccess,
+          .borrowArguments = call.borrowArguments,
+          .borrowFields = call.borrowFields,
           .dispatch = CallDispatch::Static,
           .callPlan =
               HirCallPlan{.receiver = std::nullopt,
@@ -5962,10 +5991,14 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
-    for (const auto &dependency : model.findBorrowDependencies(*raw)) {
-      auto lowered = dependency;
-      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
-      value.borrowDependencies.push_back(std::move(lowered));
+    if (const auto *complete = model.findBorrowDependencySet(*raw)) {
+      value.borrowDependencies = *complete;
+      value.borrowDependencies->dependencies.clear();
+      for (const auto &dependency : complete->dependencies) {
+        auto lowered = dependency;
+        lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+        value.borrowDependencies->dependencies.push_back(std::move(lowered));
+      }
     }
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&

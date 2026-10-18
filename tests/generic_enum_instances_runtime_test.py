@@ -66,6 +66,18 @@ public:
 
 def runtime_cases():
     cases = {
+        "array-substitution": (PASSIVE + """
+int main() {
+  Event<int32_t[2]> idle = Event<int32_t[2]>::idle;
+  int32_t[2] values = {3, 4};
+  Event<int32_t[2]> event = Event<int32_t[2]>::item(std::move(values));
+  switch (std::move(event)) {
+    case Event<int32_t[2]>::idle: return 1;
+    case Event<int32_t[2]>::item(items): return items[0] + items[1] - 7;
+    case Event<int32_t[2]>::pair(first, second): return 2;
+  }
+}
+""", 0, ""),
         "exact-instances": (PASSIVE + """
 T identity<T>(T value) { return value; }
 int main() {
@@ -583,9 +595,6 @@ int main() { auto event = Event<void>::idle; return 0; }
 """, "GTI-S2067", "payload"),
         "invalid-reference-substitution": (PASSIVE + """
 int main() { auto event = Event<int32_t&>::idle; return 0; }
-""", "GTI-S2067", "payload"),
-        "invalid-array-substitution": (PASSIVE + """
-int main() { auto event = Event<int32_t[2]>::idle; return 0; }
 """, "GTI-S2067", "payload"),
         "invalid-signature-substitution": (PASSIVE + """
 int main() { auto event = Event<int32_t(int32_t)>::idle; return 0; }

@@ -105,7 +105,7 @@ int main() {
       unsafeFunctions == 3 && unsafeCalls == 3,
       "only exact unsafe overloads and concrete instances carry the contract");
   const auto dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v105 ") &&
+  expect(dump.starts_with("mir-v106 ") &&
              dump.find("requires-unsafe=1") != std::string::npos,
          "the deterministic MIR snapshot includes the unsafe contract");
   const auto lowered =
@@ -580,6 +580,22 @@ int main() {
   expect(formatted == lang::Formatter().format(formatted) &&
              analyze(formatted).canGenerateCode(),
          "unsafe member requirements round-trip through formatting");
+  const auto mutableRequirement = analyze(R"(
+struct Counter {
+  mut int value = 1;
+  int advance(int amount) mut { this.value += amount; return this.value; }
+};
+int advance<T>(mut T& value)
+  requires requires(mut T& receiver, int amount) {
+    { receiver.advance(amount) } -> int;
+  } {
+  return value.advance(2);
+}
+int main() { mut Counter value{}; return advance(value) - 3; }
+)");
+  expect(mutableRequirement.canGenerateCode(),
+         "a mutable requirement retains receiver access without qualifying "
+         "its synthetic non-reference type argument");
   const auto hoverOffset = source.find("unsafe_reads<T> =") + 1;
   const auto hover = lang::LanguageQueries().hover(
       frontend, frontend.sourceGraph.entryUnit(), hoverOffset);
