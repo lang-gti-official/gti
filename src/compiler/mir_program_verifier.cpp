@@ -12823,8 +12823,25 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
   const auto conditionalMapping = [](const BorrowedFieldOrigin &field) {
     return !field.resultConditions.empty() || !field.sourceConditions.empty();
   };
+  const bool needsOriginGroups =
+      std::any_of(body.loans.begin(), body.loans.end(),
+                  [](const auto &loan) {
+                    return !loan.conditions.empty() ||
+                           std::any_of(loan.additionalDependencies.begin(),
+                                       loan.additionalDependencies.end(),
+                                       [](const auto &item) {
+                                         return !item.conditions.empty();
+                                       });
+                  }) ||
+      std::any_of(body.values.begin(), body.values.end(),
+                  [](const auto &value) {
+                    return value.borrowDependencies &&
+                           !value.borrowDependencies->dependencies.empty();
+                  });
+  // Existing bodies without complete conditional groups retain their original
+  // lazy transport analysis; do not add a second forward solve to every body.
   const auto reconstructed =
-      observed
+      observed || !needsOriginGroups
           ? CompleteBorrowFlow{}
           : reconstructCompleteBorrowFlow(program, body, owner, callSummary);
   const auto &flow = observed ? *observed : reconstructed;

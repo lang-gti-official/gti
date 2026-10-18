@@ -502,6 +502,8 @@ void writeCppSupportPreamble(std::ostream &output,
             "#include <type_traits>\n"
             "#include <utility>\n"
             "#include <variant>\n";
+  if (features.payloadReferences)
+    output << "#include <functional>\n";
   const bool usesExpected = features.expected;
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;

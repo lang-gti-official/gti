@@ -126,6 +126,19 @@ public:
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
+        .payloadReferences = std::any_of(
+            mir.payloadEnums().begin(), mir.payloadEnums().end(),
+            [](const auto &enumeration) {
+              return std::any_of(
+                  enumeration.variants.begin(), enumeration.variants.end(),
+                  [](const auto &variant) {
+                    return std::any_of(
+                        variant.payloadTypes.begin(),
+                        variant.payloadTypes.end(), [](const auto &field) {
+                          return field.kind == SemanticType::Reference;
+                        });
+                  });
+            }),
     };
     CppProgramEmissionPlan plan;
     capture(plan, CppProgramTextRole::SupportPreamble, [&] {
@@ -2184,11 +2197,28 @@ public:
           writeIndent();
           const bool byteTransport = cppRequiresBytePreservingTransport(
               mir, variant.payloadTypes[index]);
-          if (byteTransport)
-            output << "::gti_internal::backend::representation_cell<";
-          emitSemanticType(variant.payloadTypes[index]);
-          if (byteTransport)
-            output << '>';
+          const auto &field = variant.payloadTypes[index];
+          const bool reference = field.kind == SemanticType::Reference;
+          // A source reference retains an address, not an assignable C++
+          // reference data member. This private carrier lets MIR's passive
+          // SSA staging copy that address without changing the referent or
+          // granting source-level assignment/copy permissions.
+          if (reference) {
+            if (field.arguments.size() != 1)
+              throw std::logic_error(
+                  "verified payload reference lost its referent");
+            output << "std::reference_wrapper<";
+            if (field.referenceAccess == AccessMode::ReadOnly)
+              output << "const ";
+            emitSemanticType(field.arguments.front());
+            output << ">";
+          } else {
+            if (byteTransport)
+              output << "::gti_internal::backend::representation_cell<";
+            emitSemanticType(field);
+            if (byteTransport)
+              output << '>';
+          }
           output << " __gti_field_" << index << ";\n";
         }
         writeIndent();

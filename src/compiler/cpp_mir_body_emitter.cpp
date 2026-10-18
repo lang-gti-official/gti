@@ -38241,7 +38241,9 @@ private:
       emitOperand(subject);
     }
     output << ".__gti_value).__gti_field_" << *extract.payloadIndex;
-    if (cppRequiresBytePreservingTransport(
+    if (variant->fieldTypes.at(*extract.payloadIndex).kind ==
+            SemanticType::Reference ||
+        cppRequiresBytePreservingTransport(
             program, variant->fieldTypes.at(*extract.payloadIndex)))
       output << ".get()";
     if (moveObject) {
@@ -38314,6 +38316,26 @@ private:
   void emitPayloadConstructOperand(const ScalarBodyFacts &facts,
                                    const MirInstruction &instruction,
                                    const MirOperand &operand) {
+    if (operand.type.kind == SemanticType::Reference) {
+      const auto *stage = definitionFor(facts.body, operand);
+      if (!stage || stage->kind != MirInstructionKind::CallInput ||
+          stage->callSite != instruction.callSite ||
+          stage->operands.size() != 1)
+        throw std::logic_error(
+            "verified payload reference lost its ordered input");
+      const auto &source = stage->operands.front();
+      if (source.kind == MirOperandKind::Loan) {
+        emitLoanArgument(facts, source);
+        return;
+      }
+      const auto *place = facts.body.findPlace(source.place);
+      if (!place || (source.kind != MirOperandKind::BorrowRead &&
+                     source.kind != MirOperandKind::BorrowWrite))
+        throw std::logic_error(
+            "verified payload reference lost its runtime address");
+      emitStoragePlaceValue(facts, *place);
+      return;
+    }
     if (operand.kind == MirOperandKind::Value) {
       if (const MirPlace *slot =
               payloadTransferredValueSlot(facts.body, operand.value)) {
