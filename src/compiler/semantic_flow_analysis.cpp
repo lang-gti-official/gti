@@ -5907,6 +5907,12 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
   }
+  // A payload constructor evaluates its fields in the same ordered input
+  // region as an ordinary call. In particular, retaining an earlier reference
+  // cannot permit a later argument to mutate or move that referent.
+  validateCallPlaceExclusivity(enumerator.payloadTypes, call.arguments(),
+                               call.paren(), std::nullopt, AccessMode::ReadOnly,
+                               false, {});
   semanticModel.recordPayloadConstruction(
       call, {.owner = owner,
              .type = enumerator.symbol.type,

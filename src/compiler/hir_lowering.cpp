@@ -6896,6 +6896,28 @@ private:
         }
       }
     }
+    if (value.kind == HirValueKind::PayloadConstruction) {
+      const auto *payload = model.findPayloadConstruction(*raw);
+      if (payload &&
+          std::any_of(
+              payload->parameterTypes.begin(), payload->parameterTypes.end(),
+              [&](const SemanticType &field) {
+                return field.kind == SemanticType::Reference ||
+                       instanceProvider->traitsFor(field).containsBorrowedState;
+              })) {
+        // Borrowed aggregate fields require ordinary ordered argument
+        // protection across later field evaluation. The sealed variant owns
+        // this signature; neither a backend nor an aggregate spelling may
+        // rediscover it. Dependency-free variants keep their value transport.
+        value.parameterTypes = payload->parameterTypes;
+        if (auto planned =
+                orderedArguments(value.operands, value.parameterTypes, body))
+          value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                       .arguments = std::move(*planned)};
+        else
+          lifecycleValid = false;
+      }
+    }
     if ((value.intrinsic == IntrinsicKind::TextViewFromAddress ||
          value.intrinsic == IntrinsicKind::CStringFromAddress) &&
         !value.parameterTypes.empty() &&
