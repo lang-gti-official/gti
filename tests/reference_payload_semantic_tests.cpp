@@ -387,7 +387,7 @@ enum Observed { ready(int& value), failed(std::string error) };
   if (fail) return Observed::failed(std::string("bad"));
   return Observed::ready(owner);
 }
-int inspect(Observed& result) {
+int inspect(Observed& result, Observed& other) {
   switch (result) {
     case Observed::ready(value): return value;
     case Observed::failed(auto& error): return int(error.size());
@@ -401,7 +401,7 @@ int inspect(Observed& result) {
 int main() {
   int owner = 3;
   mut auto result = produce(owner, true);
-  if (inspect(result) != 3) return 1;
+  if (inspect(result, result) != 3) return 1;
   switch (result) {
     case Observed::ready(value): return value;
 )gti" +
@@ -493,7 +493,7 @@ int main() {
     expect(removedSelection &&
                !lang::verifyMirProgram(missingSelection).valid(),
            "unguarded scalar projection cannot omit its exact selection proof");
-    for (int mutation = 0; mutation != 3; ++mutation) {
+    for (int mutation = 0; mutation != 4; ++mutation) {
       auto detached = observed.mir;
       bool altered = false;
       for (auto &function : lang::MirProgramTestAccess::functions(detached)) {
@@ -508,8 +508,32 @@ int main() {
                   lang::PayloadExtractionKind::CopyValue;
             else if (mutation == 1)
               instruction.enumVariant = 0;
-            else
+            else if (mutation == 2)
               instruction.operands.front().place = 0;
+            else {
+              const auto *carrier =
+                  function.body.findPlace(instruction.operands.front().place);
+              if (!carrier || function.parameterBindings.size() != 2)
+                continue;
+              const auto other = std::find_if(
+                  function.body.places.begin(), function.body.places.end(),
+                  [&](const auto &place) {
+                    return place.root == lang::MirPlaceRootKind::Binding &&
+                           place.binding == function.parameterBindings[1] &&
+                           place.projections.empty();
+                  });
+              if (other == function.body.places.end() || !other->key ||
+                  !carrier->key)
+                continue;
+              auto replacement = *carrier;
+              replacement.id = function.body.places.size() + 1;
+              replacement.binding = other->binding;
+              replacement.key = other->key;
+              replacement.key->projections = carrier->key->projections;
+              function.body.places.push_back(std::move(replacement));
+              instruction.operands.front().place =
+                  function.body.places.back().id;
+            }
             altered = true;
             break;
           }
