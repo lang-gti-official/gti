@@ -678,6 +678,20 @@ public:
     }
     return *this;
   }
+  // Private SSA/binding transport can copy-construct a passive representation
+  // even when its source type deliberately forbids assignment. This does not
+  // grant GTI assignment: verified source traits still govern that operation.
+  payload_variant &operator=(const payload_variant &other) noexcept
+      requires ((std::is_nothrow_copy_constructible_v<Values> && ...) &&
+                (std::is_trivially_destructible_v<Values> && ...) &&
+                !(std::is_copy_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    destroy_active();
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(other.storage_.template get<Index>());
+    });
+    return *this;
+  }
   payload_variant &operator=(payload_variant &&)
       requires ((std::is_trivially_move_constructible_v<Values> && ...) &&
                 (std::is_trivially_move_assignable_v<Values> && ...) &&

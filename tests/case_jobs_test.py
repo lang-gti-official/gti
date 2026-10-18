@@ -222,6 +222,13 @@ class CaseJobsTests(unittest.TestCase):
             executions.append((binary, code, stdout, stderr, threading.get_ident()))
             return subprocess.CompletedProcess(command, code, stdout, stderr)
 
+        def fixture_build(command, output, **options):
+            self.assertEqual(bool(options.get("native_suffix")),
+                             pathlib.Path(command[1]).stem == "borrowed-class-payload")
+            native = options.get("native_arguments", ())
+            return process([*command, "-o", str(output),
+                            *(["--", *native] if native else [])])
+
         def run_plan(plan, work, workers, observe):
             for _, case in plan:
                 name, index, _, _, _, code, stdout, stderr = case
@@ -232,6 +239,7 @@ class CaseJobsTests(unittest.TestCase):
 
         with patch.object(sys, "argv", ["payload", "fake-gti", "--jobs", str(jobs)]), \
                 patch.object(payload_matrix, "run", process), \
+                patch.object(payload_matrix, "build_fixture", fixture_build), \
                 patch.object(payload_matrix, "run_cases", run_plan), \
                 patch.dict(os.environ, {"GTI_TEST_CASE_JOBS": "1"}), \
                 contextlib.redirect_stdout(io.StringIO()), \

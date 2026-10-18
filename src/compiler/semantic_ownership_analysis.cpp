@@ -7156,6 +7156,50 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     }
     const auto dependencies = semanticModel.findBorrowDependencies(*expression);
     if (!dependencies.empty()) {
+      // A named shared copy preserves the complete dependency group; it is
+      // not a new constructor/call publication. Reuse the existing alias
+      // endpoint machinery so every copy keeps each external owner live.
+      // Keep the exact field/tag/origin contract, not merely a matching first
+      // referent, and never duplicate an exclusive or cleanup-bound carrier.
+      const Expr *copyExpression = expression.get();
+      while (const auto *group = exprAs<Grouping>(copyExpression))
+        copyExpression = group->expression().get();
+      const auto *named = exprAs<Variable>(copyExpression);
+      const auto *copied = named ? resolve(named->name()) : nullptr;
+      const auto *retained = copied && copied->retainedLoan != 0
+                                 ? semanticModel.findLoan(copied->retainedLoan)
+                                 : nullptr;
+      const auto *complete = semanticModel.findBorrowDependencySet(*expression);
+      if (copied && retained && complete && copied->completeBorrowSet &&
+          copied->bindingKind == SemanticBindingKind::LocalVariable &&
+          copied->valueState == ValueState::Available &&
+          copied->type == carrier->type && info && info->traits.copyable &&
+          retained->kind == SemanticLoanKind::StoredValue && !retained->entry &&
+          loanFlow.records.contains(retained->id) &&
+          !retained->lifecycleBound &&
+          !lifecycleBoundBorrowCarrierFor(carrier->type) &&
+          *complete == *copied->completeBorrowSet &&
+          std::all_of(dependencies.begin(), dependencies.end(),
+                      [](const auto &dependency) {
+                        return dependency.access == AccessMode::ReadOnly;
+                      })) {
+        std::vector<SemanticLoanDependency> expected{
+            {.place = retained->place,
+             .designatedFields = retained->designatedFields,
+             .access = retained->access,
+             .protectsStorage = retained->protectsStorage,
+             .parent = retained->parent,
+             .conditions = retained->conditions}};
+        expected.insert(expected.end(),
+                        retained->additionalDependencies.begin(),
+                        retained->additionalDependencies.end());
+        if (std::equal(expected.begin(), expected.end(), dependencies.begin(),
+                       dependencies.end())) {
+          attachLoanCarrier(retained->id, *carrier, carrierSymbol, false);
+          semanticModel.recordBindingLoan(binding, retained->id);
+          return;
+        }
+      }
       for (const auto &dependency : dependencies)
         reportBorrowConflict(
             expressionToken(expression),

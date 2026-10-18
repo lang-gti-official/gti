@@ -655,6 +655,25 @@ int main() { return 0; }
   expect(danglingClassCarrier.syntaxValid &&
              !danglingClassCarrier.semanticValid,
          "borrowed class payload cannot escape its local referent");
+  const auto assignedClassCarrier = analyze(classCarrierPrefix + R"gti(
+int main() {
+  int32_t backing = 3;
+  carrier value = carrier(backing);
+  mut holder first = holder::one(value);
+  holder second = holder::one(value);
+  first = second;
+  return 0;
+}
+)gti");
+  expect(assignedClassCarrier.syntaxValid &&
+             !assignedClassCarrier.semanticValid,
+         "native passive copy transport does not grant source enum assignment");
+  if (classCarrier.canGenerateCode())
+    for (const auto &enumeration : classCarrier.mir.payloadEnums())
+      if (!enumeration.variants.empty())
+        expect(enumeration.traits.copyable &&
+                   !enumeration.traits.copyAssignable,
+               "borrowed class enum preserves construction-only copy traits");
   if (classCarrier.canGenerateCode()) {
     for (int mutation = 0; mutation != 6; ++mutation) {
       auto malformed = classCarrier.mir;

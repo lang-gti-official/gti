@@ -946,7 +946,13 @@ remains live. Moving the carrier transfers the same loan identity; creating a
 read-only alias, including copy construction of a shared carrier, adds a
 carrier to that identity. Dropping one shared copy ends only that shell's
 lifetime; owner protection remains until the final reachable use of every
-alias. An exclusive carrier has only one transferable shell. HIR carries
+alias. An exclusive carrier has only one transferable shell.
+The same alias rule applies to a named local shared payload-enum copy when
+the complete origin, access, field-path and alternative-tag set is unchanged.
+It preserves every external owner, including additional owners, after the
+original carrier's last use; it does not permit assignment or copying an
+exclusive or cleanup-bound capability.
+HIR carries
 proven straight-line, nested-merge, and conditional branch-entry endpoints,
 along with bounded switch-exit and same-path immediate-break endpoints. MIR
 records every carrier on one loan and emits an explicit borrow ending only
