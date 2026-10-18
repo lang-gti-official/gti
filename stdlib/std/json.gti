@@ -1206,7 +1206,7 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     // An open type parameter cannot be constructed from an argument, so fill
     // the empty optional in place instead.
     mut F out = F();
-    [[discard]] out.emplace(std::move(inner));
+    out.emplace(std::move(inner));
     return std::move(out);
   } else if constexpr (is_vector<F>()) {
     mut F out = F();
@@ -1223,7 +1223,7 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     std::vector<member> members = ?parse_members(text, start, stop, options);
     for (auto& entry : members) {
       auto value = ?decode_member(std::meta::list_first<std::meta::list_rest<std::meta::argument_list<F>>>(), text, entry.begin, entry.end, options, entry.key.view());
-      [[discard]] out.insert(std::string(entry.key.view()), std::move(value));
+      out.insert(std::string(entry.key.view()), std::move(value));
     }
     return std::move(out);
   } else if constexpr (std::meta::is_reflectable<F>()) {

@@ -239,6 +239,19 @@ int main() {
               instruction.operands.front().type.kind !=
                   lang::SemanticType::Class)
             continue;
+          const auto *input =
+              function.body.findValue(instruction.operands.front().value);
+          bool callbackResult = false;
+          if (input)
+            for (const auto &producerBlock : function.body.blocks)
+              for (const auto &producer : producerBlock.instructions)
+                callbackResult |=
+                    producer.id == input->definition &&
+                    producer.kind == lang::MirInstructionKind::Call &&
+                    !producer.functionTarget && producer.receiver &&
+                    producer.receiver->type.kind == lang::SemanticType::Lambda;
+          if (!callbackResult)
+            continue;
           auto malformed = owned.mir;
           auto &functions = lang::MirProgramTestAccess::functions(malformed);
           auto &changed = *std::find_if(

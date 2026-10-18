@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Callable-result projection prerequisites (0.446.0)
+## Callable-result projection prerequisites (0.447.0)
 
 `callable_return_type` covers exact result projection for signatures, function
 items, lambdas and native pointers, contextual item inference, void/reference

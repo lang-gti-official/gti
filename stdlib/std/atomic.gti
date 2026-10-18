@@ -299,32 +299,38 @@ public:
 
   /// Replaces and returns the prior value with sequentially consistent
   /// ordering.
+  [[discardable]]
   T exchange(T value) {
     return gti_internal::atomic_exchange(this.storage, value);
   }
 
   /// Replaces and returns the prior value with relaxed ordering.
+  [[discardable]]
   T exchange(T value, memory_order_relaxed order) {
     return gti_internal::atomic_exchange_relaxed(this.storage, value);
   }
 
   /// Replaces and returns the prior value with acquire ordering.
+  [[discardable]]
   T exchange(T value, memory_order_acquire order) {
     return gti_internal::atomic_exchange_acquire(this.storage, value);
   }
 
   /// Replaces and returns the prior value with release ordering.
+  [[discardable]]
   T exchange(T value, memory_order_release order) {
     return gti_internal::atomic_exchange_release(this.storage, value);
   }
 
   /// Replaces and returns the prior value with acquire-release ordering.
+  [[discardable]]
   T exchange(T value, memory_order_acq_rel order) {
     return gti_internal::atomic_exchange_acq_rel(this.storage, value);
   }
 
   /// Replaces and returns the prior value with sequentially consistent
   /// ordering.
+  [[discardable]]
   T exchange(T value, memory_order_seq_cst order) {
     return gti_internal::atomic_exchange(this.storage, value);
   }
@@ -468,12 +474,14 @@ public:
   /// Atomically adds `operand`, returning the prior value. Integer arithmetic
   /// is checked before each compare/exchange attempt; overflow raises defined
   /// failure without publishing that attempted update.
+  [[discardable]]
   T fetch_add(T operand) requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
       return T(observed + operand);
     });
   }
 
+  [[discardable]]
   T fetch_add(T operand, memory_order_relaxed order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -481,6 +489,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_add(T operand, memory_order_acquire order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -488,6 +497,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_add(T operand, memory_order_release order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -495,6 +505,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_add(T operand, memory_order_acq_rel order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -502,6 +513,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_add(T operand, memory_order_seq_cst order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -511,12 +523,14 @@ public:
 
   /// Atomically subtracts `operand`, returning the prior value. Integer
   /// arithmetic is checked before each compare/exchange attempt.
+  [[discardable]]
   T fetch_sub(T operand) requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
       return T(observed - operand);
     });
   }
 
+  [[discardable]]
   T fetch_sub(T operand, memory_order_relaxed order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -524,6 +538,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_sub(T operand, memory_order_acquire order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -531,6 +546,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_sub(T operand, memory_order_release order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -538,6 +554,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_sub(T operand, memory_order_acq_rel order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -545,6 +562,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_sub(T operand, memory_order_seq_cst order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -553,12 +571,14 @@ public:
   }
 
   /// Atomically applies bitwise AND with `operand`, returning the prior value.
+  [[discardable]]
   T fetch_and(T operand) requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
       return T(observed & operand);
     });
   }
 
+  [[discardable]]
   T fetch_and(T operand, memory_order_relaxed order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -566,6 +586,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_and(T operand, memory_order_acquire order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -573,6 +594,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_and(T operand, memory_order_release order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -580,6 +602,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_and(T operand, memory_order_acq_rel order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -587,6 +610,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_and(T operand, memory_order_seq_cst order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -595,12 +619,14 @@ public:
   }
 
   /// Atomically applies bitwise OR with `operand`, returning the prior value.
+  [[discardable]]
   T fetch_or(T operand) requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
       return T(observed | operand);
     });
   }
 
+  [[discardable]]
   T fetch_or(T operand, memory_order_relaxed order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -608,6 +634,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_or(T operand, memory_order_acquire order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -615,6 +642,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_or(T operand, memory_order_release order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -622,6 +650,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_or(T operand, memory_order_acq_rel order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -629,6 +658,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_or(T operand, memory_order_seq_cst order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -637,12 +667,14 @@ public:
   }
 
   /// Atomically applies bitwise XOR with `operand`, returning the prior value.
+  [[discardable]]
   T fetch_xor(T operand) requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
       return T(observed ^ operand);
     });
   }
 
+  [[discardable]]
   T fetch_xor(T operand, memory_order_relaxed order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -650,6 +682,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_xor(T operand, memory_order_acquire order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -657,6 +690,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_xor(T operand, memory_order_release order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -664,6 +698,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_xor(T operand, memory_order_acq_rel order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {
@@ -671,6 +706,7 @@ public:
     }, order);
   }
 
+  [[discardable]]
   T fetch_xor(T operand, memory_order_seq_cst order)
       requires std::integral<T> {
     return this.fetch_update_impl([operand](T observed) -> T {

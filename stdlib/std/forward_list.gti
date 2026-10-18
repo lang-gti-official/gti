@@ -205,7 +205,7 @@ namespace std {
       this.head = std::move(removed->next);
     }
 
-    mut T& emplace_front<Args...>(Args... args) mut {
+    [[discardable]] mut T& emplace_front<Args...>(Args... args) mut {
       // Keep the old chain intact until allocation and value construction have
       // both succeeded. Linking moves node owners, never the stored T.
       mut auto node = std::make_unique<detail::forward_list_node<T>>(
@@ -280,7 +280,7 @@ namespace std {
       result.head = std::unique_ptr<detail::forward_list_node<T>>();
     }
 
-    size_t remove(T& value) mut
+    [[discardable]] size_t remove(T& value) mut
       requires std::equality_comparable<T> {
       mut forward_list<T> retained = forward_list<T>();
       mut size_t removed = 0;
@@ -297,7 +297,7 @@ namespace std {
       retained.head = std::unique_ptr<detail::forward_list_node<T>>();
       return removed;
     }
-    size_t unique() mut
+    [[discardable]] size_t unique() mut
       requires std::equality_comparable<T> {
       mut forward_list<T> retained = forward_list<T>();
       mut size_t removed = 0;
