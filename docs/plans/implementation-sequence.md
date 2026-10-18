@@ -8982,13 +8982,17 @@ type in place of that outcome. Its spelling stays global/prelude, and the
 class retains the observer and combinator method API. Production expected is
 unchanged during prerequisite work.
 
-The prerequisite phase is developing exact callable-result type reflection:
+The first prerequisite slice implements exact callable-result type reflection:
 `std::meta::callable_return_type<F>` projects an already selected function,
 lambda, native callback or signature's declared result. Ordinary source
 wrappers can then spell mapped result types without expected-specific mapper
 analysis. This is a type fact, not overload resolution, invocation permission,
 or a borrow-origin contract. An unrelated `Box<T>` and an owned source-result
-fixture exercise it. Verification and publication remain pending.
+fixture exercise it. Native pointer results preserve GTI's logical type, and
+annotated reference relays retain exact origin and aliasing checks. Focused
+semantic, malformed-MIR and 32 native runtime cases pass; complete-suite
+verification and publication remain pending. This slice does not claim that
+every prerequisite in the release matrix below is complete.
 
 The release phase owns the following explicit acceptance matrix. These are
 requirements to implement and verify, not permission to drop old behavior:

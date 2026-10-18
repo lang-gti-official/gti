@@ -4324,7 +4324,16 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
     validateReferenceReferent(resolved, type.reference ? *type.reference
                                                        : type.name.last());
   const auto nominalKind = baseTypeOf(type, currentNamespace).kind;
-  if (nominalKind != SemanticType::Class && nominalKind != SemanticType::Enum) {
+  // A checked projected reference result is the resolved referent, not a
+  // container for the syntactic projection operands. A callable operand may
+  // itself mention reference parameters/results without storing any of them.
+  // The ordinary referent validation above and exact borrowed_from proof
+  // still apply; uncontracted bindings and parameters retain their rules.
+  const bool projectedReferenceResult =
+      contractedReferenceResult && resolved.kind == SemanticType::Reference &&
+      !type.reference;
+  if (!projectedReferenceResult && nominalKind != SemanticType::Class &&
+      nominalKind != SemanticType::Enum) {
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       const TypeRef &argument = type.arguments[index];
       if (containsReference(argument)) {
@@ -5001,6 +5010,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       candidate = group->expression().get();
     if (const auto *call = exprAs<Call>(candidate);
         call != nullptr && semanticModel.findCall(*call) == nullptr &&
+        semanticModel.findLambdaCall(*call) == nullptr &&
         semanticModel.findDeferredCallableCall(*call) != nullptr)
       return;
   }

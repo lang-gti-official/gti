@@ -58,6 +58,98 @@ void rejected(std::string source, std::string_view code,
 } // namespace
 
 int main() {
+  rejected(R"(
+#include <std/meta>
+[[borrowed_from(value)]]
+std::meta::callable_return_type<F> borrow<F>(F& fn, int& value, int& other) {
+  return fn(other);
+}
+int main() {
+  int owner = 42;
+  int other = 7;
+  auto same = [](int& value) -> int& { return value; };
+  int& result = borrow(same, owner, other);
+  return result;
+}
+)",
+           "GTI-S2017", "must derive from read-only parameter 'value'");
+  rejected(R"(
+[[borrowed_from(value)]]
+int& borrow<F>(F& fn, int& value, int& other) { return fn(other); }
+int main() {
+  int owner = 42;
+  int other = 7;
+  auto same = [](int& value) -> int& { return value; };
+  int& result = borrow(same, owner, other);
+  return result;
+}
+)",
+           "GTI-S2017", "must derive from read-only parameter 'value'");
+  rejected(R"(
+#include <std/meta>
+[[borrowed_from(value)]]
+std::meta::callable_return_type<F> borrow<F>(F& fn, int& value) { return fn(value); }
+int main() {
+  mut int owner = 42;
+  auto same = [](int& value) -> int& { return value; };
+  int& result = borrow(same, owner);
+  owner = 7;
+  return result;
+}
+)",
+           "GTI-S2017", "overlapping borrow");
+  rejected(R"(
+#include <std/meta>
+[[borrowed_from(value)]]
+std::meta::callable_return_type<F> borrow<F>(F& fn, int& value) { return fn(value); }
+int& bad() {
+  int owner = 42;
+  auto same = [](int& value) -> int& { return value; };
+  return borrow(same, owner);
+}
+int main() { return bad(); }
+)",
+           "GTI-S2017", "reference");
+  const auto borrowed = analyze(R"(
+#include <std/meta>
+[[borrowed_from(value)]]
+std::meta::callable_return_type<F> borrow<F>(F& fn, int& value, int& other) {
+  return fn(value);
+}
+int main() {
+  int owner = 42;
+  int other = 7;
+  auto same = [](int& value) -> int& { return value; };
+  int& result = borrow(same, owner, other);
+  return result;
+}
+)");
+  expect(borrowed.canGenerateCode(),
+         "projected reference preserves exact origin");
+  if (borrowed.canGenerateCode()) {
+    expect(lang::verifyMirProgram(borrowed.mir).valid(),
+           "borrowed query MIR is valid");
+    bool checked = false;
+    for (const auto &function : borrowed.mir.functionInstances()) {
+      if (function.parameterTypes.size() != 3 ||
+          function.returnType.kind != lang::SemanticType::Reference)
+        continue;
+      for (const auto origin :
+           {lang::BorrowOriginKind::None, lang::BorrowOriginKind::Argument}) {
+        auto malformed = borrowed.mir;
+        auto &functions = lang::MirProgramTestAccess::functions(malformed);
+        auto &changed = *std::find_if(
+            functions.begin(), functions.end(),
+            [&](const auto &item) { return item.id == function.id; });
+        changed.returnBorrowOrigin = origin;
+        changed.returnBorrowParameter = 2;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "missing or substituted reference origin is rejected by MIR");
+      }
+      checked = true;
+    }
+    expect(checked, "reference origin mutation exercised the generic relay");
+  }
   accepted(
       R"(
 #include <std/meta>
