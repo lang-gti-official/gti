@@ -13722,7 +13722,27 @@ private:
       } else {
         result = valueOperand(*statement.value);
         const HirValue *value = findValue(*statement.value);
-        if (value != nullptr && value->info.traits.containsBorrowedState) {
+        const auto *returnedValue =
+            result && result->kind == MirOperandKind::Value
+                ? output.findValue(result->value)
+                : nullptr;
+        // A known dependency-free active alternative has no authority to
+        // export. Preserve its complete typed fact for independent program
+        // verification rather than inventing a loan or inferring emptiness
+        // from loanForValue returning zero.
+        const bool completeEmpty =
+            value && value->info.type == output.returnType &&
+            output.returnType.kind == SemanticType::Enum &&
+            value->borrowDependencies &&
+            value->borrowDependencies->dependencies.empty() &&
+            !value->borrowDependencies->possibleAlternatives.empty() &&
+            returnedValue && returnedValue->info.type == output.returnType &&
+            returnedValue->borrowDependencies &&
+            returnedValue->borrowDependencies->dependencies.empty() &&
+            returnedValue->borrowDependencies->possibleAlternatives ==
+                value->borrowDependencies->possibleAlternatives;
+        if (value != nullptr && value->info.traits.containsBorrowedState &&
+            !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
           if (retained == 0 &&
               (output.returnType.kind == SemanticType::Class ||
@@ -13774,6 +13794,7 @@ private:
                 retainedLoan.additionalDependencies;
             output.loans[published - 1].designatedFields =
                 retainedLoan.designatedFields;
+            output.loans[published - 1].conditions = retainedLoan.conditions;
             if (retainedLoan.entry &&
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.additionalDependencies.empty() &&
