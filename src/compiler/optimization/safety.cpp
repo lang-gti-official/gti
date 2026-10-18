@@ -3686,7 +3686,8 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   if (target->kind == MirBodyKind::Function)
     if (const auto *function =
             closedCalls->program.findFunctionInstance(target->owner);
-        function && function->neverReturns && instruction.neverReturns) {
+        function && instruction.neverReturns &&
+        (function->neverReturns || instruction.noNormalBorrowResult)) {
       state.reachable = false;
       return true;
     }

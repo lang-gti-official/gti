@@ -767,6 +767,7 @@ struct MirInstruction {
   // carry this field. It is not a runtime argument or a borrow origin.
   std::optional<SemanticType> objectLayoutType;
   bool neverReturns = false;
+  bool noNormalBorrowResult = false;
   bool tracksCaller = false;
   std::optional<CallerLocationOrigin> callerLocation;
   FailureSiteId callerLocationSite = 0;

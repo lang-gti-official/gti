@@ -154,6 +154,79 @@ int main() {
     return lang::HirFunctionInstanceId{0};
   };
   {
+    std::ifstream input(root /
+                        "tests/fixtures/borrowed_enum_no_normal_result.gti");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto result = analyze(source);
+    bool found = false;
+    for (const auto &function : result.hir.functionInstances())
+      for (const auto &value : function.body.values)
+        if (value.noNormalBorrowResultProof) {
+          for (int mutation = 0; mutation < 4; ++mutation) {
+            auto malformed = result.hir;
+            auto *changed = const_cast<lang::HirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &call = *std::find_if(changed->body.values.begin(),
+                                       changed->body.values.end(),
+                                       [&](const auto &candidate) {
+                                         return candidate.id == value.id;
+                                       });
+            if (mutation == 0)
+              call.noNormalBorrowResultProof.reset();
+            if (mutation == 1)
+              call.source = nullptr;
+            if (mutation == 2)
+              call.neverReturns = false;
+            if (mutation == 3)
+              call.borrowDependencies = lang::SemanticBorrowDependencySet{};
+            expect(!lang::verifyHirProgramPlans(result.semantics, malformed)
+                        .valid(),
+                   "excluded normal result requires exact semantic proof " +
+                       std::to_string(mutation));
+          }
+        }
+    for (const auto &function : result.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.noNormalBorrowResult) {
+            found = true;
+            expect(instruction.neverReturns && !instruction.result &&
+                       !instruction.loan,
+                   "excluded reference-result domain publishes no result");
+            for (int mutation = 0; mutation < 5; ++mutation) {
+              auto malformed = result.mir;
+              auto &changed = lang::MirProgramTestAccess::functions(
+                  malformed)[function.id - 1];
+              auto &instructions =
+                  changed.body.blocks[block.id - 1].instructions;
+              auto &call =
+                  *std::find_if(instructions.begin(), instructions.end(),
+                                [&](const auto &candidate) {
+                                  return candidate.id == instruction.id;
+                                });
+              if (mutation == 0)
+                call.noNormalBorrowResult = false;
+              if (mutation == 1)
+                call.neverReturns = false;
+              if (mutation == 2)
+                call.result = changed.body.values.front().id;
+              if (mutation == 3)
+                call.borrowFields.clear();
+              if (mutation == 4)
+                for (auto &continuation : changed.body.blocks)
+                  if (continuation.terminator.kind ==
+                      lang::MirTerminatorKind::Unreachable)
+                    continuation.terminator = {
+                        .kind = lang::MirTerminatorKind::Return};
+              expect(!lang::verifyMirProgram(malformed).valid(),
+                     "excluded normal result rejects absent proof, publication "
+                     "or continuation " +
+                         std::to_string(mutation));
+            }
+          }
+    expect(found, "known missing alternative has a call-local terminal proof");
+  }
+  {
     const auto result = analyze(R"gti(
 #include <std/panic>
 enum Selected { empty, value(int& owner) };

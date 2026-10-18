@@ -703,6 +703,18 @@ actual prepared operands; matching caller/callee field maps alone are not
 proof. Reordered and multi-owner inputs preserve their individual paths and
 permissions. The native backend erases this proven publication without
 changing the existing field construction or rollback schedule.
+A fresh payload enum stored in a source-class field follows the same rule:
+its exact `PayloadConstruct`, field `Initialize`, escaping `Stored` publication,
+and immediate producer-loan retirement preserve the entire conditional
+dependency group. The native enum value already carries the selected reference
+payload. Publication emits no separate pointer and never reads an inactive
+alternative to reconstruct provenance.
+When another alternative owns cleanup, constructor staging may use the enum's
+private inactive native state: it has no active payload and therefore no borrow
+or cleanup to observe. Containing classes qualify only through recursive exact
+field empty-state checks; direct reference fields do not qualify. This is a
+construction-only representation facility, not a source default constructor,
+assignment permission, or substitute for field publication and rollback proofs.
 The child formal itself may receive a fresh ordinary constructor result.
 Origin replay peels its exact prepared input and follows the selected field
 through that result's executable constructor before reaching an enclosing

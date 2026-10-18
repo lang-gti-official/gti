@@ -635,10 +635,6 @@
             "named": false
           },
           {
-            "type": "expected_type",
-            "named": true
-          },
-          {
             "type": "native_function_type",
             "named": true
           },
@@ -2031,10 +2027,6 @@
             "named": false
           },
           {
-            "type": "expected_type",
-            "named": true
-          },
-          {
             "type": "native_function_type",
             "named": true
           },
@@ -2535,21 +2527,6 @@
           }
         ]
       }
-    }
-  },
-  {
-    "type": "expected_type",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "type",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -3054,10 +3031,6 @@
           {
             "type": "const",
             "named": false
-          },
-          {
-            "type": "expected_type",
-            "named": true
           },
           {
             "type": "native_function_type",
@@ -4402,10 +4375,6 @@
             "named": false
           },
           {
-            "type": "expected_type",
-            "named": true
-          },
-          {
             "type": "native_function_type",
             "named": true
           },
@@ -4972,10 +4941,6 @@
         },
         {
           "type": "this_expression",
-          "named": true
-        },
-        {
-          "type": "unexpected_expression",
           "named": true
         },
         {
@@ -5551,10 +5516,6 @@
           "named": true
         },
         {
-          "type": "expected_type",
-          "named": true
-        },
-        {
           "type": "function_signature",
           "named": true
         },
@@ -5699,58 +5660,6 @@
           {
             "type": "~",
             "named": false
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "unexpected_expression",
-    "named": true,
-    "fields": {
-      "error": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "assignment_expression",
-            "named": true
-          },
-          {
-            "type": "binary_expression",
-            "named": true
-          },
-          {
-            "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "conditional_expression",
-            "named": true
-          },
-          {
-            "type": "generic_function",
-            "named": true
-          },
-          {
-            "type": "index_expression",
-            "named": true
-          },
-          {
-            "type": "member_expression",
-            "named": true
-          },
-          {
-            "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "unary_expression",
-            "named": true
-          },
-          {
-            "type": "update_expression",
-            "named": true
           }
         ]
       }
@@ -6286,10 +6195,6 @@
     "named": false
   },
   {
-    "type": "expected",
-    "named": false
-  },
-  {
     "type": "export",
     "named": false
   },
@@ -6523,10 +6428,6 @@
   },
   {
     "type": "uint8_t",
-    "named": false
-  },
-  {
-    "type": "unexpected",
     "named": false
   },
   {

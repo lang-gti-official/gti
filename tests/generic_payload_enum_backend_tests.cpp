@@ -21,6 +21,10 @@ struct MirProgramTestAccess {
   static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
     return program.functions;
   }
+  static std::vector<MirConstructorInstance> &
+  constructors(MirProgram &program) {
+    return program.constructors;
+  }
 };
 struct LoweredProgramTestAccess {
   static std::vector<LoweredDeclaration> &
@@ -1371,6 +1375,13 @@ class Reading {
   mut Slot slot;
 public:
   Reading(int& value) : slot(Slot::present(value)) {}
+  Reading() : slot(Slot::absent) {}
+  bool empty() {
+    switch (this.slot) {
+    case Slot::present: return false;
+    case Slot::absent: return true;
+    }
+  }
   int& view() {
     switch (this.slot) {
     case Slot::present(auto& value): return value;
@@ -1384,18 +1395,54 @@ public:
     }
   }
 };
+[[borrowed_from(owner)]] Reading read(int& owner, bool absent) {
+  if (absent) return Reading();
+  return Reading(owner);
+}
 int main() {
   int owner = 42;
-  auto view = Reading(owner);
-  auto consumed = Reading(owner);
+  auto view = read(owner, false);
+  auto missing = read(owner, true);
+  auto consumed = read(owner, false);
   int& retained = std::move(consumed).take();
-  return view.view() == retained ? 0 : 1;
+  return view.view() == retained && missing.empty() ? 0 : 1;
 }
 )gti",
       {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
   expect(receiverReferences.canGenerateCode(),
          "receiver enum reference paths retain complete checked origins");
   if (receiverReferences.canGenerateCode()) {
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto malformed = receiverReferences.mir;
+      bool changed = false;
+      for (auto &constructor :
+           lang::MirProgramTestAccess::constructors(malformed)) {
+        if (changed)
+          break;
+        for (auto &loan : constructor.body.loans) {
+          if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
+              loan.storedField == 0 || loan.designatedFields.empty())
+            continue;
+          expect(lang::cppMirStoredReferenceBindings(malformed, constructor)
+                     .has_value(),
+                 "exact enum field publication needs no native pointer shell");
+          if (mutation == 0)
+            loan.designatedFields.clear();
+          else if (mutation == 1)
+            loan.conditions.clear();
+          else if (mutation == 2)
+            loan.producedBy = 0;
+          else
+            loan.storedField = 1;
+          changed = true;
+          expect(!lang::cppMirStoredReferenceBindings(malformed, constructor),
+                 "enum field erasure rejects a substituted field, producer "
+                 "or conditional dependency group");
+          break;
+        }
+      }
+      expect(changed, "enum field publication mutation exercises its proof");
+    }
     for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
       try {
         expect(
@@ -1406,6 +1453,145 @@ int main() {
         std::cerr << error.what() << '\n';
         expect(false,
                "checked receiver enum references have a native representation");
+      }
+    }
+  }
+  const auto mixedOwnership = lang::Frontend().analyze(
+      "borrowed-owning-enum-field.gti", R"gti(
+#include <std/string>
+#include <std/panic>
+enum Choice { borrowed(int& value), owned(std::string value) };
+class Envelope {
+  mut Choice choice;
+public:
+  Envelope(int& value) : choice(Choice::borrowed(value)) {}
+  Envelope(std::string value) : choice(Choice::owned(std::move(value))) {}
+  int& take() && {
+    switch (this.choice) {
+    case Choice::borrowed(auto& value): return value;
+    case Choice::owned: std::panic("no borrowed value");
+    }
+  }
+};
+class DirectReference {
+  int& value;
+public:
+  DirectReference(int& owner) : value(owner) {}
+};
+int main() {
+  int owner = 42;
+  mut auto borrowed = Envelope(owner);
+  auto owned = Envelope(std::string("owned"));
+  auto direct = DirectReference(owner);
+  int& retained = std::move(borrowed).take();
+  return retained == 42 ? 0 : 1;
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(mixedOwnership.canGenerateCode(),
+         "an enum field may select either external borrowing or owned cleanup");
+  if (mixedOwnership.canGenerateCode()) {
+    bool sawEnum = false;
+    bool sawReference = false;
+    for (const auto &owner : mixedOwnership.mir.classInstances()) {
+      if (owner.declaredFields.size() != 1)
+        continue;
+      const auto &field = owner.declaredFields.front();
+      if (field.type.kind == lang::SemanticType::Enum &&
+          owner.traits.containsBorrowedState && field.requiresActiveCleanup) {
+        sawEnum = true;
+        expect(lang::cppMirFailureConstructorEmptyStateEligible(
+                   mixedOwnership.mir, owner.id) &&
+                   lang::cppMirFailureConstructorEmptyStateTypeEligible(
+                       mixedOwnership.mir, field.type),
+               "an inactive enum payload supplies a construction-only native "
+               "shell without inventing a source borrow");
+      } else if (field.type.kind == lang::SemanticType::Reference) {
+        sawReference = true;
+        expect(!lang::cppMirFailureConstructorEmptyStateEligible(
+                   mixedOwnership.mir, owner.id) &&
+                   !lang::cppMirFailureConstructorEmptyStateTypeEligible(
+                       mixedOwnership.mir, owner.type),
+               "a direct reference field cannot acquire an empty native shell");
+      }
+    }
+    expect(sawEnum && sawReference,
+           "empty-shell tests cover both conditional and direct borrows");
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = mixedOwnership.mir;
+      bool changed = false;
+      for (auto &constructor :
+           lang::MirProgramTestAccess::constructors(malformed)) {
+        if (changed)
+          break;
+        for (auto &value : constructor.body.values) {
+          if (!value.borrowDependencies ||
+              value.info.type.kind != lang::SemanticType::Enum ||
+              !value.info.traits.containsBorrowedState ||
+              (mutation < 2) != value.borrowDependencies->dependencies.empty())
+            continue;
+          if (mutation == 0 || mutation == 2)
+            value.borrowDependencies.reset();
+          else if (mutation == 1)
+            value.borrowDependencies->possibleAlternatives.clear();
+          else if (mutation == 3)
+            value.borrowDependencies->dependencies.clear();
+          else
+            value.borrowDependencies->dependencies.front().source = 0;
+          changed = true;
+          break;
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "mixed enum publication rejects missing, forged-empty or "
+             "substituted provenance");
+    }
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = mixedOwnership.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (changed)
+          break;
+        for (auto &block : function.body.blocks) {
+          if (changed)
+            break;
+          for (auto &instruction : block.instructions) {
+            if (instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+                instruction.callInputKind !=
+                    lang::HirCallInputKind::MoveValue ||
+                !instruction.result ||
+                !instruction.info.traits.containsBorrowedState)
+              continue;
+            auto *value = const_cast<lang::MirValue *>(
+                function.body.findValue(*instruction.result));
+            if (!value || !value->borrowDependencies ||
+                value->borrowDependencies->dependencies.empty())
+              continue;
+            if (mutation == 0)
+              value->borrowDependencies.reset();
+            if (mutation == 1)
+              value->borrowDependencies->dependencies.clear();
+            if (mutation == 2)
+              value->borrowDependencies->dependencies.front().source = 0;
+            changed = true;
+            break;
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "consuming receiver cannot lose or substitute its external "
+             "dependencies");
+    }
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      try {
+        expect(!gti_test::emitCpp(mixedOwnership, standard).contents.empty(),
+               "mixed owning/reference enum fields retain exact native "
+               "construction and cleanup schedules");
+      } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        expect(false,
+               "mixed owning/reference enum fields have a representation");
       }
     }
   }

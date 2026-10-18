@@ -326,10 +326,6 @@
         },
         {
           "type": "STRING",
-          "value": "expected"
-        },
-        {
-          "type": "STRING",
           "value": "extern"
         },
         {
@@ -519,10 +515,6 @@
         {
           "type": "STRING",
           "value": "unsafe"
-        },
-        {
-          "type": "STRING",
-          "value": "unexpected"
         },
         {
           "type": "STRING",
@@ -5922,10 +5914,6 @@
         },
         {
           "type": "SYMBOL",
-          "name": "expected_type"
-        },
-        {
-          "type": "SYMBOL",
           "name": "native_function_type"
         },
         {
@@ -6036,35 +6024,6 @@
         {
           "type": "STRING",
           "value": "char"
-        }
-      ]
-    },
-    "expected_type": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "expected"
-        },
-        {
-          "type": "STRING",
-          "value": "<"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "type"
-        },
-        {
-          "type": "STRING",
-          "value": ","
-        },
-        {
-          "type": "SYMBOL",
-          "name": "type"
-        },
-        {
-          "type": "STRING",
-          "value": ">"
         }
       ]
     },
@@ -8743,10 +8702,6 @@
         },
         {
           "type": "SYMBOL",
-          "name": "unexpected_expression"
-        },
-        {
-          "type": "SYMBOL",
           "name": "numeric_conversion"
         },
         {
@@ -8822,31 +8777,6 @@
         {
           "type": "STRING",
           "value": "}"
-        }
-      ]
-    },
-    "unexpected_expression": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "unexpected"
-        },
-        {
-          "type": "STRING",
-          "value": "("
-        },
-        {
-          "type": "FIELD",
-          "name": "error",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_expression_not_comma"
-          }
-        },
-        {
-          "type": "STRING",
-          "value": ")"
         }
       ]
     },

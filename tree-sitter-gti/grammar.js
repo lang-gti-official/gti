@@ -33,7 +33,6 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "double",
   "else",
   "enum",
-  "expected",
   "extern",
   "export",
   "false",
@@ -82,7 +81,6 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "uint32",
   "uint64",
   "unsafe",
-  "unexpected",
   "using",
   "void",
   "virtual",
@@ -964,7 +962,6 @@ module.exports = grammar({
     _base_type: ($) =>
       choice(
         $.primitive_type,
-        $.expected_type,
         $.native_function_type,
         $.user_type,
         "auto",
@@ -997,8 +994,6 @@ module.exports = grammar({
         "bool",
         "char",
       ),
-
-    expected_type: ($) => seq("expected", "<", $.type, ",", $.type, ">"),
 
     native_function_type: ($) =>
       seq(
@@ -1456,7 +1451,6 @@ module.exports = grammar({
         $.generic_scoped_identifier,
         $.literal,
         $._qualified_identifier,
-        $.unexpected_expression,
         $.numeric_conversion,
         $.lambda_expression,
         $.layout_query_expression,
@@ -1472,9 +1466,6 @@ module.exports = grammar({
 
     unsafe_expression: ($) =>
       seq("unsafe", "{", field("value", $.expression), "}"),
-
-    unexpected_expression: ($) =>
-      seq("unexpected", "(", field("error", $._expression_not_comma), ")"),
 
     numeric_conversion: ($) =>
       seq(

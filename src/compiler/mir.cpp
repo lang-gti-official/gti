@@ -9894,7 +9894,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         instruction.successResultDestination
             ? body.findPlace(*instruction.successResultDestination)
             : nullptr;
-    if ((instruction.kind != MirInstructionKind::Call &&
+    if ((instruction.noNormalBorrowResult &&
+         (instruction.kind != MirInstructionKind::Call ||
+          !instruction.neverReturns || !instruction.functionTarget ||
+          instruction.intrinsic != IntrinsicKind::None ||
+          instruction.dispatch != CallDispatch::Static || instruction.result ||
+          instruction.loan || instruction.successResultDrop ||
+          instruction.successResultDestination)) ||
+        (instruction.kind != MirInstructionKind::Call &&
          (instruction.neverReturns || instruction.tracksCaller)) ||
         (instruction.tracksCaller != instruction.callerLocation.has_value()) ||
         (instruction.tracksCaller != (instruction.callerLocationSite != 0)) ||
@@ -10853,7 +10860,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     case MirInstructionKind::Call:
       return noOperation &&
-             hasResult == (instruction.info.type.kind != SemanticType::Void) &&
+             hasResult == (instruction.info.type.kind != SemanticType::Void &&
+                           !instruction.noNormalBorrowResult) &&
              (!instruction.successResultDestination ||
               (instruction.result && !instruction.destination &&
                !instruction.loan && !instruction.definedFailure.empty() &&

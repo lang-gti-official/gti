@@ -2280,7 +2280,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
 
 auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
     const Call &call, const ResolvedCallInfo &resolved,
-    const FunctionBorrowDependencySummary &summary)
+    const FunctionBorrowDependencySummary &summary, bool *noNormalResult)
     -> std::optional<SemanticBorrowDependencySet> {
   std::vector<const ExprPtr *> arguments;
   for (std::size_t index = 0;
@@ -2288,14 +2288,17 @@ auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
     arguments.push_back(resolvedCallArgument(call, &resolved, index));
   const auto *member = exprAs<Get>(call.callee().get());
   return instantiateCompleteBorrowArguments(
-      resolved, summary, arguments, member ? &member->object() : nullptr);
+      resolved, summary, arguments, member ? &member->object() : nullptr,
+      noNormalResult);
 }
 
 auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     const ResolvedCallInfo &resolved,
     const FunctionBorrowDependencySummary &summary,
-    std::span<const ExprPtr *const> arguments, const ExprPtr *receiver)
-    -> std::optional<SemanticBorrowDependencySet> {
+    std::span<const ExprPtr *const> arguments, const ExprPtr *receiver,
+    bool *noNormalResult) -> std::optional<SemanticBorrowDependencySet> {
+  if (noNormalResult)
+    *noNormalResult = false;
   if (resolved.dispatch != CallDispatch::Static ||
       resolved.intrinsic != IntrinsicKind::None || resolved.neverReturns)
     return std::nullopt;
@@ -2517,6 +2520,8 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       availability[index] = Availability::Available;
   }
   const auto domain = restrictCompleteBorrowResultDomain(summary, availability);
+  if (noNormalResult)
+    *noNormalResult = domain.status == BorrowResultDomainStatus::NoNormalResult;
   if (domain.status != BorrowResultDomainStatus::Known)
     return std::nullopt;
   SemanticBorrowDependencySet result{.possibleAlternatives =
@@ -7333,6 +7338,9 @@ auto SemanticVisitor::Impl::receiverStorageBorrow(
 auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                                                  const ExprPtr &expression)
     -> void {
+  // A terminal initializer never publishes this binding or a retained loan.
+  if (expressionNeverReturns(expression.get()))
+    return;
   if (expression && semanticModel.directInitializationSource(*expression)) {
     // A transparent result wrapper has no separate invocation contract or
     // lifetime. Retain the producer's complete field-wise loan, not the

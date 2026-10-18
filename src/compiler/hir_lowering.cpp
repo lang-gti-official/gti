@@ -3055,7 +3055,8 @@ private:
         const HirFunctionInstance *callee =
             output.program.findFunctionInstance(*value.functionTarget);
         if (callee != nullptr) {
-          value.neverReturns = callee->neverReturns;
+          value.neverReturns = callee->neverReturns ||
+                               value.noNormalBorrowResultProof.has_value();
           value.tracksCaller = callee->tracksCaller;
         }
       }
@@ -6321,6 +6322,8 @@ private:
           (void)seedConcreteDeclarationType(*value.objectLayoutType);
         }
         value.neverReturns = resolved->neverReturns;
+        value.noNormalBorrowResultProof =
+            model.noNormalBorrowResultProof(*call);
         value.tracksCaller = resolved->tracksCaller;
         if (sourceLocationIntrinsic(value.intrinsic)) {
           value.sourceLocation = activeDefaultSourceLocation

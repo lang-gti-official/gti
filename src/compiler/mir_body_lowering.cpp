@@ -6464,6 +6464,7 @@ private:
         .intrinsic = value.intrinsic,
         .objectLayoutType = value.objectLayoutType,
         .neverReturns = value.neverReturns,
+        .noNormalBorrowResult = value.noNormalBorrowResultProof.has_value(),
         .tracksCaller = value.tracksCaller,
         .callerLocation = value.callerLocation,
         .forwardsCallerLocation =
@@ -7008,7 +7009,8 @@ private:
       return;
     }
     call.result =
-        detachedBorrowResult
+        call.noNormalBorrowResult ? std::nullopt
+        : detachedBorrowResult
             ? std::optional<MirValueId>{appendValue(value.id, value.info)}
             : resultFor(value);
 
@@ -7085,7 +7087,8 @@ private:
     if (!sourceArguments.empty()) {
       originCall.operands = sourceArguments;
     }
-    MirPlaceId origin = borrowOriginPlace(value, originCall);
+    MirPlaceId origin =
+        call.noNormalBorrowResult ? 0 : borrowOriginPlace(value, originCall);
     // A reference field of `this` has an abstract entry Stored authority,
     // even though its receiver is not a local reference binding. Preserve
     // that authority when a checked accessor transforms the referent type.
@@ -12036,6 +12039,15 @@ private:
     if (!statement.binding) {
       return 0;
     }
+    if (statement.value) {
+      const auto *initializer = findValue(*statement.value);
+      if (initializer && initializer->neverReturns) {
+        emitValue(*statement.value);
+        if (!terminated())
+          valid = false;
+        return 0;
+      }
+    }
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const HirBinding *binding = findBinding(*statement.binding);
@@ -13616,6 +13628,15 @@ private:
   }
 
   void lowerReturn(const HirStatement &statement) {
+    if (statement.value) {
+      const auto *value = findValue(*statement.value);
+      if (value && value->neverReturns) {
+        emitValue(*statement.value);
+        if (!terminated())
+          valid = false;
+        return;
+      }
+    }
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     std::optional<MirOperand> result;

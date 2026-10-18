@@ -347,3 +347,7 @@ for <T> concept protocol_shape<Crate<T>> {
 extern "C" {
   [[link_name("foreign_counter_native")]] mut c_int foreign_counter_highlight;
 }
+
+expected<int, int> source_result_highlight() {
+  return unexpected(7);
+}

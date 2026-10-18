@@ -1492,6 +1492,25 @@ int main() {
   expect(lang::Formatter().format(formatted) == formatted,
          "formatting should be idempotent");
 
+  for (const std::string name : {"expected", "outcome"}) {
+    const std::string input = name + "<int,bool>& inspect(" + name +
+                              "<int,bool>& result){return result;}";
+    const std::string want = name + "<int, bool>& inspect(" + name +
+                             "<int, bool>& result) {\n  return result;\n}\n";
+    const auto actual = lang::Formatter().format(input);
+    expect(actual == want && lang::Formatter().format(actual) == actual,
+           "imported source-defined generic reference types format without "
+           "recognizing a library name");
+  }
+  expect(lang::Formatter().format("bool test(){return expected<limit;}") ==
+             "bool test() {\n  return expected < limit;\n}\n",
+         "a source-defined result name is not an unconditional generic prefix");
+  expect(lang::Formatter()
+                 .format("bool test(){return left<int(2)>&right;}")
+                 .find("left < int(2) > &right") != std::string::npos,
+         "numeric conversions do not turn comparison expressions into generic "
+         "reference types");
+
   const std::string nestedLambda = lang::Formatter().format(
       "void invoke<Callback>(Callback callback){callback();}"
       "void run(){invoke([]()->void{mut auto result=login();if(!result){"

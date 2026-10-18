@@ -109,6 +109,12 @@ public:
     case std::detail::expected_state<T, E>::error: return std::move(fallback);
     }
   }
+  constexpr T value_or(T fallback) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value): return std::move(value);
+    case std::detail::expected_state<T, E>::error: return std::move(fallback);
+    }
+  }
 
   [[track_caller]] T expect(std::string_view message) && {
     switch (std::move(this.state)) {
@@ -118,6 +124,31 @@ public:
   }
 
   expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    return std::move(this).transform_borrowed(mapper);
+  }
+  expected<std::meta::callable_return_type<F>, E> transform<F>(F mapper) && {
+    return std::move(this).transform_borrowed(mapper);
+  }
+  expected<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    return std::move(this).transform_error_borrowed(mapper);
+  }
+  expected<T, std::meta::callable_return_type<F>> transform_error<F>(F mapper) && {
+    return std::move(this).transform_error_borrowed(mapper);
+  }
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    return std::move(this).and_then_borrowed(mapper);
+  }
+  std::meta::callable_return_type<F> and_then<F>(F mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    return std::move(this).and_then_borrowed(mapper);
+  }
+
+private:
+  // An owned callback stays alive for the full helper call. A named callback
+  // can instead be borrowed without copying its captures. Distinct helper
+  // names avoid selecting the public owning overload again for copyable F.
+  expected<std::meta::callable_return_type<F>, E> transform_borrowed<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value):
       return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper, std::move(value));
@@ -126,7 +157,7 @@ public:
     }
   }
 
-  expected<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+  expected<T, std::meta::callable_return_type<F>> transform_error_borrowed<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value):
       return expected<T, std::meta::callable_return_type<F>>(std::move(value));
@@ -136,7 +167,7 @@ public:
     }
   }
 
-  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+  std::meta::callable_return_type<F> and_then_borrowed<F>(F& mapper) &&
       requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value): return mapper(std::move(value));
@@ -199,6 +230,28 @@ public:
   }
 
   expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    return std::move(this).transform_borrowed(mapper);
+  }
+  expected<std::meta::callable_return_type<F>, E> transform<F>(F mapper) && {
+    return std::move(this).transform_borrowed(mapper);
+  }
+  expected<void, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    return std::move(this).transform_error_borrowed(mapper);
+  }
+  expected<void, std::meta::callable_return_type<F>> transform_error<F>(F mapper) && {
+    return std::move(this).transform_error_borrowed(mapper);
+  }
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    return std::move(this).and_then_borrowed(mapper);
+  }
+  std::meta::callable_return_type<F> and_then<F>(F mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    return std::move(this).and_then_borrowed(mapper);
+  }
+
+private:
+  expected<std::meta::callable_return_type<F>, E> transform_borrowed<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_void_state<E>::value:
       return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper);
@@ -207,7 +260,7 @@ public:
     }
   }
 
-  expected<void, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+  expected<void, std::meta::callable_return_type<F>> transform_error_borrowed<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_void_state<E>::value:
       return expected<void, std::meta::callable_return_type<F>>();
@@ -217,7 +270,7 @@ public:
     }
   }
 
-  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+  std::meta::callable_return_type<F> and_then_borrowed<F>(F& mapper) &&
       requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
     switch (std::move(this.state)) {
     case std::detail::expected_void_state<E>::value: return mapper();

@@ -7325,8 +7325,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     const auto complete = completeFunctionReturnBorrow(
         function, resolved.typeArguments, resolved.valueArguments,
         tokenSpan(expressionToken(call.callee())));
+    bool noNormalResult = false;
     const auto instantiated =
-        complete ? instantiateCompleteCallBorrow(call, resolved, *complete)
+        complete ? instantiateCompleteCallBorrow(call, resolved, *complete,
+                                                 &noNormalResult)
                  : std::nullopt;
     if (instantiated) {
       if (function.returnType.kind == SemanticType::Class ||
@@ -7335,6 +7337,16 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         resolved.borrowFields = complete->dependencies;
       semanticModel.record(call, resolved);
       semanticModel.recordBorrowDependencySet(call, *instantiated);
+    } else if (noNormalResult &&
+               function.returnType.kind == SemanticType::Reference) {
+      // The exact input alternative domain excludes every normal reference
+      // result. Keep this call-site fact distinct from declaration noreturn;
+      // no referent or empty dependency set is manufactured for its result.
+      resolved.noNormalBorrowResult = true;
+      resolved.neverReturns = true;
+      resolved.borrowFields = complete->dependencies;
+      semanticModel.record(call, resolved);
+      semanticModel.clearBorrowDependencySet(call);
     } else
       semanticModel.clearBorrowDependencySet(call);
   }
