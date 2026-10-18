@@ -2695,11 +2695,15 @@ private:
               [&](SymbolId carrier) { return bindings.contains(carrier); }))
         pending.push_back(loan.id);
     }
-    for (const auto &value : body.values)
+    for (const auto &value : body.values) {
       if (value.borrowDependencies)
         for (const auto &dependency : value.borrowDependencies->dependencies)
           if (dependency.parent != 0)
             pending.push_back(dependency.parent);
+      for (const auto &dependency : value.captureBorrowDependencies)
+        if (dependency.parent != 0)
+          pending.push_back(dependency.parent);
+    }
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -6037,6 +6041,11 @@ private:
         lowered.place = qualifyPlace(dependency.place, body.placeDomain);
         value.borrowDependencies->dependencies.push_back(std::move(lowered));
       }
+    }
+    for (const auto &dependency : model.findCaptureBorrowDependencies(*raw)) {
+      auto lowered = dependency;
+      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+      value.captureBorrowDependencies.push_back(std::move(lowered));
     }
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && exprAs<Get>(call->callee().get()) != nullptr &&

@@ -274,6 +274,9 @@ struct HirValue {
   // semantic evidence. Origin places are body-qualified; structural paths are
   // declaration identities and must not be retagged.
   std::optional<SemanticBorrowDependencySet> borrowDependencies;
+  // Exact closure-construction inputs, consumed by its existing checked loan
+  // producer; not a complete result dependency set.
+  std::vector<SemanticLoanDependency> captureBorrowDependencies;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
   std::optional<HirValueId> retainedReceiverOwner;

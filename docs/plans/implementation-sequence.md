@@ -8667,6 +8667,42 @@ exercise the same rule. Acceptance includes known-empty construction/return,
 conditional joins, moved carriers, selected reference extraction, source
 destructor retention, mutable alias and dangling-return rejection, and malformed
 MIR with omitted/substituted paths, origins, tags, access or call summaries.
+
+The complete-value transport prerequisite now lowers exact HIR dependency sets
+to current-body MIR source places and mapped parents rather than discarding
+nonempty or nonconditional facts. Independent flow reconstructs a known-empty
+fact for a concrete value with an explicitly empty typed dependency/alternative
+inventory, and seeds the same fact for exact available by-value formals. It does
+not infer emptiness from missing layout, an absent loan, or a reference result.
+Closure capture-constructor inputs have separate semantic/HIR metadata: their
+existing checked capture-loan producer remains authoritative, and those inputs
+are not misrepresented as a complete result set. The callback regression checks
+that separation through semantics, HIR and MIR. Optimized focused
+`tryable_propagation`, `complete_borrow_summaries`,
+`reference_payload_semantics`, `borrowing_capture_semantics` and
+`sum_type_pipeline` all pass; logs are
+`/private/tmp/gti-complete-value-entry-{build,tests}16.log`.
+Nonempty enum parameter/constructor facts, complete interprocedural transport
+and final public reference-payload admission still require their independent
+proofs; this prerequisite does not claim that source feature is complete.
+
+The guarded parameter-entry increment now reconstructs the complete dependency
+set from the exact function/lambda/constructor formal, sealed reference and
+alternative inventories, the unique checked stored-entry group, and typed MIR
+referent places. Both initial flow and stored-entry verification use that same
+query. Each possible field keeps its own guard, access and parent; a missing
+formal, layout, path, group or referent yields unknown rather than empty.
+The internal test changes an otherwise valid owned-enum fixture into reference
+metadata and verifies the exact entry domain plus eleven substituted/missing
+proof cases. The artificial whole program is still required to fail verification;
+this is entry-proof evidence, not public source or runtime acceptance. The
+optimized build and `complete_borrow_summaries` pass in
+`/private/tmp/gti-conditional-entry-{build,summary}17.log`; the four regression
+gates are queued through the shared suite window in
+`/private/tmp/gti-conditional-entry-regressions17.log`. Constructor operand
+retention, independent complete construction, call transport and final source
+admission remain separate pending obligations.
+
 An error-only input to a reference-returning operation cannot manufacture an
 origin: if its verified normal-return contract requires an impossible active
 dependency, the implementation must represent that lack of a normal result
