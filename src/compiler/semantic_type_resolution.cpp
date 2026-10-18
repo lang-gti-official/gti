@@ -771,6 +771,13 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
       continue;
     }
     const SemanticType &parameter = parameterTypes[index];
+    const bool freshFunctionItem =
+        parameter.kind == SemanticType::Reference &&
+        parameter.referenceAccess == AccessMode::ReadOnly &&
+        parameter.arguments.size() == 1 &&
+        parameter.arguments.front().kind == SemanticType::FunctionItem &&
+        parameter.arguments.front() == analysis.types[index] &&
+        isContextualNativeFunctionArgument(arguments[index]);
     if (isContextualArrayArgument(arguments[index])) {
       if (parameter.kind != SemanticType::Array ||
           parameter.arrayLengthParameterId != 0) {
@@ -785,7 +792,7 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
       analysis.types[index] = analyzeInitializer(arguments[index], parameter);
     } else if (isContextualNativeFunctionArgument(arguments[index])) {
       if (parameter.kind != SemanticType::NativeFunction &&
-          parameter.kind != SemanticType::FunctionItem) {
+          parameter.kind != SemanticType::FunctionItem && !freshFunctionItem) {
         report(expressionToken(arguments[index]),
                "A function name argument requires one exact callable or "
                "named native-function context from the selected target.",
@@ -794,7 +801,9 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
         valid = false;
         continue;
       }
-      analysis.types[index] = analyzeInitializer(arguments[index], parameter);
+      analysis.types[index] = analyzeInitializer(
+          arguments[index],
+          freshFunctionItem ? parameter.arguments.front() : parameter);
     } else {
       analysis.types[index] =
           analyzeExpectedCallableResult(arguments[index], parameter);
@@ -802,7 +811,10 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
     if (analysis.types[index] != SemanticType::Unknown &&
         parameter != SemanticType::Unknown &&
         !callArgumentMatches(parameter, analysis.types[index],
-                             arguments[index])) {
+                             arguments[index]) &&
+        !(freshFunctionItem &&
+          analysis.types[index] == parameter.arguments.front() &&
+          freshTemporaryValue(arguments[index]).eligible)) {
       reportCallArgumentMismatch(index, parameter, analysis.types[index],
                                  arguments[index], callable);
       valid = false;
@@ -924,9 +936,28 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
       parameter.arguments.front() != argument ||
-      (argument.kind != SemanticType::Class && !payloadEnumType(argument)) ||
+      (argument.kind != SemanticType::Class && !payloadEnumType(argument) &&
+       argument.kind != SemanticType::Lambda &&
+       argument.kind != SemanticType::FunctionItem) ||
       !expression || !ephemeralBorrowTargetSupported(function)) {
     return false;
+  }
+  if (argument.kind == SemanticType::FunctionItem &&
+      isContextualNativeFunctionArgument(expression)) {
+    // Overload viability carries the selected item type locally. Do not publish
+    // a selection into the shared model until the enclosing call is selected.
+    // Only an actual namespace function name can supply this fresh item; a
+    // stored item, explicit move, or factory result is not a fresh producer.
+    const auto source = resolveExpressionSymbol(expression);
+    if (!source || source->type != SemanticType::Function)
+      return false;
+    return std::any_of(source->overloads.begin(), source->overloads.end(),
+                       [&](const CallableCandidate &candidate) {
+                         return functionItemCandidateIsEligible(candidate) &&
+                                SemanticType::functionItemType(
+                                    candidate.id, candidate.returnType,
+                                    candidate.parameterTypes) == argument;
+                       });
   }
   const FreshTemporaryValueAssessment assessment =
       freshTemporaryValue(expression);
@@ -945,8 +976,15 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
                                                deferred)) {
     return CallArgumentMatchKind::Exact;
   }
-  if (!deferred && ephemeralTemporaryArgumentMatches(function, parameter,
-                                                     argument, expression)) {
+  const auto *itemContract = argument.kind == SemanticType::FunctionItem
+                                 ? callableParameterContract(function.id, index)
+                                 : nullptr;
+  if ((!deferred || argument.kind == SemanticType::FunctionItem) &&
+      (argument.kind != SemanticType::FunctionItem ||
+       (itemContract &&
+        itemContract->boundary == CallableBoundary::Confined)) &&
+      ephemeralTemporaryArgumentMatches(function, parameter, argument,
+                                        expression)) {
     return CallArgumentMatchKind::EphemeralReadBorrow;
   }
   return CallArgumentMatchKind::Mismatch;
@@ -1424,6 +1462,26 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
     bool requireExactNullParameter, bool contextualConstruction,
     std::vector<const ConstructorInfo *> *candidateProbe) -> void {
+  selectConstructorCallArguments(&construction, nullptr, classId, typeArguments,
+                                 valueArguments, std::move(arguments), paren,
+                                 requireExactNullParameter,
+                                 contextualConstruction, candidateProbe);
+}
+
+auto SemanticVisitor::Impl::selectConstructorCallArguments(
+    const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments,
+    std::vector<AnalyzedCallArgument> arguments, const Token &paren,
+    bool requireExactNullParameter, bool contextualConstruction,
+    std::vector<const ConstructorInfo *> *candidateProbe) -> void {
+  if ((construction == nullptr) == (emptyReturn == nullptr) ||
+      (emptyReturn != nullptr &&
+       (emptyReturn->value() || !arguments.empty() || !contextualConstruction ||
+        candidateProbe != nullptr))) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
   // A probe collects the constructors whose parameter types take these
   // arguments, whatever access or ownership the selection would then
   // require. It reports nothing and records nothing.
@@ -1493,10 +1551,10 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   // Resolve this before converting-constructor overload selection, including
   // deleted/private special members. The producer owns all actual execution.
   const ExprPtr *writtenSource = nullptr;
-  if (const auto *call = exprAs<Call>(&construction);
+  if (const auto *call = exprAs<Call>(construction);
       call != nullptr && call->arguments().size() == 1)
     writtenSource = &call->arguments().front();
-  else if (const auto *direct = exprAs<DirectInitializer>(&construction);
+  else if (const auto *direct = exprAs<DirectInitializer>(construction);
            direct != nullptr && direct->arguments().size() == 1)
     writtenSource = &direct->arguments().front();
   if (candidateProbe == nullptr && !requireExactNullParameter &&
@@ -1506,7 +1564,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       arguments.front().expression == writtenSource &&
       semanticModel.isFreshClassResult(**arguments.front().expression)) {
     semanticModel.record(
-        construction,
+        *construction,
         ResolvedConstructionInfo{
             .constructedType = constructedType,
             .parameterTypes = {constructedType},
@@ -1515,7 +1573,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                                 : BorrowOriginKind::None,
             .borrowAccess = borrowAccess(constructedType),
             .directInitialization = true});
-    recordSelectedConstructionOccurrence(construction);
+    recordSelectedConstructionOccurrence(*construction);
     currentType = constructedType;
     return;
   }
@@ -1765,7 +1823,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     return;
   }
 
-  if (arguments.empty() && defaultConstructor(owner) == nullptr &&
+  if (!contextualConstruction && arguments.empty() &&
+      defaultConstructor(owner) == nullptr &&
       classCanGenerateDefaultConstructor(constructedType)) {
     viable.push_back({nullptr, {}, {}, {}, true, ConstructorKind::Ordinary});
   }
@@ -2037,8 +2096,8 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
-    if (!contextualConstruction &&
-        semanticModel.unsafeOperation(construction) ==
+    if (!contextualConstruction && construction != nullptr &&
+        semanticModel.unsafeOperation(*construction) ==
             UnsafeOperationKind::ObjectLifetime) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2055", DiagnosticPhase::Semantics, paren,
@@ -2056,8 +2115,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       return;
     }
     const bool missing = unsafeDepth == 0;
-    requireUnsafe(construction, UnsafeOperationKind::DeclaredUnsafeConstruction,
-                  paren, "Calling an unsafe constructor");
+    if (construction != nullptr)
+      requireUnsafe(*construction,
+                    UnsafeOperationKind::DeclaredUnsafeConstruction, paren,
+                    "Calling an unsafe constructor");
+    else if (missing)
+      report(paren, "Calling an unsafe constructor requires an unsafe block.",
+             "GTI-S2055");
     if (missing && selected.constructor->declaration != nullptr) {
       diagnostics.back().related.push_back(
           {tokenSpan(*selected.constructor->declaration->unsafeKeyword()),
@@ -2255,16 +2319,30 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
         resolved.borrowOrigin = BorrowOriginKind::Argument;
         resolved.borrowArgument = summary->dependencies.front().parameter;
       }
-      semanticModel.recordBorrowDependencySet(construction, *dependencies);
+      if (construction != nullptr)
+        semanticModel.recordBorrowDependencySet(*construction, *dependencies);
+      else if (!dependencies->dependencies.empty())
+        report(paren,
+               "An empty return cannot retain dependencies from constructor "
+               "default arguments.",
+               "GTI-S2045");
     }
   }
-  if (contextualConstruction) {
+  if (emptyReturn != nullptr) {
+    if (currentProgramEffectOwner.valid())
+      static_cast<void>(
+          recordProgramConstructionEffects(tokenSpan(paren), resolved, 0));
+    semanticModel.recordEmptyReturnConstruction(
+        *emptyReturn, std::move(resolved),
+        selected.constructor != nullptr &&
+            selected.constructor->requiresUnsafe);
+  } else if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
-    semanticModel.recordContextualConstruction(construction,
+    semanticModel.recordContextualConstruction(*construction,
                                                std::move(resolved), paren);
   } else {
-    semanticModel.record(construction, std::move(resolved));
-    recordSelectedConstructionOccurrence(construction);
+    semanticModel.record(*construction, std::move(resolved));
+    recordSelectedConstructionOccurrence(*construction);
   }
   currentType = constructedType;
 }

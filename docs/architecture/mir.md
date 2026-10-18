@@ -370,7 +370,7 @@ permit unconditional result initialization. MIR independently rejects missing
 failure edges and malformed result activation.
 
 Function rows retain optional declaration-relative complete result dependency
-contracts. For the initial known-empty enum slice, MIR independently validates
+contracts. MIR independently validates
 each declared alternative's exact concrete type, tag and dependency-free
 payload layout, then reconstructs facts at every reachable normal return. The
 actual alternatives must be covered by the declaration contract; additional
@@ -393,7 +393,26 @@ every case is a distinct no-normal-result state, never a complete empty result.
 The utility only handles typed guard/domain relationships. Semantic analysis
 and MIR must independently establish the actual argument origins and supplier
 states; neither shares an origin interpreter or trusts the other's attached
-facts. Nonempty call substitution remains an integration prerequisite.
+facts. Nonempty call substitution preserves the complete guarded external
+dependency group rather than selecting one representative origin.
+
+Constructor rows also retain complete result contracts. For a conditional
+borrowed field, verification requires the exact `Initialize` destination and
+operand, its independently reconstructed complete value fact, and a distinct
+escaping Stored field group published after initialization. Publication must
+preserve every origin, access, path and guard before retiring the producer's
+group. The published field group remains active at every normal constructor
+exit. Known-empty alternatives require positive typed evidence and publish no
+manufactured loan. The current source constructor slice uses an empty body
+and one common nominal field prefix; unrelated sibling obligations cannot be
+dropped during projection.
+
+A consuming receiver transfers its complete stored group through the ordinary
+ordered call-input stages. A reference result may outlive the consumed shell
+only when the independently checked callee contract derives it from the
+retained external owners. Exact receiver entry identity and access, selected
+alternative proof, group transfer and retirement remain separate requirements;
+a receiver-owned origin cannot escape its destroyed shell.
 
 Program schema 110 also preserves whether a function's resolved
 `borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
@@ -3647,6 +3666,17 @@ producer/target, borrowed state, an escaping result, producer/input reordering,
 premature or missing loan ending, and a missing or duplicate drop. The backend
 therefore consumes a complete schedule rather than relying on C++ reference
 lifetime rules.
+
+Fresh read-only callable arguments extend that same schedule with exact
+`Closure` and `FunctionItem` producers, not an implicit owning copy. A closure
+containing borrowed captures must have its own producer-published `Stored`
+dependency group. Its `CallArgument` shell retains that exact group as
+`storedDependency`; independent closure verification still proves every capture
+identity, selected origin, access and parent dependency. The shell loan ends
+after the call, while captured dependencies survive until the full-expression
+closure cleanup finishes. Missing, substituted or prematurely ended capture
+dependencies are invalid MIR. The ordinary confined callable contract and
+invocation capability checks remain required independently of materialization.
 
 An ordinary enum observer and the generated `has_value` observation for
 source-defined propagation use the same schedule. Their materialization may be the

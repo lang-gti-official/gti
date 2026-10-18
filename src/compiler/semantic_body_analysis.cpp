@@ -929,7 +929,7 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
   }
   if (containsOpenTypeParameter(sequenceType)) {
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
-    loanFlow.deferredConstexprSelection = true;
+    loanFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     return;
   }
@@ -3384,7 +3384,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
   const bool canFallThrough = functionFlow.canFallThrough;
   if (functionInfo != nullptr && functionInfo->neverReturns &&
-      !loanFlow.deferredConstexprSelection && !functionErrors() &&
+      !loanFlow.deferredGenericFlow && !functionErrors() &&
       (canFallThrough || functionFlow.normalReturn != nullptr)) {
     reportContract(
         functionFlow.normalReturn != nullptr
@@ -3395,7 +3395,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
   if (currentReturnType != SemanticType::Void &&
       currentReturnType != SemanticType::Unknown && !isEntryPoint &&
-      canFallThrough && !loanFlow.deferredConstexprSelection &&
+      canFallThrough && !loanFlow.deferredGenericFlow &&
       (functionInfo == nullptr || !functionInfo->neverReturns)) {
     const Token &location =
         stmt.operatorName() ? stmt.operatorName()->keyword : stmt.name();
@@ -3414,6 +3414,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     recordCompleteFunctionReturnBorrow(*functionInfo);
     if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
         currentReturnType.kind == SemanticType::Reference &&
+        !loanFlow.deferredGenericFlow &&
         !containsOpenTypeParameter(currentReturnType)) {
       const auto *checked = semanticModel.findFunction(stmt);
       if (!checked || !checked->completeReturnBorrow)
@@ -4256,7 +4257,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
 
     if (dependent && !instanceAnalysisActive) {
       semanticModel.recordConstexprBranch(stmt, std::nullopt);
-      loanFlow.deferredConstexprSelection = true;
+      loanFlow.deferredGenericFlow = true;
       requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
       return;
     }
@@ -4472,6 +4473,19 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     return;
   }
   if (!stmt.value()) {
+    if (containsOpenTypeParameter(currentReturnType)) {
+      requireInitializedReceiver(stmt.keyword());
+      return;
+    }
+    if (currentReturnType.kind == SemanticType::Class) {
+      selectConstructorCallArguments(nullptr, &stmt, currentReturnType.classId,
+                                     currentReturnType.arguments,
+                                     currentReturnType.valueArguments, {},
+                                     stmt.keyword(), false, true, nullptr);
+      recordEmptyReturnRawResult(stmt);
+      requireInitializedReceiver(stmt.keyword());
+      return;
+    }
     if (isExpectedVoid(currentReturnType)) {
       requireInitializedReceiver(stmt.keyword());
       return;
@@ -4598,6 +4612,27 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                        .order = loanFlow.currentOrder,
                                        .statement = &stmt});
   const SemanticType subjectType = analyze(stmt.expression());
+  if (!instanceAnalysisActive) {
+    const auto *receiver = receiverStateSymbol();
+    const auto *subjectPlace = semanticModel.findPlace(*stmt.expression());
+    const auto references = storedReferencePaths(subjectType);
+    if (receiver && containsOpenTypeParameter(receiver->type) && subjectPlace &&
+        subjectPlace->receiver &&
+        !completeBorrowDependencySet(stmt.expression()) &&
+        std::any_of(references.begin(), references.end(), [](const auto &path) {
+          return !path.conditions.empty();
+        })) {
+      // Open class arguments may add borrowed fields or alternatives. The
+      // symbolic inventory is not a complete origin proof. Defer only this
+      // dependent selection; every concrete instance must revisit it with its
+      // exact receiver inventory, while the rest of the body is still checked.
+      loanFlow.deferredGenericFlow = true;
+      requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+      loanFlow.switchBoundaries.pop_back();
+      loanFlow.switches.resize(loanSwitchIndex);
+      return;
+    }
+  }
   const EnumTypeInfo *payloadEnum =
       subjectType.kind == SemanticType::Enum
           ? semanticModel.findEnumType(subjectType.enumId)
@@ -8971,7 +9006,19 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       captureDependencies.push_back(std::move(dependency));
     } else if (typeTraits(captureType).containsBorrowedState) {
       auto dependencies = storedBorrowDependencies(capture.initializer);
-      if (storedReferencePaths(captureType).empty() || dependencies.empty())
+      const auto paths = storedReferencePaths(captureType);
+      // Expand the legacy single-reference abbreviation before composing it
+      // with the environment field. The exact source type owns that path.
+      if (paths.size() == 1 && dependencies.size() == 1 &&
+          dependencies.front().designatedFields.empty() &&
+          dependencies.front().access ==
+              paths.front().reference.referenceAccess) {
+        const auto fields =
+            storedFieldSymbols(captureType, paths.front().fields);
+        if (fields.size() == paths.front().fields.size())
+          dependencies.front().designatedFields = fields;
+      }
+      if (paths.empty() || dependencies.empty())
         report(capture.name,
                "Captured borrowed state requires complete checked dependency "
                "paths for its environment.",
@@ -9142,7 +9189,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentLambdaReturn = enclosingLambdaReturn;
   if (returnType != SemanticType::Void && returnType != SemanticType::Unknown &&
       summarizeFlow(expr.body()).canFallThrough &&
-      !loanFlow.deferredConstexprSelection) {
+      !loanFlow.deferredGenericFlow) {
     report(expr.arrow(),
            "Non-void lambda can reach the end without returning a value "
            "of type '" +
@@ -9152,8 +9199,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   finalizeLoanFlow();
 
   lambdaUncapturedLocals.pop_back();
-  const bool rawAccessFree = requestSession.rawAccessObservation == 0 &&
-                             !loanFlow.deferredConstexprSelection;
+  const bool rawAccessFree =
+      requestSession.rawAccessObservation == 0 && !loanFlow.deferredGenericFlow;
   requestSession.rawAccessObservation = enclosingRawAccessObservation;
   --lambdaDepth;
   --functionDepth;

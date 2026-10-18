@@ -3397,10 +3397,23 @@ private:
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
     if (const auto *source = findValue(sourceValue);
         source && source->info.type == output.values.back().info.type &&
-        source->borrowDependencies) {
+        source->borrowDependencies &&
+        !(source->info.category == ValueCategory::Place &&
+          output.values.back().info.category == ValueCategory::Value &&
+          !output.values.back().info.traits.containsBorrowedState &&
+          source->borrowDependencies->possibleAlternatives.empty() &&
+          std::all_of(source->borrowDependencies->dependencies.begin(),
+                      source->borrowDependencies->dependencies.end(),
+                      [](const auto &dependency) {
+                        return dependency.designatedFields.empty() &&
+                               dependency.conditions.empty();
+                      }))) {
       // Transport source-established complete sets, including known-empty
       // alternatives. MIR independently reconstructs their value/storage flow;
       // absence is never upgraded to an empty proof by lowering.
+      // A load from a borrowed scalar place reads through its address loan;
+      // the resulting dependency-free scalar does not retain that address.
+      // Stored-field dependencies and alternative domains still transport.
       MirBorrowDependencySet complete{
           .possibleAlternatives =
               source->borrowDependencies->possibleAlternatives};
@@ -5031,6 +5044,8 @@ private:
     if (temporary == nullptr ||
         (temporary->info.type.kind != SemanticType::Class &&
          temporary->info.type.kind != SemanticType::Enum &&
+         temporary->info.type.kind != SemanticType::Lambda &&
+         temporary->info.type.kind != SemanticType::FunctionItem &&
          (!allowExpected ||
           temporary->info.type.kind != SemanticType::Expected)) ||
         temporary->info.category != ValueCategory::Value ||
@@ -6195,7 +6210,9 @@ private:
           type.referenceAccess != AccessMode::ReadOnly ||
           type.arguments.size() != 1 ||
           (type.arguments.front().kind != SemanticType::Class &&
-           type.arguments.front().kind != SemanticType::Enum) ||
+           type.arguments.front().kind != SemanticType::Enum &&
+           type.arguments.front().kind != SemanticType::Lambda &&
+           type.arguments.front().kind != SemanticType::FunctionItem) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
           source->root != MirPlaceRootKind::Value ||
@@ -6207,6 +6224,14 @@ private:
       } else {
         inputLoan = createLoan(MirLoanKind::CallArgument, source->id,
                                AccessMode::ReadOnly, callSite);
+        if (source->traits.containsBorrowedState) {
+          const auto dependency =
+              findMirTemporaryCarrierDependency(output, *source);
+          if (!dependency || source->type.kind != SemanticType::Lambda)
+            valid = false;
+          else
+            output.loans[inputLoan - 1].storedDependency = dependency.loan->id;
+        }
         input.loan = inputLoan;
         scopes.back().loans.push_back(inputLoan);
       }
@@ -6636,8 +6661,13 @@ private:
             argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
             argument.kind == HirCallInputKind::ReadTemporaryBorrow
-                ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
-                                         argument.parameterType)
+                ? temporaryBorrowOperand(
+                      argument.value, AccessMode::ReadOnly,
+                      argument.parameterType, false,
+                      argument.parameterType.kind == SemanticType::Reference &&
+                          argument.parameterType.arguments.size() == 1 &&
+                          argument.parameterType.arguments.front().kind ==
+                              SemanticType::Lambda)
             : argument.kind == HirCallInputKind::CopyValue
                 ? copyArgumentOperand(argument.value, argument.parameterType)
                 : argumentOperand(argument.value, argument.parameterType);
@@ -7101,6 +7131,26 @@ private:
           std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
                     loan->id) == movedArgumentLoans.end())
         movedArgumentLoans.push_back(loan->id);
+    }
+    // A consuming method transfers its receiver by value just like an owned
+    // formal. Its external references can survive, but the returned capability
+    // must not remain a child of the consumed receiver's stored group.
+    if (!construction && value.borrowDependencies && value.functionTarget) {
+      const auto *target = program.findFunctionInstance(*value.functionTarget);
+      const auto receiver = receiverValue(value);
+      if (target && target->source && receiver &&
+          target->source->receiverMutability() ==
+              ReceiverMutability::Consuming) {
+        const auto moved = movedBorrowCarrierBinding(*receiver);
+        const auto found = bindingLoans.find(moved);
+        const auto *loan = found == bindingLoans.end()
+                               ? nullptr
+                               : output.findLoan(found->second);
+        if (moved && loan && loan->kind == MirLoanKind::Stored &&
+            std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
+                      loan->id) == movedArgumentLoans.end())
+          movedArgumentLoans.push_back(loan->id);
+      }
     }
     call.borrowOrigin = value.borrowOrigin;
     call.borrowArgument = value.borrowArgument;
@@ -10296,6 +10346,13 @@ private:
             sourcePlace = projectBorrowFields(retained->source, fields);
           else if (retained) {
             if (retained->designatedFields == fields)
+              sourcePlace = retained->source;
+            // Semantics expands a compact one-reference source into its exact
+            // field path before prefixing the capture. Program verification
+            // independently checks that the source has precisely that path.
+            else if (retained->designatedFields.empty() &&
+                     retained->additionalDependencies.empty() &&
+                     !fields.empty())
               sourcePlace = retained->source;
             for (const auto &nested : retained->additionalDependencies)
               if (nested.designatedFields == fields)

@@ -116,7 +116,7 @@ default-argument rules are therefore shared rather than restated. In this
 contextual mode, selection considers only constructors whose
 `ConstructorInfo::implicitConstruction` records a valid `implicit` modifier;
 declaration collection rejects the modifier on copy/move policies, packs and
-constructors that cannot take exactly one explicit argument (`GTI-S2121`), and
+constructors that cannot take zero or one explicit arguments (`GTI-S2121`), and
 the parser rejects it beside `unsafe`.
 `SemanticModel::recordContextualConstruction` keeps the selection and its site
 beside the initializer's own expression, call and construction records, which
@@ -133,6 +133,16 @@ range-element bindings, reference fields, unions, abstract classes,
 borrow-carrying declared types, or initializers typed by their destination
 (brace lists, contextually typed calls and function names). Calls, returns and
 assignment never consult it.
+
+Bare class-valued returns use the same constructor selector with zero explicit
+inputs and the implicit-only filter. They do not create a fake expression:
+`SemanticEmptyReturnConstructionProof` binds the exact `ReturnStmt`, selected
+construction and semantic snapshot. Concrete generic models issue their own
+proof. HIR carries it in `HirEmptyReturnConstruction`, verifies the exact target,
+defaults, statement result and full-expression root, and emits an ordinary
+constructor call with the usual failure/cleanup behavior. Instance-delta resets
+clear these records. Unknown raw-address fields stay unknown rather than
+becoming trusted because the return had no written argument.
 
 ## Conversion operators
 

@@ -730,6 +730,7 @@ private:
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
             .kind = info->kind,
+            .definitionFamilyPrimary = info->definitionFamilyPrimary,
             .exactSpecializationPrimary = info->exactSpecializationPrimary,
             .exactTypeArguments = info->exactTypeArguments,
             .exactValueArguments = info->exactValueArguments,

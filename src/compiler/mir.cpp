@@ -663,6 +663,12 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                   (instruction.kind == MirInstructionKind::Compute &&
                    instruction.operation == MirOperation::PayloadConstruct &&
                    instruction.info.type.kind == SemanticType::Enum) ||
+                  (instruction.kind == MirInstructionKind::Compute &&
+                   ((instruction.operation == MirOperation::Closure &&
+                     instruction.info.type.kind == SemanticType::Lambda) ||
+                    (instruction.operation == MirOperation::FunctionItem &&
+                     instruction.info.type.kind ==
+                         SemanticType::FunctionItem))) ||
                   (place.root == MirPlaceRootKind::Temporary &&
                    (instruction.kind == MirInstructionKind::Move ||
                     instruction.kind == MirInstructionKind::Load) &&
@@ -689,7 +695,8 @@ MirTemporaryCarrierDependency
 findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   if ((place.root != MirPlaceRootKind::Value &&
        place.root != MirPlaceRootKind::Temporary) ||
-      place.type.kind != SemanticType::Class ||
+      (place.type.kind != SemanticType::Class &&
+       place.type.kind != SemanticType::Lambda) ||
       !place.traits.containsBorrowedState ||
       place.access != AccessMode::Mutable) {
     return {};
@@ -714,6 +721,17 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
       loan->producedBy != place.sourceValue || loan->storedField != 0) {
     return {};
   }
+  // A closure's complete capture group is published only by its exact Closure
+  // producer. Program verification separately ties every group member to the
+  // selected lambda's capture identity, origin and access.
+  if (place.type.kind == SemanticType::Lambda &&
+      (producer->kind != MirInstructionKind::Compute ||
+       producer->operation != MirOperation::Closure ||
+       !producer->lambdaTarget || producer->functionTarget ||
+       producer->constructorTarget || producer->closureCaptureTypes.empty() ||
+       producer->closureCaptureTypes.size() != producer->operands.size() ||
+       producer->closureCaptureModes.size() != producer->operands.size()))
+    return {};
   // A cursor may borrow a stable carrier's physical shell while that carrier
   // retains external owners. Its exact producer-owned Stored loan remains
   // the temporary's dependency; do not flatten or discard the separately
@@ -5116,6 +5134,18 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         block.terminator.kind == MirTerminatorKind::ContainFailure ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       for (const MirLoan &loan : body.loans) {
+        // A conditional field's exact external group must still be live when
+        // construction succeeds, independently of whether cleanup uses it.
+        // This additional rejection never grants publication authority.
+        if (body.kind == MirBodyKind::Constructor &&
+            block.terminator.kind == MirTerminatorKind::Return &&
+            loan.kind == MirLoanKind::Stored && loan.escapes &&
+            loan.storedField != 0 && !loan.conditions.empty() &&
+            active[loan.id - 1] != MirLoanFlowState::Active)
+          return failure(body, owner,
+                         "conditional constructor field publication is not "
+                         "active at normal exit",
+                         block.id);
         // A successful constructor publishes every cleanup-bound field along
         // with its dependency. An inactive loan is not harmless here: it
         // would let the constructed guard outlive the resource its destructor
@@ -10479,7 +10509,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           input.info.type.referenceAccess != AccessMode::ReadOnly ||
           input.info.type.arguments.size() != 1 ||
           (input.info.type.arguments.front().kind != SemanticType::Class &&
-           input.info.type.arguments.front().kind != SemanticType::Enum) ||
+           input.info.type.arguments.front().kind != SemanticType::Enum &&
+           input.info.type.arguments.front().kind != SemanticType::Lambda &&
+           input.info.type.arguments.front().kind !=
+               SemanticType::FunctionItem) ||
           input.info.category != ValueCategory::Value ||
           operand.kind != MirOperandKind::BorrowRead ||
           operand.type != input.info.type) {
@@ -10494,6 +10527,20 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const MirValue *source = materialization.value;
       const MirInstruction *producer = materialization.producer;
       const MirLoan *loan = body.findLoan(*input.loan);
+      const auto captureDependency =
+          place && referent.kind == SemanticType::Lambda
+              ? findMirTemporaryCarrierDependency(body, *place)
+              : MirTemporaryCarrierDependency{};
+      const bool callableConstruction =
+          producer && producer->kind == MirInstructionKind::Compute &&
+          ((referent.kind == SemanticType::Lambda &&
+            producer->operation == MirOperation::Closure &&
+            producer->lambdaTarget && !producer->functionTarget &&
+            !producer->constructorTarget) ||
+           (referent.kind == SemanticType::FunctionItem &&
+            producer->operation == MirOperation::FunctionItem &&
+            producer->functionTarget && !producer->lambdaTarget &&
+            !producer->constructorTarget));
       const bool ordinaryConstruction =
           producer != nullptr &&
           producer->kind == MirInstructionKind::Construct &&
@@ -10524,15 +10571,20 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           source->sourceValue != input.hirValue ||
           source->info.type != referent ||
           source->info.category != ValueCategory::Value ||
-          source->info.traits.containsBorrowedState ||
+          source->info.traits.containsBorrowedState !=
+              bool(captureDependency) ||
+          loan->storedDependency !=
+              (captureDependency ? captureDependency.loan->id : 0) ||
           !sameCallInputTraits(place->traits, source->info.traits) ||
           !producer->result || *producer->result != source->id ||
           producer->hirValue != input.hirValue ||
           producer->info.type != referent ||
           producer->info.category != ValueCategory::Value ||
-          producer->info.traits.containsBorrowedState ||
+          producer->info.traits.containsBorrowedState !=
+              bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
-          (!ordinaryConstruction && !ordinaryCall && !payloadConstruction)) {
+          (!ordinaryConstruction && !ordinaryCall && !payloadConstruction &&
+           !callableConstruction)) {
         return false;
       }
 
@@ -11288,7 +11340,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      "semantic loan " + std::to_string(loan.semanticLoan) +
                          " is represented by more than one MIR loan");
     }
-    if (loan.storedField != 0 && !loan.designatedFields.empty()) {
+    // The destination field and its field-relative external dependency path
+    // are distinct. Program verification additionally requires the exact
+    // initialized operand, whole-group publication and normal-exit coverage.
+    const bool conditionalFieldPublication =
+        body.kind == MirBodyKind::Constructor &&
+        loan.kind == MirLoanKind::Stored && loan.escapes && !loan.entry &&
+        loan.storedField != 0 && loan.producedBy != 0 && loan.parent == 0 &&
+        loan.storedDependency == 0 && !loan.conditions.empty();
+    if (loan.storedField != 0 && !loan.designatedFields.empty() &&
+        !conditionalFieldPublication) {
       return failure(body, owner,
                      "loan " + std::to_string(loan.id) +
                          " cannot both initialize and designate a stored "
@@ -11296,7 +11357,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     if (!loan.designatedFields.empty() &&
         !((loan.kind == MirLoanKind::Stored && !loan.escapes) ||
-          (loan.kind == MirLoanKind::Return && loan.escapes))) {
+          (loan.kind == MirLoanKind::Return && loan.escapes) ||
+          conditionalFieldPublication)) {
       return failure(body, owner,
                      "loan " + std::to_string(loan.id) +
                          " designates a stored referent without being one "
@@ -11333,7 +11395,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
            (!receiver || source->root != MirPlaceRootKind::Temporary)) ||
           !source->projections.empty() ||
           (source->type.kind != SemanticType::Class &&
-           (receiver || source->type.kind != SemanticType::Enum)) ||
+           source->type.kind != SemanticType::Lambda &&
+           (receiver || (source->type.kind != SemanticType::Enum &&
+                         source->type.kind != SemanticType::FunctionItem))) ||
           source->access != AccessMode::Mutable ||
           source->traits.containsBorrowedState != receiver ||
           (!receiver && loan.storedDependency != 0)) {
@@ -12179,6 +12243,75 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                            std::to_string(firstOrigin->outcomes.size())),
             block.id, instruction.id);
       }
+      const auto exactPayloadFieldPublication =
+          [&](const MirOperand &operand, const MirInstruction &producer) {
+            const auto *published =
+                instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+            const auto *retained = body.findLoan(operand.loan);
+            const auto *value = body.findValue(operand.value);
+            if (body.kind != MirBodyKind::Constructor || !published ||
+                !retained || !value || published->kind != MirLoanKind::Stored ||
+                !published->storedField ||
+                retained->kind != MirLoanKind::Stored || retained->entry ||
+                retained->escapes || operand.place ||
+                value->info.type != operand.type ||
+                producer.id != value->definition ||
+                producer.result != operand.value ||
+                producer.loan != retained->id ||
+                producer.hirValue != retained->producedBy ||
+                producer.kind != MirInstructionKind::Compute ||
+                producer.operation != MirOperation::PayloadConstruct ||
+                operand.type.kind != SemanticType::Enum ||
+                !producer.enumOwner || !producer.enumVariant ||
+                !value->borrowDependencies ||
+                value->borrowDependencies->dependencies.empty() ||
+                !published->escapes || published->entry || published->parent ||
+                published->storedDependency || retained->storedDependency ||
+                published->producedBy != producer.hirValue ||
+                published->source != retained->source ||
+                published->access != retained->access ||
+                published->designatedFields != retained->designatedFields ||
+                published->conditions != retained->conditions ||
+                published->additionalDependencies !=
+                    retained->additionalDependencies)
+              return false;
+            std::vector<MirLoanDependency> exact{
+                {.source = retained->source,
+                 .parent = retained->parent,
+                 .designatedFields = retained->designatedFields,
+                 .access = retained->access,
+                 .conditions = retained->conditions}};
+            exact.insert(exact.end(), retained->additionalDependencies.begin(),
+                         retained->additionalDependencies.end());
+            if (exact != value->borrowDependencies->dependencies)
+              return false;
+            bool initialized = false;
+            for (const auto &stage : block.instructions) {
+              if (stage.id == instruction.id)
+                break;
+              if (stage.kind != MirInstructionKind::Initialize ||
+                  stage.hirValue != producer.hirValue)
+                continue;
+              const auto *destination = stage.destination
+                                            ? body.findPlace(*stage.destination)
+                                            : nullptr;
+              if (initialized || !stage.constructorInitializer ||
+                  !destination || destination->root != MirPlaceRootKind::This ||
+                  destination->projections.size() != 1 ||
+                  destination->projections.front().kind !=
+                      MirProjectionKind::Field ||
+                  destination->projections.front().field !=
+                      published->storedField ||
+                  destination->type != operand.type ||
+                  stage.operands.size() != 1 ||
+                  stage.operands.front().kind != MirOperandKind::Value ||
+                  stage.operands.front().value != operand.value ||
+                  stage.operands.front().type != operand.type)
+                return false;
+              initialized = true;
+            }
+            return initialized;
+          };
       const bool invalidLoanValueEvidence = std::any_of(
           instruction.operands.begin(), instruction.operands.end(),
           [&](const MirOperand &operand) {
@@ -12216,8 +12349,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                     definition->instructions.begin(),
                     definition->instructions.end(), [&](const auto &producer) {
                       return producer.id == value->definition &&
-                             producer.kind == MirInstructionKind::Construct &&
-                             producer.constructorTarget &&
+                             ((producer.kind == MirInstructionKind::Construct &&
+                               producer.constructorTarget) ||
+                              exactPayloadFieldPublication(operand,
+                                                           producer)) &&
                              producer.result == operand.value &&
                              producer.loan == retained->id &&
                              producer.hirValue == retained->producedBy;
@@ -12613,8 +12748,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                   constructedBlock->instructions.end(),
                   [&](const auto &producer) {
                     return producer.id == constructedValue->definition &&
-                           producer.kind == MirInstructionKind::Construct &&
-                           producer.constructorTarget &&
+                           ((producer.kind == MirInstructionKind::Construct &&
+                             producer.constructorTarget) ||
+                            exactPayloadFieldPublication(source, producer)) &&
                            producer.result == source.value &&
                            producer.loan == retained->id &&
                            producer.hirValue == retained->producedBy;

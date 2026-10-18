@@ -644,19 +644,24 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
 auto SemanticVisitor::Impl::recordProgramConstructionEffects(
     const Expr &site, const ResolvedConstructionInfo &construction,
     std::size_t suppliedArguments) -> bool {
+  return recordProgramConstructionEffects(tokenSpan(expressionToken(site)),
+                                          construction, suppliedArguments);
+}
+
+auto SemanticVisitor::Impl::recordProgramConstructionEffects(
+    const SourceSpan &span, const ResolvedConstructionInfo &construction,
+    std::size_t suppliedArguments) -> bool {
   recordProgramConstructorDefaultArgumentEffects(
-      programConstructor(construction.constructor), suppliedArguments,
-      tokenSpan(expressionToken(site)));
+      programConstructor(construction.constructor), suppliedArguments, span);
   if (construction.constructedType.kind != SemanticType::Class ||
       construction.constructedType.classId == 0) {
     return false;
   }
   if (hasOpenProgramCleanupShape(construction.constructedType)) {
-    addUnknownProgramEffect(site, "a generic construction has no closed "
+    addUnknownProgramEffect(span, "a generic construction has no closed "
                                   "program-storage effect summary");
     return true;
   }
-  const SourceSpan span = tokenSpan(expressionToken(site));
   if (construction.generatedDefault || construction.constructor == 0) {
     recordProgramDefaultConstructionEffects(construction.constructedType, span);
   } else {
@@ -6530,8 +6535,11 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
   const bool payloadEnum = info != nullptr && payloadEnumType(info->type);
+  const bool callable =
+      info != nullptr && (info->type.kind == SemanticType::Lambda ||
+                          info->type.kind == SemanticType::FunctionItem);
   if (info == nullptr || info->category != ValueCategory::Value ||
-      (info->type.kind != SemanticType::Class && !payloadEnum)) {
+      (info->type.kind != SemanticType::Class && !payloadEnum && !callable)) {
     return result;
   }
   result.type = info->type;
@@ -6539,7 +6547,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  if (!payloadEnum) {
+  if (!payloadEnum && !callable) {
     const ClassInfo *record = classInfo(info->type);
     if (record == nullptr || (record->kind != ClassKind::Class &&
                               record->kind != ClassKind::Struct)) {
@@ -6547,7 +6555,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       return result;
     }
   }
-  if (info->traits.containsBorrowedState) {
+  if (info->traits.containsBorrowedState && !callable) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
     return result;
   }
@@ -6555,6 +6563,26 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  if (callable) {
+    const auto *lambda = exprAs<Lambda>(producer);
+    const auto *declaration =
+        lambda ? semanticModel.findLambda(*lambda) : nullptr;
+    const auto *item = semanticModel.findFunctionItemSelection(*producer);
+    result.eligible =
+        (declaration && info->type.kind == SemanticType::Lambda &&
+         declaration->id == info->type.lambdaId &&
+         declaration->capability == CallableInvocationCapability::Read &&
+         (!info->traits.containsBorrowedState ||
+          !semanticModel.findCaptureBorrowDependencies(*producer).empty())) ||
+        (item && info->type.kind == SemanticType::FunctionItem &&
+         item->type == info->type && item->function != 0 && item->declaration &&
+         item->capability == CallableInvocationCapability::Read &&
+         !info->traits.containsBorrowedState);
+    result.failure = result.eligible
+                         ? FreshTemporaryValueFailure::None
+                         : FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
   }
   if (payloadEnum) {
@@ -7445,7 +7473,7 @@ auto SemanticVisitor::Impl::reinitializePlace(const SemanticPlace &place)
 auto SemanticVisitor::Impl::reportUnavailablePlace(
     const Token &use, const ProjectedValueState &state,
     const SemanticPlace *place) -> void {
-  if (loanFlow.deferredConstexprSelection) {
+  if (loanFlow.deferredGenericFlow) {
     return;
   }
   std::string name = place != nullptr && place->receiver ? "this"
@@ -7509,7 +7537,7 @@ auto SemanticVisitor::Impl::analyzeProjectionBase(const ExprPtr &expression)
 auto SemanticVisitor::Impl::requireInitializedReceiver(const Token &location)
     -> void {
   if (currentReceiverMutability == ReceiverMutability::Consuming ||
-      loanFlow.deferredConstexprSelection) {
+      loanFlow.deferredGenericFlow) {
     return;
   }
   const Symbol *receiver = receiverStateSymbol();
@@ -7547,7 +7575,7 @@ auto SemanticVisitor::Impl::packRequiresMove(const SemanticType &type) const
 auto SemanticVisitor::Impl::reportUnavailableValue(const Token &use,
                                                    const Symbol &symbol)
     -> void {
-  if (loanFlow.deferredConstexprSelection) {
+  if (loanFlow.deferredGenericFlow) {
     return;
   }
   report(use,
@@ -8560,6 +8588,28 @@ auto SemanticVisitor::Impl::recordRawConstructorResult(
     parameterTypes.push_back(typeOf(parameter));
   collectRawResultFields(rawPointerFieldsAt({.receiver = true}),
                          constructor.parameters(), parameterTypes, true);
+}
+
+auto SemanticVisitor::Impl::recordEmptyReturnRawResult(
+    const ReturnStmt &statement) -> void {
+  if (!rawAuditEnabled())
+    return;
+  const auto query = requestSession.collectingRawResult;
+  const auto *function = currentFunctionInfo();
+  if (!query || !function || function->id != query->function ||
+      lambdaDepth != 0)
+    return;
+  // A default constructor may create arbitrary addresses. Until its body is
+  // queried, absence of a source argument must not imply proven-safe fields.
+  std::vector<ProjectedRawPointerOrigins> fields;
+  for (auto path : rawPointerFieldPaths(currentReturnType))
+    mergeRawPointerFields(
+        fields,
+        {{std::move(path),
+          {{.addressSite = tokenSpan(statement.keyword()),
+            .sourceResultQuery = std::numeric_limits<std::size_t>::max()}}}});
+  collectRawResultFields(fields, function->bodyDeclaration()->parameters(),
+                         function->parameterTypes, false);
 }
 
 auto SemanticVisitor::Impl::collectRawResultFields(

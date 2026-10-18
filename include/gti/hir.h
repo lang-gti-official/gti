@@ -258,6 +258,7 @@ struct HirValue {
   bool neverReturns = false;
   bool tracksCaller = false;
   std::optional<CallerLocationOrigin> callerLocation;
+  std::optional<SemanticCallerLocationProof> callerLocationProof;
   std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
@@ -440,6 +441,12 @@ struct HirContextualConstruction {
   HirValueId value = 0;
 };
 
+struct HirEmptyReturnConstruction {
+  const ReturnStmt *source = nullptr;
+  HirValueId value = 0;
+  std::optional<SemanticEmptyReturnConstructionProof> constructionProof;
+};
+
 struct HirBody {
   PlaceDomain placeDomain;
   std::vector<HirBinding> bindings;
@@ -449,6 +456,7 @@ struct HirBody {
   std::vector<HirValue> values;
   std::vector<HirDirectInitialization> directInitializations;
   std::vector<HirContextualConstruction> contextualConstructions;
+  std::vector<HirEmptyReturnConstruction> emptyReturnConstructions;
   // Source expressions that semantics aliased to another expression (a
   // reflected field access and the projection it denotes): the source shares
   // the aliased expression's value without a value of its own.

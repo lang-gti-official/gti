@@ -7018,6 +7018,15 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
       producer != nullptr && producer->kind == MirInstructionKind::Compute &&
       producer->operation == MirOperation::PayloadConstruct &&
       sourceType.kind == SemanticType::Enum;
+  const bool callableConstruction =
+      producer != nullptr && producer->kind == MirInstructionKind::Compute &&
+      ((producer->operation == MirOperation::Closure &&
+        sourceType.kind == SemanticType::Lambda && producer->lambdaTarget &&
+        !producer->functionTarget && !producer->constructorTarget) ||
+       (producer->operation == MirOperation::FunctionItem &&
+        sourceType.kind == SemanticType::FunctionItem &&
+        producer->functionTarget && !producer->lambdaTarget &&
+        !producer->constructorTarget));
   // The independent program verifier binds this targetless construction to
   // the exact owner's generated default constructor. Preserve its existing
   // explicit value-slot lifecycle just like a source-declared constructor.
@@ -7033,7 +7042,8 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (borrowedValueStage && value->id != stage.operands.front().value) ||
       (!ordinaryConstruction && !functionCall && !generatedDefault &&
-       !expectedExtraction && !joinedTemporary && !payloadConstruction) ||
+       !expectedExtraction && !joinedTemporary && !payloadConstruction &&
+       !callableConstruction) ||
       value->sourceValue != stage.hirValue || value->info.type != sourceType ||
       !producer->result || *producer->result != value->id ||
       producer->hirValue != stage.hirValue ||
@@ -7186,7 +7196,9 @@ temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
                        std::size_t index) {
   if (call.kind != MirInstructionKind::Call || call.callSite == 0 ||
       !call.functionTarget || call.constructorTarget || call.lambdaTarget ||
-      call.bodyTarget || call.callableInvocation ||
+      call.bodyTarget ||
+      (call.callableInvocation &&
+       (!call.receiver || call.receiver->type.kind != SemanticType::Class)) ||
       call.intrinsic != IntrinsicKind::None || index >= call.operands.size()) {
     return {};
   }
@@ -7196,7 +7208,9 @@ temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
       operand.type.referenceAccess != AccessMode::ReadOnly ||
       operand.type.arguments.size() != 1 ||
       (operand.type.arguments.front().kind != SemanticType::Class &&
-       operand.type.arguments.front().kind != SemanticType::Enum)) {
+       operand.type.arguments.front().kind != SemanticType::Enum &&
+       operand.type.arguments.front().kind != SemanticType::Lambda &&
+       operand.type.arguments.front().kind != SemanticType::FunctionItem)) {
     return {};
   }
   const MirValue *stageValue = body.findValue(operand.value);
@@ -7248,15 +7262,18 @@ directTemporaryArgument(const MirBody &body, const MirInstruction &call,
                                                 const MirBody &body,
                                                 const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Value || !place.projections.empty() ||
-      place.type.kind != SemanticType::Enum ||
+      (place.type.kind != SemanticType::Enum &&
+       place.type.kind != SemanticType::FunctionItem) ||
       place.access != AccessMode::Mutable || !place.sourceValue ||
       place.initiallyAvailable)
     return false;
   const auto materialization =
       findMirTemporaryMaterialization(body, place, place.sourceValue);
   const auto *enumeration = program.findPayloadEnum(place.type);
-  if (!materialization || !enumeration || enumeration->requiresActiveCleanup ||
-      enumeration->traits != place.traits ||
+  const bool functionItem = place.type.kind == SemanticType::FunctionItem;
+  if (!materialization ||
+      (!functionItem && (!enumeration || enumeration->requiresActiveCleanup ||
+                         enumeration->traits != place.traits)) ||
       place.traits.ownership != OwnershipKind::Value ||
       place.traits.drop != DropKind::Trivial || !place.traits.copyable ||
       !place.traits.movable || place.traits.containsBorrowedState)
@@ -7266,10 +7283,16 @@ directTemporaryArgument(const MirBody &body, const MirInstruction &call,
   if (value.id != place.value || value.info.type != place.type ||
       value.info.traits != place.traits ||
       producer.kind != MirInstructionKind::Compute ||
-      producer.operation != MirOperation::PayloadConstruct ||
-      producer.info != value.info || producer.enumOwner != place.type.enumId ||
-      !producer.enumVariant ||
-      *producer.enumVariant >= enumeration->variants.size() ||
+      producer.info != value.info ||
+      (functionItem
+           ? (producer.operation != MirOperation::FunctionItem ||
+              !producer.functionTarget || producer.lambdaTarget ||
+              producer.constructorTarget || !producer.operands.empty() ||
+              !place.type.hasFunctionItemShape())
+           : (producer.operation != MirOperation::PayloadConstruct ||
+              producer.enumOwner != place.type.enumId ||
+              !producer.enumVariant ||
+              *producer.enumVariant >= enumeration->variants.size())) ||
       producer.destination || producer.receiver || producer.loan ||
       producer.ownership || !producer.definedFailure.empty() ||
       !producer.localFailureSites.empty() || producer.successResultDrop ||
@@ -12673,6 +12696,15 @@ lambdaValueDestination(const MirBody &body, MirValueId valueId) {
         directCopyLoad || directFunctionCall)) {
     return {};
   }
+  // A checked read-only argument observes the exact full-expression object.
+  // The same explicit slot is constructed once and retired by its value drop;
+  // no closure copy or parameter ownership transfer is introduced.
+  if (const auto temporary = directTemporaryArgumentForValue(body, valueId);
+      temporary && temporary.producer == definition &&
+      definition->operation == MirOperation::Closure) {
+    return {.slot = temporary.slot,
+            .publication = LambdaValuePublication::Direct};
+  }
   // An eagerly evaluated closure may live through a conditional call without
   // transferring into a named binding. Its exact value place carries storage;
   // an owning closure additionally retains its full-expression obligation.
@@ -12960,7 +12992,11 @@ materializedClosure(const MirProgram &program, const MirBody &body,
       destination->traits.drop == DropKind::Trivial &&
       (publication.publication == LambdaValuePublication::Passive ||
        publication.publication == LambdaValuePublication::Direct) &&
-      initialized == 0 && transferred == 0;
+      (initialized == 0 ||
+       (initialized == 1 &&
+        directTemporaryArgumentForValue(body, result->id).slot ==
+            destination)) &&
+      transferred == 0;
   if (!lexicalClosure && !passiveClosure) {
     return {};
   }
@@ -34546,16 +34582,26 @@ loanHasCppPointerCarrier(const MirProgram &program,
 [[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
                                             const MirBody &body,
                                             const MirPlace &place) {
-  if (place.root != MirPlaceRootKind::Binding || place.projections.empty())
+  if ((place.root != MirPlaceRootKind::Binding &&
+       place.root != MirPlaceRootKind::This) ||
+      place.projections.empty())
     return false;
-  const auto root = std::find_if(
-      body.places.begin(), body.places.end(), [&](const auto &candidate) {
-        return candidate.root == MirPlaceRootKind::Binding &&
-               candidate.binding == place.binding &&
-               candidate.symbol == place.symbol &&
-               candidate.projections.empty();
-      });
+  const auto root = std::find_if(body.places.begin(), body.places.end(),
+                                 [&](const auto &candidate) {
+                                   return sameMirPlaceRoot(candidate, place) &&
+                                          candidate.projections.empty();
+                                 });
   if (root == body.places.end())
+    return false;
+  // Receiver-owned enum fields have the same abstract referent paths as
+  // local carriers. Retain an exact, consistent copied root type; actual
+  // runtime addresses must still come from checked PayloadExtract below.
+  if (std::any_of(body.places.begin(), body.places.end(),
+                  [&](const auto &candidate) {
+                    return sameMirPlaceRoot(candidate, place) &&
+                           candidate.projections.empty() &&
+                           candidate.type != root->type;
+                  }))
     return false;
   SemanticType type = root->type;
   bool enumField = false;

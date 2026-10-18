@@ -68,6 +68,108 @@ void rejected(std::string source, std::string_view code,
 } // namespace
 
 int main() {
+  const auto emptyConstruction = analyze(R"(
+struct Completion {
+  int value;
+  implicit Completion(int value = 42) : value(value) {}
+};
+Completion complete() { return; }
+int main() { return complete().value - 42; }
+)");
+  expect(emptyConstruction.canGenerateCode(),
+         "empty return has a complete checked construction");
+  if (emptyConstruction.canGenerateCode()) {
+    expect(lang::verifyHirProgramPlans(emptyConstruction.semantics,
+                                       emptyConstruction.hir)
+               .valid(),
+           "empty return semantic proof validates independently");
+    for (int mutation = 0; mutation < 11; ++mutation) {
+      auto changed = emptyConstruction.hir;
+      bool found = false;
+      for (const auto &function : changed.functionInstances()) {
+        if (function.body.emptyReturnConstructions.empty())
+          continue;
+        found = true;
+        auto &body = const_cast<lang::HirBody &>(function.body);
+        auto &entry = body.emptyReturnConstructions.front();
+        auto *value = const_cast<lang::HirValue *>(body.findValue(entry.value));
+        switch (mutation) {
+        case 0:
+          entry.constructionProof.reset();
+          break;
+        case 1:
+          entry.source = nullptr;
+          break;
+        case 2:
+          value->constructorTarget.reset();
+          break;
+        case 3:
+          value->defaultArguments.clear();
+          break;
+        case 4:
+          value->callPlan->arguments.front().defaultArgument = false;
+          break;
+        case 5:
+          value->fullExpression = 0;
+          break;
+        case 6:
+          body.emptyReturnConstructions.push_back(entry);
+          break;
+        case 7:
+          body.emptyReturnConstructions.clear();
+          break;
+        case 8:
+          value->unsafeOperation =
+              lang::UnsafeOperationKind::DeclaredUnsafeConstruction;
+          break;
+        case 9:
+          value->info.type = lang::SemanticType::Bool;
+          break;
+        case 10:
+          value->borrowDependencies = lang::SemanticBorrowDependencySet{};
+          break;
+        }
+        break;
+      }
+      expect(found,
+             "empty return fixture contains a source construction proof");
+      expect(
+          !lang::verifyHirProgramPlans(emptyConstruction.semantics, changed)
+               .valid(),
+          "missing, altered and duplicated empty-return proofs are rejected");
+    }
+  }
+  accepted(R"(
+class Done<E> {
+public:
+  int value;
+  implicit Done(int initial = 42) : value(initial) {}
+};
+Done<int> finish() { return; }
+T finish_generic<T>() { return; }
+int main() { return finish().value + finish_generic<Done<int>>().value - 84; }
+)");
+  rejected(R"(
+struct Explicit { Explicit() {} };
+Explicit finish() { return; }
+int main() { return 0; }
+)",
+           "GTI-S2012", "constructor");
+  rejected(R"(
+class Hidden { implicit Hidden() {} };
+Hidden finish() { return; }
+int main() { return 0; }
+)",
+           "GTI-S2007", "private");
+  rejected(R"(
+struct Ambiguous {
+  implicit Ambiguous(int value = 1) {}
+  implicit Ambiguous(bool value = true) {}
+};
+Ambiguous finish() { return; }
+int main() { return 0; }
+)",
+           "GTI-S2013", "ambiguous");
   accepted(R"(
 #include <std/meta>
 static_assert(std::meta::type<void>().is_void());
@@ -75,6 +177,27 @@ static_assert(!std::meta::type<int>().is_void());
 static_assert(std::meta::type<int&>().is_reference());
 static_assert(!std::meta::type<int>().is_reference());
 int main() { return 0; }
+)");
+  accepted(R"(
+#include <std/meta>
+class Reply<T, E> {
+public:
+  Reply() {}
+  int kind() { return 1; }
+};
+class Reply<void, E> {
+public:
+  Reply() {}
+  int kind() { return 2; }
+};
+Reply<std::meta::callable_return_type<F>, int> invoke<F>(F& callback) {
+  callback();
+  return Reply<std::meta::callable_return_type<F>, int>();
+}
+int main() {
+  auto empty = []() -> void {};
+  return invoke(empty).kind() - 2;
+}
 )");
   const std::string client = R"(
 int inspect<T, E>(Packet<T, E>& packet) { return packet.kind(); }

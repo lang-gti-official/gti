@@ -140,8 +140,35 @@ Status inspect_borrowed_parse(int& owner, bool fail) {
   return Status(value);
 }
 
+// A source class can retain the enum's complete conditional dependency. Its
+// empty alternative needs no dummy reference. Consuming the class does not
+// consume the external owner named by the successful alternative.
+enum ReadingSlot { ready(int& value), empty };
+class StoredReading {
+  mut ReadingSlot slot;
+public:
+  StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
+  StoredReading() : slot(ReadingSlot::empty) {}
+  bool has_value() {
+    switch (this.slot) {
+      case ReadingSlot::ready: return true;
+      case ReadingSlot::empty: return false;
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+      case ReadingSlot::ready(auto& value): return value;
+      case ReadingSlot::empty: std::panic("empty reading");
+    }
+  }
+};
+
 int main() {
   int owner = 42;
+  mut auto stored = StoredReading(owner);
+  auto empty = StoredReading();
+  int& retained = std::move(stored).take();
+  if (empty.has_value() || retained != owner) return 1;
   std::println(std::to_string(inspect(owner, false).code));
   std::println(std::to_string(inspect(owner, true).code));
   mut int changing = 8;

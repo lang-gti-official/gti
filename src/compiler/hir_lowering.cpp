@@ -3021,6 +3021,12 @@ private:
                          const FullExpressionLookup &lookup,
                          const SemanticFullExpression &expression) {
     std::vector<HirValueId> roots;
+    if (expression.roots.empty() && expression.statement != nullptr) {
+      for (const auto &construction : body.emptyReturnConstructions)
+        if (construction.source == expression.statement)
+          roots.push_back(construction.value);
+      return roots;
+    }
     roots.reserve(expression.roots.size());
     for (const Expr *source : expression.roots) {
       const HirValue *found =
@@ -3054,13 +3060,14 @@ private:
         }
       }
       if (value.tracksCaller) {
-        const CallerLocationOrigin *origin =
-            value.source == nullptr ? nullptr
-                                    : model.findCallerLocation(*value.source);
-        if (origin == nullptr) {
+        const auto proof = value.source == nullptr
+                               ? std::nullopt
+                               : model.callerLocationProof(*value.source);
+        if (!proof) {
           lifecycleValid = false;
         } else {
-          value.callerLocation = *origin;
+          value.callerLocation = proof->origin();
+          value.callerLocationProof = proof;
         }
       }
     }
@@ -3555,11 +3562,20 @@ private:
           body);
     }
     if (const auto *returnStatement = stmtAs<ReturnStmt>(statement)) {
+      std::optional<HirValueId> returned;
+      if (const auto proof =
+              model.emptyReturnConstructionProof(*returnStatement)) {
+        returned = lowerContextualConstructionAt(
+            nullptr, returnStatement, proof->construction(), model,
+            classArguments, classValueArguments, body);
+      } else {
+        returned =
+            lowerReturnExpression(returnStatement->value(), model,
+                                  classArguments, classValueArguments, body);
+      }
       return appendStatement({.kind = HirStatementKind::Return,
                               .source = statement,
-                              .value = lowerReturnExpression(
-                                  returnStatement->value(), model,
-                                  classArguments, classValueArguments, body)},
+                              .value = returned},
                              body);
     }
     if (const auto *switchStatement = stmtAs<SwitchStmt>(statement)) {
@@ -3979,9 +3995,13 @@ private:
             parameter.arguments.size() != 1 ||
             parameter.arguments.front() != input->info.type ||
             (input->info.type.kind != SemanticType::Class &&
-             input->info.type.kind != SemanticType::Enum) ||
+             input->info.type.kind != SemanticType::Enum &&
+             input->info.type.kind != SemanticType::Lambda &&
+             input->info.type.kind != SemanticType::FunctionItem) ||
             input->info.category != ValueCategory::Value ||
-            input->info.traits.containsBorrowedState) {
+            (input->info.traits.containsBorrowedState &&
+             (input->kind != HirValueKind::Lambda ||
+              input->captureBorrowDependencies.empty()))) {
           return std::nullopt;
         }
         kind = HirCallInputKind::ReadTemporaryBorrow;
@@ -4108,7 +4128,9 @@ private:
            input->info.type.kind != SemanticType::Lambda) ||
           input->info.category != ValueCategory::Value ||
           !input->info.traits.movable ||
-          input->info.traits.containsBorrowedState) {
+          (input->info.traits.containsBorrowedState &&
+           (input->info.type.kind != SemanticType::Class ||
+            !input->borrowDependencies))) {
         return std::nullopt;
       }
       while (input->kind == HirValueKind::Grouping &&
@@ -5324,14 +5346,33 @@ private:
       const SemanticModel &model,
       const std::vector<SemanticType> &classArguments,
       const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
+    return lowerContextualConstructionAt(&initializer, nullptr, construction,
+                                         model, classArguments,
+                                         classValueArguments, body);
+  }
+
+  [[nodiscard]] std::optional<HirValueId> lowerContextualConstructionAt(
+      const Expr *initializer, const ReturnStmt *emptyReturn,
+      const ResolvedConstructionInfo &construction, const SemanticModel &model,
+      const std::vector<SemanticType> &classArguments,
+      const std::vector<CompileTimeValue> &classValueArguments, HirBody &body) {
     const Expr *const enclosing = contextualConstructionInner;
-    contextualConstructionInner = &initializer;
-    const std::optional<HirValueId> argument = lowerExpression(
-        initializer, model, classArguments, classValueArguments, body);
+    contextualConstructionInner = initializer;
+    const std::optional<HirValueId> argument =
+        initializer == nullptr
+            ? std::nullopt
+            : lowerExpression(*initializer, model, classArguments,
+                              classValueArguments, body);
     contextualConstructionInner = enclosing;
     const std::optional<Token> site =
-        model.contextualConstructionSite(initializer);
-    if (!argument || !site || construction.parameterTypes.empty() ||
+        emptyReturn != nullptr ? std::optional<Token>(emptyReturn->keyword())
+                               : model.contextualConstructionSite(*initializer);
+    const auto emptyProof =
+        emptyReturn == nullptr
+            ? std::nullopt
+            : model.emptyReturnConstructionProof(*emptyReturn);
+    if ((!emptyReturn && (!argument || construction.parameterTypes.empty())) ||
+        (emptyReturn && (initializer || argument || !emptyProof)) || !site ||
         construction.kind != ConstructorKind::Ordinary ||
         construction.constructor == 0 || construction.generatedDefault) {
       lifecycleValid = false;
@@ -5355,7 +5396,10 @@ private:
         .borrowFields = construction.borrowFields,
         .constructorKind = construction.kind,
     };
-    value.operands.push_back(*argument);
+    if (emptyProof && emptyProof->unsafeConstruction())
+      value.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeConstruction;
+    if (argument)
+      value.operands.push_back(*argument);
     const HirConstructorInstanceId target =
         enqueueConstructor(construction, tokenSpan(*site));
     if (target == 0) {
@@ -5395,7 +5439,8 @@ private:
     std::optional<std::vector<HirCallArgument>> arguments =
         value.operands.size() == value.parameterTypes.size()
             ? orderedConstructorArguments(value, value.operands,
-                                          value.parameterTypes, body, 1)
+                                          value.parameterTypes, body,
+                                          argument ? 1 : 0)
             : std::nullopt;
     if (!arguments) {
       lifecycleValid = false;
@@ -5405,8 +5450,14 @@ private:
                                  .arguments = std::move(*arguments)};
     const HirValueId id = value.id;
     body.values.push_back(std::move(value));
-    body.contextualConstructions.push_back(
-        {.source = &initializer, .value = id});
+    if (emptyReturn != nullptr)
+      body.emptyReturnConstructions.push_back(
+          {.source = emptyReturn,
+           .value = id,
+           .constructionProof = emptyProof});
+    else
+      body.contextualConstructions.push_back(
+          {.source = initializer, .value = id});
     return id;
   }
 

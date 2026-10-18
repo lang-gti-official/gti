@@ -1028,7 +1028,7 @@ private:
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
-    bool deferredConstexprSelection = false;
+    bool deferredGenericFlow = false;
     // A synthetic early return needs its own complete result evidence;
     // explicit ReturnStmt facts alone cannot describe the callable's result.
     bool unknownImplicitResultReturn = false;
@@ -3209,6 +3209,14 @@ private:
       bool contextualConstruction = false,
       std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
 
+  void selectConstructorCallArguments(
+      const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments,
+      std::vector<AnalyzedCallArgument> arguments, const Token &paren,
+      bool requireExactNullParameter, bool contextualConstruction,
+      std::vector<const ConstructorInfo *> *candidateProbe);
+
   void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
                                  const std::vector<SemanticType> &argumentTypes,
@@ -4163,6 +4171,10 @@ private:
   recordProgramConstructionEffects(const Expr &site,
                                    const ResolvedConstructionInfo &construction,
                                    std::size_t suppliedArguments);
+  [[nodiscard]] bool
+  recordProgramConstructionEffects(const SourceSpan &site,
+                                   const ResolvedConstructionInfo &construction,
+                                   std::size_t suppliedArguments);
 
   [[nodiscard]] std::vector<SourceUnitId>
   programInitializationUnitOrder() const;
@@ -5034,6 +5046,7 @@ private:
   rawConstructorResultQuery(const ResolvedConstructionInfo &resolved);
   void runRawResultQuery(const std::shared_ptr<RawResultQuery> &query);
   void recordRawResult(const ExprPtr &expression);
+  void recordEmptyReturnRawResult(const ReturnStmt &statement);
   void recordRawConstructorResult(const ConstructorDecl &constructor);
   void
   collectRawResultFields(const std::vector<ProjectedRawPointerOrigins> &fields,

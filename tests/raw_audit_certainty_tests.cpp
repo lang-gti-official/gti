@@ -7,7 +7,8 @@
 namespace {
 int failures = 0;
 
-void check(const std::string &name, const std::string &source, bool definite) {
+void check(const std::string &name, const std::string &source, bool definite,
+           const std::string &uncertainCode = "GTI-S2102") {
   for (const auto mode :
        {lang::RawPointerAuditMode::Off, lang::RawPointerAuditMode::Warn,
         lang::RawPointerAuditMode::Strict}) {
@@ -24,9 +25,10 @@ void check(const std::string &name, const std::string &source, bool definite) {
     const bool valid = mode != lang::RawPointerAuditMode::Strict;
     const bool findings =
         audit ? (definite ? count("GTI-S2101") > 0
-                          : count("GTI-S2101") == 0 && count("GTI-S2102") > 0)
+                          : count("GTI-S2101") == 0 && count(uncertainCode) > 0)
               : result.diagnostics.empty();
-    const auto expectedCode = definite ? "GTI-S2101" : "GTI-S2102";
+    const auto expectedCode =
+        definite ? std::string("GTI-S2101") : uncertainCode;
     const bool details = std::all_of(
         result.diagnostics.begin(), result.diagnostics.end(),
         [&](const auto &item) {
@@ -48,6 +50,18 @@ void check(const std::string &name, const std::string &source, bool definite) {
 } // namespace
 
 int main() {
+  check("empty-return construction retains unresolved raw result fields", R"(
+struct Address {
+  const int* pointer = nullptr;
+  implicit Address() : pointer(nullptr) {}
+};
+Address make_address() { return; }
+int main() {
+  auto address = make_address();
+  unsafe { return *address.pointer; }
+}
+)",
+        false, "GTI-S2103");
   const std::string start = R"(
 int inspect(bool choice) {
   int live = 1;

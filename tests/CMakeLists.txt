@@ -207,6 +207,9 @@ add_executable(gti_operator_place_composition_tests operator_place_composition_t
 target_link_libraries(gti_operator_place_composition_tests PRIVATE gti_cpp_backend)
 add_test(NAME operator_place_composition_pipeline COMMAND gti_operator_place_composition_tests)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
+add_executable(gti_fresh_callable_borrow_tests fresh_callable_borrow_tests.cpp)
+target_link_libraries(gti_fresh_callable_borrow_tests PRIVATE gti_compiler)
+add_test(NAME fresh_callable_borrow COMMAND gti_fresh_callable_borrow_tests)
 add_executable(gti_borrowing_callbacks_mir_tests borrowing_callbacks_mir_tests.cpp)
 target_link_libraries(gti_borrowing_callbacks_mir_tests PRIVATE gti_compiler)
 add_test(NAME borrowing_callbacks_mir COMMAND gti_borrowing_callbacks_mir_tests)
@@ -933,6 +936,9 @@ add_test(NAME class_argument_profiles_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/168-source-value-profiles.gti" --include-o1)
 set_tests_properties(class_argument_profiles_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME empty_return_construction_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/empty_return_construction_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(empty_return_construction_runtime PROPERTIES TIMEOUT 180)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)
@@ -2643,6 +2649,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_payload_enum.gti"
+            --ownership-checks
+  )
+  add_test(
+    NAME fresh_callable_borrow_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/fresh_callable_borrows.gti"
             --ownership-checks
   )
   add_test(

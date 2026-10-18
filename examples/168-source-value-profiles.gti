@@ -46,13 +46,37 @@ constexpr Packet<int, int> frozen{42};
 static_assert(frozen.value() == 42);
 static_assert(consume_packet() == 42);
 
+// Empty returns are a source-class opt-in, not a result-type exception.
+struct Completion {
+  int code;
+  implicit constexpr Completion(int code = 42) : code(code) {}
+};
+constexpr Completion finish() { return; }
+static_assert(finish().code == 42);
+
+mut int retired = 0;
+class Ticket {
+public:
+  Ticket() {}
+  ~Ticket() { retired += 1; }
+};
+class OwnedCompletion {
+  Ticket ticket;
+public:
+  implicit OwnedCompletion(Ticket ticket = Ticket())
+      : ticket(std::move(ticket)) {}
+};
+OwnedCompletion finish_owned() { return; }
+void exercise_owned() { auto completed = finish_owned(); }
+
 int main() {
+  exercise_owned();
   Packet<int, int> owned{42};
   Packet<void, int> empty{};
   int owner = 7;
   Packet<int&, int> borrowed{owner};
   empty.value();
   // `owner` must still be alive and cannot be mutated while this borrow is used.
-  return consume_packet() == 42 && owned.value() == 42 && borrowed.value() == 7 &&
+  return retired == 1 && finish().code == 42 && consume_packet() == 42 && owned.value() == 42 && borrowed.value() == 7 &&
       inspect(owned) == 1 && inspect(empty) == 2 && inspect(borrowed) == 3 ? 0 : 1;
 }

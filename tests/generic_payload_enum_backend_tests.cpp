@@ -169,7 +169,7 @@ int main() {
   expect(leftName && rightName && leftName != rightName,
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
-  expect(serialized.starts_with("lowered-program-v22") &&
+  expect(serialized.starts_with("lowered-program-v23") &&
              lang::MirPrinter().print(frontend.mir).starts_with("mir-v110"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
@@ -1361,6 +1361,52 @@ int main() {
       expect(changed && !lang::verifyMirProgram(malformed).valid(),
              "move publication preserves distinct source/value/binding "
              "obligations and cannot duplicate source cleanup authority");
+    }
+  }
+  const auto receiverReferences = lang::Frontend().analyze(
+      "receiver-enum-reference.gti", R"gti(
+#include <std/panic>
+enum Slot { present(int& value), absent };
+class Reading {
+  mut Slot slot;
+public:
+  Reading(int& value) : slot(Slot::present(value)) {}
+  int& view() {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("absent");
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("absent");
+    }
+  }
+};
+int main() {
+  int owner = 42;
+  auto view = Reading(owner);
+  auto consumed = Reading(owner);
+  int& retained = std::move(consumed).take();
+  return view.view() == retained ? 0 : 1;
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(receiverReferences.canGenerateCode(),
+         "receiver enum reference paths retain complete checked origins");
+  if (receiverReferences.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      try {
+        expect(
+            !gti_test::emitCpp(receiverReferences, standard).contents.empty(),
+            "receiver provenance paths are not emitted as unconditional enum "
+            "field reads");
+      } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        expect(false,
+               "checked receiver enum references have a native representation");
+      }
     }
   }
   return failures == 0 ? 0 : 1;

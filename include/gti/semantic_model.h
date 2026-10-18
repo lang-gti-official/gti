@@ -1023,6 +1023,9 @@ struct ClassTypeInfo {
   std::vector<std::string> namespaceScope;
   // Lexical ownership, not an enclosing object or lifetime dependency.
   ClassId enclosingClass = 0;
+  // Distinct definitions in one resolved generic class family share a source
+  // template name, not object identity. Zero denotes the first definition.
+  ClassId definitionFamilyPrimary = 0;
   // An exact specialization is a distinct semantic class identity whose
   // qualified source name and canonical argument key still name this primary.
   // Zero denotes an ordinary (possibly generic) class declaration.
@@ -2014,6 +2017,24 @@ struct SemanticAnalysisSeal {
 makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
                          const SourceGraph *sourceGraph = nullptr);
 
+// Caller provenance belongs to the analyzed source occurrence, including one
+// first analyzed in a concrete generic body. HIR cannot invent a new origin.
+class SemanticCallerLocationProof {
+public:
+  [[nodiscard]] const Expr *source() const { return source_; }
+  [[nodiscard]] const CallerLocationOrigin &origin() const { return origin_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticCallerLocationProof(const Expr &source, CallerLocationOrigin origin,
+                              std::uint64_t snapshot)
+      : source_(&source), origin_(origin), snapshot_(snapshot) {}
+  const Expr *source_;
+  CallerLocationOrigin origin_;
+  std::uint64_t snapshot_;
+};
+
 // Immutable selected-construction provenance. HIR may carry or copy a proof,
 // but cannot manufacture one for a different source expression. Concrete
 // instance models issue the same proof even when the primary skipped an arm.
@@ -2044,6 +2065,31 @@ private:
   const Expr *producer_;
   SemanticType type_;
   std::uint64_t snapshot_;
+};
+
+// A bare return has no expression to carry constructor provenance. Keep its
+// selected construction bound to that exact statement and semantic snapshot.
+class SemanticEmptyReturnConstructionProof {
+public:
+  [[nodiscard]] const ReturnStmt *source() const { return source_; }
+  [[nodiscard]] const ResolvedConstructionInfo &construction() const {
+    return construction_;
+  }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+  [[nodiscard]] bool unsafeConstruction() const { return unsafeConstruction_; }
+
+private:
+  friend class SemanticModel;
+  SemanticEmptyReturnConstructionProof(const ReturnStmt &source,
+                                       ResolvedConstructionInfo construction,
+                                       std::uint64_t snapshot,
+                                       bool unsafeConstruction)
+      : source_(&source), construction_(std::move(construction)),
+        snapshot_(snapshot), unsafeConstruction_(unsafeConstruction) {}
+  const ReturnStmt *source_;
+  ResolvedConstructionInfo construction_;
+  std::uint64_t snapshot_;
+  bool unsafeConstruction_;
 };
 
 struct SemanticFullExpression {
@@ -2099,6 +2145,8 @@ public:
 
   [[nodiscard]] const CallerLocationOrigin *
   findCallerLocation(const Expr &expression) const;
+  [[nodiscard]] std::optional<SemanticCallerLocationProof>
+  callerLocationProof(const Expr &expression) const;
 
   [[nodiscard]] const RawReferenceAssertionInfo *
   findRawReferenceAssertion(const Expr &expression) const;
@@ -2439,6 +2487,12 @@ public:
   // The initializer token a contextual construction reports and locates at.
   [[nodiscard]] std::optional<Token>
   contextualConstructionSite(const Expr &initializer) const;
+
+  [[nodiscard]] std::optional<SemanticEmptyReturnConstructionProof>
+  emptyReturnConstructionProof(const ReturnStmt &statement) const;
+  void recordEmptyReturnConstruction(const ReturnStmt &statement,
+                                     ResolvedConstructionInfo info,
+                                     bool unsafeConstruction);
 
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const;
@@ -2954,6 +3008,12 @@ private:
   std::unordered_map<const Expr *, ResolvedConstructionInfo>
       contextualConstructions;
   std::unordered_map<const Expr *, Token> contextualConstructionSites;
+  struct EmptyReturnConstruction {
+    ResolvedConstructionInfo construction;
+    bool unsafeConstruction = false;
+  };
+  std::unordered_map<const ReturnStmt *, EmptyReturnConstruction>
+      emptyReturnConstructions;
   std::unordered_map<const ConstructorInitializer *,
                      ResolvedConstructorInitializerInfo>
       constructorInitializers;

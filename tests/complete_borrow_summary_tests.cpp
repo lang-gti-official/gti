@@ -1369,6 +1369,15 @@ int main() { return 0; }
     }
   }
   {
+    std::ifstream fixture(root /
+                          "tests/fixtures/borrowed_enum_generic_fields.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "generic borrowed class fixture exists");
+    const auto result = analyze(source);
+    expect(result.canGenerateCode(), "concrete generic borrowed classes prove "
+                                     "shared copy and owned-error extraction");
+  }
+  {
     std::ifstream fixture(root / "tests/fixtures/borrowed_enum_fields.gti");
     const std::string source((std::istreambuf_iterator<char>(fixture)), {});
     expect(!source.empty(), "borrowed class fixture exists");
@@ -1432,6 +1441,77 @@ int main() { return 0; }
         }
       }
       expect(tested != 0, "borrowed constructor has an independently checked summary");
+    }
+    if (result.canGenerateCode()) {
+      lang::HirFunctionInstanceId takeId = 0;
+      for (const auto &function : result.hir.functionInstances()) {
+        const auto *candidate = result.mir.findFunctionInstance(function.id);
+        if (function.source && function.source->name().lexeme == "take" &&
+            candidate &&
+            candidate->receiverMutability ==
+                lang::ReceiverMutability::Consuming &&
+            candidate->completeReturnBorrow)
+          takeId = function.id;
+      }
+      const auto *take = result.mir.findFunctionInstance(takeId);
+      expect(take && take->completeReturnBorrow,
+             "consuming borrowed wrapper has an external receiver contract");
+      if (take && take->completeReturnBorrow) {
+        for (int mutation = 0; mutation < 7; ++mutation) {
+          auto malformed = result.mir;
+          auto &changed =
+              lang::MirProgramTestAccess::functions(malformed)[takeId - 1];
+          for (auto &place : changed.body.places) {
+            if (place.root != lang::MirPlaceRootKind::This ||
+                !place.projections.empty())
+              continue;
+            if (mutation == 0)
+              place.key.reset();
+            if (mutation == 1 && place.key)
+              place.key->receiver = false;
+            if (mutation == 2)
+              place.foreignStorage = true;
+            if (mutation == 3)
+              place.access = lang::AccessMode::ReadOnly;
+          }
+          for (auto &loan : changed.body.loans) {
+            if (!loan.entry || loan.kind != lang::MirLoanKind::Stored)
+              continue;
+            if (mutation == 4)
+              loan.conditions.clear();
+            if (mutation == 5)
+              loan.designatedFields.clear();
+            if (mutation == 6)
+              loan.access = lang::AccessMode::Mutable;
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "consuming receiver requires exact domain, access and "
+                 "complete guarded entry " +
+                     std::to_string(mutation));
+        }
+      }
+      for (const auto &constructor : result.mir.constructorInstances()) {
+        if (!constructor.completeBorrow ||
+            constructor.completeBorrow->dependencies.empty())
+          continue;
+        auto malformed = result.mir;
+        auto &changed = lang::MirProgramTestAccess::constructors(
+            malformed)[constructor.id - 1];
+        const auto published = std::find_if(
+            changed.body.loans.begin(), changed.body.loans.end(),
+            [](const auto &loan) { return loan.escapes && loan.storedField; });
+        expect(published != changed.body.loans.end(),
+               "constructor publishes its field group");
+        if (published == changed.body.loans.end())
+          continue;
+        for (auto &block : changed.body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::EndBorrow)
+              instruction.loan = published->id;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "constructor cannot retire the published field group before "
+               "normal exit");
+      }
     }
   }
   return failures ? 1 : 0;
