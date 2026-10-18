@@ -28,6 +28,9 @@
 
 namespace lang {
 namespace {
+[[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirPlace &place);
 bool exactConstructorPermission(const MirProgram &program,
                                 const MirInstruction &instruction) {
   if (instruction.unsafeOperation == UnsafeOperationKind::None)
@@ -27136,6 +27139,8 @@ private:
 
   void scanPlace(const MirBody &body, const MirPlace &place) {
     requireType(place.type);
+    if (nonRuntimeEnumProjection(program, body, place))
+      return;
     const CppMirEmissionEncoding root = classifyCppMirPlaceRootKind(place.root);
     if (root == CppMirEmissionEncoding::Invalid) {
       add(CppMirBodyEmissionIssueKind::InvalidPlaceRootKind, 0, 0,
@@ -34366,6 +34371,103 @@ loanHasCppPointerCarrier(const MirProgram &program,
          elementBorrowLoanProducer(body, loan) == nullptr;
 }
 
+// Enum reference inventories include guarded abstract referent paths. Those
+// paths are checked provenance, not unconditional native field reads (the
+// field may belong to an inactive alternative). An actual selection obtains
+// its address from PayloadExtract. Admit only an exact typed path with no
+// runtime address/storage use, including implicit entry-loan initialization.
+[[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.projections.empty())
+    return false;
+  const auto root = std::find_if(
+      body.places.begin(), body.places.end(), [&](const auto &candidate) {
+        return candidate.root == MirPlaceRootKind::Binding &&
+               candidate.binding == place.binding &&
+               candidate.symbol == place.symbol && candidate.projections.empty();
+      });
+  if (root == body.places.end())
+    return false;
+  SemanticType type = root->type;
+  bool enumField = false;
+  for (const auto &projection : place.projections) {
+    if (projection.kind == MirProjectionKind::Dereference &&
+        type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+      type = SemanticType(type.arguments.front());
+      continue;
+    }
+    if (projection.kind != MirProjectionKind::Field ||
+        type.kind != SemanticType::Enum)
+      return false;
+    const SemanticType *field = nullptr;
+    for (const auto &enumeration : program.payloadEnums()) {
+      if (enumeration.type != type)
+        continue;
+      for (const auto &variant : enumeration.variants) {
+        if (variant.payloadTypes.size() != variant.payloadSymbols.size())
+          return false;
+        for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+          if (variant.payloadSymbols[index] == projection.field) {
+            if (field)
+              return false;
+            field = &variant.payloadTypes[index];
+          }
+      }
+    }
+    if (!field)
+      return false;
+    type = *field;
+    enumField = true;
+  }
+  if (!enumField || type != place.type)
+    return false;
+  const auto uses = [&](const auto &operand) { return operand.place == place.id; };
+  const auto usesAny = [&](const auto &operands) {
+    return std::any_of(operands.begin(), operands.end(), uses);
+  };
+  for (const auto &block : body.blocks) {
+    const auto &edge = block.terminator;
+    if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
+        usesAny(edge.elseArguments) ||
+        std::any_of(edge.switchTargets.begin(), edge.switchTargets.end(),
+                    [&](const auto &target) { return usesAny(target.arguments); }))
+      return false;
+    for (const auto &instruction : block.instructions)
+      if (instruction.destination == place.id ||
+          instruction.successResultDestination == place.id ||
+          instruction.retainedOwnerPlace == place.id ||
+          (instruction.receiver && uses(*instruction.receiver)) ||
+          usesAny(instruction.operands))
+        return false;
+  }
+  for (const auto &drop : body.dropObligations)
+    if (drop.place == place.id)
+      return false;
+  for (const auto &range : body.rangeIterations)
+    if (range.owner == place.id || range.rangeCarrier == place.id ||
+        range.iterator == place.id || range.sentinel == place.id ||
+        range.element == place.id)
+      return false;
+  for (const auto &loan : body.loans) {
+    if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
+      continue;
+    if (loan.entry)
+      return false;
+    std::size_t producers = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.loan == loan.id &&
+            (instruction.kind == MirInstructionKind::Call ||
+             (instruction.kind == MirInstructionKind::Borrow &&
+              instruction.operands.size() == 1)))
+          ++producers;
+    if (producers != 1)
+      return false;
+  }
+  return true;
+}
+
 // A selected accessor may name a private nested receiver path solely as
 // checked provenance. Its returned pointer (or copied carrier) is the runtime
 // value, not a request to evaluate that path in the caller. Keep exact field
@@ -35247,6 +35349,8 @@ public:
                << place.id << ";\n";
         continue;
       }
+      if (nonRuntimeEnumProjection(program, facts.body, place))
+        continue;
       if (provenanceOnlyProjectedPlace(program, representations, facts.body,
                                        place))
         continue;
@@ -57383,6 +57487,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (nonRuntimeEnumProjection(program_, body, place) && typeRow(place.type))
+      continue;
     if (provenanceOnlyProjectedPlace(program_, representations_, body, place)) {
       const auto root =
           std::find_if(body.places.begin(), body.places.end(),
