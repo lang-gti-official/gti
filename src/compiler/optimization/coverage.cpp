@@ -307,6 +307,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
     return barrier("defined failure without a discharge proof family");
   case IntrinsicKind::Panic:
     return barrier("explicit terminal failure with bounded message capture");
+  case IntrinsicKind::FailEmptyOwner:
+    return barrier("explicit terminal empty-owner access failure");
   case IntrinsicKind::Count:
     break;
   }

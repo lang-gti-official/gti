@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -27,6 +28,12 @@ int main() {
     }
   };
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  std::ifstream conditionalFixture(root / "tests" / "fixtures" /
+                                   "reference_payload_tryable.gti");
+  const std::string conditionalBorrowed(
+      (std::istreambuf_iterator<char>(conditionalFixture)),
+      std::istreambuf_iterator<char>());
+  expect(!conditionalBorrowed.empty(), "conditional reference fixture exists");
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze(root / "tests" / "tryable-propagation.gti",
                                     source, {root / "stdlib" / "prelude.gti"},
@@ -72,6 +79,270 @@ int main() {
     expect(located,
            std::string("missing ") + code + " with '" + fragment + "'");
   };
+
+  accepted(conditionalBorrowed,
+           "conditional borrowed success and owned residual use exact output "
+           "dependencies through source-defined propagation");
+  auto exclusiveConditional = conditionalBorrowed;
+  for (std::size_t offset = 0;
+       (offset = exclusiveConditional.find("int&", offset)) !=
+       std::string::npos;
+       offset += 8)
+    exclusiveConditional.replace(offset, 4, "mut int&");
+  const auto ownerDeclaration = exclusiveConditional.find("int owner = 42;");
+  expect(ownerDeclaration != std::string::npos,
+         "conditional fixture has an owner declaration");
+  if (ownerDeclaration != std::string::npos)
+    exclusiveConditional.insert(ownerDeclaration, "mut ");
+  accepted(exclusiveConditional,
+           "conditional exclusive success preserves mutable owner authority");
+  for (const auto &source : {conditionalBorrowed, exclusiveConditional}) {
+    const auto proof = analyze(source);
+    expect(proof.canGenerateCode(),
+           "consuming reference publication fixture must verify");
+    if (!proof.canGenerateCode())
+      continue;
+    bool checkedOwningBorrowedCall = false;
+    for (const auto &function : proof.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.functionTarget || !instruction.loan ||
+              instruction.info.type.kind != lang::SemanticType::Enum ||
+              instruction.info.traits.drop != lang::DropKind::Lexical ||
+              !instruction.definedFailure.mayUnwind())
+            continue;
+          checkedOwningBorrowedCall = true;
+          expect(instruction.successResultDrop &&
+                     block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                     block.terminator.invokeInstruction == instruction.id,
+                 "borrowed owning enum calls publish only on Invoke success");
+          auto malformed = proof.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto &bad = changed->body.blocks[block.id - 1];
+          bad.terminator.kind = lang::MirTerminatorKind::Goto;
+          bad.terminator.invokeInstruction = 0;
+          expect(
+              !lang::verifyMirProgram(malformed).valid(),
+              "borrowed owning enum results cannot erase their failure edge");
+        }
+    expect(
+        checkedOwningBorrowedCall,
+        "conditional result fixture exercises success-only enum publication");
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        auto &body = function.body;
+        for (auto &result : body.loans) {
+          if (changed || result.kind != lang::MirLoanKind::CallResult ||
+              result.carriers.empty())
+            continue;
+          const auto input = std::find_if(
+              body.loans.begin(), body.loans.end(), [&](const auto &candidate) {
+                return candidate.kind == lang::MirLoanKind::Stored &&
+                       !candidate.entry && !candidate.conditions.empty() &&
+                       candidate.source == result.source &&
+                       candidate.parent == result.parent;
+              });
+          if (input == body.loans.end())
+            continue;
+          if (mutation == 0) {
+            // Mutually consistent annotations cannot reattach the returned
+            // reference to a carrier that the invocation has consumed.
+            result.parent = input->id;
+            for (auto &value : body.values)
+              if (value.sourceValue == result.producedBy &&
+                  value.borrowDependencies)
+                for (auto &dependency : value.borrowDependencies->dependencies)
+                  dependency.parent = input->id;
+            changed = true;
+          } else if (mutation == 3) {
+            // Losing the producer's active-variant condition is not repaired
+            // by copying the same incomplete claim into the SSA value.
+            input->conditions.clear();
+            for (auto &value : body.values)
+              if (value.sourceValue == input->producedBy &&
+                  value.borrowDependencies)
+                for (auto &dependency : value.borrowDependencies->dependencies)
+                  dependency.conditions.clear();
+            changed = true;
+          } else {
+            for (auto &block : body.blocks) {
+              if (changed)
+                break;
+              for (auto instruction = block.instructions.begin();
+                   instruction != block.instructions.end(); ++instruction) {
+                if (mutation == 1 &&
+                    instruction->kind == lang::MirInstructionKind::EndBorrow &&
+                    instruction->loan == input->id &&
+                    block.activeFailure == 0) {
+                  block.instructions.erase(instruction);
+                  changed = true;
+                  break;
+                }
+                if (mutation == 2 &&
+                    instruction->kind == lang::MirInstructionKind::CallInput &&
+                    instruction->callSite == result.producedBy &&
+                    instruction->callInputKind ==
+                        lang::HirCallInputKind::MoveValue) {
+                  instruction->callInputKind =
+                      lang::HirCallInputKind::CopyValue;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      expect(changed,
+             "mutation must select the consumed reference publication");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "consumed reference publication requires exact external ancestry, "
+             "normal-edge retirement, staged move and guarded input facts");
+    }
+  }
+  const std::string multipleOwners = R"gti(
+enum Pair { both(int& first, int& second) };
+[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+  switch (std::move(input)) {
+    case Pair::both(first, second):
+      if (choose) return first;
+      return second;
+  }
+}
+int main() {
+  int first = 41;
+  int second = 42;
+  mut auto carrier = Pair::both(first, second);
+  int& selected = select(std::move(carrier), true);
+  return selected == 41 ? 0 : 1;
+}
+)gti";
+  accepted(multipleOwners,
+           "passive consuming payloads retain each field's independent owner "
+           "through scalar result publication");
+  for (const auto *owner : {"first", "second"}) {
+    auto conflicting = multipleOwners;
+    const auto declaration = conflicting.find(std::string("  int ") + owner);
+    expect(declaration != std::string::npos,
+           "multiple-owner fixture has the selected physical local");
+    if (declaration != std::string::npos)
+      conflicting.insert(declaration + 2, "mut ");
+    conflicting.insert(conflicting.find("  return selected =="),
+                       std::string("  ") + owner + " = 19;\n");
+    rejected(conflicting, "GTI-S2017", "borrow");
+    auto aliased = conflicting;
+    const auto write = aliased.find(std::string("  ") + owner + " = 19;");
+    aliased.insert(write, "  int& alias = selected;\n");
+    aliased.replace(aliased.find("return selected =="),
+                    std::string("return selected ==").size(),
+                    "return alias ==");
+    rejected(aliased, "GTI-S2017", "borrow");
+  }
+  const auto multipleOwnerProof = analyze(multipleOwners);
+  if (multipleOwnerProof.canGenerateCode()) {
+    for (int mutation = 0; mutation < 5; ++mutation) {
+      auto malformed = multipleOwnerProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (!changed && mutation >= 3) {
+          for (auto &loan : function.body.loans) {
+            if (loan.kind != lang::MirLoanKind::CallResult ||
+                loan.additionalDependencies.empty() || loan.carriers.empty())
+              continue;
+            loan.additionalDependencies.clear();
+            if (mutation == 4)
+              for (auto &value : function.body.values)
+                if (value.sourceValue == loan.producedBy &&
+                    value.borrowDependencies &&
+                    value.borrowDependencies->dependencies.size() > 1)
+                  value.borrowDependencies->dependencies.resize(1);
+            changed = true;
+            break;
+          }
+        }
+        if (changed || !function.completeReturnBorrow ||
+            function.completeReturnBorrow->dependencies.size() != 2)
+          continue;
+        if (mutation == 0) {
+          function.completeReturnBorrow->dependencies.pop_back();
+          changed = true;
+        } else {
+          for (auto &block : function.body.blocks) {
+            for (auto it = block.instructions.begin();
+                 it != block.instructions.end(); ++it) {
+              if (changed)
+                break;
+              if (mutation == 1 && it->payloadIndex == 0 &&
+                  it->operation == lang::MirOperation::PayloadExtract) {
+                it->payloadIndex = 1;
+                changed = true;
+              } else if (mutation == 2 &&
+                         it->kind == lang::MirInstructionKind::EndBorrow &&
+                         it->loan &&
+                         function.body.loans[*it->loan - 1].kind ==
+                             lang::MirLoanKind::Stored) {
+                block.instructions.erase(it);
+                changed = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+      expect(changed, "multiple-owner mutation selects exact field handoff");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "passive field handoff cannot omit an owner, duplicate a field "
+             "or omit the consumed group's retirement");
+    }
+  }
+  auto endedOwners = multipleOwners;
+  for (const auto *owner : {"first", "second"})
+    endedOwners.insert(endedOwners.find(std::string("  int ") + owner) + 2,
+                       "mut ");
+  endedOwners.replace(endedOwners.find("  return selected == 41 ? 0 : 1;"),
+                      std::string("  return selected == 41 ? 0 : 1;").size(),
+                      "  int saved = selected;\n"
+                      "  first = 19;\n  second = 20;\n"
+                      "  return saved == 41 ? 0 : 1;");
+  accepted(endedOwners,
+           "all scalar selection origins become writable after its last use");
+  auto exclusiveConflict = exclusiveConditional;
+  const auto successReturn = exclusiveConflict.find("return Status(value);");
+  expect(successReturn != std::string::npos,
+         "conditional fixture has a success reference use");
+  if (successReturn != std::string::npos) {
+    exclusiveConflict.insert(successReturn, "owner = 19; ");
+    rejected(exclusiveConflict, "GTI-S2017", "borrow");
+  }
+  auto exclusiveCopy = exclusiveConditional;
+  const auto consumingOperand = exclusiveCopy.find("?std::move(result)");
+  expect(consumingOperand != std::string::npos,
+         "conditional fixture explicitly consumes its operand");
+  if (consumingOperand != std::string::npos) {
+    exclusiveCopy.replace(consumingOperand,
+                          std::string("?std::move(result)").size(), "?result");
+    rejected(exclusiveCopy, "GTI-S2086", "cannot copy");
+  }
+  auto localReference = conditionalBorrowed;
+  const auto selectedReturn = localReference.find("return value;");
+  expect(selectedReturn != std::string::npos,
+         "conditional fixture has a selected return");
+  if (selectedReturn != std::string::npos) {
+    localReference.replace(selectedReturn, std::string("return value;").size(),
+                           "int local = 9; return local;");
+    const auto invalid = analyze(localReference);
+    expect(!invalid.canGenerateCode(),
+           "complete reference-return proof cannot substitute a local owner");
+    expect(std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-B0001";
+                        }),
+           "local reference escape fails before backend representation");
+  }
 
   const std::string nativePayloads = R"gti(
 [[c_abi]] struct NativeAddress { mut const int* address; mut int stamp; };
@@ -376,7 +647,7 @@ int main() {
     }
   }
   for (const std::string source :
-       {"Token unknown(Token input) { return input; }",
+       {"Token unknown(Token& input) { return input; }",
         "void replace(mut Token& input) { input = Token::item(9); } "
         "Token unknown() { mut auto value = Token::empty; replace(value); "
         "return value; }"}) {
@@ -684,6 +955,28 @@ int main() {
            "MIR must reject omitted destructor-bound dependency retention");
   }
   if (proof.canGenerateCode()) {
+    for (bool primary : {true, false}) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &loan : function.body.loans) {
+          if (changed || loan.kind != lang::MirLoanKind::Stored)
+            continue;
+          const lang::BorrowDependencyCondition forged{
+              .enumeration = lang::SemanticType::enumType(1), .variant = 0};
+          if (primary)
+            loan.conditions.push_back(forged);
+          else
+            loan.additionalDependencies.push_back({.source = loan.source,
+                                                   .access = loan.access,
+                                                   .conditions = {forged}});
+          changed = true;
+        }
+      expect(changed, "conditional mutation must select a stored dependency");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "primary and additional dependencies both require exact "
+             "active-alternative proofs");
+    }
     for (int corruption = 0; corruption < 4; ++corruption) {
       auto malformed = proof.mir;
       bool changed = false;

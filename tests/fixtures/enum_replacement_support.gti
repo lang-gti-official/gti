@@ -1,0 +1,30 @@
+#include <std/mutex>
+#include <std/string>
+
+class ReplacementResource {
+  std::mutex<std::string> storage;
+  int32_t identity;
+  int32_t divisor;
+public:
+  ReplacementResource(int32_t identity, int32_t divisor)
+      : storage(std::mutex<std::string>(std::string("resource"))),
+        identity(identity), divisor(divisor) {}
+  ReplacementResource(ReplacementResource& other) = delete;
+  ReplacementResource(ReplacementResource&& other) = default;
+  ~ReplacementResource() {
+    std::println(this.identity);
+    int32_t checked = int32_t(1) / this.divisor;
+  }
+};
+
+enum ReplacementEvent {
+  idle,
+  held(ReplacementResource value),
+  other(ReplacementResource value),
+};
+
+class ReplacementGuard {
+public:
+  ReplacementGuard() {}
+  ~ReplacementGuard() { std::println(9); }
+};

@@ -221,12 +221,13 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   const bool consumes =
       operandInfo != nullptr && operandInfo->category == ValueCategory::Value;
   const SemanticTypeTraits traits = typeTraits(operandType);
+  const auto operandInventory = storedReferenceInventory(operandType);
   if (traits.containsBorrowedState &&
-      !storedReferencePath(operandType).has_value()) {
+      (!operandInventory || operandInventory->empty())) {
     return reject("Error propagation through '" + operand +
-                      "' needs an exact stored-dependency path.",
-                  "Propagate an owning type or a checked single-dependency "
-                  "carrier.");
+                      "' needs a complete checked stored-dependency inventory.",
+                  "Propagate an owning type or a carrier whose complete "
+                  "external dependencies can be checked.");
   }
   if (consumes ? !traits.movable : !traits.copyable) {
     return reject(std::string("Error propagation passes its operand like a "
@@ -292,6 +293,19 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   }
   const bool borrowedResult =
       output->returnType.kind == SemanticType::Reference;
+  std::optional<SemanticBorrowDependencySet> outputDependencies;
+  if (borrowedResult) {
+    auto candidate = conformance.operations[*takeValue].overloads.front();
+    candidate.returnType = output->returnType;
+    candidate.parameterTypes = output->parameterTypes;
+    const auto complete =
+        completeFunctionReturnBorrow(candidate, output->typeArguments,
+                                     output->valueArguments, tokenSpan(site));
+    const std::vector<const ExprPtr *> actualArguments{&expr.right()};
+    if (complete)
+      outputDependencies = instantiateCompleteBorrowArguments(
+          *output, *complete, actualArguments);
+  }
   const SemanticType resultType =
       borrowedResult && output->returnType.arguments.size() == 1
           ? output->returnType.arguments.front()
@@ -299,7 +313,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   const SemanticType residualType = residual->returnType;
   if ((borrowedResult && (output->borrowOrigin != BorrowOriginKind::Argument ||
                           output->borrowArgument != 0 ||
-                          !storedReferencePath(operandType).has_value())) ||
+                          (!outputDependencies &&
+                           !storedReferencePath(operandType).has_value()))) ||
       typeTraits(resultType).containsBorrowedState ||
       residualType.kind == SemanticType::Reference ||
       residualType == SemanticType::Void ||
@@ -328,6 +343,12 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   if (!selectResidualReturn(expr, returnType, residualType, construction)) {
     return SemanticType::Unknown;
   }
+  // This path returns from the enclosing callable even though its source is
+  // an expression, not a ReturnStmt. Until the selected residual operation's
+  // complete result contract is instantiated here, it contributes unknown.
+  loanFlow.unknownImplicitResultReturn = true;
+  if (outputDependencies)
+    semanticModel.recordBorrowDependencySet(expr, *outputDependencies);
   semanticModel.recordTryablePropagation(
       expr, {.operandType = operandType,
              .resultType = resultType,

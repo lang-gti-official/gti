@@ -1324,7 +1324,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v87\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v90\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3517,7 +3517,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v106 ") &&
+  expect(mirDump.starts_with("mir-v110 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -3723,13 +3723,12 @@ int main() {
   return int(gti_internal::optional_storage_read(values));
 }
 )");
-  expect(
-      !optionalMisuse.canGenerateCode() &&
-          hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019") &&
-          hasDiagnostic(
-              optionalMisuse.diagnostics,
-              "Optional storage operations require the exact trusted"),
-      "optional private operations reject an unrelated ordinary source owner");
+  expect(!optionalMisuse.canGenerateCode() &&
+             hasDiagnostic(optionalMisuse.diagnostics,
+                           "Undefined qualified name") &&
+             !hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-B0001"),
+         "retired optional private operations are no longer declared by the "
+         "standard library");
 
   const auto retired =
       analyzeTrustedMemoryFixture("retired-prefix-operations.gti", R"(
@@ -18483,7 +18482,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v106 ") &&
+             mirDump.starts_with("mir-v110 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=

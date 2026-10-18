@@ -1,0 +1,46 @@
+#include <std/string>
+#include <std/panic>
+
+enum Reading { ready(int& value), failed(std::string error) };
+for concept std::tryable<Reading> {
+  using value_type = int&;
+  using residual_type = std::string;
+  bool has_value(Reading& result) {
+    switch (result) {
+      case Reading::ready: return true;
+      case Reading::failed: return false;
+    }
+  }
+  [[borrowed_from(result)]] int& take_value(mut Reading result) {
+    switch (std::move(result)) {
+      case Reading::ready(value): return value;
+      case Reading::failed(error): std::panic("failed result");
+    }
+  }
+  std::string take_residual(mut Reading result) {
+    switch (std::move(result)) {
+      case Reading::ready(value): std::panic("successful result");
+      case Reading::failed(error): return std::move(error);
+    }
+  }
+};
+struct Status {
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(std::string error) : code(int(error.size())) {}
+};
+[[borrowed_from(owner)]] Reading read(int& owner, bool fail) {
+  if (fail) return Reading::failed(std::string("error"));
+  return Reading::ready(owner);
+}
+Status inspect(int& owner, bool fail) {
+  mut auto result = read(owner, fail);
+  int& value = ?std::move(result);
+  return Status(value);
+}
+int main() {
+  int owner = 42;
+  Status success = inspect(owner, false);
+  Status failure = inspect(owner, true);
+  return success.code == 42 && failure.code == 5 ? 0 : 1;
+}

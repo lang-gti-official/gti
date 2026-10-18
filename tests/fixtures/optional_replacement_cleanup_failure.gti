@@ -1,0 +1,10 @@
+#include "enum_replacement_support.gti"
+#include <std/optional>
+
+int main() {
+  ReplacementGuard guard{};
+  mut auto current = std::optional<ReplacementResource>(ReplacementResource(1, 0));
+  current = std::optional<ReplacementResource>(ReplacementResource(2, 1));
+  std::println(99);
+  return 0;
+}

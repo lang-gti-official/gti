@@ -2,6 +2,7 @@
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/mir_verifier.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 
@@ -9,6 +10,12 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static auto &functions(MirProgram &program) { return program.functions; }
+};
+} // namespace lang
 
 namespace {
 int failures = 0;
@@ -193,7 +200,6 @@ void testInvalidDeclarations() {
   for (const auto source :
        {"enum class Event<T, T> { item(T value) };",
         "enum class Event<T> { item(Missing value) };",
-        "enum class Event<T> { item(T& value) };",
         "enum class Event<T> { item(mut T value) };",
         "enum class Event<T> { empty };",
         "enum class Event<T> { empty, item(T value) }; "
@@ -206,6 +212,93 @@ void testInvalidDeclarations() {
                !result.canGenerateCode(),
            "invalid generic enum declarations or uninstantiated values fail "
            "before executable lowering");
+  }
+}
+
+void testReferenceSubstitutionsAndEmptyAlternatives() {
+  for (
+      const auto source :
+      {"enum class Event<T> { item(T& value) };",
+       "enum Event<T, U = T> { idle, item(T value), pair(T first, U second) }; "
+       "int main() { auto value = Event<int&>::idle; return 0; }",
+       "enum Event<T, U = T> { idle, item(T value), pair(T first, U second) }; "
+       "Event<int&> empty() { return Event<int&>::idle; } "
+       "int main() { auto value = empty(); auto copy = value; return 0; }",
+       "enum Event { idle, first(int& value), second(int& value) }; "
+       "int main() { Event value = Event::idle; return 0; }",
+       "enum Event<T> { idle, item(T& value) }; "
+       "int main() { int owner = 3; auto value = Event<int>::item(owner); "
+       "return 0; }"}) {
+    const auto result = lang::Frontend().analyze("reference-enum.gti", source);
+    expect(result.canGenerateCode(),
+           "concrete reference substitutions and proven empty alternatives "
+           "retain complete typed dependencies");
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  for (const auto source :
+       {"enum Event<T> { idle, item(T value) }; "
+        "int main() { auto value = Event<int&>::item(3); return 0; }",
+        "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
+        "Event<int&> dangling() { int local = 3; "
+        "return Event<int&>::pair(local, local); } int main() { return 0; }",
+        "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
+        "Event<int&> unknown(); "
+        "int main() { auto value = unknown(); return 0; }"}) {
+    const auto result =
+        lang::Frontend().analyze("bad-reference-enum.gti", source);
+    expect(!result.semanticValid && std::none_of(result.diagnostics.begin(),
+                                                 result.diagnostics.end(),
+                                                 [](const auto &diagnostic) {
+                                                   return diagnostic.code ==
+                                                          "GTI-B0001";
+                                                 }),
+           "known empty alternatives do not excuse missing or expired "
+           "reference-bearing payload owners");
+  }
+
+  const auto empty = lang::Frontend().analyze(
+      "empty-reference-enum-proof.gti",
+      "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
+      "int main() { auto value = Event<int&>::idle; return 0; }");
+  expect(empty.canGenerateCode(),
+         "dependency-free reference enum fixture reaches verified MIR");
+  if (empty.canGenerateCode()) {
+    lang::HirFunctionInstanceId owner = 0;
+    lang::MirValueId producer = 0;
+    for (const auto &function : empty.mir.functionInstances())
+      for (const auto &value : function.body.values)
+        if (value.info.type.kind == lang::SemanticType::Enum &&
+            value.info.traits.containsBorrowedState &&
+            value.borrowDependencies &&
+            value.borrowDependencies->dependencies.empty() &&
+            value.borrowDependencies->possibleAlternatives.size() == 1 &&
+            value.borrowDependencies->possibleAlternatives.front()
+                    .conditions.size() == 1) {
+          owner = function.id;
+          producer = value.id;
+        }
+    expect(owner && producer,
+           "known-empty fixture carries an exact typed producer proof");
+    for (int mutation = 0; owner && producer && mutation != 4; ++mutation) {
+      auto malformed = empty.mir;
+      auto &fact = lang::MirProgramTestAccess::functions(malformed)[owner - 1]
+                       .body.values[producer - 1]
+                       .borrowDependencies;
+      if (mutation == 0)
+        fact.reset();
+      else if (mutation == 1)
+        fact->possibleAlternatives.clear();
+      else if (mutation == 2)
+        fact->possibleAlternatives.front().conditions.front().variant = 1;
+      else
+        fact->possibleAlternatives.front().conditions.front().enumeration =
+            lang::SemanticType::Unknown;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "known-empty initialization rejects absent, untyped or "
+             "reference-bearing substituted alternative proofs");
+    }
   }
 }
 
@@ -486,6 +579,7 @@ int main() {
   testDependentPayloads();
   testOptionalClassSpelling();
   testInvalidDeclarations();
+  testReferenceSubstitutionsAndEmptyAlternatives();
   testExactTypeIdentity();
   testInstanceCatalogReset();
   testForwardDefaultsAndLatePayloadValidation();

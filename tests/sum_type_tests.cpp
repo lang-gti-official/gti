@@ -563,9 +563,33 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(borrowedPayload, "GTI-S2067") &&
-             hasMessage(borrowedPayload, "borrowed state"),
-         "a borrowed-state class payload should be rejected at construction");
+  expect(borrowedPayload.canGenerateCode() &&
+             lang::verifyMirProgram(borrowedPayload.mir).valid(),
+         "a passive borrowed class payload retains its exact owner through "
+         "verified MIR");
+
+  const auto danglingPayload = analyze("payload-borrowed-class-escape.gti", R"(
+class carrier {
+  int32_t& source;
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+enum holder { one(carrier value), none };
+[[borrowed_from(owner)]] holder escape(int32_t& owner) {
+  int32_t local = 3;
+  carrier value = carrier(local);
+  return holder::one(value);
+}
+int main() {
+  int32_t owner = 7;
+  holder result = escape(owner);
+  return 0;
+}
+)");
+  expect(danglingPayload.syntaxValid && !danglingPayload.semanticValid &&
+             !hasCode(danglingPayload, "GTI-B0001"),
+         "a borrowed class payload cannot substitute a dead local for its "
+         "declared caller origin");
 
   const lang::FrontendResult moveOnlyBinding =
       analyze("payload-move-only-binding.gti", R"(
@@ -1459,6 +1483,37 @@ int main() {
                }),
            "no field may move out of a subject whose obligation already "
            "transferred");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 std::swap(*moves.front(), *moves.back());
+                 return true;
+               }),
+           "reordered consuming extractions cannot reuse a retired carrier "
+           "dependency set");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.front()->lifecycle = moves.back()->lifecycle;
+                 return true;
+               }),
+           "duplicate subject transfers cannot preserve a carrier fact "
+           "through later field extraction");
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 for (auto &event : moves.back()->lifecycle)
+                   if (event.kind == lang::MirLifecycleEventKind::TransferOut) {
+                     event.source = 0;
+                     return true;
+                   }
+                 return false;
+               }),
+           "a final transfer with no exact shell obligation cannot justify "
+           "retained extraction facts");
     expect(consumingMutationRejected(
                temporary, 1,
                [](lang::MirBody &, lang::MirBlock &,

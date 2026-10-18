@@ -1,0 +1,30 @@
+#include <std/optional>
+
+mut int drops = 0;
+mut int drop_sum = 0;
+
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { drops += 1; drop_sum += this.id; }
+  int value() { return this.id; }
+};
+
+int main() {
+  {
+    mut std::optional<Tracked> destination{Tracked(1)};
+    std::optional<Tracked> source{Tracked(2)};
+    destination = std::move(source);
+    if (!destination || destination.value().value() != 2 ||
+        drops != 1 || drop_sum != 1) return 1;
+    std::optional<Tracked> empty{};
+    destination = std::move(empty);
+    if (destination || drops != 2 || drop_sum != 3) return 2;
+    std::optional<Tracked> replacement{Tracked(4)};
+    destination = std::move(replacement);
+    if (!destination || destination.value().value() != 4 ||
+        drops != 2) return 3;
+  }
+  return drops == 3 && drop_sum == 7 ? 0 : 4;
+}

@@ -2107,9 +2107,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         const Token token = callableToken(call->callee());
         switch (intrinsic) {
         case IntrinsicKind::Panic:
+        case IntrinsicKind::FailEmptyOwner:
           anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::Panic,
-                            DefinedFailureDetail::ExplicitPanic);
+          addFailureOutcome(operation,
+                            intrinsicTerminalFailureOutcome(intrinsic)->code,
+                            intrinsicTerminalFailureOutcome(intrinsic)->detail);
           break;
         case IntrinsicKind::FunctionPointerInvoke:
           // The erased signature preserves GTI failure propagation but not
@@ -5877,6 +5879,11 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   for (std::size_t index = 0; index < common; ++index) {
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
+    const auto &field = enumerator.payloadTypes[index];
+    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
+        isOwnerDependentTextExpression(call.arguments()[index]))
+      reportOwnerDependentTextStorage(call.arguments()[index],
+                                      "stored in a payload-enum field");
     if (actual != SemanticType::Unknown &&
         !callArgumentMatches(enumerator.payloadTypes[index], actual,
                              call.arguments()[index])) {
@@ -5888,47 +5895,38 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                  typeSpelling(enumerator.payloadTypes[index]) + "'.",
              "GTI-S2067");
     }
-    // Closed payload alternatives may own active-cleanup class values. Stored
-    // borrowed state remains outside this family because the variant would
-    // otherwise outlive or relocate an untracked referent.
-    if (typeTraits(actual).containsBorrowedState) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2067", DiagnosticPhase::Semantics,
-          expressionToken(call.arguments()[index]),
-          "Payload type '" + typeSpelling(actual) +
-              "' carries borrowed state and cannot live inside a variant "
-              "alternative.");
-      diagnostic.hints.emplace_back(
-          "Payload alternatives may own values, but they cannot store GTI "
-          "references or other borrowed-state carriers.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
   }
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
   }
+  // A payload constructor evaluates its fields in the same ordered input
+  // region as an ordinary call. In particular, retaining an earlier reference
+  // cannot permit a later argument to mutate or move that referent.
+  validateCallPlaceExclusivity(enumerator.payloadTypes, call.arguments(),
+                               call.paren(), std::nullopt, AccessMode::ReadOnly,
+                               false, {});
   semanticModel.recordPayloadConstruction(
       call, {.owner = owner,
              .type = enumerator.symbol.type,
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
              .parameterTypes = enumerator.payloadTypes});
-  // Establish empty evidence only from a complete typed inventory of every
-  // active payload field. The selected tag is part of the producer's proof;
-  // absence of an origin/loan is never itself evidence that the set is empty.
-  const bool dependencyFree =
-      call.arguments().size() == enumerator.payloadTypes.size() &&
-      std::all_of(enumerator.payloadTypes.begin(),
-                  enumerator.payloadTypes.end(),
-                  [&](const SemanticType &field) {
-                    const auto inventory = storedReferenceInventory(field);
-                    return inventory && inventory->empty();
-                  });
-  if (dependencyFree)
-    semanticModel.recordBorrowDependencySet(
-        call, {.possibleAlternatives = {
-                   {.conditions = {{.enumeration = enumerator.symbol.type,
-                                    .variant = enumerator.variantIndex}}}}});
+  // This producer attaches exact selected-alternative evidence, including
+  // every dependency path. Admission remains independently gated until the
+  // loan/tag verifier supports conditional borrowing; metadata alone does
+  // not enable reference-bearing payloads.
+  if (auto complete = payloadBorrowDependencySet(call, enumerator))
+    semanticModel.recordBorrowDependencySet(call, std::move(*complete));
+  else if (std::any_of(enumerator.payloadTypes.begin(),
+                       enumerator.payloadTypes.end(),
+                       [&](const SemanticType &field) {
+                         return field.kind == SemanticType::Reference ||
+                                typeTraits(field).containsBorrowedState;
+                       }))
+    report(call.paren(),
+           "Borrowed payload construction requires complete, stable dependency "
+           "origins for every retained field.",
+           "GTI-S2067");
   currentType = enumerator.symbol.type;
 }
 
@@ -6006,6 +6004,10 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       return std::nullopt;
     }
     const SemanticType &payloadType = enumerator->payloadTypes[index];
+    const bool storedReference = payloadType.kind == SemanticType::Reference;
+    if (storedReference && payloadType.arguments.size() != 1) {
+      return std::nullopt;
+    }
     const std::string tagOnlyPattern =
         "'case " + typeSpelling(subjectType) +
         "::" + enumerator->declaration->name.lexeme + ":'";
@@ -6013,8 +6015,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
     // (a prvalue or an explicit std::move) the field moves out of the active
     // alternative; when it observes a named place the binding is a copy.
     const SemanticTypeTraits payloadTraits = typeTraits(payloadType);
-    if (!binding->isReferencePattern() && consumingSubject &&
-        !payloadTraits.movable && !payloadTraits.copyable) {
+    if (!storedReference && !binding->isReferencePattern() &&
+        consumingSubject && !payloadTraits.movable && !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -6028,8 +6030,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
-    if (!binding->isReferencePattern() && !consumingSubject &&
-        !payloadTraits.copyable) {
+    if (!storedReference && !binding->isReferencePattern() &&
+        !consumingSubject && !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -6047,11 +6049,49 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
+    if (storedReference && !consumingSubject &&
+        !binding->isReferencePattern() &&
+        payloadType.referenceAccess == AccessMode::Mutable) {
+      report(binding->name(),
+             "An exclusive reference payload cannot be copied from an "
+             "unconsumed enum; reborrow it with 'auto&' or 'mut auto&', or "
+             "consume the enum to transfer the reference.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (storedReference && binding->isReferencePattern() && consumingSubject) {
+      report(binding->name(),
+             "A consumed reference payload uses a plain binding to transfer "
+             "its reference; explicit reference patterns reborrow an "
+             "unconsumed enum.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (storedReference && binding->isReferencePattern() &&
+        binding->isMutablePattern() &&
+        payloadType.referenceAccess != AccessMode::Mutable) {
+      report(binding->name(),
+             "A read-only reference payload cannot produce an exclusive "
+             "mutable reborrow.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    const PayloadExtractionKind extractionKind =
+        storedReference
+            ? (binding->isReferencePattern()
+                   ? PayloadExtractionKind::ReborrowReference
+               : consumingSubject ? PayloadExtractionKind::TransferReference
+                                  : PayloadExtractionKind::CopyReference)
+            : (binding->isReferencePattern()
+                   ? PayloadExtractionKind::BorrowValue
+               : consumingSubject ? PayloadExtractionKind::MoveValue
+                                  : PayloadExtractionKind::CopyValue);
     const SemanticType bindingType =
         binding->isReferencePattern()
-            ? SemanticType::referenceTo(payloadType, binding->isMutablePattern()
-                                                         ? AccessMode::Mutable
-                                                         : AccessMode::ReadOnly)
+            ? SemanticType::referenceTo(
+                  storedReference ? payloadType.arguments.front() : payloadType,
+                  binding->isMutablePattern() ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly)
             : payloadType;
     result.bindings.push_back(
         {.name = &binding->name(),
@@ -6059,7 +6099,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
          .binding = bindingInfo(bindingType, binding->isMutablePattern()
                                                  ? AccessMode::Mutable
                                                  : AccessMode::ReadOnly),
-         .payloadIndex = index});
+         .payloadIndex = index,
+         .extractionKind = extractionKind});
   }
   return result;
 }

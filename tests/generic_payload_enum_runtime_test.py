@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from native_fixture_build import build_fixture
 
 
 def run(command):
@@ -26,6 +27,143 @@ def main():
               "generic_payload_enum.gti").read_text()
     prefix = source.split("void exercise()", 1)[0]
     cases = {
+        "call-binding-publication": (prefix + """
+Event produce(int divisor) {
+  Resource guard = Resource(9);
+  return Event::message(Resource(4 / divisor));
+}
+int main() {
+  {
+    auto event = produce(1);
+    if (drops != 1 || id(event) != 4) return 1;
+  }
+  return drops == 2 ? 0 : 2;
+}
+""", 0, "9\n4\n"),
+        "call-binding-publication-failure": (prefix + """
+Event produce(int divisor) {
+  Resource guard = Resource(9);
+  return Event::message(Resource(4 / divisor));
+}
+int main() {
+  auto event = produce(0);
+  return id(event);
+}
+""", 70, "9\n"),
+        "consuming-binding-publication": (prefix + """
+Event produce() { return Event::message(Resource(4)); }
+int main() {
+  {
+    auto event = produce();
+    switch (std::move(event)) {
+      case Event::idle: return 1;
+      case Event::message(resource): {
+        if (resource.id() != 4 || drops != 0) return 2;
+        break;
+      }
+    }
+  }
+  return drops == 1 ? 0 : 3;
+}
+""", 0, "4\n"),
+        "consuming-binding-publication-failure": (prefix + """
+Event produce() { return Event::message(Resource(4)); }
+int consume(int divisor) {
+  auto event = produce();
+  switch (std::move(event)) {
+    case Event::idle: return 1;
+    case Event::message(resource): return resource.id() / divisor;
+  }
+}
+int main() { return consume(0); }
+""", 70, "4\n"),
+        "observed-owned-field": ("""
+#include <std/string>
+enum Observed { ready(int& owner), failed(std::string error) };
+[[borrowed_from(owner)]] Observed produce(int& owner) {
+  if (owner == 3) return Observed::failed(std::string("bad"));
+  return Observed::ready(owner);
+}
+int inspect(Observed& result) {
+  switch (result) {
+    case Observed::ready(value): return value;
+    case Observed::failed(auto& error): return int(error.size());
+  }
+}
+int main() {
+  int owner = 3;
+  mut auto result = produce(owner);
+  if (inspect(result) != 3) return 1;
+  switch (result) {
+    case Observed::ready(value): return 2;
+    case Observed::failed(mut auto& error): {
+      error.append("!");
+      if (error.size() != std::size_t(4)) return 3;
+      break;
+    }
+  }
+  return inspect(result) == 4 ? 0 : 4;
+}
+""", 0, ""),
+        "borrowed-class-payload": ("""
+class Carrier {
+  int& owner;
+public:
+  Carrier(int& value) : owner(value) {}
+  int read() { return this.owner; }
+};
+enum Holder { none, item(Carrier value) };
+enum Reading { none, item(int& value) };
+[[borrowed_from(owner)]]
+Reading clone(int& owner) {
+  Reading original = Reading::item(owner);
+  Reading copied = original;
+  return copied;
+}
+int inspect_reading(Reading& held) {
+  switch (held) {
+    case Reading::none: return 0;
+    case Reading::item(value): return value;
+  }
+}
+int inspect(Holder& held) {
+  switch (held) {
+    case Holder::none: return 0;
+    case Holder::item(auto& value): return value.read();
+  }
+}
+int main() {
+  mut int owner = 17;
+  {
+    Carrier value = Carrier(owner);
+    Holder held = Holder::item(value);
+    if (inspect(held) != 17) return 1;
+    Holder copied = held;
+    if (inspect(copied) != 17) return 3;
+    Reading escaped_shell = clone(owner);
+    if (inspect_reading(escaped_shell) != 17) return 4;
+  }
+  owner = 23;
+  return owner == 23 ? 0 : 2;
+}
+""", 0, ""),
+        "nested-reference-construction": ("""
+enum Shared { empty, value(int& owner) };
+enum SharedOuter { empty, wrapped(Shared inner) };
+enum Exclusive { empty, value(mut int& owner) };
+enum ExclusiveOuter { empty, wrapped(Exclusive inner) };
+int main() {
+  mut int owner = 3;
+  {
+    auto shared = SharedOuter::wrapped(Shared::value(owner));
+  }
+  {
+    auto exclusive = ExclusiveOuter::wrapped(Exclusive::value(owner));
+  }
+  owner = 19;
+  return owner == 19 ? 0 : 1;
+}
+""", 0, ""),
         "success": (source, 0, "1\n4\n3\n2\n"),
         "generic-owner-capture": (prefix + """
 int main() {
@@ -235,10 +373,16 @@ int main() {
                                  rejected.stdout + rejected.stderr)
                 return 1
         assignment = root / "construction-only-assignment.gti"
-        assignment.write_text(construction_prefix + """
+        assignment.write_text("""
+class Borrowed {
+  int& owner;
+public:
+  Borrowed(int& owner) : owner(owner) {}
+};
 int main() {
-  Event source = Event::message(Payload(1));
-  mut Event destination = Event::idle;
+  int owner = 1;
+  Borrowed source = Borrowed(owner);
+  mut Borrowed destination = Borrowed(owner);
   destination = std::move(source);
   return 0;
 }
@@ -248,7 +392,7 @@ int main() {
         if (rejected.returncode == 0 or "GTI-S2003" not in rejected.stderr or
                 "assign" not in rejected.stderr.lower() or
                 "GTI-B000" in rejected.stderr):
-            sys.stderr.write("construction-only enum must remain nonassignable\n" +
+            sys.stderr.write("borrow-carrying class must remain nonassignable\n" +
                              rejected.stdout + rejected.stderr)
             return 1
         plan = []
@@ -264,10 +408,14 @@ int main() {
             name, index, standard, optimization, flags, *_ = case
             binary = root / f"{name}-{index}"
             command = [str(compiler), str(root / (name + ".gti")), "--std", standard,
-                       "-" + optimization, "-o", str(binary)]
-            if flags:
-                command += ["--", *flags]
-            compiled = run(command)
+                       "-" + optimization]
+            suffix = ((pathlib.Path(__file__).parent / "fixtures" /
+                       "passive_payload_copy_transport.cpp").read_text()
+                      if name == "borrowed-class-payload" else "")
+            compiled = build_fixture(command, binary, native_suffix=suffix,
+                                     native_arguments=flags, standard=standard,
+                                     optimization=optimization, text=True,
+                                     capture_output=True, check=False)
             if compiled.returncode:
                 raise AssertionError(f"{name} {standard} {optimization}: compile failed\n" +
                                      compiled.stdout + compiled.stderr)

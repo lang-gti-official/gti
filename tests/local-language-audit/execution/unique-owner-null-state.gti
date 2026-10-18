@@ -11,15 +11,23 @@ public:
 
 int main() {
   mut std::unique_ptr<Tracked> owner = nullptr;
+  if (owner) return 1;
   owner.reset();
+  if (owner) return 2;
 
   owner = std::make_unique<Tracked>();
+  if (!owner) return 3;
   owner.reset();
+  if (owner) return 4;
   owner.reset();
+  if (owner) return 5;
 
   owner = std::make_unique<Tracked>();
+  if (!owner) return 6;
   owner = nullptr;
+  if (owner) return 7;
   owner.reset();
+  if (owner) return 8;
 
   std::println("done");
   return 0;

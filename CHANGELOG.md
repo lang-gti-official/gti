@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.444.0 — Checked reference payloads and complete borrowed results
+
+- Payload enums can store shared and exclusive references, including nested
+  enum values. Complete dependency sets preserve every possible external owner,
+  access mode, field path and active-alternative condition through ordinary
+  construction, calls, movement and return.
+- Consuming a direct reference alternative transfers the selected reference,
+  not its referent. Exclusive-reference enums are move-only. Reference-free
+  alternatives carry a known empty dependency set.
+- Source-defined borrowed-success/owned-error results support direct protocol
+  calls and `?`, with success-only result initialization and normal failure
+  cleanup. Example 165 demonstrates both class and enum result forms.
+- Invalid owner mutation and dangling escape remain source errors; independent
+  MIR verification rejects missing or substituted ownership evidence.
+- Consuming an outer alternative into a new reference-bearing value pattern
+  remains a separate structural goal; direct reference selection is supported.
+
 ## 0.443.0 — Composed payload enums and borrowed protocol results
 
 - Owning payload enums can contain nested enums and supported fixed arrays,
