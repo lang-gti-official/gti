@@ -11986,6 +11986,18 @@ completeBorrowSourcePath(const MirProgram &program,
                  instruction.operation == MirOperation::Identity &&
                  instruction.info.type == instruction.operands.front().type))) {
       result = fromOperand(state, instruction.operands.front());
+      if (result && instruction.kind == MirInstructionKind::CallInput &&
+          instruction.info.type.kind == SemanticType::Reference) {
+        const auto access = instruction.info.type.referenceAccess;
+        for (auto &dependency : result->dependencies) {
+          if (access == AccessMode::Mutable &&
+              dependency.access != AccessMode::Mutable) {
+            result.reset();
+            break;
+          }
+          dependency.access = access;
+        }
+      }
     }
     if (!result && instruction.result &&
         instruction.info.category == ValueCategory::Value) {
