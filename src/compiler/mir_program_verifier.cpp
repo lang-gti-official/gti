@@ -11548,6 +11548,22 @@ completeBorrowSourcePath(const MirProgram &program,
                     body, owner,
                     "dependency-set flow has an invalid edge parameter")};
   using Fact = CompleteBorrowFact;
+  const auto *function = body.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(owner)
+                             : nullptr;
+  const auto *lambda =
+      body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
+  const auto *constructor = body.kind == MirBodyKind::Constructor
+                                ? program.findConstructorInstance(owner)
+                                : nullptr;
+  const auto *parameters = function      ? &function->parameterBindings
+                           : lambda      ? &lambda->parameterBindings
+                           : constructor ? &constructor->parameterBindings
+                                         : nullptr;
+  const auto *parameterTypes = function      ? &function->parameterTypes
+                               : lambda      ? &lambda->parameterTypes
+                               : constructor ? &constructor->parameterTypes
+                                             : nullptr;
   struct State {
     std::vector<Fact> values;
     std::vector<Fact> places;
@@ -11845,6 +11861,38 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto loans = bindingLoans.find(place->binding);
       if (loans != bindingLoans.end() && loans->second.size() == 1)
         return fromReferenceLoan(state, loans->second.front());
+      // An ordinary reference formal need not have a materialized entry loan
+      // when it is only forwarded. Its caller-owned referent is nevertheless
+      // established by the exact typed formal, not by local reference storage
+      // or an attached result-origin claim. Never apply this fallback to an
+      // ambiguous carrier group or a local reference binding.
+      if (loans == bindingLoans.end() && parameters && parameterTypes &&
+          parameters->size() == parameterTypes->size() &&
+          std::count(parameters->begin(), parameters->end(), place->binding) == 1) {
+        const auto index =
+            std::find(parameters->begin(), parameters->end(), place->binding) -
+            parameters->begin();
+        const auto &formal = (*parameterTypes)[index];
+        const auto shell = std::find_if(
+            body.places.begin(), body.places.end(), [&](const auto &candidate) {
+              return candidate.root == MirPlaceRootKind::Binding &&
+                     candidate.binding == place->binding &&
+                     candidate.projections.empty() && candidate.type == formal &&
+                     candidate.initiallyAvailable && !candidate.foreignStorage;
+            });
+        if (formal.kind == SemanticType::Reference &&
+            formal.arguments.size() == 1 && shell != body.places.end() &&
+            place->projections.size() == 1 &&
+            place->projections.front().kind == MirProjectionKind::Dereference &&
+            place->type == formal.arguments.front() &&
+            place->initiallyAvailable && !place->foreignStorage &&
+            place->symbol == shell->symbol && place->key == shell->key &&
+            (place->access == AccessMode::ReadOnly ||
+             formal.referenceAccess == AccessMode::Mutable))
+          return MirBorrowDependencySet{
+              .dependencies = {{.source = place->id,
+                                .access = place->access}}};
+      }
       return std::nullopt;
     }
     if (place->root == MirPlaceRootKind::Loan ||
@@ -12344,18 +12392,6 @@ completeBorrowSourcePath(const MirProgram &program,
   };
   State initial{.values = std::vector<Fact>(body.values.size()),
                 .places = std::vector<Fact>(body.places.size())};
-  const auto *function = body.kind == MirBodyKind::Function
-                             ? program.findFunctionInstance(owner)
-                             : nullptr;
-  const auto *lambda =
-      body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
-  const auto *constructor = body.kind == MirBodyKind::Constructor
-                                ? program.findConstructorInstance(owner)
-                                : nullptr;
-  const auto *parameters = function      ? &function->parameterBindings
-                           : lambda      ? &lambda->parameterBindings
-                           : constructor ? &constructor->parameterBindings
-                                         : nullptr;
   if (parameters)
     for (const auto binding : *parameters)
       if (const auto entry =
@@ -13127,7 +13163,8 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
     }
     if (needsProof && !proveGuarded(proveGuarded, loan))
       return verificationFailure(body, owner,
-                                 "conditional loan lacks its exact typed entry "
+                                 "conditional loan " + std::to_string(loan.id) +
+                                 " lacks its exact typed entry "
                                  "or executable origin group");
   }
   for (const auto &returned : flow.normalReturns) {
