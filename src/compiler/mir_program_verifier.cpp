@@ -7255,6 +7255,11 @@ verifyMirPayloadEnums(const MirProgram &program) {
               guarded = guarded &&
                         (prefix.operation == MirOperation::PayloadExtract ||
                          prefix.kind == MirInstructionKind::Borrow ||
+                         // Retiring an earlier call/temporary loan does not
+                         // change the selected tag or payload storage. Loan
+                         // flow still rejects retirement of authority needed
+                         // by this extraction or a retained child.
+                         prefix.kind == MirInstructionKind::EndBorrow ||
                          bindingInitialization);
             }
             exact = guarded && incoming == 1 && subject != nullptr &&
