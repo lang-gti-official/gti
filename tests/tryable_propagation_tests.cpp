@@ -172,6 +172,83 @@ int main() {
              "normal-edge retirement, staged move and guarded input facts");
     }
   }
+  const std::string multipleOwners = R"gti(
+enum Pair { both(int& first, int& second) };
+[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+  switch (std::move(input)) {
+    case Pair::both(first, second):
+      if (choose) return first;
+      return second;
+  }
+}
+int main() {
+  int first = 41;
+  int second = 42;
+  mut auto carrier = Pair::both(first, second);
+  int& selected = select(std::move(carrier), true);
+  return selected == 41 ? 0 : 1;
+}
+)gti";
+  accepted(multipleOwners,
+           "passive consuming payloads retain each field's independent owner "
+           "through scalar result publication");
+  const auto multipleOwnerProof = analyze(multipleOwners);
+  if (multipleOwnerProof.canGenerateCode()) {
+    for (int mutation = 0; mutation < 5; ++mutation) {
+      auto malformed = multipleOwnerProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (!changed && mutation >= 3) {
+          for (auto &loan : function.body.loans) {
+            if (loan.kind != lang::MirLoanKind::CallResult ||
+                loan.additionalDependencies.empty() || loan.carriers.empty())
+              continue;
+            loan.additionalDependencies.clear();
+            if (mutation == 4)
+              for (auto &value : function.body.values)
+                if (value.sourceValue == loan.producedBy &&
+                    value.borrowDependencies &&
+                    value.borrowDependencies->dependencies.size() > 1)
+                  value.borrowDependencies->dependencies.resize(1);
+            changed = true;
+            break;
+          }
+        }
+        if (changed || !function.completeReturnBorrow ||
+            function.completeReturnBorrow->dependencies.size() != 2)
+          continue;
+        if (mutation == 0) {
+          function.completeReturnBorrow->dependencies.pop_back();
+          changed = true;
+        } else {
+          for (auto &block : function.body.blocks) {
+            for (auto it = block.instructions.begin();
+                 it != block.instructions.end(); ++it) {
+              if (changed)
+                break;
+              if (mutation == 1 && it->payloadIndex == 0 &&
+                  it->operation == lang::MirOperation::PayloadExtract) {
+                it->payloadIndex = 1;
+                changed = true;
+              } else if (mutation == 2 &&
+                         it->kind == lang::MirInstructionKind::EndBorrow &&
+                         it->loan &&
+                         function.body.loans[*it->loan - 1].kind ==
+                             lang::MirLoanKind::Stored) {
+                block.instructions.erase(it);
+                changed = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+      expect(changed, "multiple-owner mutation selects exact field handoff");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "passive field handoff cannot omit an owner, duplicate a field "
+             "or omit the consumed group's retirement");
+    }
+  }
   auto exclusiveConflict = exclusiveConditional;
   const auto successReturn = exclusiveConflict.find("return Status(value);");
   expect(successReturn != std::string::npos,

@@ -12176,6 +12176,45 @@ completeBorrowSourcePath(const MirProgram &program,
           result.dependencies.push_back(dependency);
     return result;
   };
+  // Passive borrowed enums have no lexical drop obligation to mark their
+  // final field transfer. Reuse the exact closed handoff sequence instead:
+  // every sealed field is extracted once, then the old group is retired
+  // before successor bindings are published. Keep the carrier fact only
+  // until that sequence's final extraction, never across a whole-value move.
+  std::unordered_map<MirInstructionId, bool> passiveFieldRetirements;
+  std::unordered_set<MirBlockId> checkedHandoffs;
+  for (const auto &loan : body.loans) {
+    if (!loan.referenceSelection)
+      continue;
+    const auto handoff = mir_detail::selectedReferenceHandoff(body, loan);
+    if (!handoff || !checkedHandoffs.insert(handoff->block).second)
+      continue;
+    const auto *block = body.findBlock(handoff->block);
+    const auto *carrier = body.findPlace(handoff->carrier);
+    const auto *enumeration =
+        carrier ? program.findPayloadEnum(carrier->type) : nullptr;
+    if (!block || !carrier || !enumeration ||
+        carrier->traits.drop == DropKind::Lexical)
+      continue;
+    std::vector<const MirInstruction *> fields;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.tombstone)
+        continue;
+      if (instruction.id == handoff->retirement)
+        break;
+      fields.push_back(&instruction);
+    }
+    if (fields.empty() || !fields.front()->enumVariant ||
+        fields.front()->enumOwner != enumeration->declaration ||
+        *fields.front()->enumVariant >= enumeration->variants.size() ||
+        fields.size() !=
+            enumeration->variants[*fields.front()->enumVariant]
+                .payloadTypes.size())
+      continue;
+    for (std::size_t index = 0; index < fields.size(); ++index)
+      passiveFieldRetirements.emplace(fields[index]->id,
+                                      index + 1 == fields.size());
+  }
   const auto execute = [&](State &state, const MirInstruction &instruction) {
     Fact result;
     const bool payload =
@@ -12299,7 +12338,12 @@ completeBorrowSourcePath(const MirProgram &program,
       // shell is retired only by its final TransferOut; lifecycle verification
       // independently proves tag dominance, one extraction per field and that
       // final retirement. Ordinary whole-value moves still invalidate here.
-      if (obligation == body.dropObligations.end() || retiresShell)
+      const auto passive = passiveFieldRetirements.find(instruction.id);
+      const bool passiveFieldTransfer =
+          fieldTransfer && passive != passiveFieldRetirements.end();
+      if (passiveFieldTransfer ? passive->second
+                              : obligation == body.dropObligations.end() ||
+                                    retiresShell)
         invalidate(state, operand.place);
     }
     if (instruction.kind == MirInstructionKind::Call ||
