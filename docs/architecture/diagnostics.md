@@ -962,12 +962,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   - a generic operand without a `requires std::tryable<T>` conjunct;
   - an operand that cannot be moved, or a named one that cannot be copied,
     suggesting `?std::move(name)`;
-  - a borrowing operand, value type or residual type;
+  - a borrowing operand without a complete checked dependency inventory, a
+    reference success without an exact checked return mapping, or a borrowed
+    residual; a checked shared/exclusive reference success is supported;
   - an enclosing callable without a declared return type, or a `void` one;
   - a return type that is neither the residual type nor constructible from it
     through exactly one `implicit` constructor;
   - use in a constexpr function;
-  - an operand that is not a class or struct, such as a payload enum.
+  - an operand that is not a class, struct or payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has
   proved a defining include. Preserve the unresolved source-name span and
   message, add the verified include hints and zero-width edits. The same rule
