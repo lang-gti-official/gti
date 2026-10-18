@@ -9167,6 +9167,104 @@ payloadEnumCallResultSlot(const MirProgram &program, const MirBody &body,
 }
 
 [[nodiscard]] const MirPlace *
+payloadEnumCallPublicationSlot(const MirProgram &program, const MirBody &body,
+                               MirValueId valueId) {
+  const auto *source = payloadEnumCallResultSlot(program, body, valueId);
+  const auto *value = body.findValue(valueId);
+  const auto *call = value ? findInstruction(body, value->definition) : nullptr;
+  // This is representation coalescing, not a new ownership transfer. Keep the
+  // value-rooted MIR obligation, but construct in its sole immediate binding
+  // consumer after an exact success-only activation/reparent schedule.
+  if (!source || !call || !call->functionTarget || !call->successResultDrop ||
+      call->callableInvocation || call->lambdaTarget)
+    return nullptr;
+  const auto *invoke = invokeProducerBlock(body, *call);
+  const auto *success =
+      invoke ? body.findBlock(invoke->terminator.target) : nullptr;
+  if (!success || success->instructions.empty())
+    return nullptr;
+  const auto &initialize = success->instructions.front();
+  if (initialize.kind != MirInstructionKind::Initialize ||
+      !initialize.destination || initialize.operands.size() != 1 ||
+      initialize.operands.front().kind != MirOperandKind::Value ||
+      initialize.operands.front().value != valueId ||
+      initialize.lifecycle.size() != 1 || !initialize.definedFailure.empty() ||
+      !initialize.localFailureSites.empty())
+    return nullptr;
+  const auto uses = nonRootRecordUses(body, valueId);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().instruction != initialize.id)
+    return nullptr;
+  const auto *destination = body.findPlace(*initialize.destination);
+  const auto &transfer = initialize.lifecycle.front();
+  const auto *drop = body.findDropObligation(transfer.target);
+  if (!destination || destination->root != MirPlaceRootKind::Binding ||
+      destination->binding == 0 || !destination->projections.empty() ||
+      destination->type != source->type ||
+      destination->traits != source->traits ||
+      transfer.kind != MirLifecycleEventKind::Reparent ||
+      transfer.source != *call->successResultDrop || transfer.conditional ||
+      transfer.failureCleanup || !drop || drop->initiallyActive ||
+      drop->place != destination->id || drop->dropType.type != source->type ||
+      !drop->dropType.requiresActiveCleanup)
+    return nullptr;
+  return destination;
+}
+
+[[nodiscard]] const MirPlace *
+payloadEnumMovePublicationSlot(const MirProgram &program, const MirBody &body,
+                               MirValueId valueId) {
+  // Narrow native value-slot elimination: preserve the actual source object,
+  // its Move, and its scheduled shell cleanup. Only the compiler-created value
+  // representation is fused into its adjacent, sole ordinary binding consumer.
+  // The existing move classifier proves distinct source/value obligations;
+  // this query independently proves the exact value/binding reparent. It does
+  // not admit temporary destinations or move cleanup across an instruction.
+  const auto moved = payloadEnumMoveValueSlot(program, body, valueId);
+  const auto *value = body.findValue(valueId);
+  if (!moved || !moved.sourceDrop || !value)
+    return nullptr;
+  const auto uses = nonRootRecordUses(body, valueId);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand)
+    return nullptr;
+  const auto *initialize = findInstruction(body, uses.front().instruction);
+  const auto *block = body.findBlock(value->definitionBlock);
+  bool adjacent = false;
+  if (block)
+    for (std::size_t i = 1; i < block->instructions.size(); ++i)
+      adjacent |= block->instructions[i - 1].id == moved.move->id &&
+                  &block->instructions[i] == initialize;
+  if (!adjacent || !initialize ||
+      initialize->kind != MirInstructionKind::Initialize ||
+      !initialize->destination || initialize->operands.size() != 1 ||
+      initialize->operands.front().kind != MirOperandKind::Value ||
+      initialize->operands.front().value != valueId ||
+      initialize->lifecycle.size() != 1 ||
+      !initialize->definedFailure.empty() ||
+      !initialize->localFailureSites.empty())
+    return nullptr;
+  const auto *destination = body.findPlace(*initialize->destination);
+  const auto &transfer = initialize->lifecycle.front();
+  const auto *drop = body.findDropObligation(transfer.target);
+  if (!destination || destination->root != MirPlaceRootKind::Binding ||
+      destination->binding == 0 || !destination->projections.empty() ||
+      destination->id == moved.source->id ||
+      destination->type != moved.slot->type ||
+      destination->traits != moved.slot->traits ||
+      transfer.kind != MirLifecycleEventKind::Reparent ||
+      transfer.source != moved.valueDrop->id || transfer.conditional ||
+      transfer.failureCleanup || !drop ||
+      drop->kind != MirDropObligationKind::Binding || drop->initiallyActive ||
+      drop->id == moved.sourceDrop->id || drop->id == moved.valueDrop->id ||
+      drop->place != destination->id ||
+      drop->dropType != moved.valueDrop->dropType)
+    return nullptr;
+  return destination;
+}
+
+[[nodiscard]] const MirPlace *
 owningPayloadEnumValueSlot(const MirProgram &program, const MirBody &body,
                            MirValueId valueId) {
   if (const MirPlace *constructed =
@@ -41546,6 +41644,18 @@ private:
         if (instruction.operands.size() == 1 &&
             instruction.operands.front().kind == MirOperandKind::Value &&
             instruction.operands.front().type.kind == SemanticType::Enum) {
+          if (payloadEnumCallPublicationSlot(
+                  program, facts.body, instruction.operands.front().value) ==
+              slot) {
+            output << "// GTI MIR payload call published in its binding\n";
+            return;
+          }
+          if (payloadEnumMovePublicationSlot(
+                  program, facts.body, instruction.operands.front().value) ==
+              slot) {
+            output << "// GTI MIR payload move published in its binding\n";
+            return;
+          }
           const MirPlace *source = owningPayloadEnumValueSlot(
               program, facts.body, instruction.operands.front().value);
           if (source != nullptr && source->id != slot->id) {
@@ -42933,9 +43043,12 @@ private:
                                                  facts.body.returnType) &&
           returnMoveDefinition(facts.body, *instruction.result) == &instruction;
       if (enumMove.move == &instruction && !publishesOwningPayloadEnumReturn) {
+        const auto *publication = payloadEnumMovePublicationSlot(
+            program, facts.body, *instruction.result);
         writeIndent();
         output << "__gti_mir_p_"
-               << canonicalSlotPlaceId(facts.body, *enumMove.slot)
+               << canonicalSlotPlaceId(facts.body, publication ? *publication
+                                                               : *enumMove.slot)
                << ".construct(std::move(";
         emitStoragePlaceValue(facts, *enumMove.source);
         output << "));\n";
@@ -46763,6 +46876,11 @@ private:
               ? owningPayloadEnumValueSlot(program, facts.body,
                                            *instruction.result)
               : nullptr;
+      if (instruction.result && owningPayloadEnumDestination != nullptr) {
+        if (const auto *published = payloadEnumCallPublicationSlot(
+                program, facts.body, *instruction.result))
+          owningPayloadEnumDestination = published;
+      }
       const bool expectedClassPlacement = expectedClassPlacementResultType(
           program, representations, callee.returnType);
       const MirPlace *expectedClassDestination =
@@ -60737,6 +60855,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                           *instruction.result)) {
           return false;
         }
+        if (const auto *publication = payloadEnumMovePublicationSlot(
+                program_, body, *instruction.result);
+            publication && !slotPlace(*publication))
+          return false;
         continue;
       }
       case MirInstructionKind::CallInput: {
@@ -61949,6 +62071,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       !instruction.result ||
                       owningPayloadEnumValueSlot(
                           program_, body, *instruction.result) != nullptr;
+                  if (returnReady && instruction.result) {
+                    if (const auto *publication =
+                            payloadEnumCallPublicationSlot(program_, body,
+                                                           *instruction.result))
+                      returnReady = slotPlace(*publication);
+                  }
                 } else {
                   returnReady = cppMirEnumBoundaryRow(
                       program_, representations_, target->returnType);

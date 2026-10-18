@@ -2601,6 +2601,23 @@ return fails admission rather than assigning into uninitialized caller
 storage. A cleanup-free enum's value-rooted place, which a call borrows for a
 fresh temporary, is the SSA value itself and has no separate local.
 Constructor arguments use the same proof, including fresh unit variants.
+A fallible ordinary source call may also construct its owning enum result
+directly in a binding when its sole executable value use is the first
+instruction on the Invoke success edge: an exact unconditional Initialize
+reparent from the result obligation to the initially inactive binding
+obligation. The original value-rooted MIR storage and drop identities remain
+verified metadata. Emission marks the binding's native representation engaged
+only on call success and erases only that matching Initialize's redundant
+representation move/retirement. Non-immediate or non-unique publication keeps
+the ordinary value-rooted representation. The admission and emission paths
+share the same publication query; no source lifetime or cleanup is removed.
+The analogous exact `Move` value-to-binding publication preserves the original
+source object, its move, and its scheduled moved-from-shell cleanup. Only the
+intermediate value-rooted native object is omitted: its sole use must be an
+adjacent Initialize in the same block, with distinct source/value/binding drop
+identities and an identical cleanup type. Temporary destinations, intervening
+instructions, multiple consumers, and incomplete transfer evidence retain the
+existing representation path.
 A fresh cleanup-free class construction that is one alternative field fuses
 into the variant braces only when it is adjacent to its `PayloadConstruct`.
 Otherwise, when its constructor ends the block at an Invoke or sibling field
