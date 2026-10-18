@@ -26,6 +26,56 @@ def main():
               "generic_payload_enum.gti").read_text()
     prefix = source.split("void exercise()", 1)[0]
     cases = {
+        "call-binding-publication": (prefix + """
+Event produce(int divisor) {
+  Resource guard = Resource(9);
+  return Event::message(Resource(4 / divisor));
+}
+int main() {
+  {
+    auto event = produce(1);
+    if (drops != 1 || id(event) != 4) return 1;
+  }
+  return drops == 2 ? 0 : 2;
+}
+""", 0, "9\n4\n"),
+        "call-binding-publication-failure": (prefix + """
+Event produce(int divisor) {
+  Resource guard = Resource(9);
+  return Event::message(Resource(4 / divisor));
+}
+int main() {
+  auto event = produce(0);
+  return id(event);
+}
+""", 70, "9\n"),
+        "consuming-binding-publication": (prefix + """
+Event produce() { return Event::message(Resource(4)); }
+int main() {
+  {
+    auto event = produce();
+    switch (std::move(event)) {
+      case Event::idle: return 1;
+      case Event::message(resource): {
+        if (resource.id() != 4 || drops != 0) return 2;
+        break;
+      }
+    }
+  }
+  return drops == 1 ? 0 : 3;
+}
+""", 0, "4\n"),
+        "consuming-binding-publication-failure": (prefix + """
+Event produce() { return Event::message(Resource(4)); }
+int consume(int divisor) {
+  auto event = produce();
+  switch (std::move(event)) {
+    case Event::idle: return 1;
+    case Event::message(resource): return resource.id() / divisor;
+  }
+}
+int main() { return consume(0); }
+""", 70, "4\n"),
         "observed-owned-field": ("""
 #include <std/string>
 enum Observed { ready(int& owner), failed(std::string error) };

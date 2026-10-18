@@ -2262,7 +2262,13 @@ public:
   }
 
   template <typename Cleanup>
-  [[nodiscard]] bool destroy_cleanup_with_failure(
+  [[nodiscard]]
+#if defined(_MSC_VER)
+  __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  bool destroy_cleanup_with_failure(
       ::gti_failure_record_v2 *record, bool conditional, bool unwinding,
       Cleanup cleanup) {
     if (!engaged_) {

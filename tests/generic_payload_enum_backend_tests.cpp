@@ -2,6 +2,7 @@
 #include "../src/compiler/cpp_representation.h"
 #include "cpp_backend_test_support.h"
 #include "gti/lowered_program_printer.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
@@ -1117,6 +1118,176 @@ int main() {
     expect(changed && !lang::verifyMirProgram(forged).valid(),
            "provenance-only enum path still requires an exact typed payload "
            "field");
+  }
+  const auto publishedCall = lang::Frontend().analyze(
+      "owning-enum-call-publication.gti", R"gti(
+#include <std/string>
+enum Packet { number(int value), text(std::string value) };
+Packet produce(bool text) {
+  if (text) return Packet::text(std::string("owned publication"));
+  return Packet::number(7);
+}
+int main() {
+  auto packet = produce(false);
+  switch (packet) {
+    case Packet::number(value): return value - 7;
+    case Packet::text(auto& value): return int(value.size());
+  }
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(publishedCall.canGenerateCode(),
+         "fallible enum result has a checked immediate binding publication");
+  if (publishedCall.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const auto text = gti_test::emitCpp(publishedCall, standard).contents;
+      expect(text.find("payload call published in its binding") !=
+                 std::string::npos,
+             "enum call constructs directly in its sole binding destination");
+    }
+    auto delayed = publishedCall.mir;
+    bool delayedPublication = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(delayed)) {
+      lang::MirInstruction literal;
+      lang::MirValue literalValue;
+      lang::MirInstructionId nextInstruction = 1;
+      lang::MirValueId nextValue = 1;
+      for (const auto &value : function.body.values)
+        nextValue = std::max(nextValue, value.id + 1);
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          nextInstruction = std::max(nextInstruction, instruction.id + 1);
+          if (instruction.operation == lang::MirOperation::Literal &&
+              instruction.result) {
+            literal = instruction;
+            literalValue = *function.body.findValue(*instruction.result);
+          }
+        }
+      if (!literal.result)
+        continue;
+      for (auto &block : function.body.blocks) {
+        if (delayedPublication || block.instructions.empty())
+          continue;
+        const auto &first = block.instructions.front();
+        if (first.kind != lang::MirInstructionKind::Initialize ||
+            first.operands.size() != 1 ||
+            first.operands.front().type.kind != lang::SemanticType::Enum)
+          continue;
+        literal.id = nextInstruction;
+        literal.result = nextValue;
+        literalValue.id = nextValue;
+        literalValue.definition = nextInstruction;
+        literalValue.definitionBlock = block.id;
+        function.body.values.push_back(literalValue);
+        block.instructions.insert(block.instructions.begin(), literal);
+        delayedPublication = true;
+      }
+      expect(lang::rebuildMirValueUses(function.body),
+             "delayed publication rebuilds exact value use index");
+    }
+    const auto delayedProof = lang::verifyMirProgram(delayed);
+    const bool validDelayed = delayedPublication && delayedProof.valid();
+    if (!validDelayed)
+      for (const auto &error : delayedProof.errors)
+        std::cerr << "delayed: " << error.message << '\n';
+    expect(validDelayed,
+           "a pure intervening value keeps delayed publication legal");
+    if (validDelayed) {
+      const auto text =
+          gti_test::emitCpp(publishedCall, delayed, delayed).contents;
+      expect(text.find("payload call published in its binding") ==
+                     std::string::npos &&
+                 text.find("end payload-enum value representation") !=
+                     std::string::npos,
+             "non-immediate publication retains the ordinary representation "
+             "fallback");
+    }
+    for (int mutation = 0; mutation < 3; ++mutation) {
+      auto malformed = publishedCall.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::Initialize ||
+                instruction.operands.size() != 1 ||
+                instruction.operands.front().type.kind !=
+                    lang::SemanticType::Enum ||
+                instruction.lifecycle.size() != 1)
+              continue;
+            auto &transfer = instruction.lifecycle.front();
+            if (transfer.kind != lang::MirLifecycleEventKind::Reparent)
+              continue;
+            changed = true;
+            if (mutation == 0)
+              transfer.source = transfer.target;
+            else if (mutation == 1)
+              transfer.conditional = true;
+            else {
+              auto *destination =
+                  function.body.findPlace(*instruction.destination);
+              for (auto &drop : function.body.dropObligations)
+                if (drop.place == destination->id)
+                  drop.initiallyActive = true;
+            }
+          }
+      expect(
+          changed && !lang::verifyMirProgram(malformed).valid(),
+          "direct publication does not waive source obligation, unconditional "
+          "transfer, or inactive destination proofs");
+    }
+  }
+  const auto movedPublication = lang::Frontend().analyze(
+      "owning-enum-move-publication.gti", R"gti(
+#include <std/string>
+enum Packet { number(int value), text(std::string value) };
+int main() {
+  auto packet = Packet::text(std::string("owned publication"));
+  switch (std::move(packet)) {
+    case Packet::number(value): return value;
+    case Packet::text(value): return int(value.size()) - 17;
+  }
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(movedPublication.canGenerateCode(),
+         "consuming switch uses independently checked enum move publication");
+  if (movedPublication.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      expect(gti_test::emitCpp(movedPublication, standard)
+                     .contents.find("payload move published in its binding") !=
+                 std::string::npos,
+             "enum move keeps its source shell but directly constructs its "
+             "adjacent binding destination");
+    for (int mutation = 0; mutation < 3; ++mutation) {
+      auto malformed = movedPublication.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Move ||
+                instruction.info.type.kind != lang::SemanticType::Enum ||
+                instruction.lifecycle.size() != 1)
+              continue;
+            changed = true;
+            auto &transfer = instruction.lifecycle.front();
+            if (mutation == 0)
+              transfer.source = transfer.target;
+            else if (mutation == 1)
+              transfer.target = transfer.source;
+            else {
+              // A duplicated publication cannot create a second drop authority.
+              for (auto &candidate : block.instructions)
+                if (candidate.kind == lang::MirInstructionKind::Initialize &&
+                    candidate.operands.size() == 1 &&
+                    candidate.operands.front().value == *instruction.result)
+                  candidate.lifecycle.front().source = transfer.source;
+            }
+          }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "move publication preserves distinct source/value/binding "
+             "obligations and cannot duplicate source cleanup authority");
+    }
   }
   return failures == 0 ? 0 : 1;
 }
