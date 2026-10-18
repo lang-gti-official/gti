@@ -1109,6 +1109,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     }
     if (classInfo->computedTypeProjection ==
         ComputedTypeProjectionKind::CallableReturn) {
+      if (type.arguments.size() == 1 && type.valueArguments.empty())
+        if (const auto *result =
+                type.arguments.front().nativeFunctionReturnType())
+          return spell(*result);
       return type.arguments.size() == 1 && type.valueArguments.empty()
                  ? "typename ::gti_internal::backend::source_callable_result<" +
                        spell(type.arguments.front()) + ">::type"

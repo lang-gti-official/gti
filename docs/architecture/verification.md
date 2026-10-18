@@ -9,7 +9,9 @@ callback escape rejection. It rejects malformed projection declarations,
 substituted MIR result types and incompatible class-publication destinations.
 `callable_return_type_lsp` checks the diagnostic's UTF-16 range and repair.
 `callable_return_type_runtime` runs example 167 and an owned source-class/result
-enum client with `transform`, `transform_error` and `and_then` under C++20/C++23,
+enum client with `transform`, `transform_error` and `and_then`, plus native
+pointer, read-only-pointer, scalar and void callback results in retained
+generic templates, under C++20/C++23,
 O0/O1/O3, disabled elision and ASan/UBSan. This is prerequisite evidence, not a
 replacement for production expected or proof of its complete migration matrix.
 
@@ -19,6 +21,9 @@ selection. In particular, direct local initialization is no longer rejected
 by a probe that admitted only the temporary-borrow subset. The producer,
 single consumer, destination type, Invoke success and cleanup proofs remain
 unchanged; this does not grant a new semantic lifetime or bypass MIR checking.
+Native callback projections resolve from exact GTI instance metadata: their
+logical pointer result cannot be reconstructed from a C function-pointer
+signature. The native fixture prevents that representation mismatch.
 
 The paired `benchmarks/callable-result-projection.gti` workload compares a
 projected result with `-D EXPLICIT_RESULT`, doing 20 million scalar mappings.

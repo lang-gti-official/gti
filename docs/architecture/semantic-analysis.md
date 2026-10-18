@@ -845,7 +845,11 @@ templates replay that projection when checking their signature against the
 concrete MIR instance; a mismatch still rejects representation. Their native
 carriers expose the MIR logical result as type metadata, never infer it from a
 C++ invocation whose ABI may instead return a failure status or use an output
-parameter. No new runtime intrinsic or storage is involved. Confined-callable
+parameter. Native function pointers have no GTI metadata carrier; their
+projections are
+resolved from exact instance substitutions, not deduced from the C signature
+(whose pointer return representation can differ from GTI's logical result).
+No new runtime intrinsic or storage is involved. Confined-callable
 escape analysis distinguishes a projection operand from stored callable state;
 ordinary concrete reference origins and escape checks remain authoritative.
 
