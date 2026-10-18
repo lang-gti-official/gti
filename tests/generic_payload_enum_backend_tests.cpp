@@ -971,6 +971,47 @@ int main() {
     for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
       expect(!gti_test::emitCpp(referenceEntry, standard).contents.empty(),
              "abstract enum reference inventory does not require native class fields");
+    const auto referenceLowered = gti_test::lowerProgram(
+        referenceEntry, referenceEntry.mir, referenceEntry.mir);
+    const lang::CppMirBodyEmissionMap referenceMap(
+        lang::buildCppMirBodyEmissionMapRows(referenceLowered,
+                                            lang::CppStandard::Cpp23));
+    for (const bool entryAddress : {false, true}) {
+      auto addressed = referenceEntry.mir;
+      bool tested = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(addressed)) {
+        for (const auto &place : function.body.places) {
+          if (tested || place.projections.size() != 3 ||
+              place.projections[1].kind != lang::MirProjectionKind::Field)
+            continue;
+          tested = true;
+          lang::MirLoan addressLoan;
+          addressLoan.id = function.body.loans.size() + 1;
+          addressLoan.kind = entryAddress ? lang::MirLoanKind::Parameter
+                                         : lang::MirLoanKind::Local;
+          addressLoan.source = place.id;
+          addressLoan.entry = entryAddress;
+          function.body.loans.push_back(addressLoan);
+          if (!entryAddress) {
+            lang::MirInstruction borrow;
+            borrow.id = 10000;
+            borrow.kind = lang::MirInstructionKind::Borrow;
+            borrow.loan = addressLoan.id;
+            borrow.info.type = place.type;
+            borrow.operands.push_back({.kind = lang::MirOperandKind::Loan,
+                                       .loan = 2,
+                                       .type = place.type});
+            function.body.blocks.front().instructions.insert(
+                function.body.blocks.front().instructions.begin(), borrow);
+          }
+          const lang::CppMirBodyEmitter rejected(addressed, referenceMap);
+          expect(!rejected.supportsBodyText(
+                     {lang::MirBodyKind::Function, function.id}),
+                 "an abstract enum path cannot hide a runtime Borrow or entry address");
+        }
+      }
+      expect(tested, "runtime address rejection fixture finds its abstract path");
+    }
     auto forged = referenceEntry.mir;
     bool changed = false;
     for (auto &function : lang::MirProgramTestAccess::functions(forged))

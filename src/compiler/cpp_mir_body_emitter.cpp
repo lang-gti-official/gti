@@ -28,6 +28,8 @@
 
 namespace lang {
 namespace {
+[[nodiscard]] const MirInstruction *
+storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan);
 [[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
                                              const MirBody &body,
                                              const MirPlace &place);
@@ -8940,6 +8942,7 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
   const MirBlock *returnBlock = nullptr;
   const MirBlock *transferBlock = nullptr;
   const MirInstruction *transferInstruction = nullptr;
+  const MirInstruction *erasedReturnBorrow = nullptr;
   std::size_t initializations = 0;
   std::size_t transfers = 0;
   for (const MirBlock &block : body.blocks) {
@@ -8949,12 +8952,18 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
                       return instruction.id == producer->id;
                     });
     if (containsProducer) {
+      const auto *returnLoan = block.terminator.returnLoan
+                                   ? body.findLoan(*block.terminator.returnLoan)
+                                   : nullptr;
+      erasedReturnBorrow = returnLoan
+                               ? storedValueReturnLoanProducer(body, *returnLoan)
+                               : nullptr;
       if (returnBlock != nullptr ||
           block.terminator.kind != MirTerminatorKind::Return ||
           !block.terminator.value ||
           block.terminator.value->kind != MirOperandKind::Value ||
           block.terminator.value->value != valueId ||
-          block.terminator.returnLoan ||
+          (block.terminator.returnLoan && !erasedReturnBorrow) ||
           !block.terminator.successLifecycle.empty()) {
         return {};
       }
@@ -9007,7 +9016,9 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
     }
     const bool cleanupOnly =
         instruction.kind == MirInstructionKind::Lifecycle ||
-        instruction.kind == MirInstructionKind::Drop;
+        instruction.kind == MirInstructionKind::Drop ||
+        instruction.kind == MirInstructionKind::EndBorrow ||
+        &instruction == erasedReturnBorrow;
     if (afterProducer &&
         (!cleanupOnly || !instruction.localFailureSites.empty() ||
          !instruction.definedFailure.empty())) {
@@ -34457,11 +34468,24 @@ loanHasCppPointerCarrier(const MirProgram &program,
     std::size_t producers = 0;
     for (const auto &block : body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.loan == loan.id &&
-            (instruction.kind == MirInstructionKind::Call ||
-             (instruction.kind == MirInstructionKind::Borrow &&
-              instruction.operands.size() == 1)))
+        if (instruction.loan == loan.id) {
+          const bool returnedAddress =
+              instruction.kind == MirInstructionKind::Call &&
+              loanProducingReferenceCall(program, body, loan) == &instruction;
+          const bool selectedAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.referenceSelection &&
+              borrowedPayloadExtract(body, loan.referenceSelection->value);
+          const bool transferredAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.kind == MirLoanKind::Return &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Loan &&
+              instruction.operands.front().place == 0;
+          if (!returnedAddress && !selectedAddress && !transferredAddress)
+            return false;
           ++producers;
+        }
     if (producers != 1)
       return false;
   }
@@ -56990,6 +57014,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (payloadEnumArgumentMetadataPlace(program_, body, place)) {
       continue;
     }
+    if (nonRuntimeEnumProjection(program_, body, place) && typeRow(place.type))
+      continue;
     if (objectAllocationForPlace(body, place.id)) {
       if (!failureForm || !typeRow(place.type.arguments.front()))
         return false;
@@ -57487,8 +57513,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
-    if (nonRuntimeEnumProjection(program_, body, place) && typeRow(place.type))
-      continue;
     if (provenanceOnlyProjectedPlace(program_, representations_, body, place)) {
       const auto root =
           std::find_if(body.places.begin(), body.places.end(),
