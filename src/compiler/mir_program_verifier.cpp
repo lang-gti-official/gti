@@ -11417,7 +11417,11 @@ constructedCompleteBorrowFact(const MirProgram &program, const MirBody &body,
                                       ? HirCallInputKind::MutableBorrow
                                       : HirCallInputKind::ReadBorrow)))
       return std::nullopt;
-    const auto inventory = findStoredCarrierReferenceInventory(program, type);
+    const auto inventory =
+        type.kind == SemanticType::Reference && type.arguments.size() == 1
+            ? std::optional{std::vector<MirStoredCarrierReference>{
+                  {.reference = type}}}
+            : findStoredCarrierReferenceInventory(program, type);
     if (!inventory)
       return std::nullopt;
     // A complete concrete reference-free field cannot contribute external
