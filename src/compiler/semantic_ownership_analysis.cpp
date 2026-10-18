@@ -2683,7 +2683,9 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
   // The exact complete source contract also owns the field mapping used by
   // call lowering. Leaving the legacy receiver-only spelling here would
   // incorrectly describe an external referent as the receiver's own storage.
-  updated.returnBorrowFields = summary.dependencies;
+  if (updated.returnType.kind == SemanticType::Class ||
+      (updated.returnType.kind == SemanticType::Reference && updated.ownerClass))
+    updated.returnBorrowFields = summary.dependencies;
   updated.completeReturnBorrow = std::move(summary);
   semanticModel.record(*updated.declaration, std::move(updated));
 }

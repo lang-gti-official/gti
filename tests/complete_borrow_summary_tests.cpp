@@ -1394,7 +1394,7 @@ int main() { return 0; }
             constructor.completeBorrow->dependencies.empty())
           continue;
         ++tested;
-        for (int mutation = 0; mutation < 5; ++mutation) {
+        for (int mutation = 0; mutation < 10; ++mutation) {
           auto malformed = result.mir;
           auto &changed = lang::MirProgramTestAccess::constructors(malformed)
                               [constructor.id - 1];
@@ -1411,9 +1411,24 @@ int main() { return 0; }
               for (auto &instruction : block.instructions)
                 if (instruction.kind == lang::MirInstructionKind::Initialize)
                   instruction.operands.clear();
+          if (mutation >= 5)
+            for (auto &loan : changed.body.loans) {
+              if (!loan.escapes || !loan.storedField)
+                continue;
+              if (mutation == 6) loan.source = 0;
+              if (mutation == 7) loan.conditions.clear();
+              if (mutation == 8) loan.storedField = 0;
+              for (auto &block : changed.body.blocks)
+                for (auto &instruction : block.instructions)
+                  if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                      instruction.loan == loan.id) {
+                    if (mutation == 5) instruction.operands.clear();
+                    if (mutation == 9) instruction.operands.front().value = 0;
+                  }
+            }
           expect(ctorProofFailed(lang::verifyMirProgram(malformed)),
                  "borrowed constructor rejects absent/substituted origin, guard, "
-                 "access or field initialization " + std::to_string(mutation));
+                 "access, field initialization or exact publication " + std::to_string(mutation));
         }
       }
       expect(tested != 0, "borrowed constructor has an independently checked summary");

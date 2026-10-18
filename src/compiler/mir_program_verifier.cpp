@@ -13034,7 +13034,8 @@ public:
       bool valid = constructor->definitionKind == MirDefinitionKind::Source &&
                    constructor->body.kind == MirBodyKind::Constructor &&
                    flow.verification.valid() && !flow.normalReturns.empty() &&
-                   wellFormed(publication, claim);
+                   wellFormed(publication, claim) &&
+                   constructorFieldPublication(*constructor, flow);
       for (const auto &returned : flow.normalReturns) {
         const auto normalized = returned.dependencies
             ? normalizedCompleteReturnBorrow(program, publication, *returned.dependencies,
@@ -13141,6 +13142,102 @@ private:
   std::vector<std::optional<FunctionBorrowDependencySummary>> constructorSummaries;
   std::vector<std::optional<CompleteBorrowFlow>> constructorFlows;
   MirVerificationResult verification;
+
+  bool constructorFieldPublication(const MirConstructorInstance &constructor,
+                                   const CompleteBorrowFlow &flow) const {
+    const auto *owner = program.findClassInstance(constructor.owner);
+    const auto inventory = owner
+        ? findStoredCarrierReferenceInventory(program, owner->type) : std::nullopt;
+    if (!inventory || inventory->empty() || inventory->front().fields.empty())
+      return false;
+    const auto field = inventory->front().fields.front();
+    if (std::any_of(inventory->begin(), inventory->end(), [&](const auto &path) {
+          return path.fields.empty() || path.fields.front() != field;
+        }))
+      return false;
+    const auto &body = constructor.body;
+    const auto initializer = std::find_if(constructor.initializers.begin(),
+        constructor.initializers.end(), [&](const auto &item) { return item.field == field; });
+    if (initializer == constructor.initializers.end() || initializer->arguments.size() != 1)
+      return false;
+    const auto index = static_cast<std::size_t>(initializer - constructor.initializers.begin()) + 1;
+    const MirBlock *stageBlock = nullptr;
+    const MirInstruction *stage = nullptr;
+    std::size_t stagePosition = 0;
+    for (const auto &block : body.blocks)
+      for (std::size_t position = 0; position < block.instructions.size(); ++position) {
+        const auto &instruction = block.instructions[position];
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.constructorInitializer != index)
+          continue;
+        if (stage)
+          return false;
+        stage = &instruction;
+        stageBlock = &block;
+        stagePosition = position;
+      }
+    const auto *destination = stage && stage->destination ? body.findPlace(*stage->destination) : nullptr;
+    if (!destination || destination->root != MirPlaceRootKind::This ||
+        destination->projections.size() != 1 ||
+        destination->projections.front().kind != MirProjectionKind::Field ||
+        destination->projections.front().field != field ||
+        destination->type != initializer->targetType || stage->operands.size() != 1 ||
+        stage->operands.front().kind != MirOperandKind::Value ||
+        stage->operands.front().type != initializer->targetType ||
+        stage->hirValue != initializer->arguments.front())
+      return false;
+    const auto value = stage->operands.front().value;
+    if (!value || value > flow.values.size() || !flow.values[value - 1])
+      return false;
+    const auto &fact = *flow.values[value - 1];
+    const MirLoan *publication = nullptr;
+    for (const auto &loan : body.loans)
+      if (loan.escapes && loan.storedField == field) {
+        if (publication)
+          return false;
+        publication = &loan;
+      }
+    if (fact.dependencies.empty())
+      return !publication && !fact.possibleAlternatives.empty();
+    const auto *producer = definitionFor(body, value);
+    const auto *input = producer && producer->loan ? body.findLoan(*producer->loan) : nullptr;
+    if (!input || !publication || input->kind != MirLoanKind::Stored ||
+        input->escapes || input->storedDependency || publication->kind != MirLoanKind::Stored ||
+        publication->entry || publication->parent || publication->storedDependency ||
+        publication->producedBy != initializer->arguments.front() ||
+        publication->source != input->source || publication->access != input->access ||
+        publication->designatedFields != input->designatedFields ||
+        publication->conditions != input->conditions ||
+        publication->additionalDependencies != input->additionalDependencies)
+      return false;
+    const std::vector<MirLoanDependency> primary{{.source = input->source,
+        .parent = input->parent, .designatedFields = input->designatedFields,
+        .access = input->access, .conditions = input->conditions}};
+    auto exact = primary;
+    exact.insert(exact.end(), input->additionalDependencies.begin(), input->additionalDependencies.end());
+    if (exact != fact.dependencies)
+      return false;
+    bool published = false;
+    bool retired = false;
+    for (std::size_t position = stagePosition + 1; position < stageBlock->instructions.size(); ++position) {
+      const auto &instruction = stageBlock->instructions[position];
+      if (instruction.kind == MirInstructionKind::Borrow && instruction.loan == publication->id) {
+        if (published || retired || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Loan ||
+            instruction.operands.front().loan != input->id ||
+            instruction.operands.front().value != value ||
+            instruction.operands.front().type != initializer->targetType)
+          return false;
+        published = true;
+      }
+      if (instruction.kind == MirInstructionKind::EndBorrow && instruction.loan == input->id) {
+        if (!published || retired)
+          return false;
+        retired = true;
+      }
+    }
+    return published && retired;
+  }
 
   bool wellFormed(const MirFunctionInstance &function,
                   const FunctionBorrowDependencySummary &claim) const {

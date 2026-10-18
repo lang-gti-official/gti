@@ -68,6 +68,14 @@ void rejected(std::string source, std::string_view code,
 } // namespace
 
 int main() {
+  accepted(R"(
+#include <std/meta>
+static_assert(std::meta::type<void>().is_void());
+static_assert(!std::meta::type<int>().is_void());
+static_assert(std::meta::type<int&>().is_reference());
+static_assert(!std::meta::type<int>().is_reference());
+int main() { return 0; }
+)");
   const std::string client = R"(
 int inspect<T, E>(Packet<T, E>& packet) { return packet.kind(); }
 int main() {

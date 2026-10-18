@@ -7329,7 +7329,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         complete ? instantiateCompleteCallBorrow(call, resolved, *complete)
                  : std::nullopt;
     if (instantiated) {
-      resolved.borrowFields = complete->dependencies;
+      if (function.returnType.kind == SemanticType::Class ||
+          (function.returnType.kind == SemanticType::Reference &&
+           function.dispatchOwner.kind == SemanticType::Class))
+        resolved.borrowFields = complete->dependencies;
       semanticModel.record(call, resolved);
       semanticModel.recordBorrowDependencySet(call, *instantiated);
     } else

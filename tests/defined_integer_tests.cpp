@@ -372,6 +372,36 @@ int main() {
                    !effect.writesUnknownMemory,
                "MIR should retain non-failing, memory-free arithmetic "
                "effects");
+        if (lang::integerArithmeticIntrinsic(instruction.intrinsic)->mode ==
+            lang::IntegerArithmeticMode::OverflowPredicate) {
+          expect(instruction.info.type == lang::SemanticType::Bool,
+                 "overflow primitives expose a fact, not a result carrier");
+          for (int mutation = 0; mutation < 5; ++mutation) {
+            auto malformed = result.mir;
+            auto *body = lang::findMirBody(
+                malformed, {lang::MirBodyKind::Function, function.id});
+            auto *changedBlock = body->findBlock(block.id);
+            auto changed = std::find_if(
+                changedBlock->instructions.begin(),
+                changedBlock->instructions.end(), [&](const auto &candidate) {
+                  return candidate.id == instruction.id;
+                });
+            if (mutation == 0)
+              changed->intrinsic = lang::IntrinsicKind::IntegerWrappingAdd;
+            else if (mutation == 1)
+              changed->operands.pop_back();
+            else if (mutation == 2)
+              changed->parameterTypes[1] = lang::SemanticType::Bool;
+            else if (mutation == 3)
+              changed->receiver = changed->operands.front();
+            else
+              changed->info.type = changed->operands.front().type;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "overflow queries reject substituted operation, arity, "
+                   "operand domain, receiver or result type: " +
+                       std::to_string(mutation));
+          }
+        }
       }
     }
   }
@@ -388,9 +418,8 @@ int main() {
          {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
           "saturating_sub", "saturating_mul", "integer_add_overflow_flag",
           "integer_subtract_overflow_flag", "integer_multiply_overflow_flag"}) {
-      const bool checked = helper.starts_with("checked_");
       expect(generated.find("::gti_internal::backend::" + std::string(helper) +
-                            (checked ? "<" : "(")) != std::string::npos,
+                            "(") != std::string::npos,
              "production MIR emission should lower each ordinary std wrapper "
              "through the selected private helper");
     }

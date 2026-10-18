@@ -130,6 +130,11 @@ or mutable method may edit a mutable field under the ordinary loan rules.
 Materialized result receivers read the exact MIR `Value` root; their passive
 storage is retired at the represented move/drop, not reconstructed as a binding
 or kept alive independently of full-expression cleanup.
+Consuming method receiver preparation also designates that same materialized
+root. A move-value receiver `CallInput` does not introduce a second owning
+constant snapshot: field moves in the callee retire the caller's exact selected
+paths, and subsequent receiver-shell cleanup skips those moved fields. Ordinary
+by-value argument transport remains independent.
 Entry string-view dependencies are backed by immutable constant bytes.
 Checked read-only and mutable reference parameters, automatic bindings, and
 returned projections use verified MIR loans. An executor-local location retains

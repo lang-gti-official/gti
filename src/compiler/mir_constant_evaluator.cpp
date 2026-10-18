@@ -1243,7 +1243,7 @@ private:
                               .selection = *child.payloadVariant});
         field.type = &child.type;
         const auto result = destroy(child, std::move(field), caller, depth + 1);
-        if (!result)
+        if (result.failure != ConstantEvaluationFailure::None)
           return result;
       }
       return {};
@@ -1513,7 +1513,7 @@ private:
         location.type = &observedType(instruction.info.type);
         const auto *loan =
             instruction.loan ? frame.body.findLoan(*instruction.loan) : nullptr;
-        const auto access = loan ? loan->access : AccessMode::ReadOnly;
+        const auto access = loan ? loan->access : instruction.info.access;
         if (access == AccessMode::Mutable &&
             location.access != AccessMode::Mutable)
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
@@ -1531,7 +1531,9 @@ private:
              instruction.callInputKind ==
                  HirCallInputKind::ReadTemporaryBorrow ||
              instruction.callInputKind ==
-                 HirCallInputKind::MutableTemporaryBorrow)) {
+                 HirCallInputKind::MutableTemporaryBorrow ||
+             (instruction.callInputRole == MirCallInputRole::Receiver &&
+              instruction.callInputKind == HirCallInputKind::MoveValue))) {
           Location location;
           const auto located =
               locateOperand(frame, instruction.operands.front(), location);
@@ -1541,6 +1543,8 @@ private:
               instruction.callInputKind ==
                   HirCallInputKind::ReadTemporaryBorrow)
             location.access = AccessMode::ReadOnly;
+          // The receiver stage forwards one already-materialized object;
+          // it is not a second owning object with independent field state.
           reference = std::move(location);
         }
         evaluated.value = arguments.front();
@@ -1855,11 +1859,13 @@ private:
               location.access != AccessMode::Mutable)
             return fail(frame, ConstantEvaluationFailure::InvalidOperands);
           location.access =
-              callee->receiverMutability == ReceiverMutability::Mutable
+              callee->receiverMutability != ReceiverMutability::ReadOnly
                   ? AccessMode::Mutable
                   : AccessMode::ReadOnly;
-          if (callee->receiverMutability != ReceiverMutability::Consuming)
-            receiverOrigin = std::move(location);
+          // Consuming methods operate on their verified receiver place, not a
+          // second owning snapshot. Field moves must retire that same place
+          // so its later shell cleanup cannot destroy an extracted owner.
+          receiverOrigin = std::move(location);
         }
         auto result = invoke(*instruction.functionTarget, arguments, depth + 1,
                              std::move(receiver), origins,
@@ -1978,7 +1984,12 @@ private:
                 .function = id};
       const auto exact = exactValue(*receiver, owner->type);
       if (!exact)
-        return {.failure = exact.failure, .function = id};
+        return {
+            .failure = exact.failure,
+            .function = id,
+            .body = {MirBodyKind::Function, id},
+            .detail =
+                "The constant receiver does not retain an exact live value."};
     }
     return executeBody(
         function->body, {MirBodyKind::Function, id}, function->returnType,

@@ -386,8 +386,16 @@ public:
                      field != constructorOwner->fields.end() &&
                      field->info.traits.containsBorrowedState &&
                      (initializer.targetType.kind == SemanticType::Class ||
+                      initializer.targetType.kind == SemanticType::Enum ||
                       initializer.targetType.kind == SemanticType::Lambda) &&
                      initializer.arguments.size() == 1) {
+            const auto *input = findValue(initializer.arguments.front());
+            const bool knownEmpty = input && input->borrowDependencies &&
+                input->borrowDependencies->dependencies.empty() &&
+                !input->borrowDependencies->possibleAlternatives.empty();
+            // An independently typed empty alternative has no owner to
+            // publish. Every nonempty carrier still transfers its full group.
+            if (!knownEmpty) {
             const MirLoanId transferred = markStoredCarrierBorrow(
                 initializer.arguments.front(), initializer.field,
                 initializer.borrowAccess);
@@ -396,6 +404,7 @@ public:
             // prefix against which transient cleanup is computed.
             for (Scope &scope : incomingScopes) {
               std::erase(scope.loans, transferred);
+            }
             }
           }
           const HirConstructorInstance *target =
@@ -10804,7 +10813,9 @@ private:
     const bool constructed = source != nullptr && value != nullptr &&
                              !source->entry && !source->escapes &&
                              source->producedBy == valueId &&
-                             value->constructorTarget.has_value();
+                             (value->constructorTarget.has_value() ||
+                              (value->kind == HirValueKind::PayloadConstruction &&
+                               value->borrowDependencies.has_value()));
     if (source == nullptr || source->kind != MirLoanKind::Stored ||
         (!constructed &&
          (!source->entry || source->designatedFields.empty())) ||
@@ -10814,9 +10825,15 @@ private:
       return 0;
     }
     const auto dependencies = source->additionalDependencies;
+    const auto designatedFields = source->designatedFields;
+    const auto conditions = source->conditions;
     const MirLoanId published = createLoan(MirLoanKind::Stored, source->source,
                                            access, valueId, 0, field);
     output.loans[published - 1].additionalDependencies = dependencies;
+    if (!conditions.empty()) {
+      output.loans[published - 1].designatedFields = designatedFields;
+      output.loans[published - 1].conditions = conditions;
+    }
     (void)appendInstruction({.kind = MirInstructionKind::Borrow,
                              .hirValue = valueId,
                              .operands = {{.kind = MirOperandKind::Loan,

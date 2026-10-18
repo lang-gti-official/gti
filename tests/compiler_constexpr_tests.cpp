@@ -2945,6 +2945,30 @@ void testConstexprPayloadEnums() {
              "constant execution rejects malformed active variant identity");
   }
   expect(mutated, "payload fixture exercises malformed construction mutation");
+  auto missingStage = result.mir;
+  bool removedStage = false;
+  for (const auto &candidate : result.mir.constructorInstances()) {
+    auto *constructor = const_cast<lang::MirConstructorInstance *>(
+        missingStage.findConstructorInstance(candidate.id));
+    for (auto &block : constructor->body.blocks) {
+      const auto stage = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Initialize &&
+                   instruction.constructorInitializer &&
+                   instruction.info.type.kind == lang::SemanticType::Enum;
+          });
+      if (stage != block.instructions.end()) {
+        block.instructions.erase(stage);
+        removedStage = true;
+        break;
+      }
+    }
+    if (removedStage)
+      break;
+  }
+  expect(removedStage && !lang::verifyMirProgram(missingStage).valid(),
+         "enum constructor fields require their exact publication stage");
   auto wrongConstant = result.mir;
   bool alteredConstant = false;
   for (auto &step :
