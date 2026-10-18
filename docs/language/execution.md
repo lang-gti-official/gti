@@ -441,11 +441,13 @@ Unused owning results are destroyed at the same full-expression boundary as
 explicitly discarded results. An unused reference does not destroy its referent.
 The compiler trusts the API author's discard policy; the annotation does not
 prove that ignoring an error/status/guard result is appropriate. Error-bearing
-APIs should normally keep the default. `storage<T>::emplace` uses the opt-out
-because insertion is useful independently of its returned element reference.
+APIs should normally keep the default. Emplacement, associative insertion and
+erasure, removal counts, `for_each`, and scalar atomic fetch/exchange operations
+use the opt-out where the returned value is optional; see the
+[standard-library policy](standard-library.md#optional-mutation-results).
 
 See `examples/115-discardable-results.gti` for an unrelated user-defined method
-and the storage API, with both consumed and ignored results.
+and the storage, optional and vector APIs, with both consumed and ignored results.
 
 ### Program initialization and call ordering
 

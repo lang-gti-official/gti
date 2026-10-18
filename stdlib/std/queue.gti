@@ -20,6 +20,7 @@ public:
   T& back() { return this.values.back(); }
   mut T& back() mut { return this.values.back(); }
   void push(T value) mut requires std::movable<T> { this.values.push_back(std::move(value)); }
+  [[discardable]]
   mut T& emplace<Args...>(Args... args) mut { return this.values.emplace_back(args...); }
   void pop() mut { this.values.pop_front(); }
   void clear() mut { this.values.clear(); }

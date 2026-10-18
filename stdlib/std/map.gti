@@ -249,7 +249,7 @@ class map<K, V, Compare = std::less<K>> {
     if (replacement != 0) { this.nodes[replacement - 1]->parent = parent; }
   }
 
-  size_t rotate_left(size_t node) mut {
+  [[discardable]] size_t rotate_left(size_t node) mut {
     size_t pivot = this.nodes[node - 1]->right;
     size_t middle = this.nodes[pivot - 1]->left;
     size_t parent = this.nodes[node - 1]->parent;
@@ -263,7 +263,7 @@ class map<K, V, Compare = std::less<K>> {
     return pivot;
   }
 
-  size_t rotate_right(size_t node) mut {
+  [[discardable]] size_t rotate_right(size_t node) mut {
     size_t pivot = this.nodes[node - 1]->left;
     size_t middle = this.nodes[pivot - 1]->right;
     size_t parent = this.nodes[node - 1]->parent;
@@ -286,13 +286,13 @@ class map<K, V, Compare = std::less<K>> {
       if (balance > 1) {
         if (this.height(this.nodes[left - 1]->left) <
             this.height(this.nodes[left - 1]->right)) {
-          [[discard]] this.rotate_left(left);
+          this.rotate_left(left);
         }
         node = this.rotate_right(node);
       } else if (balance < -1) {
         if (this.height(this.nodes[right - 1]->right) <
             this.height(this.nodes[right - 1]->left)) {
-          [[discard]] this.rotate_right(right);
+          this.rotate_right(right);
         }
         node = this.rotate_left(node);
       }
@@ -465,12 +465,12 @@ private:
   }
 
 public:
-  pair<iterator, bool> insert(K key, V value) mut {
+  [[discardable]] pair<iterator, bool> insert(K key, V value) mut {
     auto result = this.insert_position(std::move(key), std::move(value));
     return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
-  pair<iterator, bool> insert_or_assign(K key, V value) mut {
+  [[discardable]] pair<iterator, bool> insert_or_assign(K key, V value) mut {
     size_t node = this.locate(key);
     if (node != 0) {
       this.nodes[node - 1]->entry.second = std::move(value);
@@ -480,7 +480,7 @@ public:
     return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
-  pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
+  [[discardable]] pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
     size_t node = this.locate(key);
     if (node != 0) {
       return pair<iterator, bool>(iterator(this.nodes, node, this.root), false);
@@ -489,19 +489,19 @@ public:
     return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
-  pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
+  [[discardable]] pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
     auto result = this.insert_position(std::move(key), V(args...));
     return pair<iterator, bool>(iterator(this.nodes, result.first, this.root), result.second);
   }
 
-  mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
+  [[discardable]] mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
     size_t node = this.locate(key);
     if (node != 0) { return this.nodes[node - 1]->entry.second; }
     auto result = this.insert_position(std::move(key), V());
     return this.nodes[result.first - 1]->entry.second;
   }
 
-  size_t erase(K& key) mut {
+  [[discardable]] size_t erase(K& key) mut {
     size_t node = this.locate(key);
     if (node == 0) { return 0; }
     // Reserve the vacant-slot record before changing any tree links.

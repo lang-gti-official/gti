@@ -53,7 +53,7 @@ public:
       mut unordered_set<K, Hash, KeyEqual> collection, K element)
       requires std::movable<K> && std::read_callable<Hash, K, std::size_t> &&
           std::read_binary_callable<KeyEqual, K, K, bool> {
-    [[discard]] collection.insert(std::move(element));
+    collection.insert(std::move(element));
     return std::move(collection);
   }
   unordered_set() requires std::default_initializable<Hash> && std::default_initializable<KeyEqual> &&
@@ -68,7 +68,7 @@ public:
   bool empty() { return this.entries.empty(); }
   bool contains(K& key) { return this.entries.contains(key); }
   size_t count(K& key) { return this.entries.count(key); }
-  size_t erase(K& key) mut { return this.entries.erase(key); }
+  [[discardable]] size_t erase(K& key) mut { return this.entries.erase(key); }
   void clear() mut { this.entries.clear(); }
   void swap(mut unordered_set<K, Hash, KeyEqual>& other) mut {
     auto previous = std::move(this.entries);
@@ -88,11 +88,11 @@ public:
   sentinel cend() { return this.end(); }
   detail::unordered_map_sentinel end() { return this.entries.end(); }
   const_iterator find(K& key) { return const_iterator(this.entries.find(key)); }
-  pair<iterator, bool> insert(K key) mut {
+  [[discardable]] pair<iterator, bool> insert(K key) mut {
     mut auto result = this.entries.insert(std::move(key), true);
     bool inserted = result.second;
     return pair<iterator, bool>(iterator(std::move(result.first)), inserted);
   }
-  pair<iterator, bool> emplace<Args...>(Args... args) mut { return this.insert(K(args...)); }
+  [[discardable]] pair<iterator, bool> emplace<Args...>(Args... args) mut { return this.insert(K(args...)); }
 };
 }
