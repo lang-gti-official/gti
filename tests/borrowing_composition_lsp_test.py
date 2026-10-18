@@ -175,28 +175,28 @@ int main() {
             change(17, borrowed_payload)
             publication = session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
-                and any(d.get("code") == "GTI-S2019"
+                and message["params"].get("version") == 17
+                and any(d.get("code") == "GTI-S2045"
                         for d in message["params"]["diagnostics"]))["params"]
             storage = next(d for d in publication["diagnostics"]
-                           if d.get("code") == "GTI-S2019")
-            assert sum(d.get("code") == "GTI-S2019"
-                       for d in publication["diagnostics"]) == 1, publication
-            assert "payload 'View'" in storage["message"], storage
-            assert "without borrowed state" in storage["message"], storage
+                           if d.get("code") == "GTI-S2045"
+                           and "must bind every borrowed field" in d["message"])
+            # Source-defined optional uses ordinary stored-reference rules,
+            # not the retired builtin optional payload-admission diagnostic.
+            assert "exact compatible constructor parameter" in storage["message"], storage
             assert storage["severity"] == 1, storage
             assert storage["data"]["phase"] == "semantics", storage
-            assert storage["data"]["hints"] and not storage["data"].get("fixes"), storage
-            start = borrowed_payload.index("item{}")
+            assert not storage["data"].get("fixes"), storage
+            start = borrowed_payload.index("{", borrowed_payload.index("item{}"))
             request_location = {"uri": uri, "range": {
                 "start": lsp_position(borrowed_payload, start),
-                "end": lsp_position(borrowed_payload, start + 4)}}
+                "end": lsp_position(borrowed_payload, start + 1)}}
             locations = [{"uri": publication["uri"], "range": storage["range"]}]
             locations += [related["location"]
                           for related in storage.get("relatedInformation", [])]
             assert request_location in locations, storage
-            # A concrete generic error may originate in the library's private
-            # storage declaration. Its user-site relation and dependency
-            # publication must both survive, then clear on a valid generation.
+            # The user-site UTF-16 location must survive and the rejected
+            # generation must clear after selecting an admissible payload.
             rejected_uri = publication["uri"]
             change(18, borrowed_payload.replace("optional<View>", "optional<int>"))
             cleared = set()

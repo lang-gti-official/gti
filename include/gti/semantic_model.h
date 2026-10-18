@@ -1045,6 +1045,8 @@ struct ClassTypeInfo {
   // `[[reflect_private]]`: reflected access reaches private instance fields
   // from anywhere, so the representation must not hide them either.
   bool reflectPrivate = false;
+  ComputedTypeProjectionKind computedTypeProjection =
+      ComputedTypeProjectionKind::None;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
 };

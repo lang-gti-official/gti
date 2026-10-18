@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.447.0 — One-step declared return initialization
+## 0.448.0 — One-step declared return initialization
 
 - Explicitly declared value returns use the same single implicit constructor or
   conversion operator as typed declarations. Calls and assignments keep exact
@@ -18,6 +18,19 @@ for what minor and patch releases mean.
 - `std::optional<T>` accepts one exact payload through `implicit optional(T)`.
   Return `std::nullopt` or `std::string("ready")` directly from an optional-string
   function; named move-only payloads still require `std::move`.
+
+## 0.447.0 — Callable result-type reflection
+
+- Add `std::meta::callable_return_type<F>` for exact logical results of
+  function signatures, selected function items, lambdas and native pointers.
+  Source-defined wrappers can express mapped result types without private
+  combinator implementations. Querying a type grants no invocation or borrow
+  permission and does not choose overloaded class call operators.
+- Support a staged generic callback's class result initializing its checked
+  local storage. Native pointer result metadata preserves GTI representation
+  rather than mistaking the C ABI result for the logical result.
+- This prepares source-defined `expected`; production `expected` remains
+  unchanged until the separate migration release.
 
 ## 0.446.1 — Quiet internal include checks
 

@@ -18,6 +18,9 @@ set(gti_heavy_case_suites
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    callable_return_type_runtime
+    enum_replacement_runtime
+    enum_selector_runtime
     protected_member_runtime
     out_of_class_cleanup
     implicit_receiver_owned_assignment_runtime

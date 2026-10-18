@@ -750,7 +750,8 @@ private:
             .cAbiRecord = info->cAbiRecord,
             .cOpaqueHandle = info->cOpaqueHandle,
             .compilerPrivate = info->compilerPrivate,
-            .reflectPrivate = info->reflectPrivate};
+            .reflectPrivate = info->reflectPrivate,
+            .computedTypeProjection = info->computedTypeProjection};
         payload.bases.reserve(info->bases.size());
         for (std::size_t index = 0; index < info->bases.size(); ++index) {
           payload.bases.push_back({.type = info->bases[index].type,

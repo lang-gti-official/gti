@@ -1,0 +1,75 @@
+// Migration client, not a replacement for the production expected type.
+// This intentionally tests owned, non-void payloads without changing prelude
+// return sugar, borrowed results or constexpr behavior.
+#include <std/meta>
+#include <std/string>
+#include <std/panic>
+
+struct Failure<E> {
+  mut E error;
+  Failure(E value) : error(std::move(value)) {}
+};
+
+enum ResultState<T, E> { ready(T value), failed(E error) };
+
+class Result<T, E> {
+  mut ResultState<T, E> state;
+public:
+  implicit Result(T value) : state(ResultState<T, E>::ready(std::move(value))) {}
+  implicit Result(mut Failure<E> failure)
+      : state(ResultState<T, E>::failed(std::move(failure.error))) {}
+
+  T value() && {
+    switch (std::move(this.state)) {
+    case ResultState<T, E>::ready(value): return value;
+    case ResultState<T, E>::failed: std::panic("missing value");
+    }
+  }
+  E error() && {
+    switch (std::move(this.state)) {
+    case ResultState<T, E>::ready: std::panic("missing error");
+    case ResultState<T, E>::failed(error): return error;
+    }
+  }
+  Result<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case ResultState<T, E>::ready(value):
+      std::meta::callable_return_type<F> mapped = mapper(std::move(value));
+      return Result<std::meta::callable_return_type<F>, E>(std::move(mapped));
+    case ResultState<T, E>::failed(error):
+      return Result<std::meta::callable_return_type<F>, E>(Failure<E>(std::move(error)));
+    }
+  }
+  Result<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case ResultState<T, E>::ready(value):
+      return Result<T, std::meta::callable_return_type<F>>(std::move(value));
+    case ResultState<T, E>::failed(error):
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return Result<T, std::meta::callable_return_type<F>>(Failure<std::meta::callable_return_type<F>>(std::move(mapped)));
+    }
+  }
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case ResultState<T, E>::ready(value): return mapper(std::move(value));
+    case ResultState<T, E>::failed(error):
+      return std::meta::callable_return_type<F>(Failure<E>(std::move(error)));
+    }
+  }
+};
+
+int increment(int value) { return value + 1; }
+std::string error_text(int code) { return std::to_string(code); }
+Result<int, int> double_value(int value) { return Result<int, int>(value * 2); }
+
+int main() {
+  auto to_text = [](int value) -> std::string { return std::to_string(value); };
+  auto increment_fn = increment;
+  auto double_fn = double_value;
+  auto error_fn = error_text;
+  auto value = Result<int, int>(20).transform(increment_fn).and_then(double_fn).transform(to_text);
+  std::println(std::move(value).value());
+  auto failure = Result<int, int>(Failure<int>(7)).transform(increment_fn).and_then(double_fn).transform_error(error_fn);
+  std::println(std::move(failure).error());
+  return 0;
+}

@@ -1,0 +1,27 @@
+#include <std/meta>
+
+[[borrowed_from(value)]]
+std::meta::callable_return_type<F> borrow<F>(F& function, int& value) {
+  return function(value);
+}
+
+int& identity(int& value) { return value; }
+
+std::meta::callable_return_type<F> invoke<F>(F& function) {
+  return function();
+}
+
+int main() {
+  auto nothing = []() -> void {};
+  invoke(nothing);
+  mut int owner = 42;
+  auto same = [](int& value) -> int& { return value; };
+  auto function = identity;
+  {
+    int& result = borrow(same, owner);
+    if (result != 42) { return 1; }
+  }
+  owner = 17;
+  int& result = borrow(function, owner);
+  return result == 17 ? 0 : 2;
+}
