@@ -4549,6 +4549,52 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 resolved = callInputSource(producer->operands.front());
               }
               if (producer != nullptr &&
+                  stagedPayloadConstruction(instruction) &&
+                  stagedPayloadConstruction(*producer) && producer->loan &&
+                  producer->result == resolved->value) {
+                const auto *stage =
+                    operand.kind == MirOperandKind::Value
+                        ? mir_detail::definitionFor(body, operand.value)
+                        : nullptr;
+                const auto *retained = body.findLoan(*producer->loan);
+                const auto &result = body.loans[loan - 1];
+                // A staged copy of a fresh shared carrier retains the exact
+                // producer's live external authority. Neither a coincident
+                // origin place nor a dependency annotation can substitute for
+                // this SSA producer/stage/group chain. Exclusive carriers
+                // must instead follow the checked consuming transport path.
+                if (stage != nullptr &&
+                    stage->kind == MirInstructionKind::CallInput &&
+                    stage->callSite == instruction.callSite &&
+                    stage->callInputRole == MirCallInputRole::Argument &&
+                    stage->callInputIndex < instruction.parameterTypes.size() &&
+                    instruction.operands[stage->callInputIndex] == operand &&
+                    instruction.parameterTypes[stage->callInputIndex] ==
+                        producer->info.type &&
+                    stage->info.type == producer->info.type &&
+                    stage->callInputKind == HirCallInputKind::Value &&
+                    !stage->preparedParameterDrop &&
+                    stage->operands.size() == 1 &&
+                    stage->operands.front() == *resolved &&
+                    retained != nullptr &&
+                    retained->kind == MirLoanKind::Stored && !retained->entry &&
+                    !retained->escapes &&
+                    retained->producedBy == producer->hirValue &&
+                    retained->parent == parent &&
+                    retained->source == result.source &&
+                    retained->access == AccessMode::ReadOnly &&
+                    result.access == AccessMode::ReadOnly &&
+                    std::all_of(retained->additionalDependencies.begin(),
+                                retained->additionalDependencies.end(),
+                                [](const auto &dependency) {
+                                  return dependency.access ==
+                                         AccessMode::ReadOnly;
+                                }) &&
+                    active[retained->id - 1] == MirLoanFlowState::Active &&
+                    result.kind == MirLoanKind::Stored)
+                  return true;
+              }
+              if (producer != nullptr &&
                   producer->kind == MirInstructionKind::Construct &&
                   producer->constructorTarget && producer->loan &&
                   producer->result == resolved->value &&
