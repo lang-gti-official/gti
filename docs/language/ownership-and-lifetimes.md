@@ -843,6 +843,14 @@ lifetime as well as its external owners. Shared access at any layer cannot be
 upgraded by a mutable outer adapter. Constructor failure releases these loans
 only after rolling back already-initialized fields.
 
+An observing enum pattern that borrows an ordinary owned payload (for example,
+an error string beside a reference-valued success alternative) protects the
+enum's physical storage. The enum's external dependency group is not its
+parent authority. A reference to the enum itself remains the normal parent
+when matching through that reference. The live payload borrow prevents moving
+or replacing the enum; selecting a stored reference instead retains its exact
+external owners under the separate checked selection rule.
+
 Reference access and stored-field access are independent. A mutable reference
 to a shared view can mutate its own eligible fields, but cannot turn a stored
 read-only reference into a mutable one. A read-only reference to an exclusive

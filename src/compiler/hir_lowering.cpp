@@ -4821,8 +4821,8 @@ private:
 
     const std::optional<HirValueId> test = blockCall(plan.test, false, nullptr);
     const auto *outputDependencies = model.findBorrowDependencySet(expression);
-    const std::optional<HirValueId> success = blockCall(
-        plan.output, true, outputDependencies);
+    const std::optional<HirValueId> success =
+        blockCall(plan.output, true, outputDependencies);
     const std::optional<HirValueId> residual =
         blockCall(plan.residual, true, nullptr);
     if (!test || !success || !residual) {
@@ -4889,7 +4889,8 @@ private:
                                .consumesOperand = plan.consumesOperand}});
     if (outputDependencies) {
       body.values.back().borrowDependencies = *outputDependencies;
-      for (auto &dependency : body.values.back().borrowDependencies->dependencies)
+      for (auto &dependency :
+           body.values.back().borrowDependencies->dependencies)
         dependency.place = qualifyPlace(dependency.place, body.placeDomain);
     }
     output.program.sourceValueIds[&expression].push_back(id);

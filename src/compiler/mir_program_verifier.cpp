@@ -2418,11 +2418,9 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
 [[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
                                             const MirInstruction &instruction);
 
-[[nodiscard]] MirVerificationResult
-verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
-                         std::size_t owner,
-                         const std::function<bool(HirFunctionInstanceId)>
-                             &completeReturnProof) {
+[[nodiscard]] MirVerificationResult verifyMirBorrowProducers(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const std::function<bool(HirFunctionInstanceId)> &completeReturnProof) {
   if (auto entries = verifyStoredEntryPaths(program, body, owner);
       !entries.valid()) {
     return entries;
@@ -3636,9 +3634,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             block.id, instruction.id);
       }
 
-      const auto *resultValue = instruction.result
-                                    ? body.findValue(*instruction.result)
-                                    : nullptr;
+      const auto *resultValue =
+          instruction.result ? body.findValue(*instruction.result) : nullptr;
       // A value's complete conditional contract carries permissions per
       // dependency. The declaration's legacy scalar access remains unchanged.
       // Its independently reconstructed callee summary and caller value-flow
@@ -6547,9 +6544,8 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
   MirVerificationResult result;
   appendVerification(
       result, verifyMirCallableMetadata(program, program.module(), 0, nullptr));
-  appendVerification(result,
-                     verifyMirBorrowProducers(program, program.module(), 0,
-                                              completeReturnProof));
+  appendVerification(result, verifyMirBorrowProducers(program, program.module(),
+                                                      0, completeReturnProof));
   for (const MirClassInstance &instance : program.classInstances()) {
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.fieldInitializers,
@@ -6560,18 +6556,17 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     appendVerification(
         result, verifyMirCallableMetadata(
                     program, instance.staticFieldInitializers, instance.id));
-    appendVerification(
-        result, verifyMirBorrowProducers(
-                    program, instance.staticFieldInitializers, instance.id,
-                    completeReturnProof));
+    appendVerification(result, verifyMirBorrowProducers(
+                                   program, instance.staticFieldInitializers,
+                                   instance.id, completeReturnProof));
   }
   for (const MirFunctionInstance &instance : program.functionInstances()) {
     appendVerification(result,
                        verifyMirCallableMetadata(program, instance.body,
                                                  instance.id, &instance));
-    appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof));
+    appendVerification(result, verifyMirBorrowProducers(program, instance.body,
+                                                        instance.id,
+                                                        completeReturnProof));
     appendVerification(
         result,
         verifyMirFunctionBorrowSummary(
@@ -6582,25 +6577,25 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
        program.constructorInstances()) {
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
-    appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof));
+    appendVerification(result, verifyMirBorrowProducers(program, instance.body,
+                                                        instance.id,
+                                                        completeReturnProof));
     appendVerification(result,
                        verifyMirConstructorBorrowSummary(program, instance));
   }
   for (const MirDestructorInstance &instance : program.destructorInstances()) {
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
-    appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof));
+    appendVerification(result, verifyMirBorrowProducers(program, instance.body,
+                                                        instance.id,
+                                                        completeReturnProof));
   }
   for (const MirLambdaInstance &instance : program.lambdaInstances()) {
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
-    appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof));
+    appendVerification(result, verifyMirBorrowProducers(program, instance.body,
+                                                        instance.id,
+                                                        completeReturnProof));
   }
   return result;
 }
@@ -11905,7 +11900,8 @@ completeBorrowSourcePath(const MirProgram &program,
       // ambiguous carrier group or a local reference binding.
       if (loans == bindingLoans.end() && parameters && parameterTypes &&
           parameters->size() == parameterTypes->size() &&
-          std::count(parameters->begin(), parameters->end(), place->binding) == 1) {
+          std::count(parameters->begin(), parameters->end(), place->binding) ==
+              1) {
         const auto index =
             std::find(parameters->begin(), parameters->end(), place->binding) -
             parameters->begin();
@@ -11914,8 +11910,9 @@ completeBorrowSourcePath(const MirProgram &program,
             body.places.begin(), body.places.end(), [&](const auto &candidate) {
               return candidate.root == MirPlaceRootKind::Binding &&
                      candidate.binding == place->binding &&
-                     candidate.projections.empty() && candidate.type == formal &&
-                     candidate.initiallyAvailable && !candidate.foreignStorage;
+                     candidate.projections.empty() &&
+                     candidate.type == formal && candidate.initiallyAvailable &&
+                     !candidate.foreignStorage;
             });
         if (formal.kind == SemanticType::Reference &&
             formal.arguments.size() == 1 && shell != body.places.end() &&
@@ -11927,8 +11924,7 @@ completeBorrowSourcePath(const MirProgram &program,
             (place->access == AccessMode::ReadOnly ||
              formal.referenceAccess == AccessMode::Mutable))
           return MirBorrowDependencySet{
-              .dependencies = {{.source = place->id,
-                                .access = place->access}}};
+              .dependencies = {{.source = place->id, .access = place->access}}};
       }
       return std::nullopt;
     }
@@ -12210,9 +12206,8 @@ completeBorrowSourcePath(const MirProgram &program,
     if (fields.empty() || !fields.front()->enumVariant ||
         fields.front()->enumOwner != enumeration->declaration ||
         *fields.front()->enumVariant >= enumeration->variants.size() ||
-        fields.size() !=
-            enumeration->variants[*fields.front()->enumVariant]
-                .payloadTypes.size())
+        fields.size() != enumeration->variants[*fields.front()->enumVariant]
+                             .payloadTypes.size())
       continue;
     for (std::size_t index = 0; index < fields.size(); ++index)
       passiveFieldRetirements.emplace(fields[index]->id,
@@ -12344,9 +12339,9 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto passive = passiveFieldRetirements.find(instruction.id);
       const bool passiveFieldTransfer =
           fieldTransfer && passive != passiveFieldRetirements.end();
-      if (passiveFieldTransfer ? passive->second
-                              : obligation == body.dropObligations.end() ||
-                                    retiresShell)
+      if (passiveFieldTransfer
+              ? passive->second
+              : obligation == body.dropObligations.end() || retiresShell)
         invalidate(state, operand.place);
     }
     if (instruction.kind == MirInstructionKind::Call ||
@@ -13248,8 +13243,8 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
     if (needsProof && !proveGuarded(proveGuarded, loan))
       return verificationFailure(body, owner,
                                  "conditional loan " + std::to_string(loan.id) +
-                                 " lacks its exact typed entry "
-                                 "or executable origin group");
+                                     " lacks its exact typed entry "
+                                     "or executable origin group");
   }
   for (const auto &returned : flow.normalReturns) {
     if (!returned.dependencies ||

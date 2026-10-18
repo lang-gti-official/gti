@@ -1051,18 +1051,20 @@ int main() {
   auto reading = Reading::value(owner);
   return is_ready(reading) ? 0 : 1;
 }
-)gti", {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
   expect(referenceEntry.canGenerateCode(),
          "reference enum formal has independently verified guarded inventory");
   if (referenceEntry.canGenerateCode()) {
     for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
       expect(!gti_test::emitCpp(referenceEntry, standard).contents.empty(),
-             "abstract enum reference inventory does not require native class fields");
+             "abstract enum reference inventory does not require native class "
+             "fields");
     const auto referenceLowered = gti_test::lowerProgram(
         referenceEntry, referenceEntry.mir, referenceEntry.mir);
     const lang::CppMirBodyEmissionMap referenceMap(
         lang::buildCppMirBodyEmissionMapRows(referenceLowered,
-                                            lang::CppStandard::Cpp23));
+                                             lang::CppStandard::Cpp23));
     for (const bool entryAddress : {false, true}) {
       auto addressed = referenceEntry.mir;
       bool tested = false;
@@ -1075,7 +1077,7 @@ int main() {
           lang::MirLoan addressLoan;
           addressLoan.id = function.body.loans.size() + 1;
           addressLoan.kind = entryAddress ? lang::MirLoanKind::Parameter
-                                         : lang::MirLoanKind::Local;
+                                          : lang::MirLoanKind::Local;
           addressLoan.source = place.id;
           addressLoan.entry = entryAddress;
           function.body.loans.push_back(addressLoan);
@@ -1094,10 +1096,12 @@ int main() {
           const lang::CppMirBodyEmitter rejected(addressed, referenceMap);
           expect(!rejected.supportsBodyText(
                      {lang::MirBodyKind::Function, function.id}),
-                 "an abstract enum path cannot hide a runtime Borrow or entry address");
+                 "an abstract enum path cannot hide a runtime Borrow or entry "
+                 "address");
         }
       }
-      expect(tested, "runtime address rejection fixture finds its abstract path");
+      expect(tested,
+             "runtime address rejection fixture finds its abstract path");
     }
     auto forged = referenceEntry.mir;
     bool changed = false;
@@ -1111,7 +1115,8 @@ int main() {
           changed = true;
         }
     expect(changed && !lang::verifyMirProgram(forged).valid(),
-           "provenance-only enum path still requires an exact typed payload field");
+           "provenance-only enum path still requires an exact typed payload "
+           "field");
   }
   return failures == 0 ? 0 : 1;
 }

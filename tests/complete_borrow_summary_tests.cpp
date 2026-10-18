@@ -196,14 +196,14 @@ int main() { return 0; }
         auto &changed =
             lang::MirProgramTestAccess::functions(malformed)[id - 1];
         auto &body = changed.body;
-        auto published = std::find_if(body.loans.begin(), body.loans.end(),
-                                     [](const auto &loan) {
-          return loan.kind == lang::MirLoanKind::Return;
-        });
-        auto selected = std::find_if(body.loans.begin(), body.loans.end(),
-                                    [](const auto &loan) {
-          return loan.referenceSelection.has_value();
-        });
+        auto published = std::find_if(
+            body.loans.begin(), body.loans.end(), [](const auto &loan) {
+              return loan.kind == lang::MirLoanKind::Return;
+            });
+        auto selected = std::find_if(
+            body.loans.begin(), body.loans.end(), [](const auto &loan) {
+              return loan.referenceSelection.has_value();
+            });
         expect(published != body.loans.end() && selected != body.loans.end(),
                "selected scalar return has separate activation/publication");
         if (published == body.loans.end() || selected == body.loans.end())
@@ -224,13 +224,14 @@ int main() { return 0; }
         } else {
           const auto other = std::find_if(
               body.places.begin(), body.places.end(), [](const auto &place) {
-            return place.type == lang::SemanticType::Int32 &&
-                   place.root == lang::MirPlaceRootKind::Binding &&
-                   place.projections.size() == 1 &&
-                   place.projections.front().kind ==
-                       lang::MirProjectionKind::Dereference;
-          });
-          expect(other != body.places.end(), "unrelated formal referent exists");
+                return place.type == lang::SemanticType::Int32 &&
+                       place.root == lang::MirPlaceRootKind::Binding &&
+                       place.projections.size() == 1 &&
+                       place.projections.front().kind ==
+                           lang::MirProjectionKind::Dereference;
+              });
+          expect(other != body.places.end(),
+                 "unrelated formal referent exists");
           if (other == body.places.end())
             continue;
           published->source = other->id;
@@ -442,10 +443,10 @@ int main() { return 0; }
     const auto id = functionId(result, "inspect_forwarded");
     const auto *function = result.mir.findFunctionInstance(id);
     if (result.canGenerateCode() && function) {
-      expect(std::none_of(function->body.loans.begin(),
-                          function->body.loans.end(),
-                          [](const auto &loan) { return loan.entry; }),
-             "forwarding-only formal fixture uses exact places, not entry loans");
+      expect(
+          std::none_of(function->body.loans.begin(), function->body.loans.end(),
+                       [](const auto &loan) { return loan.entry; }),
+          "forwarding-only formal fixture uses exact places, not entry loans");
       for (int mutation = 0; mutation < 6; ++mutation) {
         auto malformed = result.mir;
         auto &changed =
@@ -455,10 +456,14 @@ int main() { return 0; }
           if (place.root != lang::MirPlaceRootKind::Binding ||
               place.binding != binding)
             continue;
-          if (mutation == 0) place.initiallyAvailable = false;
-          if (mutation == 1) place.foreignStorage = true;
-          if (mutation == 2 && !place.projections.empty()) ++place.symbol;
-          if (mutation == 3 && !place.projections.empty()) place.key.reset();
+          if (mutation == 0)
+            place.initiallyAvailable = false;
+          if (mutation == 1)
+            place.foreignStorage = true;
+          if (mutation == 2 && !place.projections.empty())
+            ++place.symbol;
+          if (mutation == 3 && !place.projections.empty())
+            place.key.reset();
           if (mutation == 4 && !place.projections.empty())
             place.access = lang::AccessMode::Mutable;
         }
@@ -487,7 +492,8 @@ int main() { return 0; }
     expect(function && function->completeReturnBorrow &&
                function->completeReturnBorrow->dependencies.size() == 2,
            "scalar reference summary preserves owners from every normal arm");
-    if (result.canGenerateCode() && function && function->completeReturnBorrow) {
+    if (result.canGenerateCode() && function &&
+        function->completeReturnBorrow) {
       for (int mutation = 0; mutation < 3; ++mutation) {
         auto malformed = result.mir;
         auto &changed =

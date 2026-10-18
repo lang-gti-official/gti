@@ -4578,27 +4578,30 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 if (publication != block.instructions.end())
                   for (auto next = std::next(publication);
                        next != block.instructions.end() &&
-                       next->kind == MirInstructionKind::EndBorrow; ++next)
+                       next->kind == MirInstructionKind::EndBorrow;
+                       ++next)
                     if (next->loan == producer->loan)
                       retiredAtPublication = true;
-                const bool sharedCopy = retained != nullptr &&
-                    producer->info.traits.copyable &&
+                const bool sharedCopy =
+                    retained != nullptr && producer->info.traits.copyable &&
                     retained->access == AccessMode::ReadOnly &&
                     result.access == AccessMode::ReadOnly &&
                     std::all_of(retained->additionalDependencies.begin(),
                                 retained->additionalDependencies.end(),
                                 [](const auto &dependency) {
-                                  return dependency.access == AccessMode::ReadOnly;
+                                  return dependency.access ==
+                                         AccessMode::ReadOnly;
                                 });
-                const bool exclusiveTransfer = stage != nullptr &&
-                    stage->result && retained != nullptr &&
+                const bool exclusiveTransfer =
+                    stage != nullptr && stage->result && retained != nullptr &&
                     producer->info.traits.movable &&
                     retained->access == result.access &&
                     (retained->access == AccessMode::Mutable ||
                      std::any_of(retained->additionalDependencies.begin(),
                                  retained->additionalDependencies.end(),
                                  [](const auto &dependency) {
-                                   return dependency.access == AccessMode::Mutable;
+                                   return dependency.access ==
+                                          AccessMode::Mutable;
                                  })) &&
                     uniqueInputUse(*producer->result, stage->id, 0) &&
                     uniqueInputUse(*stage->result, instruction.id,
@@ -4809,20 +4812,23 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                   uses.front().kind == MirValueUseKind::InstructionOperand &&
                   uses.front().instruction == instruction.id &&
                   uses.front().operandIndex == stage->callInputIndex &&
-                  std::any_of(instruction.lifecycle.begin(),
-                              instruction.lifecycle.end(), [&](const auto &e) {
-                    return e.kind == MirLifecycleEventKind::TransferOut &&
-                           e.source == *stage->preparedParameterDrop &&
-                           !e.conditional && !e.failureCleanup;
-                  });
+                  std::any_of(
+                      instruction.lifecycle.begin(),
+                      instruction.lifecycle.end(),
+                      [&](const auto &e) {
+                        return e.kind == MirLifecycleEventKind::TransferOut &&
+                               e.source == *stage->preparedParameterDrop &&
+                               !e.conditional && !e.failureCleanup;
+                      });
               const auto transfersAtPublication = [&](MirLoanId transferred) {
                 if (!exactStage || !inheritedParent(transferred))
                   return false;
                 const auto &group = body.loans[transferred - 1];
                 if (active[transferred - 1] != MirLoanFlowState::Active ||
-                    !sameCanonicalPlace(
-                        canonicalPlace(body, group.source, bindingLoans, active),
-                        canonicalPlace(body, result.source, bindingLoans, active)) ||
+                    !sameCanonicalPlace(canonicalPlace(body, group.source,
+                                                       bindingLoans, active),
+                                        canonicalPlace(body, result.source,
+                                                       bindingLoans, active)) ||
                     (result.access == AccessMode::Mutable &&
                      group.access != AccessMode::Mutable))
                   return false;
@@ -4844,7 +4850,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                   next = continuation->instructions.begin();
                 }
                 for (; next != continuation->instructions.end() &&
-                       next->kind == MirInstructionKind::EndBorrow; ++next)
+                       next->kind == MirInstructionKind::EndBorrow;
+                     ++next)
                   if (next->loan == transferred) {
                     selectedAlias = transferred;
                     return true;
@@ -12703,17 +12710,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               retained->producedBy != instruction.hirValue ||
               retained->source != produced.source ||
               retained->storedDependency != produced.storedDependency ||
-              retained->additionalDependencies != produced.additionalDependencies ||
+              retained->additionalDependencies !=
+                  produced.additionalDependencies ||
               retained->designatedFields != produced.designatedFields ||
               retained->conditions != produced.conditions ||
               (retained->access != produced.access &&
                retained->access != AccessMode::Mutable))
             return false;
-          const auto current = std::find_if(
-              block.instructions.begin(), block.instructions.end(),
-              [&](const MirInstruction &candidate) {
-                return candidate.id == instruction.id;
-              });
+          const auto current =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const MirInstruction &candidate) {
+                             return candidate.id == instruction.id;
+                           });
           if (current == block.instructions.end() ||
               std::next(current) == block.instructions.end())
             return false;

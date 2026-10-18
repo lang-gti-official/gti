@@ -123,11 +123,13 @@ int main() {
           auto &bad = changed->body.blocks[block.id - 1];
           bad.terminator.kind = lang::MirTerminatorKind::Goto;
           bad.terminator.invokeInstruction = 0;
-          expect(!lang::verifyMirProgram(malformed).valid(),
-                 "borrowed owning enum results cannot erase their failure edge");
+          expect(
+              !lang::verifyMirProgram(malformed).valid(),
+              "borrowed owning enum results cannot erase their failure edge");
         }
-    expect(checkedOwningBorrowedCall,
-           "conditional result fixture exercises success-only enum publication");
+    expect(
+        checkedOwningBorrowedCall,
+        "conditional result fixture exercises success-only enum publication");
     for (int mutation = 0; mutation < 4; ++mutation) {
       auto malformed = proof.mir;
       bool changed = false;
@@ -174,7 +176,8 @@ int main() {
                    instruction != block.instructions.end(); ++instruction) {
                 if (mutation == 1 &&
                     instruction->kind == lang::MirInstructionKind::EndBorrow &&
-                    instruction->loan == input->id && block.activeFailure == 0) {
+                    instruction->loan == input->id &&
+                    block.activeFailure == 0) {
                   block.instructions.erase(instruction);
                   changed = true;
                   break;
@@ -182,8 +185,10 @@ int main() {
                 if (mutation == 2 &&
                     instruction->kind == lang::MirInstructionKind::CallInput &&
                     instruction->callSite == result.producedBy &&
-                    instruction->callInputKind == lang::HirCallInputKind::MoveValue) {
-                  instruction->callInputKind = lang::HirCallInputKind::CopyValue;
+                    instruction->callInputKind ==
+                        lang::HirCallInputKind::MoveValue) {
+                  instruction->callInputKind =
+                      lang::HirCallInputKind::CopyValue;
                   changed = true;
                   break;
                 }
@@ -192,7 +197,8 @@ int main() {
           }
         }
       }
-      expect(changed, "mutation must select the consumed reference publication");
+      expect(changed,
+             "mutation must select the consumed reference publication");
       expect(!changed || !lang::verifyMirProgram(malformed).valid(),
              "consumed reference publication requires exact external ancestry, "
              "normal-edge retirement, staged move and guarded input facts");

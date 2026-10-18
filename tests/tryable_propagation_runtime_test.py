@@ -87,7 +87,7 @@ def main():
                          "-o", str(failed), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             shown = run([str(failed)])
-            assert shown.returncode == 1 and not shown.stdout, (name, shown)
+            assert shown.returncode == 70 and not shown.stdout, (name, shown)
             assert "runtime error[GTI-R0002]" in shown.stderr, (name, shown.stderr)
             assert "AddressSanitizer" not in shown.stderr and "UndefinedBehaviorSanitizer" not in shown.stderr, \
                 (name, shown.stderr)

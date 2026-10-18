@@ -7363,7 +7363,7 @@ private:
         published.designatedFields = primary.designatedFields;
         published.conditions = primary.conditions;
         published.additionalDependencies.assign(complete.begin() + 1,
-                                                 complete.end());
+                                                complete.end());
         if (!call.result ||
             !output.values[*call.result - 1].borrowDependencies) {
           valid = false;
@@ -10497,8 +10497,7 @@ private:
             oldParent != semanticLoans.end() &&
             std::find(transferred->second.begin(), transferred->second.end(),
                       oldParent->second) != transferred->second.end() &&
-            published != nullptr &&
-            !loanIsActive(scopes, oldParent->second) &&
+            published != nullptr && !loanIsActive(scopes, oldParent->second) &&
             retainableCallResultChain(existing, published->parent, valueId,
                                       desired->access)) {
           // This expression's checked consuming call published the exact
@@ -14232,7 +14231,8 @@ private:
   std::unordered_map<HirValueId, HirValueId> forwardedBorrowValues;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_set<HirBindingId> referenceAccessorBindings;
-  std::unordered_map<MirLoanId, std::vector<MirLoanId>> callResultTransferredFrom;
+  std::unordered_map<MirLoanId, std::vector<MirLoanId>>
+      callResultTransferredFrom;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
   std::unordered_map<MirLoanId, HirStatementId> callTransferredLoanEndpoints;

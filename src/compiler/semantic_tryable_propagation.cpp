@@ -298,9 +298,9 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     auto candidate = conformance.operations[*takeValue].overloads.front();
     candidate.returnType = output->returnType;
     candidate.parameterTypes = output->parameterTypes;
-    const auto complete = completeFunctionReturnBorrow(
-        candidate, output->typeArguments, output->valueArguments,
-        tokenSpan(site));
+    const auto complete =
+        completeFunctionReturnBorrow(candidate, output->typeArguments,
+                                     output->valueArguments, tokenSpan(site));
     const std::vector<const ExprPtr *> actualArguments{&expr.right()};
     if (complete)
       outputDependencies = instantiateCompleteBorrowArguments(
