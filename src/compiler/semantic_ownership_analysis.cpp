@@ -712,6 +712,12 @@ auto SemanticVisitor::Impl::typeTraits(
           traits.drop = DropKind::Lexical;
         }
         traits.copyable = traits.copyable && component.copyable;
+        // An aggregate owns its stored exclusive capability. Copying a
+        // reference expression may reborrow, but copying the whole payload
+        // must not duplicate that capability (the same rule as class fields).
+        if (payload.kind == SemanticType::Reference &&
+            payload.referenceAccess == AccessMode::Mutable)
+          traits.copyable = false;
         traits.movable = traits.movable && component.movable;
         traits.copyAssignable =
             traits.copyAssignable && component.copyAssignable;
