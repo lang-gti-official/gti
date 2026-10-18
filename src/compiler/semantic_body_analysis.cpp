@@ -2260,6 +2260,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   analyze(stmt.body()->statements());
   if (collectingRawFields)
     recordRawConstructorResult(stmt);
+  if (!hasErrorDiagnostics(
+          std::span(diagnostics).subspan(constructorDiagnosticStart)))
+    recordCompleteConstructorBorrow(stmt);
   finalizeLoanFlow();
   endScope();
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
@@ -3215,10 +3218,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   if (stmt.receiverMutability() == ReceiverMutability::Consuming) {
     const SemanticType result =
         typeOf(stmt.returnType(), stmt.returnMutability());
-    if (result.kind == SemanticType::Reference ||
-        typeTraits(result).containsBorrowedState ||
-        (functionInfo != nullptr &&
-         functionInfo->returnBorrowOrigin != BorrowOriginKind::None)) {
+    if (!conditionalReferenceReturn(result, {},
+                                    currentClass ? openClassType(*currentClass)
+                                                 : SemanticType::Unknown) &&
+        (result.kind == SemanticType::Reference ||
+         typeTraits(result).containsBorrowedState ||
+         (functionInfo != nullptr &&
+          functionInfo->returnBorrowOrigin != BorrowOriginKind::None))) {
       report(stmt.name(),
              std::string("A consuming ") +
                  (stmt.operatorName() ? "operator" : "method") +
@@ -3406,6 +3412,17 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   if (functionInfo != nullptr && !functionErrors()) {
     recordRestoredReferenceResult(*functionInfo);
     recordCompleteFunctionReturnBorrow(*functionInfo);
+    if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
+        currentReturnType.kind == SemanticType::Reference &&
+        !containsOpenTypeParameter(currentReturnType)) {
+      const auto *checked = semanticModel.findFunction(stmt);
+      if (!checked || !checked->completeReturnBorrow)
+        report(stmt.name(),
+               "A consuming reference result must preserve a complete checked "
+               "external dependency; the consumed receiver cannot own its "
+               "storage.",
+               "GTI-S2022");
+    }
   }
   endScope();
   if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
@@ -4483,8 +4500,11 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     // inherit a carrier's conditional field layout as if it were its own.
     const auto *function = currentFunctionInfo();
     auto dependencies =
-        function && conditionalReferenceReturn(currentReturnType,
-                                               function->parameterTypes)
+        function &&
+                conditionalReferenceReturn(
+                    currentReturnType, function->parameterTypes,
+                    function->ownerClass ? openClassType(function->ownerClass)
+                                         : SemanticType::Unknown)
             ? storedBorrowDependencies(stmt.value())
             : std::vector<SemanticLoanDependency>{};
     if (!dependencies.empty() &&
@@ -10105,6 +10125,9 @@ auto SemanticVisitor::Impl::visitThisExpr(const This &expr) -> void {
     return;
   }
   currentType = openClassType(*currentClass);
+  if (const auto *receiver = receiverStateSymbol();
+      receiver && receiver->completeBorrowSet)
+    semanticModel.recordBorrowDependencySet(expr, *receiver->completeBorrowSet);
 }
 
 auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
@@ -11229,7 +11252,23 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
   }
   if (type.kind == SemanticType::Enum) {
     const EnumTypeInfo *enumeration = semanticModel.findEnumType(type.enumId);
-    return enumeration != nullptr && !enumeration->payload;
+    if (!enumeration || !enumeration->payload)
+      return enumeration != nullptr;
+    std::vector<SemanticType> localVisiting;
+    if (!visiting)
+      visiting = &localVisiting;
+    if (std::find(visiting->begin(), visiting->end(), type) != visiting->end())
+      return false;
+    visiting->push_back(type);
+    const auto substitution = enumSubstitution(type);
+    bool supported = true;
+    for (const auto &variant : enumeration->enumerators)
+      for (const auto &payload : variant.payloadTypes)
+        supported &=
+            isSupportedConstexprType(substituteType(payload, substitution),
+                                     allowDependent, visiting, transient);
+    visiting->pop_back();
+    return supported;
   }
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
     if (!allowDependent && type.arrayLengthParameterId != 0) {
@@ -11307,12 +11346,6 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
   }
   // Concrete pack expansion is owned by ordinary semantic/HIR instantiation.
   // Constant execution sees only the resulting exact parameter sequence.
-  if (methodDeclaration && !staticMethod &&
-      function.receiverMutability() == ReceiverMutability::Consuming) {
-    reject(function.operatorName() ? function.operatorName()->keyword
-                                   : function.name(),
-           "A constexpr instance method cannot consume its receiver.");
-  }
   // The symbolic declaration must describe a potentially constant-capable
   // signature. Concrete generic substitutions can still be runtime-only:
   // constexpr does not forbid using an owning T at runtime. Required constant
@@ -11939,12 +11972,11 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
                                      call->paren(), context);
       }
     }
-    if (receiver == nullptr ||
-        operation->receiverMutability == ReceiverMutability::Consuming) {
+    if (receiver == nullptr) {
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::UnsupportedExpression,
                               "Compile-time operators require a supported "
-                              "non-consuming receiver call.");
+                              "receiver call.");
     }
     const ResolvedCallInfo call{.function = operation->function,
                                 .declaration = operation->declaration,
@@ -12451,14 +12483,11 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
     }
     if (const std::optional<IntegerArithmeticIntrinsic> arithmetic =
             integerArithmeticIntrinsic(resolved->intrinsic)) {
-      const bool checkedResult =
-          arithmetic->mode == IntegerArithmeticMode::CheckedResult;
-      const SemanticType &valueType =
-          checkedResult &&
-                  resolved->returnType.kind == SemanticType::Expected &&
-                  resolved->returnType.arguments.size() == 2
-              ? resolved->returnType.arguments[0]
-              : resolved->returnType;
+      const bool overflowPredicate =
+          arithmetic->mode == IntegerArithmeticMode::OverflowPredicate;
+      const SemanticType valueType = resolved->parameterTypes.empty()
+                                         ? SemanticType::Unknown
+                                         : resolved->parameterTypes.front();
       const std::optional<CheckedIntegerDomain> domain =
           constantIntegerDomain(valueType);
       if (!domain || call->arguments().size() != 2 ||
@@ -12488,7 +12517,7 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
         operands[index] = checkedIntegerValue(*integer);
       }
 
-      if (checkedResult) {
+      if (overflowPredicate) {
         const std::optional<CheckedIntegerOutcome> evaluated =
             evaluateCheckedIntegerBinary(arithmetic->operation, operands[0],
                                          operands[1], *domain);
@@ -12496,32 +12525,15 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
           return constexprFailure(call->paren(),
                                   ConstantEvaluationFailure::InvalidOperands);
         }
-        ConstantEvaluation result;
-        if (const auto *integer =
-                std::get_if<CheckedIntegerValue>(&*evaluated)) {
-          result = makeConstantResult(resolved->returnType, true,
-                                      makeConstantInteger(*integer, *domain));
-        } else if (std::get<CheckedIntegerFailure>(*evaluated) !=
-                   CheckedIntegerFailure::Overflow) {
+        if (const auto *failure =
+                std::get_if<CheckedIntegerFailure>(&*evaluated);
+            failure && *failure != CheckedIntegerFailure::Overflow) {
           return constexprFailure(call->paren(),
                                   ConstantEvaluationFailure::InvalidOperands);
-        } else {
-          const auto &errorType = resolved->returnType.arguments[1];
-          const auto *enumeration =
-              semanticModel.findEnumType(errorType.enumId);
-          const auto errorDomain =
-              enumeration ? constantIntegerDomain(enumeration->underlyingType)
-                          : std::nullopt;
-          if (!errorDomain)
-            return constexprFailure(call->paren(),
-                                    ConstantEvaluationFailure::InvalidOperands);
-          result = makeConstantResult(
-              resolved->returnType, false,
-              ConstantEnum{.enumId = errorType.enumId,
-                           .value = makeConstantInteger({}, *errorDomain)});
         }
-        return result ? constexprSuccess(source, *result.value, context)
-                      : constexprFailure(call->paren(), result.failure);
+        return constexprSuccess(
+            source, std::holds_alternative<CheckedIntegerFailure>(*evaluated),
+            context);
       }
       const std::optional<CheckedIntegerValue> evaluated =
           evaluateDefinedIntegerBinary(arithmetic->operation, operands[0],

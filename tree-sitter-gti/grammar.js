@@ -99,6 +99,8 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.generic_argument_profile_clause, $.generic_parameter],
+    [$.generic_argument_profile_clause, $._qualified_identifier],
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
     [$._base_type, $.numeric_conversion],
     [$.generic_function, $.user_type],
@@ -838,6 +840,18 @@ module.exports = grammar({
       seq(
         "<",
         field("pattern", $.function_signature),
+        repeat(seq(",", field("pattern", $.type))),
+        ">",
+      ),
+
+    generic_argument_profile_clause: ($) =>
+      seq(
+        "<",
+        repeat(seq(field("pattern", $.identifier), ",")),
+        field("pattern", choice(
+          "void",
+          seq(optional("mut"), $.identifier, $.reference_declarator),
+        )),
         repeat(seq(",", field("pattern", $.type))),
         ">",
       ),
@@ -1594,6 +1608,7 @@ function classDeclaration($, kind) {
         optional(choice(
           field("type_parameters", $.generic_parameter_clause),
           field("type_patterns", $.generic_signature_pattern_clause),
+          field("type_patterns", $.generic_argument_profile_clause),
         )),
       ),
       seq(

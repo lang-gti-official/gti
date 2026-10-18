@@ -2278,6 +2278,8 @@ private:
     HirBody body;
     std::vector<HirBindingId> parameterBindings;
     if (!snapshot.generatedDefault) {
+      if (const auto *concrete = analysis->model.findConstructor(*snapshot.source))
+        output.program.constructors[index].completeBorrow = concrete->completeBorrow;
       parameterBindings.reserve(snapshot.source->parameters().size());
       for (const Parameter &parameter : snapshot.source->parameters()) {
         parameterBindings.push_back(

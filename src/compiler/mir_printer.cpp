@@ -723,7 +723,17 @@ public:
         separator(index);
         output << instance.borrowParameters[index];
       }
-      output << "] definition=";
+      output << "] complete-borrow=";
+      if (!instance.completeBorrow) {
+        output << "unknown";
+      } else {
+        borrowFields(instance.completeBorrow->dependencies);
+        output << " alternatives=[";
+        for (const auto &alternative : instance.completeBorrow->possibleAlternatives)
+          borrowConditions(alternative.conditions);
+        output << ']';
+      }
+      output << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
         output << "source";
@@ -1006,6 +1016,8 @@ private:
             output << "aggregate:"
                    << static_cast<unsigned int>(constantValue.value->kind)
                    << ':' << constantValue.value->identity << ':';
+            if (constantValue.value->kind == ConstantAggregateKind::PayloadEnum)
+              output << "variant=" << constantValue.value->variant << ':';
             if (constantValue.value->exactType) {
               type(*constantValue.value->exactType);
             } else {

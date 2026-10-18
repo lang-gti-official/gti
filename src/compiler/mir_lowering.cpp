@@ -518,6 +518,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .borrowParameter = instance.borrowParameter,
          .borrowAccess = instance.borrowAccess,
          .borrowParameters = instance.borrowParameters,
+         .completeBorrow = instance.completeBorrow,
          .definitionKind =
              instance.generatedDefault || (instance.source != nullptr &&
                                            instance.source->body() != nullptr)

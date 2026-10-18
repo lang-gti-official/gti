@@ -49,7 +49,7 @@ enum class CheckedIntegerFailure {
 enum class IntegerArithmeticMode {
   Wrapping,
   Saturating,
-  CheckedResult,
+  OverflowPredicate,
 };
 
 using CheckedIntegerOutcome =
@@ -115,7 +115,7 @@ evaluateCheckedIntegerUnary(CheckedIntegerOperation operation,
 // Evaluates explicit non-failing add, subtract, or multiply in one fixed-width
 // integer domain. Wrapping mode returns the low domain.width bits. Saturating
 // mode clamps the mathematical result to the nearest domain endpoint. Invalid
-// domains, out-of-domain operands, unsupported operations, and CheckedResult
+// domains, out-of-domain operands, unsupported operations, and OverflowPredicate
 // mode return nullopt. Checked-result clients use evaluateCheckedIntegerBinary
 // so the out-of-domain outcome remains observable.
 //

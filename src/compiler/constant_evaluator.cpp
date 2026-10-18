@@ -116,6 +116,11 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
       // verifier/executor. Conversion preserves this immutable exact node.
       return {.value = value};
     }
+    if (target.kind == SemanticType::Enum && target.enumId != 0 &&
+        aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
+        aggregate->value->identity == target.enumId &&
+        aggregate->value->fields.empty())
+      return {.value = value};
     if (target.kind == SemanticType::Array &&
         aggregate->value->kind == ConstantAggregateKind::Array &&
         aggregate->value->elements.size() == target.arrayLength) {
@@ -201,7 +206,7 @@ bool operator==(const ConstantAggregate &left, const ConstantAggregate &right) {
        *left.exactType == *right.exactType);
   return sameType && left.kind == right.kind &&
          left.identity == right.identity && left.elements == right.elements &&
-         left.fields == right.fields;
+         left.fields == right.fields && left.variant == right.variant;
 }
 
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,

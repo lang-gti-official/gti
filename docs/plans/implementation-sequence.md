@@ -9042,6 +9042,20 @@ type selection. Production expected has not been switched yet. The remaining
 matrix above, including constexpr and cutover evidence, remains required.
 Historical optional-release validation exceptions do not apply to this campaign.
 
+The source API draft is staged in `stdlib/std/expected.gti` but is not imported
+by the prelude yet. It uses ordinary class profiles, enum state, and protocol
+conformance; the compiler's reserved expected syntax still serves production.
+Parallel prerequisite work extends complete dependency proofs through a class's
+enum field and executes payload enums in verified-MIR constant queries. The
+initial field projection requires every dependency and alternative guard to
+belong to that field; it does not silently discard sibling obligations.
+Arithmetic migration removes another carrier dependency: private integer
+operations expose overflow facts, while source numeric code constructs the
+public result. Final source cutover, complete compatibility, proof and
+performance validation remain pending; a compiling prototype is not release
+evidence. Ordinary one-value return construction is coordinated with PR #231;
+successful empty returns additionally need a general explicit constructor opt-in.
+
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
 - **State/role:** the staged MIR constexpr foundation is delivered; the original
@@ -9225,11 +9239,20 @@ Historical optional-release validation exceptions do not apply to this campaign.
   a passive result. Example 153 demonstrates scratch allocation and destruction.
   Independent step/depth, allocation-count and live-storage bounds fail closed.
   No AST allocation/destructor interpreter or public-name exceptions are added.
+- **Payload enum/source-wrapper execution (production expected campaign):**
+  Extend the canonical MIR constant profile to exact active payload enums,
+  source-class fields, borrowed observations and consuming receivers. Transient
+  owner payloads must follow the ordinary selected-variant cleanup recipe;
+  persistent constants remain passive. Constructor fields require explicit
+  canonical publication stages. Focused `testConstexprPayloadEnums` and
+  `constexpr_payload_enum_runtime` cover the implementation; acceptance remains
+  pending their focused proof, malformed-MIR, native differential and complete
+  production-cutover gates. No AST payload interpreter is introduced.
 - **Remaining scope:** Stored references, shared/virtual/recursive owning
   cleanup, raw-memory/provider allocation protocols,
   in-place constructor targets without an explicit canonical field-write schedule,
-  payload enums, unions, inherited aggregates,
-  consuming receivers, and polymorphism remain
+  unions, inherited aggregates,
+  and polymorphism remain
   excluded. Do not widen exact qualified specialization into partial specialization as a
   side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus

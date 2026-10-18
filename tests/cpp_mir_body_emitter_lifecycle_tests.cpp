@@ -11320,7 +11320,7 @@ void testConditionalNumericConversionArgument() {
                                       return candidate.id == conversion.id;
                                     });
           if (mutation == 0)
-            found->intrinsic = lang::IntrinsicKind::IntegerCheckedAdd;
+            found->intrinsic = lang::IntrinsicKind::IntegerAddOverflows;
           else if (mutation == 1)
             found->operands.push_back(found->operands.front());
           else if (mutation == 2)

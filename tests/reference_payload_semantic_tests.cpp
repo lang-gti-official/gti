@@ -978,5 +978,56 @@ int main() { return 0; }
         result.canGenerateCode(),
         "factory calls and empty/borrowed return paths verify independently");
   }
+  {
+    const std::string wrapper = R"gti(
+#include <std/panic>
+enum Cell { empty, value(int& owner) };
+class View {
+  mut Cell cell;
+public:
+  View(int& owner) : cell(Cell::value(owner)) {}
+  View() : cell(Cell::empty) {}
+  int& read() {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+  int& take() && {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+};
+)gti";
+    acceptedSemantics(analyze(wrapper + R"gti(
+int main() {
+  int owner = 42;
+  mut auto view = View(owner);
+  int& retained = std::move(view).take();
+  return retained - 42;
+}
+)gti"));
+    for (const auto *suffix : {
+             "View escape() { int local = 42; return View(local); } int main() { return 0; }",
+             "int& escape() { int local = 42; mut auto view = View(local); return std::move(view).take(); } int main() { return 0; }",
+             "int main() { mut int owner = 42; auto view = View(owner); owner = 7; return view.read(); }"}) {
+      const auto result = analyze(wrapper + suffix);
+      expect(result.syntaxValid && !result.semanticValid,
+             "borrowed class cannot escape a local or invalidate a live external owner");
+    }
+    const auto owned = analyze(R"gti(
+class Owner {
+  mut int value;
+public:
+  Owner() : value(42) {}
+  int& take() && { return this.value; }
+};
+int main() { return 0; }
+)gti");
+    expect(owned.syntaxValid && !owned.semanticValid,
+           "consuming reference extraction cannot retain receiver-owned storage");
+  }
   return failures == 0 ? 0 : 1;
 }

@@ -6847,6 +6847,18 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     }
     const auto dependencies =
         storedReferencePaths(SemanticType::classType(owner.id));
+    if (std::any_of(dependencies.begin(), dependencies.end(),
+                    [](const auto &path) { return !path.conditions.empty(); })) {
+      // Conditional fields are checked by the concrete constructor's complete
+      // result summary. A type-wide unconditional origin map would invent a
+      // dependency for alternatives which hold no reference.
+      if (owner.constructors.empty())
+        report(owner.name,
+               "A conditionally borrowed value requires a declared constructor "
+               "with a complete checked field-initialization contract.",
+               "GTI-S2045");
+      continue;
+    }
     if (dependencies.size() > 1) {
       if (owner.constructors.empty()) {
         report(owner.name,

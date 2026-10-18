@@ -332,6 +332,8 @@ private:
             output << "aggregate:"
                    << static_cast<unsigned int>(constantValue.value->kind)
                    << ':' << constantValue.value->identity << ':';
+            if (constantValue.value->kind == ConstantAggregateKind::PayloadEnum)
+              output << "variant=" << constantValue.value->variant << ':';
             if (constantValue.value->exactType) {
               type(*constantValue.value->exactType);
             } else {

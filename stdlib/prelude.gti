@@ -78,6 +78,12 @@ namespace gti_internal {
   // Terminal checked access failure, independent of any owner representation.
   [[noreturn]]
   void fail_empty_owner();
+  // Source result policy selects these terminal failure categories. These
+  // operations know neither the carrier's type nor its representation.
+  [[noreturn, track_caller]]
+  void fail_inactive_value();
+  [[noreturn, track_caller]]
+  void fail_inactive_error();
 
 
   namespace runtime {

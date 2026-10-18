@@ -156,7 +156,7 @@ void testPrivateArithmeticAuthority() {
     expect(!lang::evaluateDefinedIntegerBinary(
                lang::CheckedIntegerOperation::Add, {.magnitude = 2},
                {.magnitude = 3}, signedDomain,
-               lang::IntegerArithmeticMode::CheckedResult),
+               lang::IntegerArithmeticMode::OverflowPredicate),
            "checked-result arithmetic should retain its explicit outcome");
   }
 
@@ -386,8 +386,8 @@ int main() {
     const std::string generated = gti_test::emitCppText(result);
     for (const std::string_view helper :
          {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
-          "saturating_sub", "saturating_mul", "checked_add", "checked_sub",
-          "checked_mul"}) {
+          "saturating_sub", "saturating_mul", "integer_add_overflow_flag",
+          "integer_subtract_overflow_flag", "integer_multiply_overflow_flag"}) {
       const bool checked = helper.starts_with("checked_");
       expect(generated.find("::gti_internal::backend::" + std::string(helper) +
                             (checked ? "<" : "(")) != std::string::npos,

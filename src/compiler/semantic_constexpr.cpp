@@ -392,6 +392,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                        });
   };
   const bool requiresMir =
+      !mir.program.payloadEnums().empty() ||
       !mir.program.destructorInstances().empty() ||
       std::any_of(
           mir.program.functionInstances().begin(),
@@ -403,8 +404,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
             };
             return function.constexprFunction &&
                    function.definitionKind == MirDefinitionKind::Source &&
-                   (function.receiverMutability ==
-                        ReceiverMutability::Mutable ||
+                   (function.receiverMutability !=
+                        ReceiverMutability::ReadOnly ||
                     function.returnType == SemanticType::Void ||
                     mutableReference(function.returnType) ||
                     std::any_of(function.parameterTypes.begin(),

@@ -2308,9 +2308,6 @@ void testConstexprOperators() {
        "return 0; } "
        "};",
        "structural aggregate", "operator()", 8},
-      {"struct Item { int x; constexpr int operator()() && { return this.x; } "
-       "};",
-       "cannot consume", "operator()", 8},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
        "constexpr Item item = Item(1); constexpr int bad = item + 2;",
@@ -2883,6 +2880,92 @@ struct FailingConstructor {
            "construction/destruction failure: " +
                body);
   }
+}
+
+void testConstexprPayloadEnums() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_payload_enum.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  const auto runtime = lang::Frontend().analyze(
+      fixture,
+      source.substr(0, source.find("constexpr Signal<int> frozen")) +
+          "int main() { return 0; }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : runtime.diagnostics)
+    std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
+  for (const auto &function : runtime.hir.functionInstances()) {
+    if (!function.source || !function.source->name().lexeme.ends_with("_work"))
+      continue;
+    const auto computed =
+        lang::evaluateMirConstantFunction(runtime.mir, function.id, {});
+    if (!computed)
+      std::cerr << function.source->name().lexeme << " failure "
+                << int(computed.failure) << " body " << int(computed.body.kind)
+                << ':' << computed.body.owner << " instruction "
+                << computed.instruction << ' ' << computed.detail << '\n';
+  }
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : result.diagnostics)
+    std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode() && metrics.constexprMirExecutions >= 4,
+         "payload enums and source wrappers execute canonical MIR constants");
+  if (!result.canGenerateCode())
+    return;
+  bool mutated = false;
+  for (const auto &function : result.hir.functionInstances()) {
+    if (!function.source || !function.source->name().lexeme.ends_with("_work"))
+      continue;
+    const auto computed =
+        lang::evaluateMirConstantFunction(result.mir, function.id, {});
+    expect(computed &&
+               std::get<lang::ConstantInteger>(*computed.value).magnitude == 42,
+           "enum construction, observations and consuming cleanup agree with "
+           "runtime");
+    expect(!lang::evaluateMirConstantFunction(result.mir, function.id, {},
+                                              {.steps = 2}),
+           "payload execution shares bounded constant work");
+    auto malformed = result.mir;
+    auto *instance = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(function.id));
+    bool changed = false;
+    for (auto &block : instance->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.operation == lang::MirOperation::PayloadConstruct) {
+          instruction.enumVariant = 999;
+          mutated = true;
+          changed = true;
+        }
+    if (changed)
+      expect(!lang::evaluateMirConstantFunction(malformed, function.id, {}),
+             "constant execution rejects malformed active variant identity");
+  }
+  expect(mutated, "payload fixture exercises malformed construction mutation");
+  auto wrongConstant = result.mir;
+  bool alteredConstant = false;
+  for (auto &step :
+       const_cast<std::vector<lang::MirProgramInitializationStep> &>(
+           wrongConstant.programInitializationPlan().steps)) {
+    if (!step.dataConstant)
+      continue;
+    const auto *aggregate =
+        std::get_if<lang::ConstantAggregateValue>(&*step.dataConstant);
+    if (!aggregate || !aggregate->value ||
+        aggregate->value->kind != lang::ConstantAggregateKind::PayloadEnum)
+      continue;
+    auto node = *aggregate->value;
+    node.variant = 999;
+    step.dataConstant = lang::makeConstantAggregate(std::move(node));
+    alteredConstant = true;
+    break;
+  }
+  expect(
+      alteredConstant && !lang::verifyMirProgram(wrongConstant).valid(),
+      "MIR verification rejects a forged program-constant active alternative");
 }
 
 void testConstexprResults() {
@@ -4314,9 +4397,6 @@ constexpr int32_t missing;
 int32_t runtime_value() { return 1; }
 constexpr int32_t called = runtime_value();
 constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
-class InvalidMethod {
-  constexpr int32_t method() && { return 1; }
-};
 class InvalidMember {
   constexpr int32_t value = 1;
 };
@@ -4326,19 +4406,17 @@ struct RuntimePoint {
 };
 constexpr RuntimePoint runtime_point = RuntimePoint(1);
 )");
-  expect(
-      !invalid.semanticValid &&
-          countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
-          hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
-          hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "does not name a constexpr function") &&
-          hasDiagnostic(invalid.diagnostics, "cannot consume its receiver") &&
-          hasDiagnostic(invalid.diagnostics, "must be static") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "not an available constexpr constructor"),
-      "unsupported constexpr forms should fail with focused bounded "
-      "diagnostics");
+  expect(!invalid.semanticValid &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 5 &&
+             hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "does not name a constexpr function") &&
+             hasDiagnostic(invalid.diagnostics, "must be static") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "not an available constexpr constructor"),
+         "unsupported constexpr forms should fail with focused bounded "
+         "diagnostics");
 
   const lang::FrontendResult invalidBranch =
       lang::Frontend().analyze("invalid-if-constexpr.gti", R"(
@@ -5614,6 +5692,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprMutation", testConstexprMutation},
     {"testConstexprEnumBuilders", testConstexprEnumBuilders},
     {"testConstexprResults", testConstexprResults},
+    {"testConstexprPayloadEnums", testConstexprPayloadEnums},
     {"testConstexprAllocation", testConstexprAllocation},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},

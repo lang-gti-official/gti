@@ -2165,8 +2165,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                                 ? AccessMode::ReadOnly
                                 : selected.constructor->borrowAccess;
   std::vector<std::size_t> storedParameters;
+  const auto storedPaths = storedReferencePaths(constructedType);
+  const bool conditionalFields = std::any_of(
+      storedPaths.begin(), storedPaths.end(),
+      [](const auto &path) { return !path.conditions.empty(); });
   if (const auto paths = storedReferencePaths(constructedType);
-      !paths.empty() && selected.kind == ConstructorKind::Ordinary) {
+      !paths.empty() && !conditionalFields &&
+      selected.kind == ConstructorKind::Ordinary) {
     storedParameters = selected.constructor == nullptr
                            ? std::vector<std::size_t>{}
                            : storedCarrierConstructorParameters(
@@ -2228,6 +2233,31 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       .borrowFields = std::move(storedFields),
       .generatedDefault = selected.generatedDefault,
       .kind = selected.kind};
+  if (conditionalFields && selected.kind == ConstructorKind::Ordinary &&
+      !containsOpenTypeParameter(constructedType)) {
+    const auto summary = completeConstructorBorrow(resolved, tokenSpan(paren));
+    ResolvedCallInfo publication;
+    publication.returnType = constructedType;
+    publication.parameterTypes = selected.parameterTypes;
+    std::vector<const ExprPtr *> inputs;
+    for (const auto &argument : arguments)
+      inputs.push_back(argument.expression);
+    const auto dependencies = summary
+        ? instantiateCompleteBorrowArguments(publication, *summary, inputs)
+        : std::nullopt;
+    if (!dependencies) {
+      report(paren,
+             "Construction requires a complete checked dependency contract "
+             "for every active borrowed field and alternative.", "GTI-S2045");
+    } else {
+      resolved.borrowFields = summary->dependencies;
+      if (!summary->dependencies.empty()) {
+        resolved.borrowOrigin = BorrowOriginKind::Argument;
+        resolved.borrowArgument = summary->dependencies.front().parameter;
+      }
+      semanticModel.recordBorrowDependencySet(construction, *dependencies);
+    }
+  }
   if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
     semanticModel.recordContextualConstruction(construction,
@@ -5088,7 +5118,9 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   // carrier shell: its storage check above remains independent.
   if (function != nullptr &&
       conditionalReferenceReturn(function->returnType,
-                                 function->parameterTypes) &&
+                                 function->parameterTypes,
+                                 function->ownerClass ? openClassType(function->ownerClass)
+                                                      : SemanticType::Unknown) &&
       valueInfo->category == ValueCategory::Place) {
     auto dependencies = storedBorrowDependencies(value);
     if (!dependencies.empty() &&

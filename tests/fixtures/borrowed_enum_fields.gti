@@ -1,0 +1,42 @@
+#include <std/panic>
+
+enum Slot { present(int& value), absent(int reason) };
+
+class Reading {
+  mut Slot slot;
+public:
+  Reading(int& value) : slot(Slot::present(value)) {}
+  Reading() : slot(Slot::absent(7)) {}
+  int& view() {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("missing reading");
+    }
+  }
+  bool empty() {
+    switch (this.slot) {
+    case Slot::present: return false;
+    case Slot::absent: return true;
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("missing reading");
+    }
+  }
+};
+
+[[borrowed_from(owner)]] Reading read(int& owner, bool absent) {
+  if (absent) return Reading();
+  return Reading(owner);
+}
+
+int main() {
+  int owner = 42;
+  auto value = read(owner, false);
+  auto missing = read(owner, true);
+  mut auto consumed = read(owner, false);
+  int& retained = std::move(consumed).take();
+  return value.view() == 42 && missing.empty() && retained == 42 ? 0 : 1;
+}

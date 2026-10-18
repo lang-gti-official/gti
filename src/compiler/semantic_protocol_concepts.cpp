@@ -688,6 +688,17 @@ auto SemanticVisitor::Impl::classTemplateArguments(const SemanticType &type,
     return type.arguments;
   }
   const ClassInfo &info = classInfo(type.classId);
+  // A definition family selects representation and members, not a different
+  // public template. Protocol deduction binds the public arguments just like
+  // ordinary generic call deduction; object compatibility remains exact.
+  const auto family = [&](ClassId id) {
+    const ClassId primary = classInfo(id).definitionFamilyPrimary;
+    return primary == 0 ? id : primary;
+  };
+  if (owner != 0 && owner <= classes.size() &&
+      family(type.classId) == family(owner)) {
+    return type.arguments;
+  }
   if (info.exactSpecializationPrimary != 0 &&
       info.exactSpecializationPrimary == owner) {
     return info.exactTypeArguments;

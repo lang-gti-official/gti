@@ -178,6 +178,16 @@ private:
                            return persistentType(field.type, depth + 1);
                          });
     }
+    if (const auto *enumeration = program.findPayloadEnum(type)) {
+      if (enumeration->requiresActiveCleanup ||
+          enumeration->traits.containsBorrowedState)
+        return false;
+      for (const auto &variant : enumeration->variants)
+        for (const auto &field : variant.payloadTypes)
+          if (!persistentType(field, depth + 1))
+            return false;
+      return true;
+    }
     return std::all_of(type.arguments.begin(), type.arguments.end(),
                        [&](const auto &argument) {
                          return persistentType(argument, depth + 1);
@@ -206,6 +216,15 @@ private:
     if (scalarType(type))
       return true;
     if (type.kind == SemanticType::Enum) {
+      if (const auto *payload = program.findPayloadEnum(type)) {
+        if (depth >= limits.callDepth || payload->traits.containsBorrowedState)
+          return false;
+        for (const auto &variant : payload->variants)
+          for (const auto &field : variant.payloadTypes)
+            if (!storageType(field, depth + 1))
+              return false;
+        return true;
+      }
       const auto *enumeration = program.findIntegralEnum(type);
       return enumeration &&
              constantIntegerDomain(enumeration->underlyingType).has_value();
@@ -715,6 +734,20 @@ private:
         if (!valid)
           return valid;
       }
+    } else if (type.kind == SemanticType::Enum) {
+      const auto *enumeration = program.findPayloadEnum(type);
+      const auto &node = *aggregate->value;
+      if (!enumeration || node.variant >= enumeration->variants.size())
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      const auto &variant = enumeration->variants[node.variant];
+      if (node.elements.size() != variant.payloadTypes.size())
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      for (std::size_t index = 0; index < node.elements.size(); ++index) {
+        const auto valid =
+            exactValue(node.elements[index], variant.payloadTypes[index]);
+        if (!valid)
+          return valid;
+      }
     } else if (type.kind == SemanticType::Expected ||
                type.kind == SemanticType::Unexpected) {
       if (!aggregate->value->elements.empty()) {
@@ -786,8 +819,12 @@ private:
         (aggregate->value->kind != ConstantAggregateKind::Array &&
          aggregate->value->kind != ConstantAggregateKind::ExpectedSuccess &&
          aggregate->value->kind != ConstantAggregateKind::ExpectedError &&
-         aggregate->value->kind != ConstantAggregateKind::Unexpected))
+         aggregate->value->kind != ConstantAggregateKind::Unexpected &&
+         aggregate->value->kind != ConstantAggregateKind::PayloadEnum))
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
+        projection.selection != aggregate->value->variant)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
     if (!index || *index >= aggregate->value->elements.size())
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     auto result = project(aggregate->value->elements[*index], path, type,
@@ -1022,6 +1059,28 @@ private:
   ConstantEvaluation compute(const MirInstruction &instruction,
                              const std::vector<ConstantValue> &values) {
     const auto &type = instruction.info.type;
+    if (instruction.operation == MirOperation::PayloadConstruct &&
+        instruction.enumVariant) {
+      ConstantAggregate node{.kind = ConstantAggregateKind::PayloadEnum,
+                             .identity = type.enumId,
+                             .exactType =
+                                 std::make_shared<const SemanticType>(type),
+                             .elements = values,
+                             .variant = *instruction.enumVariant};
+      const auto value = makeConstantAggregate(std::move(node));
+      return exactValue(value, type);
+    }
+    if (instruction.operation == MirOperation::PayloadExtract &&
+        instruction.enumVariant && instruction.payloadIndex &&
+        values.size() == 1) {
+      const auto *node = std::get_if<ConstantAggregateValue>(&values[0]);
+      if (!node || !node->value ||
+          node->value->kind != ConstantAggregateKind::PayloadEnum ||
+          node->value->variant != *instruction.enumVariant ||
+          *instruction.payloadIndex >= node->value->elements.size())
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      return {.value = node->value->elements[*instruction.payloadIndex]};
+    }
     if (instruction.operation == MirOperation::EnumConstant &&
         instruction.enumOwner && instruction.enumValue &&
         type.kind == SemanticType::Enum &&
@@ -1162,6 +1221,33 @@ private:
       return destroy(recipe.aggregate[alternative], std::move(location), caller,
                      depth + 1);
     }
+    if (recipe.type.kind == SemanticType::Enum) {
+      const auto &backing = storage(location);
+      const auto value =
+          backing && location.epoch == epoch(location)
+              ? project(*backing, location.path, *location.type, 0)
+              : ConstantEvaluation{};
+      const auto *node =
+          value ? std::get_if<ConstantAggregateValue>(&*value.value) : nullptr;
+      if (!node || !node->value ||
+          node->value->kind != ConstantAggregateKind::PayloadEnum)
+        return fail(caller, ConstantEvaluationFailure::InvalidOperands);
+      for (const auto &child : recipe.aggregate) {
+        if (!child.payloadVariant || !child.payloadField)
+          return fail(caller, ConstantEvaluationFailure::InvalidOperands);
+        if (*child.payloadVariant != node->value->variant)
+          continue;
+        auto field = location;
+        field.path.push_back({.kind = MirProjectionKind::Index,
+                              .constantIndex = *child.payloadField,
+                              .selection = *child.payloadVariant});
+        field.type = &child.type;
+        const auto result = destroy(child, std::move(field), caller, depth + 1);
+        if (!result)
+          return result;
+      }
+      return {};
+    }
     if (recipe.type.kind != SemanticType::Class)
       return fail(caller, ConstantEvaluationFailure::UnsupportedType);
     if (recipe.destructor) {
@@ -1243,7 +1329,9 @@ private:
          ((*instruction.callableInvocation !=
                CallableInvocationCapability::Read &&
            *instruction.callableInvocation !=
-               CallableInvocationCapability::Mutable) ||
+               CallableInvocationCapability::Mutable &&
+           *instruction.callableInvocation !=
+               CallableInvocationCapability::Once) ||
           instruction.kind != MirInstructionKind::Call ||
           !instruction.functionTarget ||
           instruction.dispatch != CallDispatch::Static))) {
@@ -1253,6 +1341,10 @@ private:
     if (instruction.kind == MirInstructionKind::Lifecycle) {
       return {};
     }
+    if (instruction.kind == MirInstructionKind::Call &&
+        intrinsicTerminalFailureOutcome(instruction.intrinsic))
+      return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                  "A terminal defined-failure operation executed during constant evaluation.");
     if (instruction.kind == MirInstructionKind::AllocateObject) {
       if (!instruction.destination || !instruction.objectAllocation)
         return fail(frame, ConstantEvaluationFailure::InvalidOperands);
@@ -1358,6 +1450,27 @@ private:
     std::vector<ConstantValue> arguments;
     for (const auto &input : instruction.operands) {
       auto value = operand(frame, input);
+      if (instruction.operation == MirOperation::PayloadExtract &&
+          instruction.enumVariant && instruction.payloadIndex) {
+        Location location;
+        const auto located = locateOperand(frame, input, location);
+        if (located.failure != ConstantEvaluationFailure::None)
+          return fail(frame, located.failure);
+        const auto &backing = storage(location);
+        value = backing && location.epoch == epoch(location)
+                    ? project(*backing, location.path, *location.type, 0)
+                    : ConstantEvaluation{
+                          .failure =
+                              ConstantEvaluationFailure::NonConstantReference};
+        auto field = location;
+        field.path.push_back({.kind = MirProjectionKind::Index,
+                              .constantIndex = *instruction.payloadIndex,
+                              .selection = *instruction.enumVariant});
+        field.type = &observedType(instruction.info.type);
+        const auto checked = readLocation(field);
+        if (!checked)
+          return fail(frame, checked.failure);
+      }
       if (!value) {
         return fail(frame, value.failure);
       }
@@ -1386,6 +1499,27 @@ private:
       break;
     case MirInstructionKind::Compute:
       evaluated = compute(instruction, arguments);
+      if (evaluated && instruction.operation == MirOperation::PayloadExtract &&
+          instruction.payloadExtractionKind ==
+              PayloadExtractionKind::BorrowValue) {
+        Location location;
+        const auto located =
+            locateOperand(frame, instruction.operands.front(), location);
+        if (located.failure != ConstantEvaluationFailure::None)
+          return fail(frame, located.failure);
+        location.path.push_back({.kind = MirProjectionKind::Index,
+                                 .constantIndex = *instruction.payloadIndex,
+                                 .selection = *instruction.enumVariant});
+        location.type = &observedType(instruction.info.type);
+        const auto *loan =
+            instruction.loan ? frame.body.findLoan(*instruction.loan) : nullptr;
+        const auto access = loan ? loan->access : AccessMode::ReadOnly;
+        if (access == AccessMode::Mutable &&
+            location.access != AccessMode::Mutable)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        location.access = access;
+        reference = std::move(location);
+      }
       break;
     case MirInstructionKind::Load:
     case MirInstructionKind::Move:
@@ -1643,32 +1777,28 @@ private:
       } else if (const auto arithmetic =
                      integerArithmeticIntrinsic(instruction.intrinsic);
                  arithmetic && !instruction.receiver && arguments.size() == 2) {
-        const bool checked =
-            arithmetic->mode == IntegerArithmeticMode::CheckedResult;
+        const bool overflowPredicate =
+            arithmetic->mode == IntegerArithmeticMode::OverflowPredicate;
         const auto &type = instruction.info.type;
-        const auto domain =
-            constantIntegerDomain(checked ? type.arguments[0] : type);
+        const auto domain = constantIntegerDomain(instruction.operands[0].type);
         const auto *left = std::get_if<ConstantInteger>(&arguments[0]);
         const auto *right = std::get_if<ConstantInteger>(&arguments[1]);
         if (!domain || !left || !right || left->domain != *domain ||
             right->domain != *domain)
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
-        if (checked) {
+        if (overflowPredicate) {
+          if (type != SemanticType::Bool)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
           const auto value = evaluateCheckedIntegerBinary(
               arithmetic->operation, checkedIntegerValue(*left),
               checkedIntegerValue(*right), *domain);
           if (!value)
             return fail(frame, ConstantEvaluationFailure::InvalidOperands);
-          if (const auto *integer = std::get_if<CheckedIntegerValue>(&*value)) {
-            evaluated = makeConstantResult(
-                type, true, makeConstantInteger(*integer, *domain));
-          } else if (std::get<CheckedIntegerFailure>(*value) ==
-                     CheckedIntegerFailure::Overflow) {
-            const auto error = enumValue(type.arguments[1], {});
-            if (!error)
-              return fail(frame, error.failure);
-            evaluated = makeConstantResult(type, false, error.value);
-          }
+          if (const auto *failure = std::get_if<CheckedIntegerFailure>(&*value);
+              failure && *failure != CheckedIntegerFailure::Overflow)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          evaluated.value =
+              std::holds_alternative<CheckedIntegerFailure>(*value);
         } else {
           const auto value = evaluateDefinedIntegerBinary(
               arithmetic->operation, checkedIntegerValue(*left),
@@ -1728,7 +1858,8 @@ private:
               callee->receiverMutability == ReceiverMutability::Mutable
                   ? AccessMode::Mutable
                   : AccessMode::ReadOnly;
-          receiverOrigin = std::move(location);
+          if (callee->receiverMutability != ReceiverMutability::Consuming)
+            receiverOrigin = std::move(location);
         }
         auto result = invoke(*instruction.functionTarget, arguments, depth + 1,
                              std::move(receiver), origins,
@@ -1794,6 +1925,18 @@ private:
     }
     for (const auto &input : instruction.operands) {
       if (input.kind == MirOperandKind::Move) {
+        if (instruction.operation == MirOperation::PayloadExtract) {
+          Location location;
+          const auto located = locateOperand(frame, input, location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          location.path.push_back({.kind = MirProjectionKind::Index,
+                                   .constantIndex = *instruction.payloadIndex,
+                                   .selection = *instruction.enumVariant});
+          retired(location).push_back(
+              {location.root, location.cell, location.epoch, location.path});
+          continue;
+        }
         const auto retired = retirePlace(frame, input.place);
         if (retired.failure != ConstantEvaluationFailure::None)
           return fail(frame, retired.failure);
@@ -1812,7 +1955,6 @@ private:
     if (function == nullptr || !function->constexprFunction ||
         function->requiresUnsafe || function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
-        function->receiverMutability == ReceiverMutability::Consuming ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
          function->returnType.kind != SemanticType::Reference) ||
         function->entryKind != ProgramEntryKind::None ||
@@ -1842,7 +1984,7 @@ private:
         function->body, {MirBodyKind::Function, id}, function->returnType,
         function->parameterTypes, function->parameterBindings, arguments, depth,
         std::move(receiver), argumentOrigins, std::move(receiverOrigin),
-        function->receiverMutability == ReceiverMutability::Mutable
+        function->receiverMutability != ReceiverMutability::ReadOnly
             ? AccessMode::Mutable
             : AccessMode::ReadOnly,
         referenceResult);
@@ -2127,6 +2269,20 @@ private:
           if (!arm.value)
             return fail(frame, ConstantEvaluationFailure::InvalidOperands);
           const auto &label = *arm.value;
+          if (const auto *node =
+                  std::get_if<ConstantAggregateValue>(&*subject.value);
+              node && node->value &&
+              node->value->kind == ConstantAggregateKind::PayloadEnum) {
+            if (label.kind != SwitchCaseKind::Enumerator ||
+                label.enumOwner != node->value->identity ||
+                label.value.negative)
+              return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+            if (node->value->variant == label.value.magnitude) {
+              selected = arm.target;
+              break;
+            }
+            continue;
+          }
           ConstantValue value;
           if (label.kind == SwitchCaseKind::Character) {
             value = CharacterLiteral{

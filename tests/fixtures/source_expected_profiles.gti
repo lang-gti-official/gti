@@ -1,0 +1,172 @@
+// Production-migration differential client. Production expected is unchanged
+// until this source carrier passes the full compatibility matrix.
+#include <std/meta>
+#include <std/panic>
+#include <std/string>
+
+namespace source_result {
+class Failure<E> {
+  mut E payload;
+public:
+  Failure(E value) : payload(std::move(value)) {}
+  E error() && { return std::move(this.payload); }
+};
+enum State<T, E> { ready(T value), failed(E error) };
+enum EmptyState<E> { ready, failed(E error) };
+}
+
+class SourceResult<T, E> {
+  mut source_result::State<T, E> state;
+public:
+  implicit SourceResult(T value) : state(source_result::State<T, E>::ready(std::move(value))) {}
+  implicit SourceResult(mut source_result::Failure<E> failure)
+      : state(source_result::State<T, E>::failed(std::move(failure).error())) {}
+  bool has_value() {
+    switch (this.state) {
+    case source_result::State<T, E>::ready: return true;
+    case source_result::State<T, E>::failed: return false;
+    }
+  }
+  operator bool() { return this.has_value(); }
+  T& value() {
+    switch (this.state) {
+    case source_result::State<T, E>::ready(auto& value): return value;
+    case source_result::State<T, E>::failed: std::panic("missing value");
+    }
+  }
+  mut T& value() mut {
+    switch (this.state) {
+    case source_result::State<T, E>::ready(mut auto& value): return value;
+    case source_result::State<T, E>::failed: std::panic("missing value");
+    }
+  }
+  T value() && {
+    switch (std::move(this.state)) {
+    case source_result::State<T, E>::ready(value): return std::move(value);
+    case source_result::State<T, E>::failed: std::panic("missing value");
+    }
+  }
+  E& error() {
+    switch (this.state) {
+    case source_result::State<T, E>::ready: std::panic("missing error");
+    case source_result::State<T, E>::failed(auto& error): return error;
+    }
+  }
+  mut E& error() mut {
+    switch (this.state) {
+    case source_result::State<T, E>::ready: std::panic("missing error");
+    case source_result::State<T, E>::failed(mut auto& error): return error;
+    }
+  }
+  E error() && {
+    switch (std::move(this.state)) {
+    case source_result::State<T, E>::ready: std::panic("missing error");
+    case source_result::State<T, E>::failed(error): return std::move(error);
+    }
+  }
+};
+
+class SourceResult<void, E> {
+  mut source_result::EmptyState<E> state;
+public:
+  SourceResult() : state(source_result::EmptyState<E>::ready) {}
+  implicit SourceResult(mut source_result::Failure<E> failure)
+      : state(source_result::EmptyState<E>::failed(std::move(failure).error())) {}
+  bool has_value() {
+    switch (this.state) {
+    case source_result::EmptyState<E>::ready: return true;
+    case source_result::EmptyState<E>::failed: return false;
+    }
+  }
+  operator bool() { return this.has_value(); }
+  void value() {
+    if (!this.has_value()) { std::panic("missing value"); }
+  }
+  void value() && {
+    if (!this.has_value()) { std::panic("missing value"); }
+  }
+  E& error() {
+    switch (this.state) {
+    case source_result::EmptyState<E>::ready: std::panic("missing error");
+    case source_result::EmptyState<E>::failed(auto& error): return error;
+    }
+  }
+  mut E& error() mut {
+    switch (this.state) {
+    case source_result::EmptyState<E>::ready: std::panic("missing error");
+    case source_result::EmptyState<E>::failed(mut auto& error): return error;
+    }
+  }
+  E error() && {
+    switch (std::move(this.state)) {
+    case source_result::EmptyState<E>::ready: std::panic("missing error");
+    case source_result::EmptyState<E>::failed(error): return std::move(error);
+    }
+  }
+};
+
+class SourceResult<T&, E> {
+  mut source_result::State<T&, E> state;
+public:
+  implicit SourceResult(T& value) : state(source_result::State<T&, E>::ready(value)) {}
+  implicit SourceResult(mut source_result::Failure<E> failure)
+      : state(source_result::State<T&, E>::failed(std::move(failure).error())) {}
+  bool has_value() {
+    switch (this.state) {
+    case source_result::State<T&, E>::ready: return true;
+    case source_result::State<T&, E>::failed: return false;
+    }
+  }
+  operator bool() { return this.has_value(); }
+  T& value() {
+    switch (this.state) {
+    case source_result::State<T&, E>::ready(auto& value): return value;
+    case source_result::State<T&, E>::failed: std::panic("missing value");
+    }
+  }
+  T& value() && {
+    switch (this.state) {
+    case source_result::State<T&, E>::ready(auto& value): return value;
+    case source_result::State<T&, E>::failed: std::panic("missing value");
+    }
+  }
+  E& error() {
+    switch (this.state) {
+    case source_result::State<T&, E>::ready: std::panic("missing error");
+    case source_result::State<T&, E>::failed(auto& error): return error;
+    }
+  }
+  mut E& error() mut {
+    switch (this.state) {
+    case source_result::State<T&, E>::ready: std::panic("missing error");
+    case source_result::State<T&, E>::failed(mut auto& error): return error;
+    }
+  }
+  E error() && {
+    switch (std::move(this.state)) {
+    case source_result::State<T&, E>::ready: std::panic("missing error");
+    case source_result::State<T&, E>::failed(error): return std::move(error);
+    }
+  }
+};
+
+[[borrowed_from(owner)]]
+SourceResult<int&, int> borrow(int& owner, bool fail) {
+  if (fail) return SourceResult<int&, int>(source_result::Failure<int>(7));
+  return SourceResult<int&, int>(owner);
+}
+
+int main() {
+  mut SourceResult<int, int> owned{42};
+  owned.value() = 43;
+  SourceResult<void, int> empty{};
+  empty.value();
+  int owner = 7;
+  mut auto view = borrow(owner, false);
+  int& observed = std::move(view).value();
+  auto failed_view = borrow(owner, true);
+  mut SourceResult<std::string, int> text{std::string("source")};
+  std::string extracted = std::move(text).value();
+  return owned.value() == 43 && observed == 7 && !failed_view &&
+      failed_view.error() == 7 && extracted == "source" ? 0 : 1;
+}

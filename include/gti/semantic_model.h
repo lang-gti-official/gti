@@ -379,9 +379,9 @@ enum class IntrinsicKind {
   IntegerSaturatingAdd,
   IntegerSaturatingSubtract,
   IntegerSaturatingMultiply,
-  IntegerCheckedAdd,
-  IntegerCheckedSubtract,
-  IntegerCheckedMultiply,
+  IntegerAddOverflows,
+  IntegerSubtractOverflows,
+  IntegerMultiplyOverflows,
   StorageBoundsCheck,
   OptionalStorageHasValue,
   OptionalStorageConstruct,
@@ -430,6 +430,8 @@ enum class IntrinsicKind {
   RequireContainerArgument,
   Panic,
   FailEmptyOwner,
+  FailInactiveValue,
+  FailInactiveError,
   SharedOwnerEmpty,
   SharedOwnerFromUnique,
   SharedOwnerClone,
@@ -531,6 +533,12 @@ enum class IntrinsicKind {
 };
 
 // Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] inline bool intrinsicTracksCaller(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::Panic ||
+         intrinsic == IntrinsicKind::FailInactiveValue ||
+         intrinsic == IntrinsicKind::FailInactiveError;
+}
+
 [[nodiscard]] inline std::optional<DefinedFailureOutcome>
 intrinsicTerminalFailureOutcome(IntrinsicKind intrinsic) {
   switch (intrinsic) {
@@ -540,6 +548,12 @@ intrinsicTerminalFailureOutcome(IntrinsicKind intrinsic) {
   case IntrinsicKind::FailEmptyOwner:
     return DefinedFailureOutcome{DefinedFailureCode::EmptyOwnerAccess,
                                  DefinedFailureDetail::MemberAccess};
+  case IntrinsicKind::FailInactiveValue:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidExpectedAccess,
+                                 DefinedFailureDetail::ValueOnError};
+  case IntrinsicKind::FailInactiveError:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidExpectedAccess,
+                                 DefinedFailureDetail::ErrorOnValue};
   default:
     return std::nullopt;
   }
@@ -1201,6 +1215,9 @@ struct ConstructorInfo {
   // Distinct formal inputs retained by a composed read-only carrier. Includes
   // the primary borrowParameter when there is more than one input.
   std::vector<std::size_t> borrowParameters;
+  // Complete, declaration-relative field/tag dependencies established by
+  // checked initializer execution. Empty is a proof, not missing metadata.
+  std::optional<FunctionBorrowDependencySummary> completeBorrow;
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   // Declared `implicit`: a declaration may construct from its one argument.

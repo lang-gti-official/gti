@@ -1,0 +1,108 @@
+#include <std/memory>
+#include <std/panic>
+
+enum Signal<T> { empty, value(T payload), error(int code) };
+class Packet<T> {
+  mut Signal<T> state;
+public:
+  constexpr Packet(T value) : state(Signal<T>::value(std::move(value))) {}
+  constexpr bool has_value() {
+    switch (this.state) {
+    case Signal<T>::empty: return false;
+    case Signal<T>::value: return true;
+    case Signal<T>::error: return false;
+    }
+  }
+  constexpr T& value() {
+    switch (this.state) {
+    case Signal<T>::value(auto& value): return value;
+    case Signal<T>::empty: std::panic("empty");
+    case Signal<T>::error: std::panic("error");
+    }
+  }
+  constexpr T take() && {
+    switch (std::move(this.state)) {
+    case Signal<T>::value(value): return std::move(value);
+    case Signal<T>::empty: std::panic("empty");
+    case Signal<T>::error(code): std::panic("error");
+    }
+  }
+};
+
+constexpr int payload_work() {
+  mut Signal<int> signal = Signal<int>::error(3);
+  signal = Signal<int>::value(42);
+  switch (signal) {
+  case Signal<int>::value(auto& value): return value;
+  case Signal<int>::empty: return 1;
+  case Signal<int>::error(code): return code;
+  }
+}
+constexpr int packet_work() {
+  Packet<int> packet{42};
+  return packet.has_value() ? packet.value() : 0;
+}
+constexpr int consumed_work() {
+  mut Packet<int> packet{42};
+  return std::move(packet).take();
+}
+struct Counter {
+  int value;
+  constexpr Counter(int value) : value(value) {}
+  constexpr int operator()() && { return this.value; }
+};
+constexpr int callable_work() { return Counter(42)(); }
+struct Point {
+  int x;
+  int y;
+  constexpr Point(int x, int y) : x(x), y(y) {}
+};
+constexpr int record_work() {
+  Packet<Point> packet{Point(40, 2)};
+  return packet.value().x + packet.value().y;
+}
+constexpr int owning_work() {
+  mut Packet<std::unique_ptr<int>> packet{std::make_unique<int>(42)};
+  auto owner = std::move(packet).take();
+  return *owner;
+}
+enum Twins<T> { values(T first, T second), absent };
+constexpr int twins_work() {
+  mut auto pair = Twins<std::unique_ptr<int>>::values(
+      std::make_unique<int>(20), std::make_unique<int>(22));
+  switch (std::move(pair)) {
+  case Twins<std::unique_ptr<int>>::values(first, second): return *first + *second;
+  case Twins<std::unique_ptr<int>>::absent: return 0;
+  }
+}
+constexpr Signal<int> freeze() { return Signal<int>::value(42); }
+// A generic constexpr declaration does not require every runtime payload to
+// have constexpr construction or cleanup.
+struct RuntimeOnly {
+  int value;
+  RuntimeOnly(int value) : value(value) {}
+  ~RuntimeOnly() {}
+};
+int runtime_only() {
+  mut Packet<RuntimeOnly> packet{RuntimeOnly(42)};
+  auto result = std::move(packet).take();
+  return result.value;
+}
+constexpr Signal<int> frozen = freeze();
+constexpr Packet<int> frozen_packet = Packet<int>(42);
+constexpr Packet<Point> frozen_record = Packet<Point>(Point(40, 2));
+static_assert(frozen_packet.value() == 42);
+static_assert(frozen_record.value().x == 40);
+static_assert(payload_work() == 42);
+static_assert(packet_work() == 42);
+static_assert(consumed_work() == 42);
+static_assert(callable_work() == 42);
+static_assert(record_work() == 42);
+static_assert(owning_work() == 42);
+static_assert(twins_work() == 42);
+int main() {
+  return payload_work() == 42 && packet_work() == 42 &&
+         consumed_work() == 42 && callable_work() == 42 &&
+         record_work() == 42 && owning_work() == 42 && twins_work() == 42 &&
+         runtime_only() == 42 ? 0 : 1;
+}

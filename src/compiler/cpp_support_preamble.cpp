@@ -199,11 +199,11 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "callable_capability",
       "capacity",
       "capacity_",
-      "checked_add",
+      "integer_add_overflow_flag",
       "checked_index",
       "checked_initialized_index",
-      "checked_mul",
-      "checked_sub",
+      "integer_multiply_overflow_flag",
+      "integer_subtract_overflow_flag",
       "cleanup",
       "cleanup_task",
       "cleanup_result",
@@ -554,14 +554,14 @@ namespace gti_internal::backend {
 // Passive members retain trivial native special members and byte transport.
 template <typename... Values> union payload_union;
 template <> union payload_union<> {
-  payload_union() noexcept {}
+  constexpr payload_union() noexcept {}
   ~payload_union() = default;
 };
 template <typename Head, typename... Tail>
 union payload_union<Head, Tail...> {
   Head head;
   payload_union<Tail...> tail;
-  payload_union() noexcept {}
+  constexpr payload_union() noexcept {}
   payload_union(const payload_union &) = default;
   payload_union(payload_union &&) = default;
   payload_union &operator=(const payload_union &) = default;
@@ -571,7 +571,7 @@ union payload_union<Head, Tail...> {
   ~payload_union() noexcept {}
 
   template <std::size_t Index, typename... Args>
-  void construct(Args &&...args) {
+  constexpr void construct(Args &&...args) {
     if constexpr (Index == 0) {
       std::construct_at(std::addressof(head), std::forward<Args>(args)...);
     } else {
@@ -618,7 +618,7 @@ template <typename... Values> class payload_variant {
     }
   }
   template <std::size_t Index, typename... Args>
-  void construct(Args &&...args) {
+  constexpr void construct(Args &&...args) {
     static_assert(Index < sizeof...(Values));
     // Publish only after complete construction. If native construction throws,
     // no alternative is live; any active recursive tails contain no resource.
@@ -632,10 +632,10 @@ template <typename... Values> class payload_variant {
     tag_ = vacant;
   }
 public:
-  payload_variant() noexcept(std::is_nothrow_default_constructible_v<
+  constexpr payload_variant() noexcept(std::is_nothrow_default_constructible_v<
       std::tuple_element_t<0, std::tuple<Values...>>>) { construct<0>(); }
   template <std::size_t Index, typename... Args>
-  explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
+  constexpr explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
     construct<Index>(std::forward<Args>(args)...);
   }
   payload_variant(const payload_variant &)
@@ -4040,43 +4040,29 @@ inline constexpr Value saturating_mul(Value left, Value right) {
   return value;
 }
 )";
-  if (usesExpected) {
-    output << R"(
+  output << R"(
 
-template <typename Error, typename Value>
-inline constexpr expected_result<Value, Error> checked_add(Value left,
-                                                           Value right) {
+template <typename Value>
+inline constexpr bool integer_add_overflow_flag(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
   Value value{};
-  if (integer_add_overflows(left, right, &value)) {
-    return make_unexpected_result(Error{});
-  }
-  return value;
+  return integer_add_overflows(left, right, &value);
 }
 
-template <typename Error, typename Value>
-inline constexpr expected_result<Value, Error> checked_sub(Value left,
-                                                           Value right) {
+template <typename Value>
+inline constexpr bool integer_subtract_overflow_flag(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
   Value value{};
-  if (integer_subtract_overflows(left, right, &value)) {
-    return make_unexpected_result(Error{});
-  }
-  return value;
+  return integer_subtract_overflows(left, right, &value);
 }
 
-template <typename Error, typename Value>
-inline constexpr expected_result<Value, Error> checked_mul(Value left,
-                                                           Value right) {
+template <typename Value>
+inline constexpr bool integer_multiply_overflow_flag(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
   Value value{};
-  if (integer_multiply_overflows(left, right, &value)) {
-    return make_unexpected_result(Error{});
-  }
-  return value;
+  return integer_multiply_overflows(left, right, &value);
 }
 )";
-  }
   output << R"(
 
 template <typename Left, typename Right>

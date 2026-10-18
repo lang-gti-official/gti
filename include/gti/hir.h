@@ -725,6 +725,7 @@ struct HirConstructorInstance {
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowParameters;
+  std::optional<FunctionBorrowDependencySummary> completeBorrow;
   std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;
