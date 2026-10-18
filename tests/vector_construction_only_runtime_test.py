@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Empty-slot vector transport needs construction, not element assignment."""
+"""Vector construction/relocation and source-optional payload transport."""
 
 import os
 import pathlib
@@ -84,18 +84,18 @@ struct Envelope {
 };
 """
     rejected = [
-        ("assignment", owner + """
+        ("copy-assignment", owner + """
 int main() {
   mut Envelope target{};
   Envelope source{};
-  target = std::move(source);
+  target = source;
   return 0;
 }
-""", "Move assignment is unavailable for type 'Envelope'"),
-        ("stronger-concept", owner + """
-bool requires_assignment<std::movable T>(T& input) { return true; }
-int main() { Envelope input{}; return requires_assignment(input) ? 0 : 1; }
-""", "std::movable"),
+""", "Cannot copy assign move-only type 'Envelope'"),
+        ("copy-concept", owner + """
+bool requires_copy<std::copyable T>(T& input) { return true; }
+int main() { Envelope input{}; return requires_copy(input) ? 0 : 1; }
+""", "std::copyable"),
         ("deleted-move", """
 #include <std/vector>
 class Immovable {
