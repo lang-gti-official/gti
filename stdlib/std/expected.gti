@@ -50,6 +50,13 @@ public:
   implicit constexpr expected(mut std::detail::unexpected_value<E> failure)
       : state(std::detail::expected_state<T, E>::error(std::move(failure).error())) {}
 
+  constexpr void operator=(T value) mut {
+    this.state = std::detail::expected_state<T, E>::value(std::move(value));
+  }
+  constexpr void operator=(mut std::detail::unexpected_value<E> failure) mut {
+    this.state = std::detail::expected_state<T, E>::error(std::move(failure).error());
+  }
+
   constexpr bool has_value() {
     switch (this.state) {
     case std::detail::expected_state<T, E>::value: return true;
@@ -142,9 +149,13 @@ public:
 class expected<void, E> {
   mut std::detail::expected_void_state<E> state;
 public:
-  constexpr expected() : state(std::detail::expected_void_state<E>::value) {}
+  implicit constexpr expected() : state(std::detail::expected_void_state<E>::value) {}
   implicit constexpr expected(mut std::detail::unexpected_value<E> failure)
       : state(std::detail::expected_void_state<E>::error(std::move(failure).error())) {}
+
+  constexpr void operator=(mut std::detail::unexpected_value<E> failure) mut {
+    this.state = std::detail::expected_void_state<E>::error(std::move(failure).error());
+  }
 
   constexpr bool has_value() {
     switch (this.state) {

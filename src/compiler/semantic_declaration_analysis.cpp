@@ -8562,17 +8562,15 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
 
       if (const std::optional<Token> &implicit =
               constructor->implicitKeyword()) {
-        // A declaration constructs from one value of another type: a copy or
-        // move policy never has that role, and the constructor must be
-        // callable with exactly one explicit argument.
+        // Contextual construction supplies zero or one explicit values. A
+        // copy/move policy never supplies a conversion or empty return.
         if (info.kind != ConstructorKind::Ordinary) {
           report(*implicit, "A copy or move constructor cannot be implicit.",
                  "GTI-S2121");
-        } else if (info.parameterPack || constructor->parameters().empty() ||
-                   info.requiredParameterCount > 1) {
+        } else if (info.parameterPack || info.requiredParameterCount > 1) {
           report(*implicit,
-                 "An implicit constructor must accept exactly one explicit "
-                 "argument.",
+                 "An implicit constructor must accept zero or one explicit "
+                 "arguments.",
                  "GTI-S2121");
         } else {
           info.implicitConstruction = true;
@@ -9247,6 +9245,7 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
                 qualifiedName(owner.namespaceScope, owner.name.lexeme),
             .namespaceScope = owner.namespaceScope,
             .enclosingClass = owner.enclosingClass,
+            .definitionFamilyPrimary = owner.definitionFamilyPrimary,
             .exactSpecializationPrimary = owner.exactSpecializationPrimary,
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,
@@ -9345,6 +9344,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
                 qualifiedName(owner.namespaceScope, owner.name.lexeme),
             .namespaceScope = owner.namespaceScope,
             .enclosingClass = owner.enclosingClass,
+            .definitionFamilyPrimary = owner.definitionFamilyPrimary,
             .exactSpecializationPrimary = owner.exactSpecializationPrimary,
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,

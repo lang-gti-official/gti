@@ -196,6 +196,40 @@ substituteTemplateType(SemanticType type,
   return type;
 }
 
+// Check a substituted source signature against the already selected concrete
+// type. A profile may have a different declaration identity from its family's
+// open spelling. This checks presentation of the exact instance; it neither
+// selects a profile nor makes distinct class objects interchangeable.
+[[nodiscard]] bool matchesSelectedTemplateType(SemanticType projected,
+                                               const SemanticType &selected,
+                                               const LoweredProgram &program) {
+  if (projected.kind != selected.kind ||
+      projected.arguments.size() != selected.arguments.size())
+    return false;
+  if (projected.kind == SemanticType::Class &&
+      projected.classId != selected.classId) {
+    const auto *source = program.findClassDeclaration(projected.classId);
+    const auto *concrete = program.findClassDeclaration(selected.classId);
+    if (!source || !concrete)
+      return false;
+    const auto family = [](const LoweredClassDeclaration &declaration) {
+      return declaration.definitionFamilyPrimary != 0
+                 ? declaration.definitionFamilyPrimary
+                 : declaration.id;
+    };
+    if (family(*source) != family(*concrete))
+      return false;
+    projected.classId = selected.classId;
+  }
+  for (std::size_t index = 0; index < projected.arguments.size(); ++index) {
+    if (!matchesSelectedTemplateType(projected.arguments[index],
+                                     selected.arguments[index], program))
+      return false;
+    projected.arguments[index] = selected.arguments[index];
+  }
+  return projected == selected;
+}
+
 [[nodiscard]] bool
 appendTemplateArguments(TemplateSubstitution &substitution,
                         const std::vector<LoweredGenericParameter> &parameters,
@@ -410,8 +444,10 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
   for (auto &parameter : result.parameterTypes)
     parameter = resolveNativeProjections(resolveNativeProjections,
                                          std::move(parameter));
-  if (substituteTemplateType(result.returnType, functionSubstitution,
-                             &program) != instance.returnType) {
+  if (!matchesSelectedTemplateType(substituteTemplateType(result.returnType,
+                                                          functionSubstitution,
+                                                          &program),
+                                   instance.returnType, program)) {
     return std::nullopt;
   }
   std::vector<SemanticType> concreteParameters;
@@ -419,7 +455,13 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
     SemanticType::appendExpandedArgument(
         concreteParameters,
         substituteTemplateType(parameter, functionSubstitution, &program));
-  if (concreteParameters != instance.parameterTypes)
+  if (concreteParameters.size() != instance.parameterTypes.size() ||
+      !std::equal(concreteParameters.begin(), concreteParameters.end(),
+                  instance.parameterTypes.begin(),
+                  [&](const auto &projected, const auto &selected) {
+                    return matchesSelectedTemplateType(projected, selected,
+                                                       program);
+                  }))
     return std::nullopt;
   return result;
 }

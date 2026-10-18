@@ -477,12 +477,25 @@ constructor. A conversion operator without `implicit` converts only
 explicitly; the exact-type error's hint then names `T(...)`.
 
 `implicit` is written first in an ordinary constructor declaration, before
-`constexpr`. It requires a source body and a constructor callable with exactly
-one explicit argument, so any further parameters must have defaults. It is
+`constexpr`. It requires a source body and a constructor callable with zero or
+one explicit arguments, so any further parameters must have defaults. It is
 invalid on a copy or move constructor or a constructor with a parameter pack
 (`GTI-S2121`), and cannot be combined with `unsafe`: a construction a
 declaration performs implicitly carries no unsafe caller obligation.
 Misplaced spellings, such as `constexpr implicit`, are syntax errors.
+
+A bare `return;` in a class-valued function selects an accessible `implicit`
+constructor callable with no explicit arguments. Omitted arguments use the
+constructor's ordinary defaults. A generated default constructor or an explicit
+zero-argument constructor does not opt in. Ambiguity, inaccessible constructors,
+failed construction and cleanup follow ordinary direct construction rules.
+The concrete return type owns selection, including after generic substitution;
+this is not a rule tied to a library type's name. Semantics records the exact
+return statement and selected constructor. HIR preserves that proof and a full
+expression for construction/default-argument cleanup; no synthetic source
+expression is invented. Borrowed dependencies from temporary default arguments
+cannot escape an empty return. Raw-address fields remain unresolved in optional
+pointer auditing until their construction origin is established.
 
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
@@ -876,6 +889,17 @@ tracked borrowed state. Mutable references, explicit moves, native or callback
 targets, compound producers, borrowed-state values, and results that could
 retain the argument loan remain ill-formed. Transparent parentheses do not
 change eligibility.
+
+The same call-scoped read-only parameter boundary admits an exact fresh lambda
+or selected GTI function item. The selected generic parameter must still have
+a proven confined callable contract, and invocation must respect the callable's
+read-only capability. A lambda may own captures or retain checked shared
+capture dependencies: those exact origins remain live and protected through
+the call and the temporary's full-expression cleanup. No closure copy is
+introduced, and named callables continue to bind by their ordinary reference.
+This does not admit mutable temporary parameters, explicit moves of named
+callables, returned references to the temporary, or conflicting mutation of a
+capture while the call remains live.
 
 A consuming method or call operator may be virtual or an interface requirement. An
 override must preserve its exact `&&` receiver capability, parameters, and

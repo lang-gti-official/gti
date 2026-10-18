@@ -1,0 +1,24 @@
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int observe<F>(F& callback, int value) {
+  int result = callback();
+  return result;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  Resource capture{7};
+  int divisor = argc == 2 ? 0 : 1;
+  return observe([capture = std::move(capture)]() -> int {
+    return capture.read();
+  }, 12 / divisor) - 7;
+}

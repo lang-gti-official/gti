@@ -878,6 +878,31 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
   for (const LoweredDeclaration &declaration : program.declarations_) {
     const auto *specialization =
         std::get_if<LoweredClassDeclaration>(&declaration.payload);
+    if (specialization && specialization->definitionFamilyPrimary != 0) {
+      const auto *primary =
+          program.findClassDeclaration(specialization->definitionFamilyPrimary);
+      const auto identity =
+          classDeclarations.find(specialization->definitionFamilyPrimary);
+      const auto *primaryRow = identity == classDeclarations.end()
+                                   ? nullptr
+                                   : program.findDeclaration(identity->second);
+      if (!primary || !primaryRow || primary->id == specialization->id ||
+          primary->definitionFamilyPrimary != 0 ||
+          primary->exactSpecializationPrimary != 0 ||
+          specialization->exactSpecializationPrimary != 0 ||
+          primary->kind != specialization->kind ||
+          primary->qualifiedName != specialization->qualifiedName ||
+          primaryRow->parent != declaration.parent ||
+          primaryRow->namespaceScope != declaration.namespaceScope ||
+          primaryRow->name != declaration.name ||
+          primary->genericParameters.empty() ||
+          specialization->genericParameters.empty()) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "generic class definition does not retain its exact family "
+                 "primary identity",
+                 std::nullopt, declaration.id);
+      }
+    }
     if (specialization == nullptr ||
         specialization->exactSpecializationPrimary == 0) {
       continue;

@@ -1,0 +1,79 @@
+#include <std/meta>
+#include <std/string>
+#include <std/panic>
+
+// Public spelling remains prelude vocabulary, but all these results are source
+// classes. Neither the test nor its callers opt into an experimental carrier.
+static_assert(std::meta::type<expected<int, int>>().is_class());
+
+constexpr expected<int, int> compute(bool fail) {
+  if (fail) return unexpected(7);
+  return 42;
+}
+constexpr expected<void, int> complete(bool fail) {
+  if (fail) return unexpected(8);
+  return;
+}
+constexpr int answer = compute(false).value();
+static_assert(answer == 42);
+static_assert(!complete(true).has_value());
+static_assert(complete(false).has_value());
+
+expected<int, int> forward(bool fail) {
+  int value = ?compute(fail);
+  ?complete(fail);
+  return value;
+}
+
+expected<int&, std::string> lookup(int& owner, bool fail) {
+  if (fail) return unexpected(std::string("missing"));
+  return owner;
+}
+int& required(int& owner) {
+  return lookup(owner, false).expect("required owner");
+}
+
+int increment(int value) { return value + 1; }
+
+int main() {
+  if (forward(false).value() != 42 || forward(true).error() != 7) return 1;
+  auto mapped = compute(false).transform(increment);
+  if (mapped.value() != 43) return 2;
+  int offset = 3;
+  auto borrowed_callback = compute(false).transform([&offset](int value) -> int {
+    return value + offset;
+  });
+  if (borrowed_callback.value() != 45) return 3;
+  auto text = compute(true).transform_error([](int value) -> std::string {
+    return std::to_string(value);
+  });
+  if (text.has_value() || text.error() != "7") return 4;
+  auto nothing = compute(false).transform([](int value) -> void {
+    if (value != 42) std::panic("incorrect callback input");
+  });
+  std::move(nothing).value();
+  auto from_void = complete(false).transform([]() -> int { return 42; });
+  if (std::move(from_void).value() != 42) return 5;
+  auto still_void = complete(false).transform([]() -> void {});
+  std::move(still_void).expect("void result");
+  auto chained = compute(false).and_then([](int value) -> expected<void, int> {
+    if (value != 42) return unexpected(9);
+    return;
+  });
+  if (!chained) return 6;
+  mut expected<std::string, int> owned = std::string("owned");
+  if (std::move(owned).expect("owned result") != "owned") return 7;
+  mut expected<int, int> replaced = 1;
+  replaced = unexpected(9);
+  if (replaced.has_value() || replaced.error() != 9) return 8;
+  replaced = 42;
+  if (replaced.value() != 42 || compute(true).value_or(9) != 9) return 9;
+  int owner = 42;
+  auto view = expected<int&, int>(owner);
+  auto copied_view = view;
+  int& retained = std::move(copied_view).value();
+  if (retained != 42 || view.value() != 42 || required(owner) != 42) return 10;
+  auto absent = lookup(owner, true);
+  if (absent.has_value() || absent.error() != "missing") return 11;
+  return 0;
+}

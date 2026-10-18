@@ -2624,13 +2624,12 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
       (cleared.returnType.kind != SemanticType::Enum &&
        !(cleared.returnType.kind == SemanticType::Class &&
          typeTraits(cleared.returnType).containsBorrowedState) &&
-       !conditionalReferenceReturn(cleared.returnType,
-                                   cleared.parameterTypes,
-                                   cleared.ownerClass ? openClassType(cleared.ownerClass)
-                                                      : SemanticType::Unknown)) ||
+       !conditionalReferenceReturn(cleared.returnType, cleared.parameterTypes,
+                                   cleared.ownerClass
+                                       ? openClassType(cleared.ownerClass)
+                                       : SemanticType::Unknown)) ||
       containsOpenTypeParameter(cleared.returnType) || cleared.neverReturns ||
-      loanFlow.deferredConstexprSelection ||
-      loanFlow.unknownImplicitResultReturn)
+      loanFlow.deferredGenericFlow || loanFlow.unknownImplicitResultReturn)
     return;
 
   // Expression facts were recorded at each return's own evaluation point,
@@ -8998,7 +8997,7 @@ auto SemanticVisitor::Impl::recordProvenLoanEndpoint(
 }
 
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
-  if (loanFlow.deferredConstexprSelection) {
+  if (loanFlow.deferredGenericFlow) {
     // Unselected arms can add uses and conflicts. Publishing endpoints from
     // this incomplete primary would assert liveness that was never proved.
     return;

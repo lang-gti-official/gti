@@ -1742,7 +1742,8 @@ spelling. Finite nested enum payloads and fixed arrays of supported payload
 elements retain these construction and cleanup obligations. Passive native
 records and unions may be payloads when their C ABI layout is validated.
 Polymorphic enum callable transport, direct owning-enum lambda capture, arrays
-whose elements are directly owning enums, stored-reference class owners, unsupported
+whose elements are directly owning enums, payloads that are themselves
+stored-reference class owners, unsupported
 compiler-private payloads, native-layout owners containing owning enum fields,
 and polymorphic bases remain diagnosed rather than inventing indirect cleanup
 state.
@@ -1760,6 +1761,25 @@ factories establish that complete fact through their return expressions; a bare
 declaration or missing dependency metadata does not establish an empty proof.
 A shared-reference enum may be copied when its other fields permit copying. An exclusive-reference field makes
 the complete enum move-only, including when nested in another enum.
+
+A source class can retain that conditional dependency set in a field. The
+current structural slice requires every retained dependency and alternative
+guard to share one exact field prefix; selecting the field removes that prefix
+from the whole set, never just the convenient subset. Empty-body constructors
+establish the result from their exact field initializers, including a proved
+reference-free alternative. A missing proof is not an empty alternative.
+Implicit copying remains conditional on all fields being copyable; copying a
+shared-reference wrapper retains the same external owners, while moving a
+wrapper does not move those owners. A consuming method may return a selected
+external reference after retiring the wrapper, but cannot return a reference
+to the wrapper's own storage.
+
+An open generic receiver may not yet have a complete conditional inventory.
+Only its dependent enum switch is deferred to concrete instance analysis;
+every requested instance must establish the exact inventory and recheck the
+selection, return and lifetime rules. Unrelated nondependent errors remain
+diagnosed at the declaration. This is not permission to infer an external
+owner from an incomplete type.
 
 Selecting a direct reference field proves the active tag and retains all of
 that field's possible external owners. Consuming the enum retires its old

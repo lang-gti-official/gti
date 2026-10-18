@@ -1,0 +1,38 @@
+#include <std/string>
+#include <std/vector>
+
+mut int construction_divisor = 1;
+mut int argument_divisor = 1;
+
+class Trace {
+  int identity;
+public:
+  Trace(int identity) : identity(identity) {}
+  ~Trace() { std::println(this.identity); }
+};
+
+Trace default_ticket() {
+  int argument_failure = 1 / argument_divisor;
+  return Trace(3);
+}
+
+class Completion {
+  Trace ticket;
+  int value;
+public:
+  implicit Completion(Trace ticket = default_ticket(), int divisor = construction_divisor)
+      : ticket(std::move(ticket)), value(10 / divisor) {}
+};
+
+Completion finish() {
+  Trace local{2};
+  return;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace caller{9};
+  construction_divisor = argc == 2 ? 0 : 1;
+  argument_divisor = argc == 3 ? 0 : 1;
+  auto completed = finish();
+  return 0;
+}

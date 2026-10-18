@@ -1,0 +1,46 @@
+#include <std/memory>
+
+int invoke<F>(F& callback, int argument) {
+  int result = callback(argument);
+  return result;
+}
+int forward<F>(F& callback, int argument) {
+  return invoke(callback, argument);
+}
+int increment(int value) { return value + 1; }
+bool increment(bool value) { return !value; }
+class Reading {
+  int& source;
+public:
+  Reading(int& value) : source(value) {}
+  int get() { return this.source; }
+};
+class Client {
+  int value;
+public:
+  Client(int input) : value(input) {}
+  int invoke<F>(F& callback) && {
+    int result = callback(this.value);
+    return result;
+  }
+};
+int main() {
+  int offset = 1;
+  int base = 40;
+  int one = invoke([](int value) -> int { return value + 1; }, base);
+  int two = invoke(increment, one);
+  int three = forward([&offset, &base](int value) -> int {
+    return value + offset + base;
+  }, two);
+  if (three != 83) return 1;
+  Reading reading{base};
+  int four = invoke([reading](int value) -> int { return reading.get() + value; }, 2);
+  if (four != 42) return 2;
+  auto owner = std::make_unique<int>(40);
+  int five = invoke([owned = std::move(owner)](int value) -> int {
+    return *owned + value;
+  }, 2);
+  if (five != 42) return 3;
+  int six = Client(41).invoke([](int value) -> int { return value + 1; });
+  return six == 42 ? 0 : 4;
+}

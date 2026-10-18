@@ -9021,12 +9021,18 @@ the wrapper; it does not require moving an enum subfield out separately.
 Focused work has established a compiling/running empty-wrapper case and an
 independent constructor-publication checker with mutations for missing or
 substituted origins, guards, access, field initialization and publication.
-The nonempty wrapper still fails the older body/program verifier boundaries;
-integration is not validated or released. Remaining acceptance includes exact
-receiver-entry and constructor-publication integration, source dangling/alias
-rejections, malformed receiver/field/loan mutations, native lifecycle runs and
-the release matrix below. Passing a standalone summary checker is not evidence
-that the whole program is safe or ready to release.
+The nonempty nongeneric wrapper now passes full semantic/MIR verification,
+including consuming external-reference extraction and implicit shared copying.
+Native integration remains in progress: consuming receivers must use ordinary
+ordered call-input stages, not a backend scheduling exception. Open generic
+receiver selections defer only their dependent switch until concrete instance
+analysis; they do not manufacture complete facts from symbolic inventories.
+The concrete instance must establish the full origin/access/guard proof and
+reject dangling selections or mutation through a surviving copied view.
+Remaining acceptance includes malformed receiver/field/loan mutations, generic
+concrete-instance tests, native lifecycle runs and the release matrix below.
+Passing a standalone summary checker or MIR verification is not evidence that
+the whole release matrix is complete.
 
 The enum constant-execution prerequisite now passes its focused compiler and
 native differential tests: exact alternatives, class-contained enum fields,
@@ -9039,13 +9045,16 @@ introduce persistent reference constants.
 
 Combinator compatibility remains an explicit integration goal. The source draft
 uses ordinary value/void invocation profiles and checked-reference mapper
-parameters; named value-returning lambdas reach native execution. Fresh lambdas
+parameters; the named-callback owned/void API matrix reaches native execution. Fresh lambdas
 (including existing borrowing captures) and namespace function items still need
 general call-scoped temporary-reference admission with exact capture dependencies,
 non-escape, full-expression cleanup and invocation capability proofs. Do not
 replace a named callback's environment with an implicit ownership copy. The
-current void-mapping native probe also exposes a backend vocabulary rejection
-after verified MIR; that path is not release-ready. The draft header remains
+void-mapping native rejection was traced to loss of semantic class-definition
+family identity at callable-signature substitution. The lowered program now
+preserves that family identity, so the backend checks the already selected
+concrete profile without reimplementing source selection or changing object-type
+identity. The draft header remains
 outside the prelude until these compatibility gates, constructor publication,
 ordinary implicit-return construction and the complete release matrix pass.
 
@@ -9105,6 +9114,12 @@ public result. Final source cutover, complete compatibility, proof and
 performance validation remain pending; a compiling prototype is not release
 evidence. Ordinary one-value return construction is coordinated with PR #231;
 successful empty returns additionally need a general explicit constructor opt-in.
+That implementation now binds selection of a zero-explicit-argument `implicit`
+constructor to the exact bare return statement and semantic snapshot. HIR must
+retain that proof, selected defaults and one full-expression cleanup schedule;
+it must not manufacture a source expression or treat missing raw-address origins
+as safe. Focused access, ambiguity, unsafe-contract, cleanup and malformed-proof
+validation remains in progress.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
