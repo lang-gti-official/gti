@@ -942,7 +942,13 @@ publishes anything. An owning join whose arms evaluate inputs first keeps the
 ordinary owned-temporary publication it already has. The outer arm's move
 out of a nested join is that join's single move, and the nested join's
 representation ends right after it, so a loop that evaluates the conditional
-again finds both storages empty. When a passive join's single move reaches
+again finds both storages empty. Slot retirement always clears engagement and
+preserves the empty-slot guards. For a trivially destructible C++ representation,
+retirement need not invoke a destructor: its physical lifetime ends on storage
+reuse or release. This avoids an unnecessary native lifetime-end barrier while
+MIR still forbids subsequent use of the retired value. Nontrivial representations
+still run their destructor at retirement, including cleanup-bearing source
+objects and representation-only shells. When a passive join's single move reaches
 neither the binding nor the prepared argument terminal, the moved value is
 staged in its own representation-only slot and the join's representation ends
 right after. That staged slot then serves a return, field read, assignment or

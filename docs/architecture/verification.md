@@ -53,10 +53,11 @@
   `testUnconsumedFusedClosureSpellsNoBody` admits a function whose two
   lambdas are never consumed and emits no lambda body for it, while the same
   lambda invoked once still emits its body. Against the 0.440.2 emitter the
-  runtime fixture and both text tests fail. A differential `--emit-cpp` run
-  over `tests/fixtures`, `tests/coverage` and `examples` against the same tree
-  with the 0.440.3 emitter changes only the new fixture, which no longer
-  fails.
+  runtime fixture and both text tests fail. The recovered historical
+  differential log records four changed existing fixtures and one newly
+  accepted fixture; it does not establish that only the new fixture changed.
+  Its compiler provenance is incomplete, so combined acceptance requires
+  a fresh comparison with explicit source and compiler identities.
 - **Out of scope.** Reading a nested field of a class call result, as in
   `build(1).inner.id`, and reading a field of a construction that takes a
   call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a
