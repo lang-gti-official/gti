@@ -6897,7 +6897,8 @@ private:
       }
     }
     if (value.kind == HirValueKind::PayloadConstruction) {
-      const auto *payload = model.findPayloadConstruction(*raw);
+      const auto *call = exprAs<Call>(raw);
+      const auto *payload = call ? model.findPayloadConstruction(*call) : nullptr;
       if (payload &&
           std::any_of(
               payload->parameterTypes.begin(), payload->parameterTypes.end(),
