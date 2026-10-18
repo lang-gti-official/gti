@@ -852,6 +852,11 @@ resolved from exact instance substitutions, not deduced from the C signature
 No new runtime intrinsic or storage is involved. Confined-callable
 escape analysis distinguishes a projection operand from stored callable state;
 ordinary concrete reference origins and escape checks remain authoritative.
+A contracted reference projection is checked as its resolved reference type;
+references in the query's callable metadata are not nested stored references.
+Deferred generic call records defer return-origin proof only while no resolved
+function or lambda call exists. Concrete lambda instantiation must prove the
+declared origin, including rejecting a different reference argument.
 
 `field.get(owner)` and `get_mut` on a `meta_field` value are intercepted in
 `visitCallExpr` (`analyzeMetaFieldAccess`): semantics synthesizes the

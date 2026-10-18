@@ -978,9 +978,10 @@ public:
         });
   }
 
-  void emitLoweredFailureResultParameter(const SemanticType &returnType,
-                                         bool callableTemplate = false,
-                                         bool retainVoidChannel = false) {
+  void emitLoweredFailureResultParameter(
+      const SemanticType &returnType, bool callableTemplate = false,
+      bool retainVoidChannel = false,
+      const SemanticType *concreteType = nullptr) {
     const auto emitType = [&](const SemanticType &type,
                               AccessMode access = AccessMode::Mutable) {
       if (!callableTemplate) {
@@ -995,8 +996,19 @@ public:
       }
       output << cppAccessQualifiedTypeSpelling(type, access, spelling);
     };
-    if (returnType.kind == SemanticType::Reference &&
-        returnType.arguments.size() == 1) {
+    // The verified concrete result selects transport; a dependent logical
+    // spelling may still be a projection whose native alias is a reference.
+    const SemanticType &transport = concreteType ? *concreteType : returnType;
+    if (transport == SemanticType::Void) {
+      if (retainVoidChannel)
+        output << "void *__gti_mir_out_result, ";
+    } else if (transport.kind == SemanticType::Reference &&
+               returnType.kind != SemanticType::Reference) {
+      output << "std::remove_reference_t<";
+      emitType(returnType);
+      output << "> **__gti_mir_out_result, ";
+    } else if (returnType.kind == SemanticType::Reference &&
+               returnType.arguments.size() == 1) {
       emitType(returnType.arguments.front(), returnType.referenceAccess);
       output << " **__gti_mir_out_result, ";
     } else if (returnType != SemanticType::Void) {
@@ -1168,7 +1180,8 @@ public:
           : instance == nullptr ? function.returnType
                                 : instance->returnType,
           callableSignature.has_value(),
-          cppFunctionHasFailureResultChannel(loweredProgram, function));
+          cppFunctionHasFailureResultChannel(loweredProgram, function),
+          instance == nullptr ? nullptr : &instance->returnType);
       output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     if (!failure && (indirectResult || conditionalVirtualResult)) {

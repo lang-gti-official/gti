@@ -7,11 +7,14 @@ items, lambdas and native pointers, contextual item inference, void/reference
 metadata, invalid operands, retained unsafe-call requirements and confined
 callback escape rejection. It rejects malformed projection declarations,
 substituted MIR result types and incompatible class-publication destinations.
+Reference relay tests also reject substituted or missing MIR origins,
+unrelated callback arguments, dangling owners and overlapping mutation.
 `callable_return_type_lsp` checks the diagnostic's UTF-16 range and repair.
 `callable_return_type_runtime` runs example 167 and an owned source-class/result
 enum client with `transform`, `transform_error` and `and_then`, plus native
 pointer, read-only-pointer, scalar and void callback results in retained
-generic templates, under C++20/C++23,
+generic templates, and annotated shared-reference relays through lambdas and
+function items (including a void lambda invocation), under C++20/C++23,
 O0/O1/O3, disabled elision and ASan/UBSan. This is prerequisite evidence, not a
 replacement for production expected or proof of its complete migration matrix.
 
@@ -24,6 +27,10 @@ unchanged; this does not grant a new semantic lifetime or bypass MIR checking.
 Native callback projections resolve from exact GTI instance metadata: their
 logical pointer result cannot be reconstructed from a C function-pointer
 signature. The native fixture prevents that representation mismatch.
+Projected reference results select the failure-result pointer channel from the
+verified concrete MIR type, not the unresolved alias's syntactic kind. A
+resolved lambda call must undergo the ordinary return-origin proof even when
+its primary generic body retained a deferred-call record.
 
 The paired `benchmarks/callable-result-projection.gti` workload compares a
 projected result with `-D EXPLICIT_RESULT`, doing 20 million scalar mappings.
