@@ -2283,6 +2283,45 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         if (dependency.designatedFields == *externalPrefix &&
             dependency.conditions == externalConditions)
           sources.push_back(dependency);
+      // A scalar result is a new reborrow of the input carrier's external
+      // permission, not a whole-carrier ownership transfer. Retain that
+      // exact live authority so an exclusive input cannot become a competing
+      // sibling of its own result. Fresh producers without a retained loan
+      // keep the ancestry in their complete producer fact.
+      if (resolved.returnType.kind == SemanticType::Reference) {
+        const auto retained = retainedLoanSource(*argument);
+        const auto *loan =
+            retained ? semanticModel.findLoan(retained->loan) : nullptr;
+        if (loan && loan->kind == SemanticLoanKind::StoredValue) {
+          const auto matches = [&](const SemanticLoanDependency &source,
+                                   const SemanticLoanDependency &candidate) {
+            auto place = candidate.place;
+            if (loan->entry)
+              for (const auto field : candidate.designatedFields)
+                place.projections.push_back(
+                    {.kind = PlaceProjectionKind::Field, .field = field});
+            return source.place == place &&
+                   source.designatedFields == candidate.designatedFields &&
+                   source.conditions == candidate.conditions &&
+                   source.access == candidate.access &&
+                   source.protectsStorage == candidate.protectsStorage;
+          };
+          const SemanticLoanDependency primary{
+              .place = loan->place,
+              .designatedFields = loan->designatedFields,
+              .access = loan->access,
+              .protectsStorage = loan->protectsStorage,
+              .conditions = loan->conditions};
+          for (auto &source : sources)
+            if (matches(source, primary) ||
+                std::any_of(loan->additionalDependencies.begin(),
+                            loan->additionalDependencies.end(),
+                            [&](const auto &candidate) {
+                              return matches(source, candidate);
+                            }))
+              source.parent = loan->id;
+        }
+      }
     } else {
       if (!hasStableBorrowStorage(*argument))
         continue;
