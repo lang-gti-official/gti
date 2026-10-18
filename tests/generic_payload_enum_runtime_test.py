@@ -113,12 +113,18 @@ public:
   int read() { return this.owner; }
 };
 enum Holder { none, item(Carrier value) };
+enum Reading { none, item(int& value) };
 [[borrowed_from(owner)]]
-Holder clone(int& owner) {
-  Carrier value = Carrier(owner);
-  Holder original = Holder::item(value);
-  Holder copied = original;
+Reading clone(int& owner) {
+  Reading original = Reading::item(owner);
+  Reading copied = original;
   return copied;
+}
+int inspect_reading(Reading& held) {
+  switch (held) {
+    case Reading::none: return 0;
+    case Reading::item(value): return value;
+  }
 }
 int inspect(Holder& held) {
   switch (held) {
@@ -134,8 +140,8 @@ int main() {
     if (inspect(held) != 17) return 1;
     Holder copied = held;
     if (inspect(copied) != 17) return 3;
-    Holder escaped_shell = clone(owner);
-    if (inspect(escaped_shell) != 17) return 4;
+    Reading escaped_shell = clone(owner);
+    if (inspect_reading(escaped_shell) != 17) return 4;
   }
   owner = 23;
   return owner == 23 ? 0 : 2;
