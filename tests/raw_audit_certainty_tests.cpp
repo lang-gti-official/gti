@@ -7,7 +7,8 @@
 namespace {
 int failures = 0;
 
-void check(const std::string &name, const std::string &source, bool definite) {
+void check(const std::string &name, const std::string &source, bool definite,
+           const char *unresolvedCode = "GTI-S2102") {
   for (const auto mode :
        {lang::RawPointerAuditMode::Off, lang::RawPointerAuditMode::Warn,
         lang::RawPointerAuditMode::Strict}) {
@@ -22,11 +23,11 @@ void check(const std::string &name, const std::string &source, bool definite) {
     };
     const bool audit = mode != lang::RawPointerAuditMode::Off;
     const bool valid = mode != lang::RawPointerAuditMode::Strict;
-    const bool findings =
-        audit ? (definite ? count("GTI-S2101") > 0
-                          : count("GTI-S2101") == 0 && count("GTI-S2102") > 0)
-              : result.diagnostics.empty();
-    const auto expectedCode = definite ? "GTI-S2101" : "GTI-S2102";
+    const bool findings = audit ? (definite ? count("GTI-S2101") > 0
+                                            : count("GTI-S2101") == 0 &&
+                                                  count(unresolvedCode) > 0)
+                                : result.diagnostics.empty();
+    const auto expectedCode = definite ? "GTI-S2101" : unresolvedCode;
     const bool details = std::all_of(
         result.diagnostics.begin(), result.diagnostics.end(),
         [&](const auto &item) {
@@ -51,7 +52,7 @@ int main() {
   check("implicit return construction retains unresolved raw-field origins",
         R"gti(
 struct Handle {
-  const int* pointer;
+  const int* pointer = nullptr;
   implicit Handle(const int* input) : pointer(input) {}
 };
 Handle handle(const int* pointer) { return pointer; }
@@ -62,7 +63,7 @@ int inspect() {
 }
 int main() { return 0; }
 )gti",
-        false);
+        false, "GTI-S2103");
   const std::string start = R"(
 int inspect(bool choice) {
   int live = 1;
