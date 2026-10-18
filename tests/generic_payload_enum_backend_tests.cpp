@@ -1118,5 +1118,66 @@ int main() {
            "provenance-only enum path still requires an exact typed payload "
            "field");
   }
+  const auto publishedCall = lang::Frontend().analyze(
+      "owning-enum-call-publication.gti", R"gti(
+#include <std/string>
+enum Packet { number(int value), text(std::string value) };
+Packet produce(bool text) {
+  if (text) return Packet::text(std::string("owned publication"));
+  return Packet::number(7);
+}
+int main() {
+  auto packet = produce(false);
+  switch (packet) {
+    case Packet::number(value): return value - 7;
+    case Packet::text(auto& value): return int(value.size());
+  }
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(publishedCall.canGenerateCode(),
+         "fallible enum result has a checked immediate binding publication");
+  if (publishedCall.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const auto text = gti_test::emitCpp(publishedCall, standard).contents;
+      expect(text.find("payload call published in its binding") !=
+                 std::string::npos,
+             "enum call constructs directly in its sole binding destination");
+    }
+    for (int mutation = 0; mutation < 3; ++mutation) {
+      auto malformed = publishedCall.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::Initialize ||
+                instruction.operands.size() != 1 ||
+                instruction.operands.front().type.kind !=
+                    lang::SemanticType::Enum ||
+                instruction.lifecycle.size() != 1)
+              continue;
+            auto &transfer = instruction.lifecycle.front();
+            if (transfer.kind != lang::MirLifecycleEventKind::Reparent)
+              continue;
+            changed = true;
+            if (mutation == 0)
+              transfer.source = transfer.target;
+            else if (mutation == 1)
+              transfer.conditional = true;
+            else {
+              auto *destination =
+                  function.body.findPlace(*instruction.destination);
+              for (auto &drop : function.body.dropObligations)
+                if (drop.place == destination->id)
+                  drop.initiallyActive = true;
+            }
+          }
+      expect(
+          changed && !lang::verifyMirProgram(malformed).valid(),
+          "direct publication does not waive source obligation, unconditional "
+          "transfer, or inactive destination proofs");
+    }
+  }
   return failures == 0 ? 0 : 1;
 }
