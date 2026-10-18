@@ -4937,6 +4937,49 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
 [[nodiscard]] MirVerificationResult
 verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner) {
+  const auto physicalPayloadCarrier =
+      [&](const MirPlace &place) -> const MirPlace * {
+    if (place.root != MirPlaceRootKind::Value || !place.projections.empty())
+      return nullptr;
+    const auto *value = body.findValue(place.value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (!value || !block || value->info.category != ValueCategory::Place ||
+        value->info.type != place.type)
+      return nullptr;
+    const auto producer =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const auto &instruction) {
+                       return instruction.id == value->definition;
+                     });
+    if (producer == block->instructions.end() || producer->tombstone ||
+        producer->kind != MirInstructionKind::Compute ||
+        producer->operation != MirOperation::PayloadExtract ||
+        producer->payloadExtractionKind != PayloadExtractionKind::BorrowValue ||
+        producer->result != value->id || producer->info != value->info ||
+        producer->operands.size() != 1 || !producer->enumOwner ||
+        !producer->enumVariant || !producer->payloadIndex)
+      return nullptr;
+    const auto &operand = producer->operands.front();
+    const auto *carrier = body.findPlace(operand.place);
+    const auto *enumeration = program.findPayloadEnum(operand.type);
+    if (!carrier || carrier->type != operand.type || !enumeration ||
+        (operand.kind != MirOperandKind::BorrowRead &&
+         operand.kind != MirOperandKind::BorrowWrite) ||
+        producer->enumOwner != enumeration->declaration ||
+        *producer->enumVariant >= enumeration->variants.size())
+      return nullptr;
+    const auto &variant = enumeration->variants[*producer->enumVariant];
+    if (*producer->payloadIndex >= variant.payloadTypes.size() ||
+        variant.payloadTypes[*producer->payloadIndex] != place.type ||
+        place.type.kind == SemanticType::Reference)
+      return nullptr;
+    // The typed switch-edge proof establishes this exact active field; the
+    // body proof establishes the child's parent containment and liveness.
+    // Resolve inherited owner dependencies from the executable carrier, not
+    // from the child's claimed parent or its storedDependency annotation.
+    return carrier;
+  };
   for (const auto &loan : body.loans) {
     const auto *source = body.findPlace(loan.source);
     if (source == nullptr)
@@ -5031,6 +5074,9 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
           "carrier-reference construction or publication");
     if (!localShell && loan.storedDependency == 0)
       continue;
+    const auto *dependencySource = physicalPayloadCarrier(*source);
+    if (!dependencySource)
+      dependencySource = source;
     MirLoanId expected = 0;
     const auto *restoration = mir_detail::restoredBorrowAuthority(body, loan);
     if (restoration != nullptr &&
@@ -5039,15 +5085,16 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
       const auto *witness = result ? body.findLoan(result->parent) : nullptr;
       if (witness && result->storedDependency == witness->id)
         expected = witness->id;
-    } else if (source->root == MirPlaceRootKind::Loan) {
-      const auto *parent = body.findLoan(source->loan);
+    } else if (dependencySource->root == MirPlaceRootKind::Loan) {
+      const auto *parent = body.findLoan(dependencySource->loan);
       expected = parent == nullptr ? 0 : parent->storedDependency;
-    } else if (source->root == MirPlaceRootKind::Value ||
-               source->root == MirPlaceRootKind::Temporary) {
-      const auto temporary = findMirTemporaryCarrierDependency(body, *source);
+    } else if (dependencySource->root == MirPlaceRootKind::Value ||
+               dependencySource->root == MirPlaceRootKind::Temporary) {
+      const auto temporary =
+          findMirTemporaryCarrierDependency(body, *dependencySource);
       expected = temporary ? temporary.loan->id : 0;
-    } else if (source->root == MirPlaceRootKind::Binding ||
-               source->root == MirPlaceRootKind::This) {
+    } else if (dependencySource->root == MirPlaceRootKind::Binding ||
+               dependencySource->root == MirPlaceRootKind::This) {
       for (const auto &candidate : body.loans) {
         const auto *entrySource = body.findPlace(candidate.source);
         // verifyStoredEntryPaths has already independently checked every
@@ -5055,19 +5102,20 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         // carrier list, distinguishes this caller-owned entry.
         const bool abstractEntry =
             candidate.entry && candidate.kind == MirLoanKind::Stored &&
-            entrySource != nullptr && entrySource->root == source->root &&
-            entrySource->binding == source->binding &&
+            entrySource != nullptr &&
+            entrySource->root == dependencySource->root &&
+            entrySource->binding == dependencySource->binding &&
             entrySource->projections.empty() &&
             (entrySource->root == MirPlaceRootKind::This ||
              entrySource->type.kind == SemanticType::Reference);
         const bool carried =
-            source->root == MirPlaceRootKind::Binding &&
+            dependencySource->root == MirPlaceRootKind::Binding &&
             (std::find(candidate.carriers.begin(), candidate.carriers.end(),
-                       source->binding) != candidate.carriers.end() ||
+                       dependencySource->binding) != candidate.carriers.end() ||
              (candidate.kind == MirLoanKind::Stored &&
               candidate.lifecycleBound &&
-              mir_detail::bindingReceivedStoredLoan(body, source->binding,
-                                                    candidate.id)));
+              mir_detail::bindingReceivedStoredLoan(
+                  body, dependencySource->binding, candidate.id)));
         if (candidate.id == loan.id || (!abstractEntry && !carried))
           continue;
         const MirLoanId dependency = candidate.kind == MirLoanKind::Stored
@@ -13229,7 +13277,11 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
           producer.operands.size() == 1 &&
           producer.operands.front().kind == MirOperandKind::Loan) {
         const auto *input = body.findLoan(producer.operands.front().loan);
-        needsProof |= input && guarded(*input);
+        // A selected scalar has unconditional projected origins, not its
+        // parent's conditional carrier layout. Its exact producer, tag and
+        // complete owner set are independently checked by the mandatory
+        // verifySelectedReferenceOrigins transport proof below.
+        needsProof |= input && guarded(*input) && !loan.referenceSelection;
       }
       if (producer.result && *producer.result <= flow.values.size()) {
         const auto &fact = flow.values[*producer.result - 1];

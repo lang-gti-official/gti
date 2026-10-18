@@ -8761,6 +8761,26 @@ Normal release gates include C++20/C++23 O0/O1/O2/O3 runtime and failure-cleanup
 coverage, sanitizers, the example/corpus checks, relevant tooling and broad
 compiler validation, and optimized runtime/allocation/code-size measurements.
 
+**Consolidated admission (2026-10-18, release validation pending):** the preceding
+entries are historical prerequisite checkpoints. The integrated implementation
+now admits direct shared and exclusive reference payload construction,
+observing selection, consuming extraction and complete result forwarding with
+all possible external origins retained. Example 165 exercises a source-defined
+borrowed-success/owned-error protocol through prefix `?`. Nested shared and
+exclusive carrier construction/transport is supported; consuming an owned
+nested reference-bearing value into a pattern binding remains a diagnosed
+structural goal, not an admitted implicit handoff.
+
+Selected scalar references retain unconditional exact projected origins rather
+than their parent's conditional field layout. Ordinary owned-field borrows
+protect the enum shell; matching through an enum reference also retains that
+reference's independent external dependencies. Complete proof, typed extraction,
+active alternative, parent containment, last-use endpoints and failure cleanup
+remain mandatory. The integration has focused positive, dangling/alias-rejection
+and malformed-MIR evidence; the release record must report final broad,
+sanitizer and matched-contract performance results rather than treating these
+prerequisite checkpoints as full acceptance.
+
 ### L-ERR-01: Error Propagation Operator
 
 - **State/role:** complete in 0.311.0; `M-LIFE-01`, `D-LANG-01`, and
