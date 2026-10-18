@@ -272,6 +272,23 @@ Source-defined owning wrappers implement read, mutable and consuming invocation
 under the separate callable ownership/cleanup contract. The declaration syntax
 alone does not supply storage, erasure or `std::function` policy.
 
+An argument-profile family can also combine an ordinary type-parameter definition
+with void and checked-reference profiles, for example `class Packet<T, E>`,
+`class Packet<void, E>`, and `class Packet<T&, E>`. Each has its own members and
+layout. A profile head contains bare type binders, `void`, or reference binders;
+it has no packs, defaults, value parameters, pointer patterns or nested patterns.
+All definitions have the same public arity, class/struct kind and package owner.
+Non-fallback profiles must be mutually disjoint: `Packet<T&, E>` and
+`Packet<T, E&>` overlap and cannot form a family. At most one ordinary definition
+is the fallback. Selection is independent of declaration order and precedes
+member lookup; constraints on a selected definition do not cause fallback to a
+different one. Read-only and mutable references are distinct profiles.
+Generic deduction uses the family's public arguments, then concrete checking
+uses the selected definition's exact identity. This does not allow conversions
+between definitions or erase checked references' origins/access/lifetimes.
+[Source value profiles](../../examples/168-source-value-profiles.gti) demonstrates
+ordinary owned, empty and borrowed classes without a library-specific capability.
+
 A lambda or nominal `operator()` call can expand a concrete parameter pack. Concrete
 reanalysis checks the flattened arity and each exact argument type, including
 an empty expansion. It does not pass a pack object as one lambda argument.

@@ -9034,9 +9034,13 @@ requirements to implement and verify, not permission to drop old behavior:
    the production clients. A reference-class or void-profile prototype alone
    is not completion.
 
-No production migration or completed prerequisite verification is claimed by
-this planning record. Historical optional-release validation exceptions do not
-apply to this campaign.
+Production migration is in progress. The first implementation checkpoint extends
+ordinary class argument-pattern families to disjoint void/reference profiles and
+an ordinary type-parameter fallback. This lets a source carrier spell each
+profile's methods and storage directly, instead of introducing expected-specific
+type selection. Production expected has not been switched yet. The remaining
+matrix above, including constexpr and cutover evidence, remains required.
+Historical optional-release validation exceptions do not apply to this campaign.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 

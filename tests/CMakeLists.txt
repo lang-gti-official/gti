@@ -926,6 +926,13 @@ add_test(NAME reflection_semantics COMMAND gti_reflection_tests)
 add_executable(gti_callable_return_type_tests "${PROJECT_SOURCE_DIR}/tests/callable_return_type_tests.cpp")
 target_link_libraries(gti_callable_return_type_tests PRIVATE gti_cpp_backend)
 add_test(NAME callable_return_type COMMAND gti_callable_return_type_tests)
+add_executable(gti_class_argument_profile_tests "${PROJECT_SOURCE_DIR}/tests/class_argument_profile_tests.cpp")
+target_link_libraries(gti_class_argument_profile_tests PRIVATE gti_cpp_backend)
+add_test(NAME class_argument_profiles COMMAND gti_class_argument_profile_tests)
+add_test(NAME class_argument_profiles_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/168-source-value-profiles.gti" --include-o1)
+set_tests_properties(class_argument_profiles_runtime PROPERTIES TIMEOUT 180)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)

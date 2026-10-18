@@ -12046,7 +12046,8 @@ auto SemanticVisitor::Impl::baseTypeOf(
     if (const std::optional<ClassId> id =
             resolveClassPath(type.name, fromScope)) {
       const ClassInfo &owner = classInfo(*id);
-      if (!owner.declaration->genericArgumentPatterns().empty()) {
+      if (!owner.declaration->genericArgumentPatterns().empty() ||
+          !owner.definitionFamilyMembers.empty() || owner.definitionFamilyPrimary != 0) {
         std::vector<SemanticType> arguments;
         for (const TypeRef &argument : type.arguments) {
           arguments.push_back(typeOf(argument, fromScope));

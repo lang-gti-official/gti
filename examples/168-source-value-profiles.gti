@@ -1,0 +1,37 @@
+// A source class family can provide distinct value, void and borrowed profiles.
+// Selection changes the source definition, not the rules for checked borrows.
+class Packet<T, E> {
+  T payload;
+public:
+  Packet(T value) : payload(std::move(value)) {}
+  T& value() { return this.payload; }
+  int kind() { return 1; }
+};
+
+class Packet<void, E> {
+public:
+  Packet() {}
+  void value() {}
+  int kind() { return 2; }
+};
+
+class Packet<T&, E> {
+  T& payload;
+public:
+  Packet(T& value) : payload(value) {}
+  T& value() { return this.payload; }
+  int kind() { return 3; }
+};
+
+int inspect<T, E>(Packet<T, E>& value) { return value.kind(); }
+
+int main() {
+  Packet<int, int> owned{42};
+  Packet<void, int> empty{};
+  int owner = 7;
+  Packet<int&, int> borrowed{owner};
+  empty.value();
+  // `owner` must still be alive and cannot be mutated while this borrow is used.
+  return owned.value() == 42 && borrowed.value() == 7 &&
+      inspect(owned) == 1 && inspect(empty) == 2 && inspect(borrowed) == 3 ? 0 : 1;
+}

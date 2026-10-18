@@ -1363,10 +1363,10 @@ private:
     AccessModifier enclosingAccess = AccessModifier::Public;
     std::unordered_map<std::string, ClassId> nestedTypes;
     ClassId exactSpecializationPrimary = 0;
-    // Disjoint signature receiver definitions share a lookup name, not a
+    // Disjoint source definitions share a lookup name, not a
     // concrete class identity. The first registered definition owns the list.
-    ClassId signatureFamilyPrimary = 0;
-    std::vector<ClassId> signatureFamilyMembers;
+    ClassId definitionFamilyPrimary = 0;
+    std::vector<ClassId> definitionFamilyMembers;
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
@@ -2726,12 +2726,12 @@ private:
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren);
 
-  [[nodiscard]] static bool tryInferTypeArguments(
+  [[nodiscard]] bool tryInferTypeArguments(
       const SemanticType &pattern, const SemanticType &argument,
       const std::vector<GenericParameterInfo> &parameters,
       GenericSubstitution &substitution, const ExprPtr *expression = nullptr,
       GenericParameterId *conflictingParameter = nullptr,
-      bool *conflictingValueParameter = nullptr);
+      bool *conflictingValueParameter = nullptr) const;
 
   [[nodiscard]] bool tryInstantiateFunction(
       const CallableCandidate &candidate,
@@ -3762,7 +3762,7 @@ private:
   [[nodiscard]] SemanticType
   selectExactClassSpecialization(SemanticType type) const;
 
-  [[nodiscard]] ClassId selectSignatureClassDefinition(
+  [[nodiscard]] ClassId selectClassDefinition(
       ClassId id, const std::vector<SemanticType> &arguments) const;
 
   [[nodiscard]] static bool

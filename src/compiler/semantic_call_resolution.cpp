@@ -2334,7 +2334,7 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
     const SemanticType &pattern, const SemanticType &argument,
     const std::vector<GenericParameterInfo> &parameters,
     GenericSubstitution &substitution, const ExprPtr *expression,
-    GenericParameterId *conflictingParameter, bool *conflictingValueParameter)
+    GenericParameterId *conflictingParameter, bool *conflictingValueParameter) const
     -> bool {
   if (pattern.kind == SemanticType::Reference &&
       pattern.arguments.size() == 1) {
@@ -2417,9 +2417,18 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
     return true;
   }
 
+  const auto definitionFamily = [&](ClassId id) {
+    if (id == 0 || id > classes.size())
+      return id;
+    const auto primary = classInfo(id).definitionFamilyPrimary;
+    return primary == 0 ? id : primary;
+  };
+  // Deduce from a family's public arguments. Concrete substitution still
+  // selects an exact definition and ordinary argument matching checks it;
+  // distinct definitions are not interchangeable object representations.
   if (pattern.kind != argument.kind ||
       pattern.nativeCScalar != argument.nativeCScalar ||
-      pattern.classId != argument.classId ||
+      definitionFamily(pattern.classId) != definitionFamily(argument.classId) ||
       pattern.enumId != argument.enumId ||
       pattern.signatureReceiver != argument.signatureReceiver ||
       pattern.arrayLength != argument.arrayLength ||
