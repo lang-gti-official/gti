@@ -1,6 +1,7 @@
 // A source-defined fallible view can consume its wrapper while keeping the
 // success reference tied to the caller's owner. Its error owns its text.
 #include <std/string>
+#include <std/panic>
 
 class Reading {
 public:
@@ -101,6 +102,44 @@ int inspect_parse(Parse& value) {
   }
 }
 
+// Unlike Reading's always-present reference field, only the success
+// alternative below borrows. The error owns its string. The checked body of
+// take_value selects the exact reference; has_value is not a tag-proof hint.
+enum BorrowedParse { ready(int& value), failed(std::string error) };
+for concept std::tryable<BorrowedParse> {
+  using value_type = int&;
+  using residual_type = std::string;
+  bool has_value(BorrowedParse& result) {
+    switch (result) {
+      case BorrowedParse::ready: return true;
+      case BorrowedParse::failed: return false;
+    }
+  }
+  [[borrowed_from(result)]] int& take_value(mut BorrowedParse result) {
+    switch (std::move(result)) {
+      case BorrowedParse::ready(value): return value;
+      case BorrowedParse::failed(error): std::panic("not a successful parse");
+    }
+  }
+  std::string take_residual(mut BorrowedParse result) {
+    switch (std::move(result)) {
+      case BorrowedParse::ready(value): std::panic("not a failed parse");
+      case BorrowedParse::failed(error): return std::move(error);
+    }
+  }
+};
+
+[[borrowed_from(owner)]] BorrowedParse borrowed_parse(int& owner, bool fail) {
+  if (fail) return BorrowedParse::failed(std::string("bad"));
+  return BorrowedParse::ready(owner);
+}
+
+Status inspect_borrowed_parse(int& owner, bool fail) {
+  mut auto result = borrowed_parse(owner, fail);
+  int& value = ?std::move(result);
+  return Status(value);
+}
+
 int main() {
   int owner = 42;
   std::println(std::to_string(inspect(owner, false).code));
@@ -110,6 +149,8 @@ int main() {
   std::println(std::to_string(edit(changing, true).code));
   std::println(std::to_string(changing));
   std::println(std::to_string(parse().code));
+  std::println(std::to_string(inspect_borrowed_parse(owner, false).code));
+  std::println(std::to_string(inspect_borrowed_parse(owner, true).code));
   // This temporary borrow is an ordinary call, independent of tryable.
   return inspect_parse(Parse::ready(7)) - 7;
 }

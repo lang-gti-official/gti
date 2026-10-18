@@ -3992,7 +3992,8 @@ private:
       } else if (!orderedOwningParameterType(parameter) ||
                  input->info.type != parameter ||
                  (input->info.traits.containsBorrowedState &&
-                  parameter.kind != SemanticType::Class)) {
+                  parameter.kind != SemanticType::Class &&
+                  parameter.kind != SemanticType::Enum)) {
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
                  input->info.traits.copyable) {

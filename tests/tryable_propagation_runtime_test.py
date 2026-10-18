@@ -29,6 +29,7 @@ CASES = [
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "tryable_propagation.gti"
+    conditional_source = pathlib.Path(__file__).parent / "fixtures" / "reference_payload_tryable.gti"
     example = pathlib.Path(__file__).parent.parent / "examples" / "159-tryable-propagation.gti"
     borrowed_example = pathlib.Path(__file__).parent.parent / "examples" / "165-borrowed-payload-results.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
@@ -57,7 +58,14 @@ def main():
                          "-o", str(borrowed), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             shown = run([str(borrowed)])
-            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "42\n3\n9\n3\n9\n12\n", ""), \
+            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "42\n3\n9\n3\n9\n12\n42\n3\n", ""), \
+                (name, shown.returncode, shown.stdout, shown.stderr)
+            conditional = pathlib.Path(directory) / f"conditional-reference-{name}"
+            built = run([str(compiler), str(conditional_source), *flags,
+                         "-o", str(conditional), *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            shown = run([str(conditional)])
+            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "", ""), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
             print(f"tryable propagation: {name} passed", flush=True)
 

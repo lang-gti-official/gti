@@ -316,6 +316,39 @@ int main() {
            "constructor rejects dangling owners, mutable aliases and later "
            "field mutation");
   }
+  for (const bool exclusive : {false, true}) {
+    const auto copied = analyze(
+        std::string("enum Reading { empty, value(") +
+        (exclusive ? "mut int&" : "int&") + R"gti( owner) };
+int inspect(Reading input) {
+  switch (input) {
+    case Reading::empty: return 0;
+    case Reading::value(value): return value;
+  }
+}
+int main() {
+  mut int owner = 3;
+  auto first = Reading::value(owner);
+  auto second = first;
+  return inspect(std::move(first)) + inspect(std::move(second));
+}
+)gti");
+    if (exclusive) {
+      expect(copied.syntaxValid && !copied.semanticValid,
+             "copying a whole mutable-reference enum cannot duplicate its "
+             "exclusive owner authority");
+      expect(std::any_of(copied.diagnostics.begin(), copied.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.message.find("copy") !=
+                                      std::string::npos ||
+                                  diagnostic.message.find("move-only") !=
+                                      std::string::npos;
+                         }),
+             "exclusive enum copying has a source ownership diagnostic");
+    } else {
+      acceptedSemantics(copied);
+    }
+  }
   const auto constructed = lang::Frontend().analyze(
       root / "tests" / "reference-payload-constructor.gti", R"gti(
 enum Reading { empty, value(int& owner, int sequence) };
