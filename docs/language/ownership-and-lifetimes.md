@@ -1774,6 +1774,16 @@ wrapper does not move those owners. A consuming method may return a selected
 external reference after retiring the wrapper, but cannot return a reference
 to the wrapper's own storage.
 
+A reference accessor on a statically known reference-free alternative can
+still be called when its checked body has no normal result for that
+alternative. The compiler preserves the call's failure or nontermination;
+it does not invent a referent or reject the call merely because no owner can
+be supplied. This is an input-specific fact, not a `noreturn` property of the
+accessor: calls on reference-bearing alternatives retain their ordinary
+checked result. Unknown dependency information is insufficient to establish
+this fact. Reference initialization, nested call arguments and reference
+returns stop at the terminal call without publishing a reference.
+
 An open generic receiver may not yet have a complete conditional inventory.
 Only its dependent enum switch is deferred to concrete instance analysis;
 every requested instance must establish the exact inventory and recheck the

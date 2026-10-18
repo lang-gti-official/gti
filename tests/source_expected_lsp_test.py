@@ -74,7 +74,7 @@ def main():
                 if isinstance(definitions, dict):
                     definitions = [definitions]
                 assert definitions and any(
-                    item.get("uri", item.get("targetUri", "")).endswith("/std/expected.gti")
+                    item.get("uri", item.get("targetUri", "")).endswith("/prelude.gti")
                     for item in definitions), definitions
             tokens = semantic_tokens_by_position(request(
                 "textDocument/semanticTokens/full", {"textDocument": {"uri": uri}})["data"])

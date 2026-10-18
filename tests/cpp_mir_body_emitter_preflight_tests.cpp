@@ -347,7 +347,7 @@ int main() {
             break;
           case 12:
             payload->variants.back().payloadTypes.front() =
-                lang::SemanticType::String;
+                lang::SemanticType::arrayOf(lang::SemanticType::Int32, 2);
             break;
           case 0:
             ++changed->initializers.front().field;
@@ -568,7 +568,8 @@ int main() { return many(1); }
     const lang::CppMirBodyEmitter emitter(frontend.mir, map);
     std::size_t checkedBodies = 0;
     for (const auto &function : frontend.mir.functionInstances()) {
-      if (function.owner || function.parameterTypes.size() != 1)
+      const auto *hir = frontend.hir.findFunctionInstance(function.id);
+      if (!hir || !hir->source || hir->source->name().lexeme != "many")
         continue;
       std::vector<lang::MirDropType> recipes;
       std::size_t drops = 0;
@@ -582,7 +583,7 @@ int main() { return many(1); }
             continue;
           const auto *drop = function.body.findDropObligation(
               instruction.lifecycle.front().source);
-          if (!drop || drop->dropType.type.kind != lang::SemanticType::Expected)
+          if (!drop || drop->dropType.type.kind != lang::SemanticType::Class)
             continue;
           ++drops;
           if (std::find(recipes.begin(), recipes.end(), drop->dropType) ==
@@ -606,7 +607,7 @@ int main() { return many(1); }
           ++count;
         return count;
       };
-      expect(recipes.size() == 3 && drops > recipes.size(),
+      expect(recipes.size() >= 3 && drops > recipes.size(),
              "fixture distinguishes equal recipes, equal cleanup expressions "
              "with different native types, and different source error recipes");
       expect(occurrences("const auto __gti_mir_cleanup_adapter_") ==
@@ -4215,7 +4216,8 @@ int main() { return 0; }
 }
 
 void testPlainExpectedPayloadConstruction() {
-  const auto frontend = analyze("plain-expected-payload.gti", R"(
+  const auto frontend =
+      analyzeWithStandardLibrary("plain-expected-payload.gti", R"(
 class Ticket {
   int first;
   int second;
@@ -4457,7 +4459,8 @@ void testExpectedFieldHasOnlyPayloadStorage() {
 }
 
 void testNativeExpectedCopyPublication() {
-  auto frontend = analyze("cpp-mir-native-expected-copy.gti", R"(
+  auto frontend =
+      analyzeWithStandardLibrary("cpp-mir-native-expected-copy.gti", R"(
 [[c_abi]] struct Native { const int* pointer; int value; };
 extern "C" { Native empty_native(); }
 expected<Native, int> success(Native value) { return value; }
@@ -6625,6 +6628,8 @@ int main() {
   lang::MirPlaceId temporary = 0;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
     for (const lang::MirBlock &block : function.body.blocks) {
       for (const lang::MirInstruction &producer : block.instructions) {
         if ((producer.kind != lang::MirInstructionKind::Call &&

@@ -731,12 +731,10 @@ auto SemanticVisitor::Impl::patternInstanceArguments(
 auto SemanticVisitor::Impl::matchConformance(
     ConceptId id, const std::vector<SemanticType> &arguments) const
     -> std::optional<ConformanceMatch> {
-  if (std::any_of(arguments.begin(), arguments.end(),
-                  [&](const SemanticType &argument) {
-                    return containsOpenTypeParameter(argument);
-                  })) {
-    return std::nullopt;
-  }
+  // Match a declared family structurally even when its arguments are open.
+  // This establishes only the conformance head and substitution; constraints
+  // and operation borrow contracts are checked separately. A bare parameter
+  // cannot match a class/enum family, nor can a repeated binder change type.
   for (std::size_t index = 0; index < conformances.size(); ++index) {
     const RegisteredConformance &conformance = conformances[index];
     if (conformance.conceptId != id ||
@@ -903,11 +901,7 @@ auto SemanticVisitor::Impl::associatedTypeProjection(
 auto SemanticVisitor::Impl::reduceAssociatedTypeProjection(
     SemanticType projection) const -> SemanticType {
   if (!projection.isAssociatedTypeProjection() ||
-      projection.arguments.empty() ||
-      std::any_of(projection.arguments.begin(), projection.arguments.end(),
-                  [&](const SemanticType &argument) {
-                    return containsOpenTypeParameter(argument);
-                  })) {
+      projection.arguments.empty()) {
     return projection;
   }
   const std::optional<ConformanceMatch> match =
@@ -1046,11 +1040,7 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
       .applicationArgumentIndex = 0,
       .missingConformance = true,
       .conformanceArguments = requirement.arguments};
-  if (requirement.arguments.size() != conceptInfo.parameterIds.size() ||
-      std::any_of(requirement.arguments.begin(), requirement.arguments.end(),
-                  [&](const SemanticType &type) {
-                    return containsOpenTypeParameter(type);
-                  })) {
+  if (requirement.arguments.size() != conceptInfo.parameterIds.size()) {
     return failure;
   }
   const std::optional<ConformanceMatch> match =
@@ -1093,10 +1083,12 @@ auto SemanticVisitor::Impl::protocolBorrowContractFailure(
     for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter)
       substitution.types.emplace(parameters[parameter].id, binding[parameter]);
     const auto returnType = substituteType(candidate.returnType, substitution);
-    if (returnType == SemanticType::Unknown ||
-        containsOpenTypeParameter(returnType))
+    if (returnType == SemanticType::Unknown)
       return index;
-    if (returnType.kind != SemanticType::Reference)
+    // An open result may become a reference. Require the declared dependency
+    // already; concrete analysis still verifies its exact origins and access.
+    if (returnType.kind != SemanticType::Reference &&
+        !containsOpenTypeParameter(returnType))
       continue;
     const auto *function = candidate.declaration;
     const auto *origin =

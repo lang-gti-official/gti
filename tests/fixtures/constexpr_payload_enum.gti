@@ -88,6 +88,18 @@ constexpr int twins_work() {
   }
 }
 constexpr Signal<int> freeze() { return Signal<int>::value(42); }
+class Profile<T, E> {};
+class Profile<void, E> {
+  Content<E> state;
+public:
+  constexpr Profile(E value) : state(Content<E>::value(value)) {}
+  constexpr E code() {
+    switch (this.state) {
+    case Content<E>::value(value): return value;
+    }
+  }
+};
+constexpr int profile_work() { return Profile<void, int>(42).code(); }
 // A generic constexpr declaration does not require every runtime payload to
 // have constexpr construction or cleanup.
 struct RuntimeOnly {
@@ -114,10 +126,12 @@ static_assert(callable_work() == 42);
 static_assert(record_work() == 42);
 static_assert(owning_work() == 42);
 static_assert(twins_work() == 42);
+static_assert(Profile<void, int>(42).code() == 42);
+static_assert(profile_work() == 42);
 int main() {
   return payload_work() == 42 && packet_work() == 42 &&
          consumed_work() == 42 && mutated_work() == 42 && empty_work() == 42 &&
          callable_work() == 42 &&
          record_work() == 42 && owning_work() == 42 && twins_work() == 42 &&
-         runtime_only() == 42 ? 0 : 1;
+         runtime_only() == 42 && profile_work() == 42 ? 0 : 1;
 }

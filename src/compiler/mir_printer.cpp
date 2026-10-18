@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v110 valid=" << program.valid() << '\n';
+    output << "mir-v111 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -830,7 +830,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v90\n";
+    output << "mir-body-v91\n";
     body(value, 0);
   }
 

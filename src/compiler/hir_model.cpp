@@ -990,6 +990,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   target->owner > program.classInstances().size()
               ? nullptr
               : &program.classInstances()[target->owner - 1];
+      auto expectedDependencies =
+          construction ? construction->contextualBorrowDependencies
+                       : std::nullopt;
+      if (expectedDependencies)
+        for (auto &dependency : expectedDependencies->dependencies)
+          dependency.place.domain = body.placeDomain;
       if (value == nullptr || construction == nullptr || target == nullptr ||
           owner == nullptr || !listed.insert(entry.value).second ||
           value->kind != HirValueKind::DirectInitializer ||
@@ -998,8 +1004,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           body.valueForSource(*entry.source) != argument ||
           construction->constructor == 0 || construction->generatedDefault ||
           construction->kind != ConstructorKind::Ordinary ||
-          construction->borrowOrigin != BorrowOriginKind::None ||
-          !construction->borrowFields.empty() ||
+          (owner->traits.containsBorrowedState && !expectedDependencies) ||
           target->declaration != construction->constructor ||
           owner->type != construction->constructedType ||
           value->info != ExpressionInfo{.type = owner->type,
@@ -1017,9 +1022,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value->constructorKind != ConstructorKind::Ordinary ||
           value->definedFailure.propagation !=
               FailurePropagationKind::Constructor ||
-          value->borrowOrigin != BorrowOriginKind::None ||
-          !value->borrowFields.empty() || !value->callPlan ||
-          value->callPlan->receiver ||
+          value->borrowOrigin != construction->borrowOrigin ||
+          value->borrowArgument != construction->borrowArgument ||
+          value->borrowAccess != construction->borrowAccess ||
+          value->borrowArguments != construction->borrowArguments ||
+          value->borrowFields != construction->borrowFields ||
+          value->borrowDependencies != expectedDependencies ||
+          !value->callPlan || value->callPlan->receiver ||
           value->callPlan->arguments.size() != value->operands.size()) {
         result.errors.emplace_back(
             "contextual construction HIR value differs from its semantic "
@@ -1314,6 +1323,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             selected.returnType.kind != SemanticType::Reference ||
             selected.returnType != contractTarget->returnType ||
             selected.parameterTypes != value.parameterTypes ||
+            selected.parameterTypes != contractTarget->parameterTypes ||
+            selected.typeArguments != contractTarget->typeArguments ||
+            selected.valueArguments != contractTarget->valueArguments ||
             selected.dispatchOwner != value.dispatchOwner ||
             !selected.noNormalBorrowResult || !selected.neverReturns ||
             value.borrowDependencies) {

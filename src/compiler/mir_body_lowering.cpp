@@ -4576,6 +4576,9 @@ private:
       return {};
     }
     emitPlaceDependencies(id);
+    if (terminated()) {
+      return {};
+    }
     const MirPlaceId place = placeForValue(id);
     if (place == 0) {
       valid = false;
@@ -4882,6 +4885,9 @@ private:
       return valueOperand(id);
     }
     emitPlaceDependencies(id, true);
+    if (terminated()) {
+      return {};
+    }
     if (const MirLoanId existing = loanForValue(id); existing != 0) {
       // A borrow-carrying value (for example a read-only stored-reference
       // iterator) already has an owner loan, but a reference parameter needs
@@ -4923,6 +4929,9 @@ private:
   [[nodiscard]] MirOperand copyArgumentOperand(HirValueId id,
                                                const SemanticType &parameter) {
     emitPlaceDependencies(id, true);
+    if (terminated()) {
+      return {};
+    }
     const HirValue *value = findValue(id);
     MirPlaceId place = placeForValue(id);
     const MirPlace *resolved = output.findPlace(place);
@@ -5149,6 +5158,9 @@ private:
         return {};
       }
       (void)valueOperand(pointerId);
+      if (terminated()) {
+        return {};
+      }
       const SemanticType pointee = pointer->info.type.arguments.front();
       const AccessMode pointeeAccess = pointer->info.type.pointerAccess;
       const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Value,
@@ -5167,6 +5179,9 @@ private:
     }
     if (receiver->info.category == ValueCategory::Place) {
       emitPlaceDependencies(id, true);
+      if (terminated()) {
+        return {};
+      }
       const MirPlaceId place = placeForValue(id);
       if (place != 0) {
         return {.kind = access == AccessMode::Mutable
@@ -6536,6 +6551,9 @@ private:
                 ? temporaryBorrowOperand(receiver.value, access, receiver.type,
                                          false, true)
                 : receiverOperand(receiver.value, access);
+        if (terminated()) {
+          return;
+        }
         PreparedCallInput prepared = prepareCallInput(
             value.id, receiver.value, receiver.type, receiver.kind,
             MirCallInputRole::Receiver, 0, *sourceReceiver,
@@ -10431,6 +10449,9 @@ private:
       return {};
     }
     emitPlaceDependencies(valueId);
+    if (terminated()) {
+      return {};
+    }
     const MirLoanId existing = loanForValue(valueId);
     const HirLoan *desired = binding == 0 ? nullptr : loanForBinding(binding);
     if (desired != nullptr && value->kind == HirValueKind::PayloadExtraction &&

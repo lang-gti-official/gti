@@ -1274,6 +1274,10 @@ struct ResolvedConstructionInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // Contextual construction keeps the source expression as its original
+  // argument. Its synthetic result therefore needs distinct complete facts;
+  // never overwrite the argument's expression type, place or dependencies.
+  std::optional<SemanticBorrowDependencySet> contextualBorrowDependencies;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
   // Exact same-type fresh-result initialization names the existing result

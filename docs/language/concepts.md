@@ -748,6 +748,15 @@ does not depend on include order.
 
 ### Uses in generic code
 
+A declared class/enum family conformance also proves an open application whose
+complete head matches that family. For example, a block for `C<Wrapper<T>>`
+can establish `C<Wrapper<U>>` inside a generic body. Its binder constraints
+must still be satisfied; repeated binders must agree exactly. A block for only
+`Wrapper<int>` does not establish the family, and a bare unknown type still
+needs an explicit requirement. Associated types reduce by the same checked
+substitution. If a result can become a reference, its required borrow contract
+must already be declared; concrete instantiation verifies the exact dependency.
+
 In generic code, `C<T>::name` and `C<T>::operation(...)` require `C<T>` as a
 conjunct of the enclosing `requires` clause, not inside a disjunction. With
 several parameters the conjunct must name the same arguments in the same
@@ -791,10 +800,13 @@ Unsafe implementations cannot satisfy ordinary safe operation declarations.
 Violations are reported as `GTI-S2123`; an unsatisfied requirement at a call
 is `GTI-S2029`. See [ADR 028](../decisions/028-protocol-concepts.md).
 
-The prelude's `std::tryable<T>` is the protocol of prefix `?` for every type
-except built-in `expected`. A type propagates with `?` once a block supplies
+The prelude's `std::tryable<T>` is the protocol of prefix `?`, including
+source-defined `expected`. A type propagates with `?` once a block supplies
 its `value_type`, `residual_type`, `has_value`, `take_value` and
 `take_residual` ([ADR 029](../decisions/029-tryable-propagation.md)).
+Constant invocation uses the same protocol and MIR control flow when the
+selected operations and residual construction belong to the supported constexpr
+call closure. A runtime-only operation remains ineligible for constant execution.
 
 ## Deliberate exclusions and extension rule
 

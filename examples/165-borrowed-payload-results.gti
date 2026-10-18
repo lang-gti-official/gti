@@ -2,6 +2,7 @@
 // success reference tied to the caller's owner. Its error owns its text.
 #include <std/string>
 #include <std/panic>
+#include <std/vector>
 
 class Reading {
 public:
@@ -163,7 +164,13 @@ public:
   }
 };
 
-int main() {
+int main(int argc, std::vector<std::string> argv) {
+  // Run with an extra argument to observe the accessor's defined failure.
+  // The empty alternative has no owner; no dummy reference is manufactured.
+  if (argc > 1) {
+    mut auto missing = StoredReading();
+    return std::move(missing).take();
+  }
   int owner = 42;
   mut auto stored = StoredReading(owner);
   auto empty = StoredReading();

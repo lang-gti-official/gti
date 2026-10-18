@@ -53,6 +53,15 @@ public:
           SemanticType::appendExpandedArgument(
               ownerTypes, substitution.types.at(parameter.id));
       }
+      // A selected class profile's binders are not its public arguments:
+      // Profile<void, E> binds only E. Reconstruct the exact semantic pattern
+      // before ordinary instance discovery, just as a runtime receiver does.
+      if (!owner->genericArgumentPatterns.empty()) {
+        ownerTypes.clear();
+        for (const auto &pattern : owner->genericArgumentPatterns)
+          SemanticType::appendExpandedArgument(
+              ownerTypes, substitute(pattern, substitution));
+      }
     }
     for (const auto &parameter : function->genericParameters) {
       if (parameter.value ? !substitution.values.contains(parameter.id)
@@ -4452,7 +4461,6 @@ private:
         .borrowFields = construction.borrowFields,
         .constructorKind = construction.kind,
     };
-
     const HirConstructorInstanceId target =
         enqueueConstructor(construction, tokenSpan(initializer.brace()));
     if (target != 0) {
@@ -5397,6 +5405,11 @@ private:
         .borrowFields = construction.borrowFields,
         .constructorKind = construction.kind,
     };
+    if (construction.contextualBorrowDependencies) {
+      value.borrowDependencies = construction.contextualBorrowDependencies;
+      for (auto &dependency : value.borrowDependencies->dependencies)
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+    }
     if (emptyProof && emptyProof->unsafeConstruction())
       value.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeConstruction;
     if (argument)

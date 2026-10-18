@@ -2992,6 +2992,42 @@ void testConstexprPayloadEnums() {
       "MIR verification rejects a forged program-constant active alternative");
 }
 
+void testConstexprTryable() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_tryable.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : result.diagnostics)
+    std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode() && metrics.constexprMirExecutions >= 2,
+         "source protocol propagation executes its selected calls and both "
+         "return paths through verified MIR");
+  for (const std::string operation :
+       {"bool has_value", "int take_value", "Rejected take_residual"}) {
+    auto runtimeOnly = source;
+    const auto annotation = runtimeOnly.find("constexpr " + operation);
+    expect(annotation != std::string::npos,
+           "each protocol operation has an explicit constant contract");
+    if (annotation == std::string::npos)
+      continue;
+    runtimeOnly.erase(annotation, std::string("constexpr ").size());
+    const auto rejected = lang::Frontend().analyze(fixture, runtimeOnly,
+                                                   {standardLibraryPrelude()},
+                                                   {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &d) { return d.code == "GTI-S2057"; }),
+           "constant propagation cannot execute a runtime-only selected "
+           "protocol operation");
+  }
+}
+
 void testConstexprResults() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_results.gti";
@@ -5716,6 +5752,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprMutation", testConstexprMutation},
     {"testConstexprEnumBuilders", testConstexprEnumBuilders},
     {"testConstexprResults", testConstexprResults},
+    {"testConstexprTryable", testConstexprTryable},
     {"testConstexprPayloadEnums", testConstexprPayloadEnums},
     {"testConstexprAllocation", testConstexprAllocation},
     {"testStaticAssertions", testStaticAssertions},

@@ -71,13 +71,11 @@ const std::unordered_map<std::string_view, TokenKind> keywords{
     {"uint64", TokenKind::UINT64},
     {"bool", TokenKind::BOOL},
     {"char", TokenKind::CHAR},
-    {"expected", TokenKind::EXPECTED},
     {"nullptr_t", TokenKind::NULLPTR_TYPE},
     {"void", TokenKind::VOID},
 
     {"this", TokenKind::THIS},
     {"nullptr", TokenKind::NULLPTR},
-    {"unexpected", TokenKind::UNEXPECTED},
 };
 
 } // namespace lang

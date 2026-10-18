@@ -85,7 +85,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v110`, `mir-body-v90`).
+instruction, body, and caller-assignment facts (`mir-v111`, `mir-body-v91`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -334,7 +334,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v110`/`mir-body-v90`,
+The combined deterministic serialization is currently `mir-v111`/`mir-body-v91`,
 with `lowered-program-v22` declaration metadata. Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
@@ -413,6 +413,24 @@ only when the independently checked callee contract derives it from the
 retained external owners. Exact receiver entry identity and access, selected
 alternative proof, group transfer and retirement remain separate requirements;
 a receiver-owned origin cannot escape its destroyed shell.
+Initializing a distinct direct field of the same exact non-union record does
+not erase the retained field's complete fact. This separation is proved from
+the concrete record and its declared field identities, not merely unequal
+projection labels. Whole-object writes, unknown roots, union overlap and
+unproved indirect projections retain conservative invalidation.
+
+Program schema 111/body 91 also carries a call-local excluded-normal-result
+flag for direct reference-result calls. This is distinct from a declaration's
+`noreturn` contract: the callee can return normally for other inputs. Semantics
+must establish that every supplier in the callee's complete normal-return
+contract is excluded by these exact inputs; HIR retains the source-bound
+selection proof. MIR independently reconstructs that exclusion from the
+verified callee summary and the actual incoming dependency groups before
+allowing a call with no result loan. Missing or unknown input facts cannot
+establish exclusion. The call retains its effects and failure continuation,
+while its normal continuation is unreachable. It cannot publish a result,
+invent an empty reference dependency, or form later argument/receiver stages
+after that terminal evaluation.
 
 Program schema 110 also preserves whether a function's resolved
 `borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
@@ -548,7 +566,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v110`/`lowered-program-v22`, preserving
+The combined serialization is `mir-v111`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

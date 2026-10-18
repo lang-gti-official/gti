@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <variant>
@@ -174,7 +175,7 @@ int main() {
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v23") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v110"),
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v111"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
@@ -1490,6 +1491,10 @@ int main() {
       {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
   expect(mixedOwnership.canGenerateCode(),
          "an enum field may select either external borrowing or owned cleanup");
+  if (!mixedOwnership.canGenerateCode())
+    for (const auto &diagnostic : mixedOwnership.diagnostics)
+      std::cerr << diagnostic.primary.line << ": " << diagnostic.message
+                << '\n';
   if (mixedOwnership.canGenerateCode()) {
     bool sawEnum = false;
     bool sawReference = false;
@@ -1546,9 +1551,15 @@ int main() {
              "mixed enum publication rejects missing, forged-empty or "
              "substituted provenance");
     }
+    const auto mixedLowered = gti_test::lowerProgram(
+        mixedOwnership, mixedOwnership.mir, mixedOwnership.mir);
+    const lang::CppMirBodyEmissionMap mixedMap(
+        lang::buildCppMirBodyEmissionMapRows(mixedLowered,
+                                             lang::CppStandard::Cpp23));
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto malformed = mixedOwnership.mir;
       bool changed = false;
+      lang::HirFunctionInstanceId changedFunction = 0;
       for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
         if (changed)
           break;
@@ -1575,13 +1586,28 @@ int main() {
             if (mutation == 2)
               value->borrowDependencies->dependencies.front().source = 0;
             changed = true;
+            changedFunction = function.id;
             break;
           }
         }
       }
-      expect(changed && !lang::verifyMirProgram(malformed).valid(),
-             "consuming receiver cannot lose or substitute its external "
-             "dependencies");
+      if (mutation == 0) {
+        // The annotation is optional: MIR reconstructs the actual dependency
+        // from executable loan flow. This bounded native slot classifier
+        // additionally requires its exact attached transport witness.
+        const lang::CppMirBodyEmitter rejected(malformed, mixedMap);
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           changedFunction};
+        expect(
+            changed && lang::verifyMirProgram(malformed).valid() &&
+                !rejected.supportsBodyText(address) &&
+                !rejected.supportsFailureBodyText(address),
+            "native consuming transport requires its exact optional witness");
+      } else {
+        expect(changed && !lang::verifyMirProgram(malformed).valid(),
+               "consuming receiver cannot substitute its proved external "
+               "dependencies");
+      }
     }
     for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
       try {
@@ -1593,6 +1619,73 @@ int main() {
         expect(false,
                "mixed owning/reference enum fields have a representation");
       }
+    }
+  }
+  const auto conditionalPath =
+      std::filesystem::path(__FILE__).parent_path() /
+      "fixtures/consuming_owned_conditional_argument.gti";
+  std::ifstream conditionalInput(conditionalPath);
+  const std::string conditionalSource{
+      std::istreambuf_iterator<char>(conditionalInput), {}};
+  const auto conditional = lang::Frontend().analyze(
+      conditionalPath, conditionalSource, {compositionLibrary / "prelude.gti"},
+      {}, {compositionLibrary});
+  expect(
+      conditional.canGenerateCode(),
+      "ordinary consuming method result has verified conditional argument MIR");
+  if (conditional.canGenerateCode()) {
+    const auto conditionalLowered =
+        gti_test::lowerProgram(conditional, conditional.mir, conditional.mir);
+    const lang::CppMirBodyEmissionMap conditionalMap(
+        lang::buildCppMirBodyEmissionMapRows(conditionalLowered,
+                                             lang::CppStandard::Cpp23));
+    expect(lang::CppMirBodyEmitter(conditional.mir, conditionalMap)
+               .analyzeProgram()
+               .ready(),
+           "ordinary consuming method result retains its exact lifetime across "
+           "later arguments");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = conditional.mir;
+      bool changed = false;
+      lang::HirFunctionInstanceId entry = 0;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
+          continue;
+        entry = function.id;
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputRole != lang::MirCallInputRole::Argument ||
+                !instruction.preparedParameterDrop ||
+                instruction.lifecycle.size() != 1 ||
+                instruction.operands.size() != 1)
+              continue;
+            const auto *record =
+                function.body.findValue(instruction.operands.front().value);
+            if (!record)
+              continue;
+            const lang::MirInstruction *producer = nullptr;
+            for (const auto &candidateBlock : function.body.blocks)
+              for (const auto &candidate : candidateBlock.instructions)
+                if (candidate.id == record->definition)
+                  producer = &candidate;
+            if (!producer || !producer->receiver || !producer->functionTarget)
+              continue;
+            if (mutation == 0)
+              ++instruction.callSite;
+            if (mutation == 1)
+              instruction.lifecycle.front().conditional = true;
+            if (mutation == 2)
+              instruction.lifecycle.front().source = 0;
+            changed = true;
+          }
+      }
+      expect(changed && !lang::CppMirBodyEmitter(malformed, conditionalMap)
+                             .supportsFailureBodyText(
+                                 {lang::MirBodyKind::Function, entry}),
+             "ordinary method result cannot lose its exact argument transfer "
+             "proof");
     }
   }
   return failures == 0 ? 0 : 1;
