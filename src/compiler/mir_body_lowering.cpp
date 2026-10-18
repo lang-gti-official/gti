@@ -9993,6 +9993,7 @@ private:
     }
     std::vector<MirDropObligationId> payloadPreparedDrops;
     std::vector<MirLoanId> payloadTemporaryLoans;
+    std::vector<MirLoanId> payloadConsumedGroups;
     const bool stagedPayload =
         value->kind == HirValueKind::PayloadConstruction && value->callPlan;
     if (stagedPayload) {
@@ -10024,6 +10025,27 @@ private:
           payloadPreparedDrops.push_back(prepared.parameterDrop);
         if (prepared.loan)
           payloadTemporaryLoans.push_back(prepared.loan);
+        const auto *source = findValue(argument.value);
+        if (source && source->kind == HirValueKind::PayloadConstruction &&
+            argument.kind == HirCallInputKind::Value &&
+            source->info.traits.movable &&
+            source->info.traits.containsBorrowedState) {
+          const auto group = loanForValue(source->id);
+          const auto *retained = output.findLoan(group);
+          if (retained && retained->kind == MirLoanKind::Stored &&
+              !retained->entry && !retained->escapes &&
+              retained->producedBy == source->id) {
+            if (retained->access == AccessMode::Mutable ||
+                std::any_of(retained->additionalDependencies.begin(),
+                            retained->additionalDependencies.end(),
+                            [](const auto &dependency) {
+                              return dependency.access == AccessMode::Mutable;
+                            }))
+              payloadConsumedGroups.push_back(group);
+          }
+          else
+            valid = false;
+        }
       }
     }
     for (std::size_t index = 0; index < value->operands.size(); ++index) {
@@ -10210,6 +10232,11 @@ private:
       }
     }
     (void)appendInstruction(std::move(instruction));
+    for (const auto group : payloadConsumedGroups) {
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirValue = value->id, .loan = group});
+      removeLoanFromState(group, scopes, bindingLoans);
+    }
     for (auto loan = payloadTemporaryLoans.rbegin();
          loan != payloadTemporaryLoans.rend(); ++loan) {
       (void)appendInstruction(

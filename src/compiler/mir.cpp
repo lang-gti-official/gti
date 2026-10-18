@@ -4558,11 +4558,57 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                         : nullptr;
                 const auto *retained = body.findLoan(*producer->loan);
                 const auto &result = body.loans[loan - 1];
+                const auto uniqueInputUse = [&](MirValueId id,
+                                                MirInstructionId consumer,
+                                                std::size_t index) {
+                  const auto uses = body.usesOf(id);
+                  return uses.size() == 1 &&
+                         uses.front().kind ==
+                             MirValueUseKind::InstructionOperand &&
+                         uses.front().instruction == consumer &&
+                         uses.front().operandIndex == index;
+                };
+                bool retiredAtPublication = false;
+                const auto publication = std::find_if(
+                    block.instructions.begin(), block.instructions.end(),
+                    [&](const auto &candidate) {
+                      return candidate.id == instruction.id;
+                    });
+                if (publication != block.instructions.end())
+                  for (auto next = std::next(publication);
+                       next != block.instructions.end() &&
+                       next->kind == MirInstructionKind::EndBorrow; ++next)
+                    if (next->loan == producer->loan)
+                      retiredAtPublication = true;
+                const bool sharedCopy = retained != nullptr &&
+                    producer->info.traits.copyable &&
+                    retained->access == AccessMode::ReadOnly &&
+                    result.access == AccessMode::ReadOnly &&
+                    std::all_of(retained->additionalDependencies.begin(),
+                                retained->additionalDependencies.end(),
+                                [](const auto &dependency) {
+                                  return dependency.access == AccessMode::ReadOnly;
+                                });
+                const bool exclusiveTransfer = stage != nullptr &&
+                    stage->result && retained != nullptr &&
+                    producer->info.traits.movable &&
+                    retained->access == result.access &&
+                    (retained->access == AccessMode::Mutable ||
+                     std::any_of(retained->additionalDependencies.begin(),
+                                 retained->additionalDependencies.end(),
+                                 [](const auto &dependency) {
+                                   return dependency.access == AccessMode::Mutable;
+                                 })) &&
+                    uniqueInputUse(*producer->result, stage->id, 0) &&
+                    uniqueInputUse(*stage->result, instruction.id,
+                                   stage->callInputIndex) &&
+                    retiredAtPublication;
                 // A staged copy of a fresh shared carrier retains the exact
                 // producer's live external authority. Neither a coincident
                 // origin place nor a dependency annotation can substitute for
-                // this SSA producer/stage/group chain. Exclusive carriers
-                // must instead follow the checked consuming transport path.
+                // this SSA producer/stage/group chain. A fresh carrier with
+                // exclusive dependencies has one use and retires its old group
+                // immediately at successful publication, before any access.
                 if (stage != nullptr &&
                     stage->kind == MirInstructionKind::CallInput &&
                     stage->callSite == instruction.callSite &&
@@ -4582,17 +4628,13 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                     retained->producedBy == producer->hirValue &&
                     retained->parent == parent &&
                     retained->source == result.source &&
-                    retained->access == AccessMode::ReadOnly &&
-                    result.access == AccessMode::ReadOnly &&
-                    std::all_of(retained->additionalDependencies.begin(),
-                                retained->additionalDependencies.end(),
-                                [](const auto &dependency) {
-                                  return dependency.access ==
-                                         AccessMode::ReadOnly;
-                                }) &&
+                    (sharedCopy || exclusiveTransfer) &&
                     active[retained->id - 1] == MirLoanFlowState::Active &&
-                    result.kind == MirLoanKind::Stored)
+                    result.kind == MirLoanKind::Stored) {
+                  if (exclusiveTransfer)
+                    selectedAlias = retained->id;
                   return true;
+                }
               }
               if (producer != nullptr &&
                   producer->kind == MirInstructionKind::Construct &&
