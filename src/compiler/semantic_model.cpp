@@ -2759,9 +2759,9 @@ void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   if (const FunctionInfo *target = findFunction(info.function)) {
     info.neverReturns = target->neverReturns;
     info.tracksCaller = target->tracksCaller;
-  } else if (info.intrinsic == IntrinsicKind::Panic) {
+  } else if (intrinsicTerminalFailureOutcome(info.intrinsic)) {
     info.neverReturns = true;
-    info.tracksCaller = true;
+    info.tracksCaller = info.intrinsic == IntrinsicKind::Panic;
   }
   suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));

@@ -1,0 +1,29 @@
+// The stable class API is ordinary GTI over a private payload enum.
+// No optional-specific storage capability is involved in this program.
+#include <std/optional>
+#include <std/string>
+
+std::optional<std::string> label(bool present) {
+  if (!present) {
+    std::optional<std::string> none = std::nullopt;
+    return none;
+  }
+  return std::optional<std::string>(std::string("ready"));
+}
+
+std::optional<std::size_t> length(bool present) {
+  std::string text = ?label(present);
+  return std::optional<std::size_t>(text.size());
+}
+
+int main() {
+  std::println(std::to_string(length(true).value()));
+  std::println(length(false).has_value() ? "present" : "missing");
+  mut std::optional<std::string> slot{};
+  [[discard]] slot.emplace("old");
+  slot = label(true);
+  std::string taken = std::move(slot).value();
+  std::println(taken);
+  // `slot` is moved; accessing it here would be a source error.
+  return 0;
+}

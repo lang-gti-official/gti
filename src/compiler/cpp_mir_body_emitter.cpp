@@ -28662,22 +28662,25 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
 [[nodiscard]] bool explicitFailureCall(const MirInstruction &instruction) {
   return instruction.kind == MirInstructionKind::Call &&
          (intrinsicBooleanFailureOutcome(instruction.intrinsic) ||
-          instruction.intrinsic == IntrinsicKind::Panic) &&
+          intrinsicTerminalFailureOutcome(instruction.intrinsic)) &&
          !instruction.functionTarget;
 }
 
 [[nodiscard]] bool exactExplicitFailure(const MirProgram &program,
                                         const MirInstruction &instruction) {
   const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
-  const SemanticType parameter =
-      panic ? SemanticType::StringView : SemanticType::Bool;
+  const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic);
+  const std::vector<SemanticType> parameters =
+      panic ? std::vector<SemanticType>{SemanticType::StringView}
+            : terminal ? std::vector<SemanticType>{}
+                       : std::vector<SemanticType>{SemanticType::Bool};
   if (!explicitFailureCall(instruction) || instruction.result ||
       instruction.receiver || instruction.destination ||
       instruction.info.type != SemanticType::Void ||
-      instruction.operands.size() != 1 ||
-      instruction.operands.front().type != parameter ||
-      instruction.neverReturns != panic || instruction.tracksCaller != panic ||
-      instruction.parameterTypes != std::vector<SemanticType>{parameter} ||
+      instruction.operands.size() != parameters.size() ||
+      (!parameters.empty() && instruction.operands.front().type != parameters.front()) ||
+      instruction.neverReturns != terminal.has_value() || instruction.tracksCaller != panic ||
+      instruction.parameterTypes != parameters ||
       instruction.definedFailure.propagation != FailurePropagationKind::None ||
       instruction.localFailureSites.size() != 1 ||
       instruction.definedFailure.localOrigins.size() != 1 ||
@@ -28687,8 +28690,7 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
   const auto *site =
       program.failureMetadata().findSite(instruction.localFailureSites.front());
   const DefinedFailureOutcome expected =
-      panic ? DefinedFailureOutcome{DefinedFailureCode::Panic,
-                                    DefinedFailureDetail::ExplicitPanic}
+      terminal ? *terminal
             : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
   return site != nullptr &&
          site->outcomes == std::vector<DefinedFailureOutcome>{expected} &&
@@ -45852,10 +45854,10 @@ private:
         throw std::logic_error(
             "verified container check lost its exact failure contract");
       }
-      if (instruction.intrinsic == IntrinsicKind::Panic) {
+      if (const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic)) {
         output << "__gti_mir_failure_status_" << instruction.id
-               << " = {GTI_FAILURE_CODE_PANIC_V2, "
-                  "GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2};\n";
+               << " = {" << cppFailureCodeAbiConstant(terminal->code) << ", "
+               << cppFailureDetailAbiConstant(terminal->detail) << "};\n";
         return;
       }
       output << "__gti_mir_failure_status_" << instruction.id
@@ -62568,7 +62570,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           if (explicitFailureCall(instruction)) {
             if (!exactExplicitFailure(program_, instruction) ||
-                !valueOperand(instruction.operands.front()) ||
+                !std::all_of(instruction.operands.begin(), instruction.operands.end(), valueOperand) ||
                 (instruction.definedFailure.mayUnwind() &&
                  (!failureForm ||
                   !invokePairedInstruction(body, instruction.id))))
