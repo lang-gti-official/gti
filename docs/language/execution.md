@@ -867,6 +867,12 @@ the ordinary rules. A reference success uses `take_value`'s declared
 `borrowed_from` contract to preserve the operand's external owner, not the
 lifetime of its consumed wrapper. Its loan remains live through the success
 reference's uses; the residual branch does not create that success loan.
+For a conditional enum dependency, the selected operation's complete checked
+return mapping chooses the actual external origin and permission. Propagation
+does not forward every operand dependency to a scalar success reference, and
+`has_value` grants no special tag authority to `take_value`. Owning enum operands
+use the same ordered argument staging and failure cleanup as other owning
+arguments.
 
 GTI does not provide language exceptions.
 
