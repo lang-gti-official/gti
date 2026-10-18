@@ -2,6 +2,7 @@
 """Source cleanup bodies compose with owning fields through one MIR recipe."""
 
 import pathlib
+import re
 import sys
 import tempfile
 
@@ -91,6 +92,16 @@ def main():
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             generated = binary.with_suffix(".gti.cpp").read_text()
+            retirements = re.findall(
+                r"^[^\n]+::~[^\n]+\(\) noexcept \{[^\n]+\}$",
+                generated, re.MULTILINE)
+            assert retirements, "source cleanup fixture lost native destructors"
+            for retirement in retirements:
+                guard = re.search(
+                    r"\{ if \(__gti_lifecycle_active_(\d+)\) \{ "
+                    r"__gti_lifecycle_cleanup_\1\(\); \} \}$", retirement)
+                assert guard, (name, "unproved native retirement guard", retirement)
+                assert f"bool __gti_lifecycle_active_{guard[1]} = true;" in generated
             assert "mir_cleanup_sequence_v1 sequence" in generated
             assert "if (!sequence.step(__gti_mir" in generated
             assert "// GTI verified-MIR body:" in generated

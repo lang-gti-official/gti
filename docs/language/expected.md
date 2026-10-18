@@ -209,7 +209,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  T take_value(Checked<T> result) { return result.value; }
+  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 
@@ -226,6 +226,13 @@ is copied whole, and a named move-only operand needs `std::move`. A
 `void` `value_type` makes `?operand` a statement. See
 [execution](execution.md#48-recoverable-failure) for the order of
 evaluation and cleanup.
+
+`value_type` may be a checked reference when the operation's declared
+`borrowed_from` contract relays the operand's single stored external
+dependency. This keeps the success reference tied to its actual owner even
+after the wrapper is consumed. The residual may own resources such as an
+error string. The current protocol propagation slice still requires a class
+or struct wrapper and an owned residual.
 
 ## Requiring a successful result
 

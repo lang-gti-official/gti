@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.443.0 — Composed payload enums and borrowed protocol results
+
+- Owning payload enums can contain nested enums and supported fixed arrays,
+  with finite-layout checks and exact move/destruction behavior, including
+  partial construction and cleanup failure.
+- Native payload enums use GTI-owned tagged storage. Passive alternatives keep
+  trivial transport; tag-only observation does not load their payloads.
+- A source-defined fallible wrapper can use `borrowed_from` in its protocol
+  contract to return a shared or mutable reference through `?`, preserving the
+  exact external owner when the wrapper is consumed.
+- Checked temporary argument staging handles grouped and conditional
+  construction without losing the original borrow or lifetime obligations.
+- General reference-bearing enum payloads remain unsupported: conditional
+  loans and complete interprocedural dependency transport are still in progress.
+- Examples 164 and 165 demonstrate composition and borrowed results.
+
 ## 0.442.2 — Portable floating-point parsing
 
 - Restore runtime builds on Apple SDKs and other standard libraries that lack

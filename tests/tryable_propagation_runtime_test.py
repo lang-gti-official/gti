@@ -30,6 +30,7 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "tryable_propagation.gti"
     example = pathlib.Path(__file__).parent.parent / "examples" / "159-tryable-propagation.gti"
+    borrowed_example = pathlib.Path(__file__).parent.parent / "examples" / "165-borrowed-payload-results.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
              for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
@@ -50,6 +51,13 @@ def main():
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             shown = run([str(demo)])
             assert (shown.returncode, shown.stdout) == (0, "42\n2\n"), \
+                (name, shown.returncode, shown.stdout, shown.stderr)
+            borrowed = pathlib.Path(directory) / f"borrowed-example-{name}"
+            built = run([str(compiler), str(borrowed_example), *flags,
+                         "-o", str(borrowed), *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            shown = run([str(borrowed)])
+            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "42\n3\n9\n3\n9\n12\n", ""), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
             print(f"tryable propagation: {name} passed", flush=True)
 

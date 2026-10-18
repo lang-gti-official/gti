@@ -1989,9 +1989,43 @@ int main() {
 )";
   const auto contractResult = lang::Frontend().analyze(
       "split-contracts.gti", contracts, {standardLibraryPrelude()});
+  if (!contractResult.canGenerateCode())
+    for (const auto &diagnostic : contractResult.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(contractResult.canGenerateCode(),
          "private constructors, consuming receivers and differently named "
          "borrowed parameters keep declaration contracts");
+  const auto secondParameter =
+      lang::Frontend().analyze("split-contract-position.gti", R"(
+struct Relay {
+  [[borrowed_from(selected)]] static int& choose(int& other, int& selected);
+};
+int& Relay::choose(int& selected, int& other) { return other; }
+int main() {
+  int first = 3;
+  int second = 7;
+  auto& result = Relay::choose(first, second);
+  return result - 7;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(secondParameter.canGenerateCode(),
+         "a split borrow contract names the declaration parameter position, "
+         "not a matching name in the definition");
+  for (const auto &[origin, result] :
+       std::vector<std::pair<std::string, std::string>>{{"missing", "value"},
+                                                        {"input", "other"}}) {
+    const auto invalidContract = lang::Frontend().analyze(
+        "split-invalid-contract.gti",
+        "struct Relay { [[borrowed_from(" + origin +
+            ")]] static int& choose(int& input, int& unused); }; "
+            "int& Relay::choose(int& value, int& other) { return " +
+            result + "; } int main() { return 0; }",
+        {standardLibraryPrelude()});
+    expect(invalidContract.syntaxValid && !invalidContract.semanticValid,
+           "separate definitions cannot rescue an invalid borrow contract "
+           "or return a different parameter from its declared origin");
+  }
   const std::string borrowed = R"(
 struct Cell {
   mut int number = 3;
@@ -3309,10 +3343,15 @@ int main() {
           containsMangledFunction(generated, "", "identity", "(__gti_mir_v_") &&
           generated.find("_set(__gti_mir_v_") != std::string::npos,
       "applied types and explicit generic calls should lower recursively");
+  const auto sourceNamespace = generated.find("namespace __gti_program {");
+  expect(sourceNamespace != std::string::npos,
+         "concrete source declarations retain their GTI program namespace");
   expect(generated.find(".template __gti_fn_") == std::string::npos &&
              generated.find("_Box::__gti_member_") != std::string::npos &&
              generated.find("_echo(__gti_mir_v_") != std::string::npos &&
-             generated.find("template <> ") == std::string::npos,
+             sourceNamespace != std::string::npos &&
+             generated.find("template <> ", sourceNamespace) ==
+                 std::string::npos,
          "the backend should emit the concrete selected generic method "
          "without reopening C++ dependent-template lookup");
 
