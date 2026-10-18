@@ -44,6 +44,16 @@ One fresh build of each variant took 0.41 s / 79.53 MB maximum RSS projected
 and 0.39 s / 79.04 MB explicit. These short build samples are descriptive,
 not a statistically significant compile-time regression claim.
 
+Local acceptance on Apple Silicon used an optimized compiler and all 774
+registered gates. The complete run on `46a08b9f` passed 770; four existing
+fixture/registration mismatches were then corrected: optional's ordinary
+borrow diagnostic, optional's now-supported move replacement, canonical source
+identity in the reusable semantic-visitor fixture, and bounded-worker
+registration for enum replacement/selector matrices. Corrective reruns pass,
+including the full compiler-pipeline gate and all native optional/vector
+cases; no production compiler behavior changed after the complete run.
+The two earlier interrupted runs are not counted as complete-suite evidence.
+
 ## Class results of callable invocations (0.442.1)
 
 - **Defect.** A lambda call returning a class without a default constructor
