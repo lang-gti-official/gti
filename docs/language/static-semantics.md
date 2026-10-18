@@ -1158,6 +1158,12 @@ declaration. A definition must be in the owner's namespace or an enclosing
 namespace and in the same package ownership domain. Duplicate/mismatched
 definitions and foreign-package definitions are errors (`GTI-S2120`).
 
+A `borrowed_from` parameter name is resolved on that original declaration and
+retained by parameter position. Renaming parameters in the definition does not
+change the origin; declaration indexing order cannot change contract acceptance.
+An invalid declared origin remains an error rather than falling back to inference
+from the separate body.
+
 The body has ordinary member access, including private members and an implicit
 receiver for instance methods. Pure virtual/interface instance requirements
 cannot acquire bodies. Selected declarations still require definitions before
