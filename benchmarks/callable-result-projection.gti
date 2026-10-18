@@ -1,0 +1,29 @@
+// Compare -D EXPLICIT_RESULT against the dependent result projection at -O3.
+// Both programs perform identical bounded scalar work with no owning storage.
+#include <std/meta>
+class Counter<T> {
+  mut T value;
+public:
+  Counter(T item) : value(std::move(item)) {}
+  T read() requires std::copy_constructible<T> { return this.value; }
+#ifdef EXPLICIT_RESULT
+  Counter<uint32_t> map<F>(F& mapper) && {
+    return Counter<uint32_t>(mapper(std::move(this.value)));
+  }
+#else
+  Counter<std::meta::callable_return_type<F>> map<F>(F& mapper) && {
+    return Counter<std::meta::callable_return_type<F>>(mapper(std::move(this.value)));
+  }
+#endif
+};
+int main() {
+  auto advance = [](uint32_t value) -> uint32_t {
+    return (value % uint32_t(65521)) * uint32_t(3) + uint32_t(7);
+  };
+  mut uint32_t state = 17;
+  for (mut uint32_t index = 0; index < uint32_t(20000000); index += 1) {
+    state = Counter<uint32_t>(state).map(advance).read();
+  }
+  std::println(state);
+  return 0;
+}

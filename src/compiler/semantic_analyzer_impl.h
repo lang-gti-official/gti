@@ -1342,6 +1342,7 @@ private:
     MetaParameterList,
     MetaParameterType,
     MetaReturnType,
+    MetaCallableReturnType,
     MetaConstructorList,
     MetaConstructorParameterList,
     MetaConstructorParameterType,
@@ -2746,8 +2747,8 @@ private:
 
   [[nodiscard]] static bool containsClosureObjectType(const SemanticType &type);
 
-  [[nodiscard]] static bool containsExactType(const SemanticType &type,
-                                              const SemanticType &candidate);
+  [[nodiscard]] bool containsExactType(const SemanticType &type,
+                                       const SemanticType &candidate) const;
 
   [[nodiscard]] bool containsDisallowedCallableCaptureState(
       const SemanticType &type, std::unordered_set<ClassId> &visiting,

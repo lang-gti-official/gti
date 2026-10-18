@@ -319,7 +319,9 @@ profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
 The combined deterministic serialization is currently `mir-v110`/`mir-body-v90`,
-with `lowered-program-v21` declaration metadata. The combined schema retains
+with `lowered-program-v22` declaration metadata. Declaration-bound computed
+type projections retain logical callable results independently of native ABI
+result channels. The combined schema retains
 complete borrowed-dependency-set proofs alongside foreign-storage inventories
 and place identity. Loan selection records distinguish an evaluated stored
 reference address (exact extraction value and carrier) from the external places
@@ -511,7 +513,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v110`/`lowered-program-v21`, preserving
+The combined serialization is `mir-v110`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

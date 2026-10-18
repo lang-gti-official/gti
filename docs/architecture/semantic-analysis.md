@@ -837,6 +837,27 @@ to name, and `meta_field_list` and `meta_field_type` are computed types that
 canonicalization point both `typeOf` and `substituteType` pass through, as
 soon as their arguments are concrete.
 
+`meta_callable_return_type` projects the exact logical result already recorded
+on a function item, native function pointer, function signature or lambda.
+Open generic projections retain declaration-bound `ComputedTypeProjectionKind`
+metadata in the semantic and lowered class inventories. Native callable
+templates replay that projection when checking their signature against the
+concrete MIR instance; a mismatch still rejects representation. Their native
+carriers expose the MIR logical result as type metadata, never infer it from a
+C++ invocation whose ABI may instead return a failure status or use an output
+parameter. Native function pointers have no GTI metadata carrier; their
+projections are
+resolved from exact instance substitutions, not deduced from the C signature
+(whose pointer return representation can differ from GTI's logical result).
+No new runtime intrinsic or storage is involved. Confined-callable
+escape analysis distinguishes a projection operand from stored callable state;
+ordinary concrete reference origins and escape checks remain authoritative.
+A contracted reference projection is checked as its resolved reference type;
+references in the query's callable metadata are not nested stored references.
+Deferred generic call records defer return-origin proof only while no resolved
+function or lambda call exists. Concrete lambda instantiation must prove the
+declared origin, including rejecting a different reference argument.
+
 `field.get(owner)` and `get_mut` on a `meta_field` value are intercepted in
 `visitCallExpr` (`analyzeMetaFieldAccess`): semantics synthesizes the
 projection `owner.<field>` as an expression owned by the model, analyzes it in

@@ -251,6 +251,8 @@ struct LoweredClassDeclaration {
   // Every member is emitted public: GTI access control is enforced in
   // semantics, and reflected access may read private fields.
   bool reflectPrivate = false;
+  ComputedTypeProjectionKind computedTypeProjection =
+      ComputedTypeProjectionKind::None;
 
   friend bool operator==(const LoweredClassDeclaration &,
                          const LoweredClassDeclaration &) = default;

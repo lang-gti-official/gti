@@ -30,6 +30,10 @@ struct FrontendWorkMetrics;
 // never changes typing, checked loans, MIR verification, or runtime semantics.
 enum class RawPointerAuditMode { Off, Warn, Strict };
 
+// Semantic type projections retained in declaration metadata when their
+// arguments are still open. They describe types, never runtime operations.
+enum class ComputedTypeProjectionKind { None, CallableReturn };
+
 // When one semantic check analyses compiler-trusted (prelude and
 // standard-library) function bodies. `Complete` analyses every body in
 // lexical order. `Deferred` analyses every trusted body after the application
@@ -596,6 +600,17 @@ struct SemanticType {
 
   [[nodiscard]] const SemanticType *lambdaReturnType() const {
     return hasLambdaShape() ? &arguments.front() : nullptr;
+  }
+
+  [[nodiscard]] const SemanticType *callableReturnType() const {
+    if (const auto *result = lambdaReturnType())
+      return result;
+    if (const auto *result = functionItemReturnType())
+      return result;
+    if (const auto *result = nativeFunctionReturnType())
+      return result;
+    return kind == FunctionSignature && !arguments.empty() ? &arguments.front()
+                                                           : nullptr;
   }
 
   [[nodiscard]] std::span<const SemanticType> lambdaParameterTypes() const {
