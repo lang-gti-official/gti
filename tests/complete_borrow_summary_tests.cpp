@@ -462,6 +462,41 @@ int main() { return 0; }
       }
     }
   }
+  {
+    const auto result = analyze(R"gti(
+enum Either { left(int& owner), right(int& owner) };
+[[borrowed_from(input)]] int& select_either(mut Either input) {
+  switch (std::move(input)) {
+  case Either::left(owner): return owner;
+  case Either::right(owner): return owner;
+  }
+}
+int main() { return 0; }
+)gti");
+    const auto id = functionId(result, "select_either");
+    const auto *function = result.mir.findFunctionInstance(id);
+    expect(function && function->completeReturnBorrow &&
+               function->completeReturnBorrow->dependencies.size() == 2,
+           "scalar reference summary preserves owners from every normal arm");
+    if (result.canGenerateCode() && function && function->completeReturnBorrow) {
+      for (int mutation = 0; mutation < 3; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        auto &dependencies = changed.completeReturnBorrow->dependencies;
+        if (mutation == 0)
+          dependencies.pop_back();
+        else if (mutation == 1)
+          dependencies.back() = dependencies.front();
+        else
+          dependencies.back().sourceConditions =
+              dependencies.front().sourceConditions;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "scalar summary rejects lost, substituted and wrongly guarded "
+               "alternative owners");
+      }
+    }
+  }
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";
