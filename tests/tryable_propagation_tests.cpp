@@ -83,6 +83,19 @@ int main() {
   accepted(conditionalBorrowed,
            "conditional borrowed success and owned residual use exact output "
            "dependencies through source-defined propagation");
+  auto exclusiveConditional = conditionalBorrowed;
+  for (std::size_t offset = 0;
+       (offset = exclusiveConditional.find("int&", offset)) !=
+       std::string::npos;
+       offset += 8)
+    exclusiveConditional.replace(offset, 4, "mut int&");
+  const auto ownerDeclaration = exclusiveConditional.find("int owner = 42;");
+  expect(ownerDeclaration != std::string::npos,
+         "conditional fixture has an owner declaration");
+  if (ownerDeclaration != std::string::npos)
+    exclusiveConditional.insert(ownerDeclaration, "mut ");
+  accepted(exclusiveConditional,
+           "conditional exclusive success preserves mutable owner authority");
   auto localReference = conditionalBorrowed;
   const auto selectedReturn = localReference.find("return value;");
   expect(selectedReturn != std::string::npos,
