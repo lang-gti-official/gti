@@ -225,9 +225,9 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   if (traits.containsBorrowedState &&
       (!operandInventory || operandInventory->empty())) {
     return reject("Error propagation through '" + operand +
-                      "' needs an exact stored-dependency path.",
-                  "Propagate an owning type or a checked single-dependency "
-                  "carrier.");
+                      "' needs a complete checked stored-dependency inventory.",
+                  "Propagate an owning type or a carrier whose complete "
+                  "external dependencies can be checked.");
   }
   if (consumes ? !traits.movable : !traits.copyable) {
     return reject(std::string("Error propagation passes its operand like a "
