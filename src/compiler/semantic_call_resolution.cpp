@@ -7297,7 +7297,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // Complete dependency facts are body-derived, not overload properties.
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.
-  if (function.returnType.kind == SemanticType::Enum) {
+  if (function.returnType.kind == SemanticType::Enum ||
+      conditionalReferenceReturn(function.returnType, function.parameterTypes)) {
     const auto complete = completeFunctionReturnBorrow(
         function, resolved.typeArguments, resolved.valueArguments,
         tokenSpan(expressionToken(call.callee())));

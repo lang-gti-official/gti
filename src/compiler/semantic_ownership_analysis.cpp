@@ -1786,13 +1786,31 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::conditionalReferenceReturn(
+    const SemanticType &result, std::span<const SemanticType> parameters) const
+    -> bool {
+  if (result.kind != SemanticType::Reference || result.arguments.size() != 1)
+    return false;
+  return std::any_of(parameters.begin(), parameters.end(), [&](const auto &type) {
+    const auto inventory = storedReferenceInventory(
+        type.kind == SemanticType::Reference && type.arguments.size() == 1
+            ? type.arguments.front() : type);
+    return inventory && std::any_of(inventory->begin(), inventory->end(),
+                                   [](const auto &path) {
+                                     return !path.conditions.empty();
+                                   });
+  });
+}
+
 auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     const CallableCandidate &function,
     const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site)
     -> std::optional<FunctionBorrowDependencySummary> {
   if (function.virtualMethod ||
-      function.returnType.kind != SemanticType::Enum ||
+      (function.returnType.kind != SemanticType::Enum &&
+       !conditionalReferenceReturn(function.returnType,
+                                   function.parameterTypes)) ||
       containsOpenTypeParameter(function.returnType) || !function.declaration ||
       function.declaration->hasCLinkage() ||
       std::any_of(function.parameterTypes.begin(),
@@ -2159,6 +2177,20 @@ auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
     const Call &call, const ResolvedCallInfo &resolved,
     const FunctionBorrowDependencySummary &summary)
     -> std::optional<SemanticBorrowDependencySet> {
+  std::vector<const ExprPtr *> arguments;
+  for (std::size_t index = 0;
+       index < resolvedCallArgumentCount(call, &resolved); ++index)
+    arguments.push_back(resolvedCallArgument(call, &resolved, index));
+  const auto *member = exprAs<Get>(call.callee().get());
+  return instantiateCompleteBorrowArguments(
+      resolved, summary, arguments, member ? &member->object() : nullptr);
+}
+
+auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
+    const ResolvedCallInfo &resolved,
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const ExprPtr *const> arguments, const ExprPtr *receiver)
+    -> std::optional<SemanticBorrowDependencySet> {
   if (resolved.dispatch != CallDispatch::Static ||
       resolved.intrinsic != IntrinsicKind::None || resolved.neverReturns)
     return std::nullopt;
@@ -2179,8 +2211,8 @@ auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
     bool physical = false;
     if (mapping.origin == BorrowOriginKind::Argument &&
         mapping.parameter < resolved.parameterTypes.size() &&
-        mapping.parameter < resolvedCallArgumentCount(call, &resolved)) {
-      argument = resolvedCallArgument(call, &resolved, mapping.parameter);
+        mapping.parameter < arguments.size()) {
+      argument = arguments[mapping.parameter];
       formal = resolved.parameterTypes[mapping.parameter];
       if (formal.kind == SemanticType::Reference &&
           formal.arguments.size() == 1) {
@@ -2188,8 +2220,7 @@ auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
         formal = SemanticType(formal.arguments.front());
       }
     } else if (mapping.origin == BorrowOriginKind::Receiver) {
-      if (const auto *member = exprAs<Get>(call.callee().get()))
-        argument = &member->object();
+      argument = receiver;
       formal = resolved.dispatchOwner;
       physical = resolved.receiverMode != CallReceiverMode::Consuming &&
                  resolved.receiverMode != CallReceiverMode::None;
@@ -2365,7 +2396,9 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     semanticModel.record(*cleared.declaration, cleared);
   const FunctionDecl *syntax = cleared.bodyDeclaration();
   if (!syntax || !syntax->body() ||
-      cleared.returnType.kind != SemanticType::Enum ||
+      (cleared.returnType.kind != SemanticType::Enum &&
+       !conditionalReferenceReturn(cleared.returnType,
+                                   cleared.parameterTypes)) ||
       containsOpenTypeParameter(cleared.returnType) || cleared.neverReturns ||
       loanFlow.deferredConstexprSelection ||
       loanFlow.unknownImplicitResultReturn)
@@ -2385,7 +2418,16 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                            ? semanticModel.findExpression(*returned->value())
                            : nullptr;
     const auto complete = completeBorrowDependencySet(returned->value());
-    if (!info || info->type != cleared.returnType || !complete)
+    const bool directReference =
+        cleared.returnType.kind == SemanticType::Reference &&
+        cleared.returnType.arguments.size() == 1;
+    if (!info || !complete ||
+        (directReference
+             ? (info->type != cleared.returnType.arguments.front() ||
+                info->category != ValueCategory::Place ||
+                (cleared.returnType.referenceAccess == AccessMode::Mutable &&
+                 info->access != AccessMode::Mutable))
+             : info->type != cleared.returnType))
       return;
     const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete);
     // This source contract is still checked independently against executable
@@ -3240,14 +3282,21 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         // A by-value carrier transfers its external dependency, never the
         // lifetime of its own parameter storage. The executable return proof
         // still requires the exact designated external referent.
-        const auto inventory =
-            conditional ? storedReferenceInventory(type) : std::nullopt;
+        const auto inventory = storedReferenceInventory(type);
+        const bool compatibleExternal = inventory && std::any_of(
+            inventory->begin(), inventory->end(), [&](const auto &path) {
+              return path.reference.kind == SemanticType::Reference &&
+                     path.reference.arguments.size() == 1 &&
+                     (contract.access == AccessMode::ReadOnly ||
+                      path.reference.referenceAccess == AccessMode::Mutable);
+            });
         const bool eligible =
             conditional ? (type.kind == SemanticType::Reference ||
                            (inventory && !inventory->empty()))
                         : (type.kind == SemanticType::Reference ||
-                           storedReferencePath(type).has_value()) &&
+                           compatibleExternal) &&
                               (contract.access == AccessMode::ReadOnly ||
+                               compatibleExternal ||
                                borrowAccess(type) == AccessMode::Mutable);
         if (!eligible)
           continue;

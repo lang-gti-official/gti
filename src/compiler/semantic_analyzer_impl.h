@@ -1808,6 +1808,9 @@ private:
                 bool structural = false) const;
 
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
+  [[nodiscard]] bool conditionalReferenceReturn(
+      const SemanticType &result,
+      std::span<const SemanticType> parameters) const;
   // Normalize one already checked return expression before end-of-body
   // summary publication. Failure is unknown/invalid, never an empty proof.
   // The caller still enforces ordinary child-loan escape and availability.
@@ -1823,6 +1826,12 @@ private:
   instantiateCompleteCallBorrow(const Call &call,
                                 const ResolvedCallInfo &resolved,
                                 const FunctionBorrowDependencySummary &summary);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  instantiateCompleteBorrowArguments(
+      const ResolvedCallInfo &resolved,
+      const FunctionBorrowDependencySummary &summary,
+      std::span<const ExprPtr *const> arguments,
+      const ExprPtr *receiver = nullptr);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the

@@ -4465,6 +4465,31 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    // Snapshot scalar-reference origins at this return point, before arm
+    // cleanup or a subsequent body demand changes its local loan state.
+    // Selection already discharged the tag guard; a scalar result must not
+    // inherit a carrier's conditional field layout as if it were its own.
+    const auto *function = currentFunctionInfo();
+    auto dependencies =
+        function && conditionalReferenceReturn(currentReturnType,
+                                                function->parameterTypes)
+            ? storedBorrowDependencies(stmt.value())
+            : std::vector<SemanticLoanDependency>{};
+    if (!dependencies.empty() &&
+        std::all_of(dependencies.begin(), dependencies.end(),
+                    [&](const auto &dependency) {
+                      return dependency.place.valid() &&
+                             dependency.designatedFields.empty() &&
+                             dependency.conditions.empty() &&
+                             (currentReturnType.referenceAccess ==
+                                  AccessMode::ReadOnly ||
+                              dependency.access == AccessMode::Mutable);
+                    })) {
+      for (auto &dependency : dependencies)
+        dependency.access = currentReturnType.referenceAccess;
+      semanticModel.recordBorrowDependencySet(
+          *stmt.value(), {.dependencies = std::move(dependencies)});
+    }
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
