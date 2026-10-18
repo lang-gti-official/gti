@@ -2446,8 +2446,8 @@
       }
     },
     "166-source-optional.gti": {
-      "declarations": 1211,
-      "bodies": 147,
+      "declarations": 1216,
+      "bodies": 152,
       "generated_items": 102,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2462,8 +2462,8 @@
     }
   },
   "totals": {
-    "declarations": 127670,
-    "bodies": 18706,
+    "declarations": 127675,
+    "bodies": 18711,
     "generated_items": 11832
   }
 }
