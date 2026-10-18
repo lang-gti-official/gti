@@ -8734,6 +8734,15 @@ units. This is a published integration prerequisite, not runtime acceptance:
 the parent branch must connect body-level ordered-consumer/liveness checks and
 source admission, then pass direct/nested construction, later-input failure,
 alias/dangling rejection and malformed stage/origin/group tests before release.
+The subsequent integrated frontend check (parent `256c7c4b` plus constructor
+proof `a73280a3` and tests `314c0cbe`) passes with optimized compiler objects:
+direct and nested shared construction, factory-call extraction, empty/success
+factory returns, and eleven malformed stage/signature/group/parent/producer/
+return-proof mutations. The nested proof binds the exact staged SSA producer
+to its live external authority; overlapping places alone grant no permission.
+Evidence is `/private/tmp/gti-reference-nested-test.log`. This is frontend/MIR
+evidence, not native runtime acceptance. Fresh exclusive nested-carrier transfer
+and the remaining runtime/failure/platform gates remain explicit obligations.
 
 An error-only input to a reference-returning operation cannot manufacture an
 origin: if its verified normal-return contract requires an impossible active
