@@ -293,6 +293,93 @@ int main() {
              "slot");
     }
   }
+  const auto cleanupForwarding = lang::Frontend().analyze(
+      "single-action-cleanup.gti", R"(
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+class Single {
+  Resource child;
+public:
+  Single() : child(Resource()) {}
+};
+class Multiple {
+  Resource first;
+  Resource second;
+public:
+  Multiple() : first(Resource()), second(Resource()) {}
+};
+class WithDestructor {
+  Resource child;
+public:
+  WithDestructor() : child(Resource()) {}
+  ~WithDestructor() {}
+};
+enum Choice { none, left(Resource value), right(Resource value) };
+enum Pair { none, both(Resource first, Resource second) };
+int main() {
+  Single single{};
+  Multiple multiple{};
+  WithDestructor destructor{};
+  auto choice = Choice::right(Resource());
+  auto pair = Pair::both(Resource(), Resource());
+  return 0;
+}
+)",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(
+      cleanupForwarding.canGenerateCode(),
+      "unrelated single/multiple-action cleanup wrappers reach verified MIR");
+  if (!cleanupForwarding.canGenerateCode())
+    for (const auto &diagnostic : cleanupForwarding.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (cleanupForwarding.canGenerateCode()) {
+    const auto text = gti_test::emitCpp(cleanupForwarding).contents;
+    for (const auto &instance : cleanupForwarding.hir.classInstances()) {
+      const auto name = instance.source->name().lexeme;
+      if (name != "Single" && name != "Multiple" && name != "WithDestructor")
+        continue;
+      const auto start = text.find("constexpr (__gti_cleanup_instance == " +
+                                   std::to_string(instance.id) + ")");
+      const auto end = text.find("else { static_assert", start);
+      expect(start != std::string::npos && end != std::string::npos,
+             "each exact class cleanup descriptor has an emitted adapter");
+      if (start == std::string::npos || end == std::string::npos)
+        continue;
+      const auto adapter = text.substr(start, end - start);
+      expect((adapter.find("mir_cleanup_sequence_v1 sequence") ==
+              std::string::npos) == (name == "Single"),
+             "only a destructor-free singleton class recipe tail-forwards");
+      if (name == "Single")
+        expect(
+            adapter.find("(record, unwinding);") != std::string::npos,
+            "singleton cleanup forwards the original record and unwind mode");
+    }
+    for (const auto &enumeration : cleanupForwarding.mir.payloadEnums()) {
+      const auto cleanup =
+          lang::mirUniqueCleanupType(cleanupForwarding.mir, enumeration.type);
+      expect(cleanup.has_value(),
+             "an owned enum has a complete cleanup recipe");
+      if (!cleanup)
+        continue;
+      const auto expression = lang::cppMirCleanupValueExpression(
+          cleanupForwarding.mir, *cleanup, "value", "record", "unwinding");
+      const bool singletonAlternatives = enumeration.variants.size() == 3;
+      expect((expression.find("mir_cleanup_sequence_v1") ==
+              std::string::npos) == singletonAlternatives,
+             "distinct singleton alternatives forward, but two simultaneous "
+             "children retain ordered secondary-failure handling");
+      if (singletonAlternatives)
+        expect(
+            expression.find("(record, unwinding)") != std::string::npos &&
+                expression.find("return true;") != std::string::npos,
+            "enum forwarding retains incoming failure state and empty success");
+    }
+  }
   const auto projected =
       lang::Frontend().analyze("projected-enum-borrow.gti", R"(
 enum Event<T> { item(T value) };

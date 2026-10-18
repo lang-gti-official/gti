@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "1ce3e32633936c49e19d5010deb081de87b90e08cabf14c702db6701ee116615",
+    "stdlib/prelude.gti": "1b4d80faba181081a9003ce292c54c613b65023a0986dc522685106a80a971c5",
     "stdlib/std/algorithm.gti": "ca85de188a5b770453de0cbf1942015c64b364b001f8a58e06823b40f1313e7c",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
     "stdlib/std/atomic.gti": "c7edcd7882161c47b5a6de827025181621df547bfaaedbed5cbcafe9a7f89d2b",
@@ -16,7 +16,7 @@
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/optional.gti": "623d543812dec501d51b19588e57cc002d22a65865bada09b5eae94951f3efe9",
+    "stdlib/std/experimental/optional.gti": "acb499fe668d3d6c6999a37a1b18b48ed6d049e1f505e3757c17864097bbf89b",
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
@@ -1448,6 +1448,13 @@
       "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "tryable-borrowed-results",
+      "mode": "run",
+      "source": "examples/165-borrowed-payload-results.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "42\n3\n9\n3\n9\n12\n", "stderr": ""}
     },
     {
       "id": "tryable-propagation",
@@ -3280,9 +3287,9 @@
       "source": "stdlib/prelude.gti",
       "status": "executable",
       "operations": ["std::tryable"],
-      "case_ids": ["tryable-propagation"],
-      "required_instantiations": ["unrelated user result and residual types", "generic block over a constrained parameter", "void value type", "residual as the return type", "temporary, moved and named copyable operands"],
-      "evidence": ["tests/fixtures/stdlib_surface_tryable.gti", "tests/fixtures/tryable_propagation.gti", "tests/tryable_propagation_tests.cpp", "tests/tryable_propagation_runtime_test.py"]
+      "case_ids": ["tryable-borrowed-results", "tryable-propagation"],
+      "required_instantiations": ["unrelated user result and residual types", "generic block over a constrained parameter", "void value type", "residual as the return type", "temporary, moved and named copyable operands", "shared and exclusive borrowed success results", "borrowed-result contract inactive for owned concrete payloads"],
+      "evidence": ["tests/fixtures/stdlib_surface_tryable.gti", "tests/fixtures/tryable_propagation.gti", "tests/tryable_propagation_tests.cpp", "tests/tryable_propagation_runtime_test.py", "tests/protocol_concept_tests.cpp", "examples/165-borrowed-payload-results.gti"]
     },
     {
       "id": "process.executable",
