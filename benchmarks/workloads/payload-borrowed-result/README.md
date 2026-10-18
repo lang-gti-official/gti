@@ -2,7 +2,7 @@
 
 All variants perform ten million lookups. Success borrows the current local
 integer without copying or allocating it; every fourth lookup instead owns the
-same 61-byte error string. Compare matching contracts:
+same 61-byte error string. Compare matching observation/consumption contracts:
 
 - `source` consumes the enum and moves its error into an arm-local owner;
   `builtin-consumed` moves the expected error into an ordinary local owner.
@@ -13,6 +13,14 @@ Each owned error is destroyed once. All check the full sum before printing the
 same benchmark record. Consumed versus observed results are useful additional
 cost information, not a parity claim. This comparison does not measure protocol
 dispatch or claim identical public APIs.
+
+The current native implementations do **not** have identical cleanup-failure
+contracts: source payload enums use explicit fallible cleanup and propagation,
+whereas the built-in borrowed expected currently destroys its native wrapper
+and terminates if its error's native destructor reports a failure. These runs
+exercise successful allocation/release, not that failure distinction. Report
+their successful-execution cost comparison honestly; do not claim complete
+failure-contract parity or weaken source-defined enum cleanup to match it.
 
 Run `scripts/benchmark_compare.py --gti <compiler> --cxx <native-compiler>
 --optimization 2 --cpp-standard c++23 --warmup 3 --runs 30 --seed 178

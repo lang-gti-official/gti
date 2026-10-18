@@ -62006,6 +62006,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       !instruction.result ||
                       owningPayloadEnumValueSlot(
                           program_, body, *instruction.result) != nullptr;
+                  if (returnReady && instruction.result) {
+                    if (const auto *publication =
+                            payloadEnumCallPublicationSlot(program_, body,
+                                                           *instruction.result))
+                      returnReady = slotPlace(*publication);
+                  }
                 } else {
                   returnReady = cppMirEnumBoundaryRow(
                       program_, representations_, target->returnType);
