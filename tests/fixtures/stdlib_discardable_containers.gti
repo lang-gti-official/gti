@@ -1,0 +1,209 @@
+#include <std/vector>
+#include <std/deque>
+#include <std/list>
+#include <std/forward_list>
+#include <std/map>
+#include <std/set>
+#include <std/unordered_map>
+#include <std/unordered_set>
+
+int test_vector() {
+  mut std::vector<int> values{};
+  values.emplace_back(1);
+  // Ignoring a returned reference must not keep a loan across later mutation.
+  values.emplace_back(2);
+  {
+    mut int& added = values.emplace_back(3);
+    added = 4;
+  }
+  values.push_back(5);
+  if (values.size() != 4 || values[std::size_t(2)] != 4 || values.back() != 5) { return 1; }
+  return 0;
+}
+
+int test_deque() {
+  mut std::deque<int> values{};
+  values.emplace_back(2);
+  values.emplace_front(1);
+  values.emplace(std::size_t(1), 3);
+  {
+    mut int& added = values.emplace_back(4);
+    added = 5;
+  }
+  {
+    mut int& added = values.emplace_front(6);
+    added = 7;
+  }
+  {
+    mut int& added = values.emplace(std::size_t(2), 8);
+    added = 9;
+  }
+  values.push_back(10);
+  if (values.size() != 7 || values.front() != 7 ||
+      values[std::size_t(2)] != 9 || values.back() != 10) { return 1; }
+  return 0;
+}
+
+int test_list() {
+  mut std::list<int> values{};
+  values.emplace_back(2);
+  values.emplace_front(1);
+  values.emplace_front(1);
+  values.unique();
+  if (values.size() != 2) { return 1; }
+  int one = 1;
+  values.remove(one);
+  if (values.size() != 1 || values.front() != 2) { return 2; }
+  int two = 2;
+  if (values.remove(two) != 1 || !values.empty()) { return 3; }
+  values.emplace_back(3);
+  values.emplace_back(3);
+  if (values.unique() != 1 || values.size() != 1) { return 4; }
+  {
+    mut int& added = values.emplace_back(4);
+    added = 5;
+  }
+  {
+    mut int& added = values.emplace_front(6);
+    added = 7;
+  }
+  values.push_back(8);
+  if (values.size() != 4 || values.front() != 7 || values.back() != 8) { return 5; }
+  return 0;
+}
+
+int test_forward_list() {
+  mut std::forward_list<int> values{};
+  values.emplace_front(2);
+  values.emplace_front(1);
+  values.emplace_front(1);
+  values.unique();
+  int one = 1;
+  values.remove(one);
+  if (values.front() != 2) { return 1; }
+  int two = 2;
+  if (values.remove(two) != 1 || !values.empty()) { return 2; }
+  values.emplace_front(3);
+  values.emplace_front(3);
+  if (values.unique() != 1) { return 3; }
+  {
+    mut int& added = values.emplace_front(4);
+    added = 5;
+  }
+  values.push_front(6);
+  values.pop_front();
+  if (values.front() != 5) { return 4; }
+  values.pop_front();
+  if (values.front() != 3) { return 5; }
+  values.pop_front();
+  if (!values.empty()) { return 6; }
+  return 0;
+}
+
+int test_map() {
+  mut std::map<int, int> values{};
+  values.insert(1, 10);
+  values.insert(1, 99);
+  if (values.insert(1, 99).second) { return 1; }
+  values.insert_or_assign(1, 11);
+  if (values.insert_or_assign(1, 12).second) { return 2; }
+  values.try_emplace(2, 20);
+  if (values.try_emplace(2, 99).second) { return 3; }
+  values.emplace(3, 30);
+  if (values.emplace(3, 99).second) { return 4; }
+  values.get_or_insert(4);
+  int four = 4;
+  if (values.at(four) != 0) { return 5; }
+  {
+    mut int& added = values.get_or_insert(4);
+    added = 40;
+  }
+  int one = 1;
+  int two = 2;
+  int three = 3;
+  if (values.at(one) != 12 || values.at(two) != 20 ||
+      values.at(three) != 30 || values.at(four) != 40) { return 6; }
+  values.erase(one);
+  if (values.erase(one) != 0 || values.erase(two) != 1 || values.size() != 2) { return 7; }
+  return 0;
+}
+
+int test_unordered_map() {
+  mut std::unordered_map<int, int> values{};
+  values.insert(1, 10);
+  values.insert(1, 99);
+  if (values.insert(1, 99).second) { return 1; }
+  values.insert_or_assign(1, 11);
+  if (values.insert_or_assign(1, 12).second) { return 2; }
+  values.try_emplace(2, 20);
+  if (values.try_emplace(2, 99).second) { return 3; }
+  values.emplace(3, 30);
+  if (values.emplace(3, 99).second) { return 4; }
+  values.get_or_insert(4);
+  int four = 4;
+  if (values.at(four) != 0) { return 5; }
+  {
+    mut int& added = values.get_or_insert(4);
+    added = 40;
+  }
+  int one = 1;
+  int two = 2;
+  int three = 3;
+  if (values.at(one) != 12 || values.at(two) != 20 ||
+      values.at(three) != 30 || values.at(four) != 40) { return 6; }
+  values.erase(one);
+  if (values.erase(one) != 0 || values.erase(two) != 1 || values.size() != 2) { return 7; }
+  return 0;
+}
+
+int test_set() {
+  mut std::set<int> values{};
+  values.insert(1);
+  values.insert(1);
+  if (values.insert(1).second) { return 1; }
+  values.emplace(2);
+  bool duplicate = values.emplace(2).second;
+  bool inserted = values.insert(3).second;
+  if (duplicate || !inserted) { return 2; }
+  int one = 1;
+  int two = 2;
+  values.erase(one);
+  if (values.erase(one) != 0 || values.erase(two) != 1 || values.size() != 1) { return 3; }
+  return 0;
+}
+
+int test_unordered_set() {
+  mut std::unordered_set<int> values{};
+  values.insert(1);
+  values.insert(1);
+  if (values.insert(1).second) { return 1; }
+  values.emplace(2);
+  bool duplicate = values.emplace(2).second;
+  bool inserted = values.insert(3).second;
+  if (duplicate || !inserted) { return 2; }
+  int one = 1;
+  int two = 2;
+  values.erase(one);
+  if (values.erase(one) != 0 || values.erase(two) != 1 || values.size() != 1) { return 3; }
+  return 0;
+}
+
+int main() {
+  int vector_status = test_vector();
+  if (vector_status != 0) { return 10 + vector_status; }
+  int deque_status = test_deque();
+  if (deque_status != 0) { return 20 + deque_status; }
+  int list_status = test_list();
+  if (list_status != 0) { return 30 + list_status; }
+  int forward_status = test_forward_list();
+  if (forward_status != 0) { return 40 + forward_status; }
+  int map_status = test_map();
+  if (map_status != 0) { return 50 + map_status; }
+  int unordered_map_status = test_unordered_map();
+  if (unordered_map_status != 0) { return 60 + unordered_map_status; }
+  int set_status = test_set();
+  if (set_status != 0) { return 70 + set_status; }
+  int unordered_set_status = test_unordered_set();
+  if (unordered_set_status != 0) { return 80 + unordered_set_status; }
+  return 0;
+}
