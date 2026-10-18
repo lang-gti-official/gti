@@ -713,6 +713,15 @@ bindings, and a failure while the subject's other temporaries end drops the
 consumed enum once. A moved place stays moved after the switch on every path.
 A consumed subject cannot supply borrowed bindings.
 
+When a payload field itself stores a checked reference, its ordinary binding
+transfers that reference rather than borrowing the consumed enum's storage.
+Every selected field address is captured before the old dependency group ends;
+only then are the successor reference bindings published. This same sequence
+applies to passive enums with no destructor obligation. Each successor retains
+its exact external owner and access, and a selected reference returned through
+an ordinary call retains all possible external owners rather than only the
+first payload's owner.
+
 When any alternative contains an active-cleanup class, the enum owns one
 variant-aware lexical cleanup obligation. Payload construction transfers each
 successfully produced owning class value into the selected alternative before
