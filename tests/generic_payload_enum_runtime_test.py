@@ -26,6 +26,34 @@ def main():
               "generic_payload_enum.gti").read_text()
     prefix = source.split("void exercise()", 1)[0]
     cases = {
+        "observed-owned-field": ("""
+#include <std/string>
+enum Observed { ready(int& owner), failed(std::string error) };
+[[borrowed_from(owner)]] Observed produce(int& owner) {
+  if (owner == 3) return Observed::failed(std::string("bad"));
+  return Observed::ready(owner);
+}
+int inspect(Observed& result) {
+  switch (result) {
+    case Observed::ready(value): return value;
+    case Observed::failed(auto& error): return int(error.size());
+  }
+}
+int main() {
+  int owner = 3;
+  mut auto result = produce(owner);
+  if (inspect(result) != 3) return 1;
+  switch (result) {
+    case Observed::ready(value): return 2;
+    case Observed::failed(mut auto& error): {
+      error.append("!");
+      if (error.size() != std::size_t(4)) return 3;
+      break;
+    }
+  }
+  return inspect(result) == 4 ? 0 : 4;
+}
+""", 0, ""),
         "nested-reference-construction": ("""
 enum Shared { empty, value(int& owner) };
 enum SharedOuter { empty, wrapped(Shared inner) };

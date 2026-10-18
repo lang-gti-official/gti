@@ -31,8 +31,8 @@ namespace {
 [[nodiscard]] const MirInstruction *
 storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan);
 [[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
-                                             const MirBody &body,
-                                             const MirPlace &place);
+                                            const MirBody &body,
+                                            const MirPlace &place);
 bool exactConstructorPermission(const MirProgram &program,
                                 const MirInstruction &instruction) {
   if (instruction.unsafeOperation == UnsafeOperationKind::None)
@@ -8978,9 +8978,9 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
       const auto *returnLoan = block.terminator.returnLoan
                                    ? body.findLoan(*block.terminator.returnLoan)
                                    : nullptr;
-      erasedReturnBorrow = returnLoan
-                               ? storedValueReturnLoanProducer(body, *returnLoan)
-                               : nullptr;
+      erasedReturnBorrow =
+          returnLoan ? storedValueReturnLoanProducer(body, *returnLoan)
+                     : nullptr;
       if (returnBlock != nullptr ||
           block.terminator.kind != MirTerminatorKind::Return ||
           !block.terminator.value ||
@@ -34411,15 +34411,16 @@ loanHasCppPointerCarrier(const MirProgram &program,
 // its address from PayloadExtract. Admit only an exact typed path with no
 // runtime address/storage use, including implicit entry-loan initialization.
 [[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
-                                             const MirBody &body,
-                                             const MirPlace &place) {
+                                            const MirBody &body,
+                                            const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Binding || place.projections.empty())
     return false;
   const auto root = std::find_if(
       body.places.begin(), body.places.end(), [&](const auto &candidate) {
         return candidate.root == MirPlaceRootKind::Binding &&
                candidate.binding == place.binding &&
-               candidate.symbol == place.symbol && candidate.projections.empty();
+               candidate.symbol == place.symbol &&
+               candidate.projections.empty();
       });
   if (root == body.places.end())
     return false;
@@ -34441,7 +34442,8 @@ loanHasCppPointerCarrier(const MirProgram &program,
       for (const auto &variant : enumeration.variants) {
         if (variant.payloadTypes.size() != variant.payloadSymbols.size())
           return false;
-        for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+        for (std::size_t index = 0; index < variant.payloadSymbols.size();
+             ++index)
           if (variant.payloadSymbols[index] == projection.field) {
             if (field)
               return false;
@@ -34456,7 +34458,9 @@ loanHasCppPointerCarrier(const MirProgram &program,
   }
   if (!enumField || type != place.type)
     return false;
-  const auto uses = [&](const auto &operand) { return operand.place == place.id; };
+  const auto uses = [&](const auto &operand) {
+    return operand.place == place.id;
+  };
   const auto usesAny = [&](const auto &operands) {
     return std::any_of(operands.begin(), operands.end(), uses);
   };
@@ -34464,8 +34468,9 @@ loanHasCppPointerCarrier(const MirProgram &program,
     const auto &edge = block.terminator;
     if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
         usesAny(edge.elseArguments) ||
-        std::any_of(edge.switchTargets.begin(), edge.switchTargets.end(),
-                    [&](const auto &target) { return usesAny(target.arguments); }))
+        std::any_of(
+            edge.switchTargets.begin(), edge.switchTargets.end(),
+            [&](const auto &target) { return usesAny(target.arguments); }))
       return false;
     for (const auto &instruction : block.instructions)
       if (instruction.destination == place.id ||

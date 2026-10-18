@@ -1791,15 +1791,17 @@ auto SemanticVisitor::Impl::conditionalReferenceReturn(
     -> bool {
   if (result.kind != SemanticType::Reference || result.arguments.size() != 1)
     return false;
-  return std::any_of(parameters.begin(), parameters.end(), [&](const auto &type) {
-    const auto inventory = storedReferenceInventory(
-        type.kind == SemanticType::Reference && type.arguments.size() == 1
-            ? type.arguments.front() : type);
-    return inventory && std::any_of(inventory->begin(), inventory->end(),
-                                   [](const auto &path) {
-                                     return !path.conditions.empty();
-                                   });
-  });
+  return std::any_of(
+      parameters.begin(), parameters.end(), [&](const auto &type) {
+        const auto inventory = storedReferenceInventory(
+            type.kind == SemanticType::Reference && type.arguments.size() == 1
+                ? type.arguments.front()
+                : type);
+        return inventory && std::any_of(inventory->begin(), inventory->end(),
+                                        [](const auto &path) {
+                                          return !path.conditions.empty();
+                                        });
+      });
 }
 
 auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
@@ -3322,13 +3324,16 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         // lifetime of its own parameter storage. The executable return proof
         // still requires the exact designated external referent.
         const auto inventory = storedReferenceInventory(type);
-        const bool compatibleExternal = inventory && std::any_of(
-            inventory->begin(), inventory->end(), [&](const auto &path) {
-              return path.reference.kind == SemanticType::Reference &&
-                     path.reference.arguments.size() == 1 &&
-                     (contract.access == AccessMode::ReadOnly ||
-                      path.reference.referenceAccess == AccessMode::Mutable);
-            });
+        const bool compatibleExternal =
+            inventory &&
+            std::any_of(
+                inventory->begin(), inventory->end(), [&](const auto &path) {
+                  return path.reference.kind == SemanticType::Reference &&
+                         path.reference.arguments.size() == 1 &&
+                         (contract.access == AccessMode::ReadOnly ||
+                          path.reference.referenceAccess ==
+                              AccessMode::Mutable);
+                });
         const bool eligible =
             conditional ? (type.kind == SemanticType::Reference ||
                            (inventory && !inventory->empty()))
@@ -7182,8 +7187,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     const auto complete = completeBorrowDependencySet(expression);
     if (complete && complete->possibleAlternatives.empty() &&
         complete->dependencies.size() > 1 &&
-        std::all_of(complete->dependencies.begin(), complete->dependencies.end(),
-                    [](const auto &dependency) {
+        std::all_of(complete->dependencies.begin(),
+                    complete->dependencies.end(), [](const auto &dependency) {
                       return dependency.designatedFields.empty() &&
                              dependency.conditions.empty();
                     })) {
@@ -7198,7 +7203,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           return; // Ordinary reference binding owns the access diagnostic.
         reportBorrowConflict(
             expressionToken(expression),
-            conflictingLoans(dependency.place, carrierAccess, dependency.parent),
+            conflictingLoans(dependency.place, carrierAccess,
+                             dependency.parent),
             "Cannot retain this reference while an overlapping borrow may "
             "still be live.");
         dependency.access = carrierAccess;
@@ -7217,7 +7223,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordLoan(std::move(loan));
       for (const auto &dependency : dependencies) {
         if (dependency.protectsStorage)
-          registerStorageLoan(dependency.place.root, dependency.place.receiver, id);
+          registerStorageLoan(dependency.place.root, dependency.place.receiver,
+                              id);
         if (dependency.parent != 0)
           recordSemanticLoanUseForLoan(dependency.parent);
       }

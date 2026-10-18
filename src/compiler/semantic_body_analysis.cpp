@@ -4472,7 +4472,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     const auto *function = currentFunctionInfo();
     auto dependencies =
         function && conditionalReferenceReturn(currentReturnType,
-                                                function->parameterTypes)
+                                               function->parameterTypes)
             ? storedBorrowDependencies(stmt.value())
             : std::vector<SemanticLoanDependency>{};
     if (!dependencies.empty() &&
@@ -4959,7 +4959,13 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             }
             SemanticLoanId parent = 0;
             if (const auto source = retainedLoanSource(stmt.expression()))
-              parent = source->loan;
+              if (const auto *loan = semanticModel.findLoan(source->loan);
+                  loan && loan->kind != SemanticLoanKind::StoredValue)
+                parent = source->loan;
+            // This pattern borrows physical payload storage, not a stored
+            // reference's external owner. A dependency group carried by an
+            // owned enum cannot authorize a child loan into that enum's shell.
+            // A reference to the enum itself still supplies its normal parent.
             reportBorrowConflict(
                 *payload.name, conflictingLoans(place, access, parent),
                 "Cannot borrow this payload while an overlapping enum borrow "

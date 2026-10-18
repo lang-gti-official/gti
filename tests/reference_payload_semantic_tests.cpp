@@ -317,9 +317,9 @@ int main() {
            "field mutation");
   }
   for (const bool exclusive : {false, true}) {
-    const auto copied = analyze(
-        std::string("enum Reading { empty, value(") +
-        (exclusive ? "mut int&" : "int&") + R"gti( owner) };
+    const auto copied =
+        analyze(std::string("enum Reading { empty, value(") +
+                (exclusive ? "mut int&" : "int&") + R"gti( owner) };
 int inspect(Reading input) {
   switch (input) {
     case Reading::empty: return 0;
@@ -380,6 +380,96 @@ int main() { mut int owner = 3; return update(owner); }
                             return diagnostic.code == "GTI-B0001";
                           }),
          "nested borrowed-value handoff rejects in semantics, not as an ICE");
+  const std::string observedPrefix = R"gti(
+#include <std/string>
+enum Observed { ready(int& value), failed(std::string error) };
+[[borrowed_from(owner)]] Observed produce(int& owner, bool fail) {
+  if (fail) return Observed::failed(std::string("bad"));
+  return Observed::ready(owner);
+}
+)gti";
+  for (const bool exclusive : {false, true}) {
+    const auto observed = lang::Frontend().analyze(
+        root / "tests" / "reference-payload-owned-field.gti",
+        observedPrefix + R"gti(
+int main() {
+  int owner = 3;
+  mut auto result = produce(owner, true);
+  switch (result) {
+    case Observed::ready(value): return value;
+)gti" +
+            (exclusive
+                 ? "case Observed::failed(mut auto& error): { "
+                   "error.append(\"!\"); return int(error.size()) - 4; }\n"
+                 : "case Observed::failed(auto& error): "
+                   "return int(error.size()) - 3;\n") +
+            "  }\n}\n",
+        {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+    expect(observed.canGenerateCode(),
+           "owned payload storage is independent of external reference owners");
+    if (!observed.canGenerateCode())
+      for (const auto &diagnostic : observed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    if (!observed.canGenerateCode())
+      continue;
+    auto forged = observed.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged)) {
+      const auto external = std::find_if(
+          function.body.loans.begin(), function.body.loans.end(),
+          [](const auto &loan) {
+            return loan.kind == lang::MirLoanKind::Stored && !loan.entry;
+          });
+      if (external == function.body.loans.end())
+        continue;
+      for (auto &loan : function.body.loans) {
+        if (loan.kind != lang::MirLoanKind::Local || loan.referenceSelection)
+          continue;
+        const bool ownedField = std::any_of(
+            function.body.blocks.begin(), function.body.blocks.end(),
+            [&](const auto &block) {
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const auto &i) {
+                    return i.hirValue == loan.producedBy &&
+                           i.operation == lang::MirOperation::PayloadExtract &&
+                           i.payloadExtractionKind ==
+                               lang::PayloadExtractionKind::BorrowValue;
+                  });
+            });
+        if (!ownedField)
+          continue;
+        expect(loan.parent == 0,
+               "owned local enum field borrows have no external-group parent");
+        loan.parent = external->id;
+        changed = true;
+        break;
+      }
+      if (changed)
+        break;
+    }
+    expect(
+        changed && !lang::verifyMirProgram(forged).valid(),
+        "an external dependency cannot authorize physical enum field storage");
+  }
+  for (const std::string body :
+       {"result = produce(owner, true); return int(error.size());",
+        "auto moved = std::move(result); return int(error.size());"}) {
+    const auto invalidated = analyze(observedPrefix + R"gti(
+int main() {
+  int owner = 3;
+  mut auto result = produce(owner, true);
+  switch (result) {
+    case Observed::ready(value): return value;
+    case Observed::failed(auto& error): {
+)gti" + body + "\n    }\n  }\n}\n");
+    expect(
+        !invalidated.semanticValid &&
+            std::none_of(invalidated.diagnostics.begin(),
+                         invalidated.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-B0001"; }),
+        "live owned payload references prevent shell replacement and move");
+  }
   const auto referenceEntry = lang::Frontend().analyze(
       root / "tests" / "reference-payload-formal.gti", R"gti(
 #include <std/string>

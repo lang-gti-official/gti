@@ -1808,9 +1808,9 @@ private:
                 bool structural = false) const;
 
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
-  [[nodiscard]] bool conditionalReferenceReturn(
-      const SemanticType &result,
-      std::span<const SemanticType> parameters) const;
+  [[nodiscard]] bool
+  conditionalReferenceReturn(const SemanticType &result,
+                             std::span<const SemanticType> parameters) const;
   // Normalize one already checked return expression before end-of-body
   // summary publication. Failure is unknown/invalid, never an empty proof.
   // The caller still enforces ordinary child-loan escape and availability.

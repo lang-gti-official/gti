@@ -41,21 +41,21 @@ void hashType(std::size_t &seed, const SemanticType &type) {
 
 } // namespace
 
-std::size_t InstanceAnalysisKeyHash::operator()(
-    const InstanceAnalysisKey &key) const {
-    std::size_t seed = static_cast<std::size_t>(key.kind);
-    combine(seed, key.declaration);
-    for (const auto *types : {&key.classTypes, &key.types}) {
-      combine(seed, types->size());
-      for (const SemanticType &type : *types)
-        hashType(seed, type);
-    }
-    for (const auto *values : {&key.classValues, &key.values}) {
-      combine(seed, values->size());
-      for (const CompileTimeValue &value : *values)
-        hashValue(seed, value);
-    }
-    return seed;
+std::size_t
+InstanceAnalysisKeyHash::operator()(const InstanceAnalysisKey &key) const {
+  std::size_t seed = static_cast<std::size_t>(key.kind);
+  combine(seed, key.declaration);
+  for (const auto *types : {&key.classTypes, &key.types}) {
+    combine(seed, types->size());
+    for (const SemanticType &type : *types)
+      hashType(seed, type);
+  }
+  for (const auto *values : {&key.classValues, &key.values}) {
+    combine(seed, values->size());
+    for (const CompileTimeValue &value : *values)
+      hashValue(seed, value);
+  }
+  return seed;
 }
 
 class InstanceAnalysisGeneration final {
