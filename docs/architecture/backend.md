@@ -74,6 +74,18 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+Guarded enum reference inventories include abstract referent paths that are
+provenance, not unconditional reads of native fields in possibly inactive
+alternatives. The backend omits a path's physical alias only after checking its
+exact typed enum-field/dereference chain and absence of runtime storage/address
+uses. Stored loans carry no native pointer; selected-reference extraction,
+reference-returning calls and exact return-pointer transfers supply their own
+runtime addresses. Generic Borrow or entry-address uses cannot hide behind this
+classification. Fresh owning enum returns may cross their verified erased
+Stored-to-Return borrow publication and EndBorrow markers without inventing a
+second result slot; all actual cleanup and success-only initialization remains
+in the original MIR order.
+
 Payload alternatives construct in place from their already selected MIR
 operands. The native enum's in-place alternative constructor avoids temporary
 alternative and whole-enum transfers. List initialization preserves operand
