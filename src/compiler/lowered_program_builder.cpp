@@ -649,6 +649,8 @@ private:
             .type = instance.type,
             .sourceUnit = instance.sourceUnit,
             .qualifiedName = instance.qualifiedName,
+            .genericParameters =
+                lowerGenericParameters(primary->genericParameters),
             .underlyingType = instance.underlyingType,
             .traits = instance.traits,
             .requiresActiveCleanup = instance.requiresActiveCleanup,

@@ -6788,14 +6788,15 @@ validFailureInstructionShape(const MirInstruction &instruction) {
   if (intrinsicBooleanFailureOutcome(instruction.intrinsic) ||
       intrinsicTerminalFailureOutcome(instruction.intrinsic)) {
     const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
-    const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic);
+    const auto terminal =
+        intrinsicTerminalFailureOutcome(instruction.intrinsic);
     const std::vector<SemanticType> parameters =
-        panic ? std::vector<SemanticType>{SemanticType::StringView}
-              : terminal ? std::vector<SemanticType>{}
-                         : std::vector<SemanticType>{SemanticType::Bool};
+        panic      ? std::vector<SemanticType>{SemanticType::StringView}
+        : terminal ? std::vector<SemanticType>{}
+                   : std::vector<SemanticType>{SemanticType::Bool};
     const DefinedFailureOutcome expected =
         terminal ? *terminal
-              : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
+                 : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
     return instruction.kind == MirInstructionKind::Call &&
            !instruction.functionTarget && !instruction.constructorTarget &&
            !instruction.bodyTarget && !instruction.lambdaTarget &&
@@ -6805,7 +6806,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.neverReturns == terminal.has_value() &&
            instruction.tracksCaller == panic &&
            instruction.operands.size() == parameters.size() &&
-           (parameters.empty() || instruction.operands.front().type == parameters.front()) &&
+           (parameters.empty() ||
+            instruction.operands.front().type == parameters.front()) &&
            instruction.parameterTypes == parameters &&
            instruction.definedFailure.propagation ==
                FailurePropagationKind::None &&

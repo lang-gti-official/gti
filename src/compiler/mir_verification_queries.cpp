@@ -796,6 +796,8 @@ bool objectRelocate(const MirProgram &program,
       pointer.pointerAccess != AccessMode::Mutable ||
       pointer.arguments.size() != 1 ||
       !completeObjectType(program, pointer.arguments.front()) ||
+      mirTypeRelocationKind(program, pointer.arguments.front()) ==
+          RelocationKind::Unavailable ||
       !mirTypeRelocationIsDefinedFailureFree(program,
                                              pointer.arguments.front()) ||
       (range && mirTypeRelocationKind(program, pointer.arguments.front()) !=

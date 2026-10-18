@@ -2109,7 +2109,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::Panic:
         case IntrinsicKind::FailEmptyOwner:
           anchor(token);
-          addFailureOutcome(operation, intrinsicTerminalFailureOutcome(intrinsic)->code,
+          addFailureOutcome(operation,
+                            intrinsicTerminalFailureOutcome(intrinsic)->code,
                             intrinsicTerminalFailureOutcome(intrinsic)->detail);
           break;
         case IntrinsicKind::FunctionPointerInvoke:

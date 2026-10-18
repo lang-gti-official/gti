@@ -245,11 +245,15 @@ class CaseJobsTests(unittest.TestCase):
         self.assertEqual(serial, parallel)
         result, builds, negatives, executions = serial
         self.assertEqual(result, 0)
-        self.assertEqual(len(builds), 19 * 8)
+        self.assertEqual(len(builds), 26 * 8)
         self.assertEqual(len(negatives), 4)
-        self.assertEqual(len(executions), 19 * 8)
+        self.assertEqual(len(executions), 26 * 8)
         self.assertTrue(all(row[-1] == threading.get_ident() for row in executions))
         self.assertEqual({pathlib.Path(row[0][1]).stem for row in builds}, {
+            "call-binding-publication", "call-binding-publication-failure",
+            "consuming-binding-publication", "consuming-binding-publication-failure",
+            "observed-owned-field", "nested-reference-construction",
+            "borrowed-class-payload",
             "success", "generic-owner-capture", "partial-owner",
             "container-cleanup-failure", "later-argument-failure",
             "later-argument-after-move", "callee-failure",
@@ -260,8 +264,8 @@ class CaseJobsTests(unittest.TestCase):
             "construction-only-called-destructor-failure",
             "construction-only-called-secondary-failure", "construction-only-callee-failure",
             "construction-only-callee-secondary-failure"})
-        self.assertEqual(sum("-fno-elide-constructors" in row[0] for row in builds), 19)
-        self.assertEqual(sum("-fsanitize=address,undefined" in row[0] for row in builds), 19)
+        self.assertEqual(sum("-fno-elide-constructors" in row[0] for row in builds), 26)
+        self.assertEqual(sum("-fsanitize=address,undefined" in row[0] for row in builds), 26)
         expected_modes = [(standard, optimization, ())
                           for standard in ("c++20", "c++23")
                           for optimization in ("-O0", "-O1", "-O3")]

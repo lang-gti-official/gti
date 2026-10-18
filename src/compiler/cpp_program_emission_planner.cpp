@@ -2179,6 +2179,127 @@ public:
     }
   }
 
+  void emitLoweredEnumSelectorCatalog() {
+    std::set<EnumId> needed;
+    const auto dependent = [&](const auto &self,
+                               const SemanticType &type) -> bool {
+      return type.kind == SemanticType::TypeParameter ||
+             (type.kind == SemanticType::TypePack && !type.concretePack) ||
+             type.arrayLengthParameterId != 0 ||
+             std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                         [](const auto &value) {
+                           return value.kind != CompileTimeValue::UInt64;
+                         }) ||
+             std::any_of(
+                 type.arguments.begin(), type.arguments.end(),
+                 [&](const auto &argument) { return self(self, argument); });
+    };
+    const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+      if (type.kind == SemanticType::Enum && dependent(dependent, type))
+        needed.insert(type.enumId);
+      for (const auto &argument : type.arguments)
+        self(self, argument);
+    };
+    for (const auto &row : loweredProgram.declarations()) {
+      // Reuse the planner's existing representation decision. Concrete class
+      // instances and concrete free functions never spell their dependent
+      // source declaration types, so they must not demand a native catalog.
+      if (row.ownerClass != 0) {
+        const auto *owner = loweredProgram.findClassDeclaration(row.ownerClass);
+        if (owner && !owner->genericParameters.empty() &&
+            !loweredClassNeedsNativePrimary(*owner))
+          continue;
+      }
+      if (const auto *owner =
+              std::get_if<LoweredClassDeclaration>(&row.payload);
+          owner && !owner->genericParameters.empty() &&
+          !loweredClassNeedsNativePrimary(*owner))
+        continue;
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&row.payload);
+          function && function->ownerClass == 0 &&
+          !function->genericParameters.empty() &&
+          function->definitionKind == MirDefinitionKind::Source) {
+        const auto instances = loweredFunctionInstances(function->id);
+        const bool overlay = std::any_of(
+            instances.begin(), instances.end(), [&](const auto *instance) {
+              const auto *concrete = loweredFunctionInstance(instance->id);
+              return concrete &&
+                     cppCallableFreeFunctionSpelling(
+                         loweredProgram, row, *function, *concrete, *instance)
+                         .has_value();
+            });
+        if (!overlay)
+          continue;
+      }
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&row.payload))
+        visit(visit, storage->type);
+      else if (const auto *alias =
+                   std::get_if<LoweredTypeAliasDeclaration>(&row.payload))
+        visit(visit, alias->type);
+      else if (const auto *function =
+                   std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
+        visit(visit, function->returnType);
+        for (const auto &parameter : function->parameters)
+          visit(visit, parameter.type);
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(&row.payload)) {
+        for (const auto &parameter : constructor->parameters)
+          visit(visit, parameter.type);
+      } else if (const auto *owner =
+                     std::get_if<LoweredClassDeclaration>(&row.payload)) {
+        for (const auto &base : owner->bases)
+          visit(visit, base.type);
+      }
+    }
+    if (needed.empty())
+      return;
+    writeIndent();
+    output << "template <typename...> struct __gti_enum_types;\n";
+    for (const auto family : needed) {
+      writeIndent();
+      output << "template <typename, typename> struct __gti_enum_selector_"
+             << family << ";\n";
+    }
+    std::unordered_set<std::string> selections;
+    std::vector<std::pair<EnumId, std::string>> nativeKeys;
+    for (const auto &row : loweredProgram.declarations()) {
+      const auto *enumeration =
+          std::get_if<LoweredEnumDeclaration>(&row.payload);
+      if (!enumeration || !needed.contains(enumeration->id))
+        continue;
+      const auto family =
+          "__gti_enum_selector_" + std::to_string(enumeration->id);
+      const auto key =
+          family +
+          cppEnumSelectorArguments(loweredProgram, standard, enumeration->type);
+      if (!selections.insert(key).second)
+        throw std::logic_error(
+            "distinct enum instances share a native selector key");
+      // Native typedefs may spell one C++ type differently. Check equivalence
+      // as well as textual duplicates; never silently pick a different GTI
+      // instance because two source identities share one native ABI type.
+      const auto arguments =
+          cppEnumSelectorArguments(loweredProgram, standard, enumeration->type);
+      const auto nativeKey = "__gti_enum_types" + arguments;
+      for (const auto &[owner, prior] : nativeKeys) {
+        if (owner != enumeration->id)
+          continue;
+        writeIndent();
+        output << "static_assert(!std::is_same_v<" << prior << ", " << nativeKey
+               << ">, \"distinct verified enum instances have ambiguous native "
+                  "selector keys\");\n";
+      }
+      nativeKeys.emplace_back(enumeration->id, nativeKey);
+      writeIndent();
+      output << "template <> struct " << key << " { using type = "
+             << cppSemanticTypeSpelling(loweredProgram, standard,
+                                        enumeration->type)
+             << "; };\n";
+    }
+  }
+
   void emitLoweredEnumDefinition(const LoweredDeclaration &row,
                                  const LoweredEnumDeclaration &enumeration) {
     const std::string name =
@@ -7592,6 +7713,7 @@ public:
       emitLoweredTypeForwardDeclarations(0);
       emitLoweredConcreteClassForwardDeclarations();
       emitLoweredExactClassSpecializationForwardDeclarations();
+      emitLoweredEnumSelectorCatalog();
       emitLoweredAliasForwardDeclarations(0);
       emitLoweredFunctionForwardDeclarations(0);
     });

@@ -1173,13 +1173,58 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
                     "fixtures/construction_only_payload_enum.gti";
   std::ifstream input(path);
   expect(input.good(), "construction-only enum fixture must exist");
-  const std::string source{std::istreambuf_iterator<char>(input), {}};
-  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  std::string source{std::istreambuf_iterator<char>(input), {}};
+  // A mutex payload can move but cannot be assigned. Its owning enum now has
+  // whole-value replacement, but initializing a containing field still needs
+  // its exact construction/publication proof, not an assignment shortcut.
+  const std::string original = "std::optional<std::string>";
+  const std::string replacement = "std::mutex<std::string>";
+  for (std::size_t offset = 0;
+       (offset = source.find(original, offset)) != std::string::npos;
+       offset += replacement.size())
+    source.replace(offset, original.size(), replacement);
+  source = "#include <std/mutex>\n" + source;
+  // The mutex's address stability is separate from construction-only field
+  // publication; it is not a relocatable vector element.
+  const auto vectorStart = source.find("  mut std::vector<Event> events{};");
+  const auto vectorEnd = source.find("  mut std::optional<Event> selected");
+  expect(vectorStart != std::string::npos && vectorEnd > vectorStart,
+         "construction-only control identifies its unrelated vector section");
+  if (vectorStart != std::string::npos && vectorEnd != std::string::npos &&
+      vectorEnd > vectorStart)
+    source.erase(vectorStart, vectorEnd - vectorStart);
+  const auto optionalStart = source.find("  mut std::optional<Event> selected");
+  const auto optionalEnd = source.find("\n}", optionalStart);
+  expect(optionalStart != std::string::npos && optionalEnd > optionalStart,
+         "construction-only control identifies its unrelated optional section");
+  if (optionalStart != std::string::npos && optionalEnd != std::string::npos &&
+      optionalEnd > optionalStart)
+    source.erase(optionalStart, optionalEnd - optionalStart);
+  for (const std::string name : {"cleanup_divisor", "helper_divisor"}) {
+    const auto offset = source.find("mut int32_t " + name);
+    expect(offset != std::string::npos,
+           "construction-only control retains its named divisor");
+    if (offset != std::string::npos)
+      source.erase(offset, 4);
+  }
+  auto target = lang::TargetInfo::host();
+  target.executionProfile = lang::ExecutionProfile::Concurrent;
+  target.runtimeCapabilities.threads = true;
+  const auto standardLibrary =
+      path.parent_path().parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend({.target = target})
+          .analyze(path.string(), source, {standardLibrary / "prelude.gti"}, {},
+                   {standardLibrary});
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(),
          "construction-only enum fields must pass semantic and MIR checks");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target));
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   expect(emitter.analyzeProgram().ready(),
          "fallible owners of construction-only enums need a complete backend "
@@ -1202,7 +1247,7 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
             !field || field->root != lang::MirPlaceRootKind::This ||
             !enumeration || !enumeration->requiresActiveCleanup ||
             !enumeration->traits.movable ||
-            enumeration->traits.moveAssignable ||
+            !enumeration->traits.moveAssignable ||
             instruction.lifecycle.size() != 1 ||
             instruction.lifecycle.front().kind !=
                 lang::MirLifecycleEventKind::Reparent)
@@ -1353,7 +1398,7 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
   }
   expect(foundFresh && foundMove && foundCall,
          "fixture must exercise constructed, moved and helper-returned "
-         "nonassignable enum field publications");
+         "enum fields with nonassignable payloads");
 }
 
 void testPassiveEnumTemporaryBorrowAdmission() {
@@ -5357,14 +5402,10 @@ int main() {
     return;
   lang::MirBodyAddress address{};
   lang::MirInstructionId eraseId = 0;
-  const auto findOptional = [&](const auto &self,
-                                auto &recipe) -> decltype(&recipe) {
-    const auto *owner =
-        recipe.classInstance
-            ? frontend.mir.findClassInstance(*recipe.classInstance)
-            : nullptr;
-    if (owner && owner->compilerCapability ==
-                     lang::CompilerCapabilityTypeKind::OptionalStorage)
+  const auto findPayloadCleanup = [&](const auto &self,
+                                      auto &recipe) -> decltype(&recipe) {
+    if (recipe.type.kind == lang::SemanticType::Enum &&
+        frontend.mir.findPayloadEnum(recipe.type))
       return &recipe;
     for (auto &child : recipe.aggregate)
       if (auto *found = self(self, child))
@@ -5378,7 +5419,8 @@ int main() {
             instruction.elementCleanup &&
             instruction.definedFailure.propagation ==
                 lang::FailurePropagationKind::Destructor &&
-            findOptional(findOptional, *instruction.elementCleanup)) {
+            findPayloadCleanup(findPayloadCleanup,
+                               *instruction.elementCleanup)) {
           address = {.kind = lang::MirBodyKind::Function, .owner = function.id};
           eraseId = instruction.id;
         }
@@ -5394,8 +5436,8 @@ int main() {
   expect(erase->elementCleanup &&
              erase->definedFailure.propagation ==
                  lang::FailurePropagationKind::Destructor &&
-             findOptional(findOptional, *erase->elementCleanup),
-         "nested optional capability must preserve exact payload cleanup and "
+             findPayloadCleanup(findPayloadCleanup, *erase->elementCleanup),
+         "nested source optional enum must preserve exact payload cleanup and "
          "enclosing destructor failure propagation");
   if (!erase->elementCleanup)
     return;
@@ -5403,7 +5445,22 @@ int main() {
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
   expect(lang::CppMirBodyEmitter(frontend.mir, map)
              .supportsFailureBodyText(address),
-         "nested capability cleanup must remain an admitted MIR operation");
+         "nested enum cleanup must remain an admitted MIR operation");
+  const auto *enumCleanup =
+      findPayloadCleanup(findPayloadCleanup, *erase->elementCleanup);
+  const auto *enumeration =
+      enumCleanup ? frontend.mir.findPayloadEnum(enumCleanup->type) : nullptr;
+  expect(enumeration && enumeration->variants.size() == 2 &&
+             enumeration->variants.front().payloadTypes.empty() &&
+             enumeration->variants.back().payloadTypes.size() == 1 &&
+             enumCleanup->aggregate.size() == 1 &&
+             enumCleanup->aggregate.front().payloadVariant ==
+                 enumeration->variants.back().variantIndex &&
+             enumCleanup->aggregate.front().payloadField == 0 &&
+             enumCleanup->aggregate.front().type ==
+                 enumeration->variants.back().payloadTypes.front(),
+         "source optional cleanup must select its exact engaged enum field, "
+         "with no cleanup for the empty alternative");
   bool sawDormantCleanup = false;
   for (const auto &owner : frontend.mir.classInstances()) {
     for (const auto &block : owner.fieldInitializers.blocks) {
@@ -5415,7 +5472,7 @@ int main() {
           continue;
         const auto *drop = owner.fieldInitializers.findDropObligation(
             instruction.lifecycle.front().source);
-        if (!drop || !findOptional(findOptional, drop->dropType))
+        if (!drop || !findPayloadCleanup(findPayloadCleanup, drop->dropType))
           continue;
         const auto targets = lang::mirDropDestructorTargets(drop->dropType);
         if (targets.empty())
@@ -5501,24 +5558,65 @@ int main() {
     auto *changedBody = lang::findMirBody(changed, address);
     auto *changedErase = findPreflightInstruction(*changedBody, eraseId);
     mutate(*changedErase);
-    expect(!lang::verifyMirProgram(changed).valid(), message);
+    expect(!lang::verifyMirProgram(changed).valid() &&
+               !lang::CppMirBodyEmitter(changed, map).analyzeProgram().ready(),
+           message);
   };
   rejectMutation([](auto &erase) { erase.elementCleanup.reset(); },
-                 "nested capability cleanup cannot erase its removal recipe");
+                 "nested enum cleanup cannot erase its removal recipe");
   rejectMutation(
       [&](auto &erase) {
-        auto *payload = findOptional(findOptional, *erase.elementCleanup);
+        auto *payload =
+            findPayloadCleanup(findPayloadCleanup, *erase.elementCleanup);
         if (payload)
           payload->aggregate.clear();
       },
       "optional cleanup cannot omit its engaged payload recipe");
   rejectMutation(
       [&](auto &erase) {
-        auto *payload = findOptional(findOptional, *erase.elementCleanup);
+        auto *payload =
+            findPayloadCleanup(findPayloadCleanup, *erase.elementCleanup);
         if (payload && !payload->aggregate.empty())
           payload->aggregate.front().type = lang::SemanticType::Int32;
       },
       "optional cleanup cannot replace its exact payload type");
+  rejectMutation(
+      [&](auto &erase) {
+        auto *payload =
+            findPayloadCleanup(findPayloadCleanup, *erase.elementCleanup);
+        if (payload && !payload->aggregate.empty())
+          payload->aggregate.front().payloadVariant = 0;
+      },
+      "optional cleanup cannot route its payload destructor through the "
+      "empty alternative");
+  rejectMutation(
+      [&](auto &erase) {
+        auto *payload =
+            findPayloadCleanup(findPayloadCleanup, *erase.elementCleanup);
+        if (payload && !payload->aggregate.empty())
+          payload->aggregate.front().payloadField = 1;
+      },
+      "optional cleanup cannot substitute an absent payload field");
+  rejectMutation(
+      [&](auto &erase) {
+        auto *payload =
+            findPayloadCleanup(findPayloadCleanup, *erase.elementCleanup);
+        if (payload && !payload->aggregate.empty())
+          payload->aggregate.front().payloadVariant.reset();
+      },
+      "optional cleanup cannot discard its active-alternative guard");
+  rejectMutation(
+      [&](auto &erase) {
+        auto *payload =
+            findPayloadCleanup(findPayloadCleanup, *erase.elementCleanup);
+        if (payload)
+          for (const auto &candidate : frontend.mir.payloadEnums())
+            if (candidate.type != payload->type) {
+              payload->type = candidate.type;
+              break;
+            }
+      },
+      "optional cleanup cannot substitute a distinct concrete enum identity");
   rejectMutation(
       [](auto &erase) {
         erase.definedFailure.propagation = lang::FailurePropagationKind::None;

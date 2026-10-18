@@ -170,8 +170,20 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                                  sequence + ".unwinding()", depth + 1) +
           ")) return false; ";
     }
-    return expression + "return " +
-           (singleAction ? "true" : sequence + ".success()") + "; }())";
+    expression +=
+        "return " +
+        (singleAction ? std::string("true") : sequence + ".success()") +
+        "; }())";
+    // A first cleanup failure has still drained the selected alternative.
+    // A containing class replacement can subsequently reach its lexical drop;
+    // preserve a valid vacant shell rather than repeating that child cleanup.
+    // During secondary-failure unwinding the recipe may instead abandon its
+    // remaining children, so native retirement is deliberately forbidden.
+    return "([&]() { const bool __gti_enum_cleaned = " + expression +
+           "; if (!__gti_enum_cleaned && !(" + std::string(unwinding) + ")) " +
+           receiver +
+           ".__gti_value.retire_cleaned_alternative(); "
+           "return __gti_enum_cleaned; }())";
   }
   if (type.type.kind == SemanticType::Expected ||
       type.type.kind == SemanticType::Unexpected) {
@@ -9295,6 +9307,7 @@ owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
   const auto *cleanup = findInstruction(body, instruction.replacementPair);
   if (destination == nullptr || !destination->key || slot == nullptr ||
       destination->type != slot->type ||
+      instruction.operands.front().type != slot->type ||
       instruction.ownership->place != *destination->key ||
       instruction.ownership->after != OwnershipStateSet::Available ||
       source == nullptr || source->place != slot->id ||
@@ -9304,7 +9317,8 @@ owningPayloadEnumAssignmentSlot(const MirProgram &program, const MirBody &body,
       cleanup->replacementPair != instruction.id ||
       cleanup->destination != instruction.destination ||
       !cleanup->replacementCleanup ||
-      cleanup->replacementCleanup->type != destination->type)
+      cleanup->replacementCleanup !=
+          mirUniqueCleanupType(program, destination->type))
     return nullptr;
   return slot;
 }
@@ -28671,15 +28685,17 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
   const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
   const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic);
   const std::vector<SemanticType> parameters =
-      panic ? std::vector<SemanticType>{SemanticType::StringView}
-            : terminal ? std::vector<SemanticType>{}
-                       : std::vector<SemanticType>{SemanticType::Bool};
+      panic      ? std::vector<SemanticType>{SemanticType::StringView}
+      : terminal ? std::vector<SemanticType>{}
+                 : std::vector<SemanticType>{SemanticType::Bool};
   if (!explicitFailureCall(instruction) || instruction.result ||
       instruction.receiver || instruction.destination ||
       instruction.info.type != SemanticType::Void ||
       instruction.operands.size() != parameters.size() ||
-      (!parameters.empty() && instruction.operands.front().type != parameters.front()) ||
-      instruction.neverReturns != terminal.has_value() || instruction.tracksCaller != panic ||
+      (!parameters.empty() &&
+       instruction.operands.front().type != parameters.front()) ||
+      instruction.neverReturns != terminal.has_value() ||
+      instruction.tracksCaller != panic ||
       instruction.parameterTypes != parameters ||
       instruction.definedFailure.propagation != FailurePropagationKind::None ||
       instruction.localFailureSites.size() != 1 ||
@@ -28691,7 +28707,7 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
       program.failureMetadata().findSite(instruction.localFailureSites.front());
   const DefinedFailureOutcome expected =
       terminal ? *terminal
-            : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
+               : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
   return site != nullptr &&
          site->outcomes == std::vector<DefinedFailureOutcome>{expected} &&
          instruction.definedFailure.localOrigins.front().outcomes ==
@@ -42572,13 +42588,21 @@ private:
         writeIndent();
         output << "return ";
       }
-      output << "[&](auto &__gti_cleanup_value) { return "
+      const bool retireEnum =
+          instruction.replacementCleanup->type.kind == SemanticType::Enum;
+      output << "[&](auto &__gti_cleanup_value) { "
+             << (retireEnum ? "const bool __gti_cleaned = " : "return ")
              << cppMirCleanupValueExpression(
                     program, *instruction.replacementCleanup,
                     "__gti_cleanup_value",
                     failureForm ? "__gti_mir_failure_record" : "nullptr",
                     "false")
-             << "; }(";
+             << "; ";
+      if (retireEnum)
+        output
+            << "__gti_cleanup_value.__gti_value.retire_cleaned_alternative(); "
+               "return __gti_cleaned; ";
+      output << "}(";
       emitStoragePlaceValue(facts,
                             *facts.body.findPlace(*instruction.destination));
       output << ");\n";
@@ -45854,9 +45878,10 @@ private:
         throw std::logic_error(
             "verified container check lost its exact failure contract");
       }
-      if (const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic)) {
-        output << "__gti_mir_failure_status_" << instruction.id
-               << " = {" << cppFailureCodeAbiConstant(terminal->code) << ", "
+      if (const auto terminal =
+              intrinsicTerminalFailureOutcome(instruction.intrinsic)) {
+        output << "__gti_mir_failure_status_" << instruction.id << " = {"
+               << cppFailureCodeAbiConstant(terminal->code) << ", "
                << cppFailureDetailAbiConstant(terminal->detail) << "};\n";
         return;
       }
@@ -62570,7 +62595,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           if (explicitFailureCall(instruction)) {
             if (!exactExplicitFailure(program_, instruction) ||
-                !std::all_of(instruction.operands.begin(), instruction.operands.end(), valueOperand) ||
+                !std::all_of(instruction.operands.begin(),
+                             instruction.operands.end(), valueOperand) ||
                 (instruction.definedFailure.mayUnwind() &&
                  (!failureForm ||
                   !invokePairedInstruction(body, instruction.id))))

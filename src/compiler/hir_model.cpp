@@ -1204,7 +1204,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const bool panic = value.kind == HirValueKind::Call &&
                          value.intrinsic == IntrinsicKind::Panic;
       const bool expectedTerminal =
-          (value.kind == HirValueKind::Call && intrinsicTerminalFailureOutcome(value.intrinsic)) ||
+          (value.kind == HirValueKind::Call &&
+           intrinsicTerminalFailureOutcome(value.intrinsic)) ||
           (contractTarget != nullptr && contractTarget->neverReturns);
       const bool expectedTracking =
           panic || (contractTarget != nullptr && contractTarget->tracksCaller);

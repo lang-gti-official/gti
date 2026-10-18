@@ -104,6 +104,31 @@ int main() {
   return inspect(result) == 4 ? 0 : 4;
 }
 """, 0, ""),
+        "borrowed-class-payload": ("""
+class Carrier {
+  int& owner;
+public:
+  Carrier(int& value) : owner(value) {}
+  int read() { return this.owner; }
+};
+enum Holder { none, item(Carrier value) };
+int inspect(Holder& held) {
+  switch (held) {
+    case Holder::none: return 0;
+    case Holder::item(auto& value): return value.read();
+  }
+}
+int main() {
+  mut int owner = 17;
+  {
+    Carrier value = Carrier(owner);
+    Holder held = Holder::item(value);
+    if (inspect(held) != 17) return 1;
+  }
+  owner = 23;
+  return owner == 23 ? 0 : 2;
+}
+""", 0, ""),
         "nested-reference-construction": ("""
 enum Shared { empty, value(int& owner) };
 enum SharedOuter { empty, wrapped(Shared inner) };
@@ -330,10 +355,16 @@ int main() {
                                  rejected.stdout + rejected.stderr)
                 return 1
         assignment = root / "construction-only-assignment.gti"
-        assignment.write_text(construction_prefix + """
+        assignment.write_text("""
+class Borrowed {
+  int& owner;
+public:
+  Borrowed(int& owner) : owner(owner) {}
+};
 int main() {
-  Event source = Event::message(Payload(1));
-  mut Event destination = Event::idle;
+  int owner = 1;
+  Borrowed source = Borrowed(owner);
+  mut Borrowed destination = Borrowed(owner);
   destination = std::move(source);
   return 0;
 }
@@ -343,7 +374,7 @@ int main() {
         if (rejected.returncode == 0 or "GTI-S2003" not in rejected.stderr or
                 "assign" not in rejected.stderr.lower() or
                 "GTI-B000" in rejected.stderr):
-            sys.stderr.write("construction-only enum must remain nonassignable\n" +
+            sys.stderr.write("borrow-carrying class must remain nonassignable\n" +
                              rejected.stdout + rejected.stderr)
             return 1
         plan = []

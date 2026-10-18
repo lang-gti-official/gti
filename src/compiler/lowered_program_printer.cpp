@@ -537,6 +537,8 @@ private:
     output << "enum(id=" << value.id << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
     type(value.type);
+    output << ";generics=";
+    genericParameters(value.genericParameters);
     output << ";underlying=";
     type(value.underlyingType);
     output << ";payload=" << value.payload << ";traits=";
@@ -818,7 +820,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v20\n";
+  output << "lowered-program-v21\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

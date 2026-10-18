@@ -363,10 +363,32 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
   case LoweredDeclarationKind::Enum: {
     const auto *payload =
         std::get_if<LoweredEnumDeclaration>(&declaration.payload);
+    const auto genericShape = [&] {
+      if (!payload)
+        return false;
+      std::size_t types = 0, values = 0;
+      bool pack = false;
+      for (std::size_t index = 0; index < payload->genericParameters.size();
+           ++index) {
+        const auto &parameter = payload->genericParameters[index];
+        if (parameter.pack) {
+          if (parameter.value || index + 1 != payload->genericParameters.size())
+            return false;
+          pack = true;
+        } else if (parameter.value)
+          ++values;
+        else
+          ++types;
+      }
+      return payload->type.valueArguments.size() == values &&
+             (pack ? payload->type.arguments.size() >= types
+                   : payload->type.arguments.size() == types);
+    };
     if (payload == nullptr || payload->id == 0 ||
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
-        payload->type.kind != SemanticType::Enum ||
+        !validGenericParameters(payload->genericParameters) ||
+        !genericShape() || payload->type.kind != SemanticType::Enum ||
         payload->type.enumId != payload->id || !resolvedType(payload->type) ||
         !resolvedType(payload->underlyingType) ||
         payload->underlyingType == SemanticType::Void ||
@@ -766,6 +788,18 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                  "duplicate exact enum instance", std::nullopt, declaration.id);
       enumDeclarations.push_back(payload->type);
+      for (const auto &prior : program.declarations_) {
+        if (prior.id >= declaration.id)
+          break;
+        const auto *family =
+            std::get_if<LoweredEnumDeclaration>(&prior.payload);
+        if (family && family->id == payload->id &&
+            family->genericParameters != payload->genericParameters)
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "enum instances disagree on their declaration parameter "
+                   "identities",
+                   std::nullopt, declaration.id);
+      }
       const MirPayloadEnum *mirEnumeration =
           program.mir_.findPayloadEnum(payload->type);
       if (payload->payload) {

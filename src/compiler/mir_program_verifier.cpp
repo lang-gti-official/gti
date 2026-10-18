@@ -6915,6 +6915,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
                  !enumeration.variants.empty();
     declarations.push_back(enumeration.type);
     bool active = false;
+    bool movable = true;
+    bool fieldMoveAssignable = true;
+    bool borrowed = false;
     std::unordered_set<SymbolId> payloadSymbols;
     for (std::size_t variantIndex = 0;
          variantIndex < enumeration.variants.size(); ++variantIndex) {
@@ -6930,6 +6933,20 @@ verifyMirPayloadEnums(const MirProgram &program) {
         if (fieldIndex >= variant.payloadRequiresActiveCleanup.size())
           break;
         const SemanticType &field = variant.payloadTypes[fieldIndex];
+        const auto fieldTraits = concreteMirTypeTraits(program, field);
+        exact = exact && fieldTraits.has_value();
+        if (fieldTraits) {
+          movable = movable && fieldTraits->movable;
+          fieldMoveAssignable =
+              fieldMoveAssignable && fieldTraits->moveAssignable;
+          borrowed = borrowed || fieldTraits->containsBorrowedState;
+          // Replacement commits use generated movement after checked cleanup,
+          // never a potentially failing payload assignment policy.
+          if (enumeration.traits.moveAssignable &&
+              !enumeration.traits.containsBorrowedState)
+            exact =
+                exact && mirTypeRelocationIsDefinedFailureFree(program, field);
+        }
         // Stored mutable references are exclusive capabilities, unlike a
         // reference expression that can create a shorter reborrow. The
         // nominal enum cannot advertise whole-value copying for them.
@@ -6948,7 +6965,11 @@ verifyMirPayloadEnums(const MirProgram &program) {
         active = active || variant.payloadRequiresActiveCleanup[fieldIndex];
       }
     }
-    exact = exact && active == enumeration.requiresActiveCleanup &&
+    exact = exact && enumeration.traits.movable == movable &&
+            enumeration.traits.containsBorrowedState == borrowed &&
+            enumeration.traits.moveAssignable ==
+                (borrowed ? fieldMoveAssignable : movable) &&
+            active == enumeration.requiresActiveCleanup &&
             (!active || enumeration.traits.drop == DropKind::Lexical) &&
             enumeration.traits.relocation ==
                 mirTypeRelocationKind(program, enumeration.type);
@@ -7032,6 +7053,21 @@ verifyMirPayloadEnums(const MirProgram &program) {
             }
           }
           std::vector<bool> transferred(variant->payloadTypes.size(), false);
+          const auto preparedFieldDrop = [&](std::size_t index) {
+            if (!borrowedFields || index >= instruction.operands.size())
+              return MirDropObligationId{0};
+            const auto &operand = instruction.operands[index];
+            const auto *stage = operand.kind == MirOperandKind::Value
+                                    ? definitionFor(*body, operand.value)
+                                    : nullptr;
+            return stage && stage->kind == MirInstructionKind::CallInput &&
+                           stage->callSite == instruction.callSite &&
+                           stage->callInputRole == MirCallInputRole::Argument &&
+                           stage->callInputIndex == index &&
+                           stage->info.type == variant->payloadTypes[index]
+                       ? stage->preparedParameterDrop.value_or(0)
+                       : MirDropObligationId{0};
+          };
           std::size_t resultInitializations = 0;
           bool lifetimeOnlyTemporary = false;
           for (const MirLifecycleEvent &event : instruction.lifecycle) {
@@ -7042,11 +7078,18 @@ verifyMirPayloadEnums(const MirProgram &program) {
               for (std::size_t fieldIndex = 0;
                    source != nullptr && fieldIndex < transferred.size();
                    ++fieldIndex) {
+                const auto prepared = preparedFieldDrop(fieldIndex);
                 if (!transferred[fieldIndex] &&
-                    variant->payloadRequiresActiveCleanup[fieldIndex] &&
+                    (variant->payloadRequiresActiveCleanup[fieldIndex] ||
+                     prepared != 0) &&
+                    (!borrowedFields ||
+                     (prepared == event.source &&
+                      source->kind ==
+                          MirDropObligationKind::PreparedParameter)) &&
                     source->dropType.type ==
                         variant->payloadTypes[fieldIndex] &&
-                    source->dropType.requiresActiveCleanup) {
+                    source->dropType.requiresActiveCleanup ==
+                        variant->payloadRequiresActiveCleanup[fieldIndex]) {
                   transferred[fieldIndex] = true;
                   matched = true;
                   break;
@@ -7107,9 +7150,10 @@ verifyMirPayloadEnums(const MirProgram &program) {
           }
           for (std::size_t fieldIndex = 0; fieldIndex < transferred.size();
                ++fieldIndex) {
-            exact =
-                exact && transferred[fieldIndex] ==
-                             variant->payloadRequiresActiveCleanup[fieldIndex];
+            exact = exact &&
+                    transferred[fieldIndex] ==
+                        (variant->payloadRequiresActiveCleanup[fieldIndex] ||
+                         preparedFieldDrop(fieldIndex) != 0);
           }
           exact = exact && resultInitializations ==
                                static_cast<std::size_t>(
@@ -12275,6 +12319,83 @@ completeBorrowSourcePath(const MirProgram &program,
         inputs.push_back(fromOperand(state, operand));
       result =
           constructedCompleteBorrowFact(program, body, instruction, inputs);
+    } else if (instruction.kind == MirInstructionKind::Construct &&
+               instruction.constructorTarget && instruction.loan) {
+      const auto *constructor =
+          program.findConstructorInstance(*instruction.constructorTarget);
+      const auto *ownerClass =
+          constructor ? program.findClassInstance(constructor->owner) : nullptr;
+      const auto paths =
+          findStoredCarrierReferenceInventory(program, instruction.info.type);
+      const auto *published = body.findLoan(*instruction.loan);
+      bool exact =
+          constructor && ownerClass && paths && !paths->empty() &&
+          ownerClass->type == instruction.info.type &&
+          constructor->parameterTypes == instruction.parameterTypes &&
+          instruction.operands.size() == instruction.parameterTypes.size() &&
+          published && published->kind == MirLoanKind::Stored &&
+          !published->entry && !published->escapes &&
+          published->producedBy == instruction.hirValue;
+      MirBorrowDependencySet reconstructed;
+      if (exact) {
+        for (const auto &path : *paths) {
+          const auto mapping =
+              constructorFieldOrigin(program, *constructor, path);
+          if (!mapping || mapping->origin != BorrowOriginKind::Argument ||
+              mapping->parameter >= instruction.operands.size() ||
+              !path.conditions.empty()) {
+            exact = false;
+            break;
+          }
+          const auto input =
+              fromOperand(state, instruction.operands[mapping->parameter]);
+          bool found = false;
+          if (input)
+            for (auto dependency : input->dependencies) {
+              if (dependency.designatedFields != mapping->sourceFields ||
+                  dependency.conditions != mapping->sourceConditions)
+                continue;
+              if (mapping->access == AccessMode::Mutable &&
+                  dependency.access != AccessMode::Mutable) {
+                exact = false;
+                break;
+              }
+              dependency.designatedFields = path.fields;
+              dependency.access = mapping->access;
+              dependency.conditions = path.conditions;
+              reconstructed.dependencies.push_back(std::move(dependency));
+              found = true;
+            }
+          if (!found || !exact) {
+            exact = false;
+            break;
+          }
+        }
+      }
+      if (exact && completeBorrowSetHasTypedShape(
+                       program, instruction.info.type, reconstructed)) {
+        std::vector<MirLoanDependency> claims{
+            {.source = published->source,
+             .parent = published->parent,
+             .designatedFields = published->designatedFields,
+             .access = published->access,
+             .conditions = published->conditions}};
+        claims.insert(claims.end(), published->additionalDependencies.begin(),
+                      published->additionalDependencies.end());
+        // The existing single-field constructor contract permits a compact
+        // path. Restore that path only from the independently replayed layout.
+        if (claims.size() == 1 && reconstructed.dependencies.size() == 1 &&
+            claims.front().designatedFields.empty())
+          claims.front().designatedFields =
+              reconstructed.dependencies.front().designatedFields;
+        if (claims == reconstructed.dependencies) {
+          // Copies of the constructed carrier retain its proven group, not
+          // a fresh claim about the original parameter's storage.
+          for (auto &dependency : reconstructed.dependencies)
+            dependency.parent = published->id;
+          result = std::move(reconstructed);
+        }
+      }
     } else if (instruction.kind == MirInstructionKind::Compute &&
                instruction.operation == MirOperation::PayloadExtract) {
       if (const auto carrier = extractionSource(state, instruction))

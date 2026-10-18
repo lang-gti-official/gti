@@ -1141,10 +1141,32 @@ private constructor even when the originating GTI member can. The selected
 MIR constructor, staged arguments, destination, success activation, and
 rollback remain unchanged; source visibility is never widened.
 
-Empty-field admission for a containing owner of the sealed optional slot retains
+Legacy empty-field admission for a containing owner of the sealed optional slot retains
 the exact selected private constructor's instruction-free, nonborrowed void
 `Return` witness. A recursive fields-only aggregate proof cannot substitute the
 slot's shape for that witness after the selected constructor has been corrupted.
+The promoted standard optional no longer instantiates this capability: its
+state is an ordinary payload enum and uses the general constructor, active-tag,
+assignment and cleanup proofs. Legacy capability implementation code is retained
+but is not declared by `<std/optional>`.
+
+The declaration-bound `fail_empty_owner` terminal operation takes no arguments,
+never returns, and selects the existing `EmptyOwnerAccess`/`MemberAccess`
+failure. Semantics establishes those facts; HIR preserves them and MIR checks
+arity, termination, caller tracking and the exact failure identity independently.
+The backend publishes that verified failure using ordinary failure cleanup. It
+does not recognize `std::optional`, inspect its tag or grant access to its value.
+
+Owning enum replacement is admitted from an exact paired cleanup recipe,
+source slot and lifecycle transfer. It uses payload move construction even
+when payload assignment is unavailable; borrowed-state assignment rules do not
+change. After checked replacement cleanup, the backend retires the drained
+native alternative and leaves a vacant shell until commit or lexical drop.
+An enum nested in a containing class also retires its drained alternative on a
+first cleanup failure, preventing the containing failure edge from repeating
+child cleanup. Secondary-failure abandonment does not retire incompletely
+drained storage. Failure-free movement and raw relocation eligibility remain
+independent proofs, including for address-stable mutex storage.
 
 The existing MIR double-failure contract also has an inherited dynamic component:
 an ordinary source destructor or helper called by a failure-cleanup `Drop` cannot
@@ -3817,6 +3839,20 @@ instance of a generic active-drop class defines its cleanup adapter and
 destructor failure entries in its own deferred concrete row; the primary's
 lifecycle pass leaves that instance alone and emits explicit specializations
 only for instances that remain specializations of the primary.
+
+Dependent generic enum fields and signatures in these native carriers use a
+closed selector catalog. Its key retains the GTI enum family, expanded type
+arguments, and separate checked uint64 value arguments; trailing packs and
+namespace-distinct families remain distinct. Each specialization names an
+already-verified concrete enum representation. The native compiler does not
+instantiate payload semantics or invent a layout. An unused dependent family
+may have only an undefined selector primary; an executable concrete application
+must have its exact lowered/MIR instance. Missing concrete instances never
+become `void` fields. The catalog is emitted only for dependently referenced
+families, and rejects textual duplicate keys; native `is_same` assertions also
+reject distinct GTI keys that collapse through native typedef equivalence.
+Enum declaration parameter metadata is serialized and validated for exact
+argument kind/count and consistency across the family's concrete rows.
 
 Generated constructors have no source member declaration row. For a retained
 native primary, their exact ordinary and status-form specialization declarations

@@ -273,6 +273,8 @@ struct LoweredEnumDeclaration {
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
+  // Declaration-bound selector shape; executable payloads below are concrete.
+  std::vector<LoweredGenericParameter> genericParameters;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<LoweredEnumerator> enumerators;
   SemanticTypeTraits traits{};

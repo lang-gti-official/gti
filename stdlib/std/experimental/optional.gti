@@ -3,8 +3,8 @@
 // value directly and no compiler-private storage is involved. Prefix `?`
 // propagates an empty optional through `std::tryable`.
 //
-// This is the candidate successor of `std::optional`. It is promoted once its
-// surface, failure behaviour and performance match.
+// Compatibility spelling for the former candidate. New code should use
+// <std/optional>; this distinct type retains its historical panic behavior.
 #include <std/panic>
 #include <std/utility>
 

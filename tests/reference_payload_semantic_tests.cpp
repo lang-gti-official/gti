@@ -619,6 +619,95 @@ int main() { return 0; }
              "carrier, parent and referent type");
     }
   }
+  const std::string classCarrierPrefix = R"gti(
+class carrier {
+  int32_t& source;
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+enum holder { one(carrier value), none };
+)gti";
+  const auto classCarrier = lang::Frontend().analyze(
+      root / "tests" / "reference-class-payload.gti",
+      classCarrierPrefix + R"gti(
+int main() {
+  mut int32_t backing = 3;
+  carrier value = carrier(backing);
+  holder held = holder::one(value);
+  return 0;
+}
+)gti",
+      {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  if (!classCarrier.canGenerateCode())
+    for (const auto &diagnostic : classCarrier.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(
+      classCarrier.canGenerateCode(),
+      "passive borrowed class payload preserves origin and prepared lifetime");
+  const auto danglingClassCarrier = analyze(classCarrierPrefix + R"gti(
+holder dangling() {
+  mut int32_t backing = 3;
+  carrier value = carrier(backing);
+  return holder::one(value);
+}
+int main() { return 0; }
+)gti");
+  expect(danglingClassCarrier.syntaxValid &&
+             !danglingClassCarrier.semanticValid,
+         "borrowed class payload cannot escape its local referent");
+  if (classCarrier.canGenerateCode()) {
+    for (int mutation = 0; mutation != 6; ++mutation) {
+      auto malformed = classCarrier.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        auto &body = function.body;
+        for (auto &block : body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (mutation < 3 &&
+                instruction.operation == lang::MirOperation::PayloadConstruct &&
+                instruction.operands.size() == 1 &&
+                !instruction.lifecycle.empty()) {
+              auto &event = instruction.lifecycle.front();
+              if (mutation == 0)
+                event.source = 0;
+              else if (mutation == 1)
+                instruction.lifecycle.push_back(event);
+              else
+                instruction.lifecycle.clear();
+              changed = true;
+            }
+            if ((mutation == 3 || mutation == 4) &&
+                instruction.kind == lang::MirInstructionKind::Construct &&
+                instruction.loan && instruction.constructorTarget) {
+              auto &loan = body.loans[*instruction.loan - 1];
+              if (mutation == 3)
+                loan.source = 0;
+              else
+                loan.producedBy = 0;
+              changed = true;
+            }
+            if (mutation == 5 &&
+                instruction.kind == lang::MirInstructionKind::CallInput &&
+                instruction.preparedParameterDrop) {
+              const auto replacement = std::find_if(
+                  body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const auto &drop) {
+                    return drop.id != *instruction.preparedParameterDrop &&
+                           drop.dropType.type == instruction.info.type;
+                  });
+              if (replacement != body.dropObligations.end()) {
+                instruction.preparedParameterDrop = replacement->id;
+                changed = true;
+              }
+            }
+          }
+      }
+      expect(
+          changed && !lang::verifyMirProgram(malformed).valid(),
+          "borrowed class payload rejects absent/duplicate lifetime transfer "
+          "and forged constructor origin/publication");
+    }
+  }
   const auto constructed = lang::Frontend().analyze(
       root / "tests" / "reference-payload-constructor.gti", R"gti(
 enum Reading { empty, value(int& owner, int sequence) };

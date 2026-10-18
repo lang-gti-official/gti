@@ -730,6 +730,12 @@ auto SemanticVisitor::Impl::typeTraits(
       }
     }
     visiting.pop_back();
+    // An owning sum replaces its active alternative as a whole. The checked
+    // replacement sequence destroys the destination before constructing the
+    // new alternative; it does not invoke assignment on an existing payload.
+    // Borrow-carrying sums retain their existing dependency/assignment rules.
+    if (!traits.containsBorrowedState)
+      traits.moveAssignable = traits.movable;
     return traits;
   }
 
@@ -10786,11 +10792,14 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       validateType(argument);
     }
     if (!expr.typeArguments().empty() ||
-        (panic ? argumentTypes != std::vector<SemanticType>{SemanticType::StringView}
+        (panic ? argumentTypes !=
+                     std::vector<SemanticType>{SemanticType::StringView}
                : !argumentTypes.empty())) {
       report(expr.paren(),
-             panic ? "Panic requires one counted text-view message and no type arguments."
-                   : "Terminal owner failure requires no arguments or type arguments.",
+             panic ? "Panic requires one counted text-view message and no type "
+                     "arguments."
+                   : "Terminal owner failure requires no arguments or type "
+                     "arguments.",
              "GTI-S2019");
     }
     currentType = SemanticType::Void;
