@@ -74,7 +74,7 @@ below retain their technical prerequisites under the revised admission policy:
 | RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
 | RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. The sort slice is delivered in 0.410.1 as bounded iterative introsort; see [RT-9](#rt-9-library-algorithm-and-data-structure-choices). |
 | RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
-| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. Singleton cleanup forwarding removes unnecessary wrapper sequencing: fresh GCC/Linux paired evidence at `560cafa9` no longer shows the preceding 4.4% string residual. Its median is 1.0035 with a 95% interval spanning parity; this is not a universal exact-parity claim. Fresh macOS evidence remains required before final cross-platform acceptance or promotion of `std::experimental::optional`. |
+| RT-11 payload-enum construction and layout | General destination construction, place-based tag observation, a GTI-owned tagged carrier, exact closed-tag-domain proof, passive field publication and guarded native shell retirement are implemented; see the [backend contract](../architecture/backend.md). They preserve MIR Move/Replace/Drop and failure ordering rather than recognizing a public optional spelling. Singleton cleanup forwarding removes unnecessary wrapper sequencing: GCC/Linux paired evidence at `560cafa9` no longer shows the preceding 4.4% string residual. Fresh macOS evidence at `9d11fb6d` also shows no material regression; the string confidence intervals span parity on both platforms. This does not automatically promote `std::experimental::optional` or establish universal performance parity. |
 
 RT-11 evidence (2026-10-15): `scripts/benchmark_compare.py` compared the source
 and built-in optional workloads with Apple Clang 21, C++23, `-O2`, two warmups
@@ -134,8 +134,35 @@ The nine-mode allocation/move matrix retains zero scalar allocations and equal
 source/built-in string allocation counts and bytes. Unrelated singleton,
 multi-child and source-destructor fixtures, exact primary/secondary failure
 reports, partial construction, moved shells, ASan/UBSan and independently
-forged cleanup-recipe checks pass. Fresh macOS measurements remain pending;
-the earlier `bcb67338` results are not relabeled as this candidate's evidence.
+forged cleanup-recipe checks pass.
+
+The consolidation measurement (2026-10-18) uses the Release compiler built from
+clean `9d11fb6d`, Apple Clang 21, C++23, `-O2`, two warmups and two independently
+ordered 15-pair runs (seeds 1337/7331). The agents reserved a quiet local window.
+Both workloads pass their existing timing-quality gates and digest checks.
+Paired source/built-in medians are 0.8609 for scalar (bootstrap 95% interval
+0.8576–0.8652; 29/30 source samples faster) and 0.9876 for string
+(0.9789–1.0078; 20/30 faster). This closes the missing macOS measurement with
+no observed material regression, without claiming a precise string speedup.
+The compiler and build-report hashes match in both runs. The first run records
+a clean repository throughout; the second records a dirty-after flag because
+the concurrent packaging repair added one test source to
+`tests/installed_library_smoke/CMakeLists.txt` (subsequently `7b34db59`). That
+change does not alter the compiler binary, benchmark, runtime or emitted code;
+the second run is evidence for the unchanged `9d11fb6d` compiler, not a claim
+that its working tree stayed clean.
+
+Executable sizes (source/built-in) are 125208/125192 bytes for scalar and
+128792/128760 for string; emitted C++ sizes are 496336/480038 and
+695695/681066 bytes. Separate local resource builds take 0.70/0.66 seconds
+and 1.04/1.01 seconds, with peak RSS 118685696/108003328 bytes and
+147128320/137494528 bytes. These single resource samples describe build cost,
+not a statistically established build-time difference. Raw reports, commands,
+digests and binary identities are retained under
+`/private/tmp/gti-pr178-macos-seed1337` and
+`/private/tmp/gti-pr178-macos-seed7331`; `/private/tmp/gti-pr178-assessment.log`
+records the paired bootstrap and resource results. Final combined local
+correctness/installed-consumer validation belongs to the integrating PR #180.
 
 Closed-world executable lowering from #176 is already integrated; the old
 whole-stdlib code-size observations must be remeasured, not used as current
