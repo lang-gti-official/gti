@@ -18,6 +18,24 @@ enum expected_void_state<E> { value, error(E failure) };
 // result family with the same error type. No compiler type-name recognition.
 struct expected_error_identity<E> {};
 concept expected_result<R, Error> { typename value_type; };
+
+// A void invocation publishes an empty success; a value invocation moves its
+// result into the success alternative. Both policies use ordinary source class
+// profiles, so their callable contracts remain visible before instantiation.
+class expected_mapping<R, E> {
+public:
+  expected<R, E> invoke<F, Args...>(F& mapper, Args... arguments) {
+    R mapped = mapper(arguments...);
+    return expected<R, E>(std::move(mapped));
+  }
+};
+class expected_mapping<void, E> {
+public:
+  expected<void, E> invoke<F, Args...>(F& mapper, Args... arguments) {
+    mapper(arguments...);
+    return expected<void, E>();
+  }
+};
 }
 
 constexpr std::detail::unexpected_value<E> unexpected<E>(E value) {
@@ -93,21 +111,11 @@ public:
   }
 
   expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
-    if constexpr (std::meta::type<std::meta::callable_return_type<F>>().is_void()) {
-      switch (std::move(this.state)) {
-      case std::detail::expected_state<T, E>::value(value):
-        mapper(std::move(value));
-        return expected<void, E>();
-      case std::detail::expected_state<T, E>::error(error):
-        return expected<void, E>(unexpected(std::move(error)));
-      }
-    } else {
-      switch (std::move(this.state)) {
-      case std::detail::expected_state<T, E>::value(value):
-        return expected<std::meta::callable_return_type<F>, E>(mapper(std::move(value)));
-      case std::detail::expected_state<T, E>::error(error):
-        return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
-      }
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value):
+      return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper, std::move(value));
+    case std::detail::expected_state<T, E>::error(error):
+      return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
     }
   }
 
@@ -116,7 +124,8 @@ public:
     case std::detail::expected_state<T, E>::value(value):
       return expected<T, std::meta::callable_return_type<F>>(std::move(value));
     case std::detail::expected_state<T, E>::error(error):
-      return expected<T, std::meta::callable_return_type<F>>(unexpected(mapper(std::move(error))));
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return expected<T, std::meta::callable_return_type<F>>(unexpected(std::move(mapped)));
     }
   }
 
@@ -179,21 +188,11 @@ public:
   }
 
   expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
-    if constexpr (std::meta::type<std::meta::callable_return_type<F>>().is_void()) {
-      switch (std::move(this.state)) {
-      case std::detail::expected_void_state<E>::value:
-        mapper();
-        return expected<void, E>();
-      case std::detail::expected_void_state<E>::error(error):
-        return expected<void, E>(unexpected(std::move(error)));
-      }
-    } else {
-      switch (std::move(this.state)) {
-      case std::detail::expected_void_state<E>::value:
-        return expected<std::meta::callable_return_type<F>, E>(mapper());
-      case std::detail::expected_void_state<E>::error(error):
-        return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
-      }
+    switch (std::move(this.state)) {
+    case std::detail::expected_void_state<E>::value:
+      return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper);
+    case std::detail::expected_void_state<E>::error(error):
+      return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
     }
   }
 
@@ -202,7 +201,8 @@ public:
     case std::detail::expected_void_state<E>::value:
       return expected<void, std::meta::callable_return_type<F>>();
     case std::detail::expected_void_state<E>::error(error):
-      return expected<void, std::meta::callable_return_type<F>>(unexpected(mapper(std::move(error))));
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return expected<void, std::meta::callable_return_type<F>>(unexpected(std::move(mapped)));
     }
   }
 
@@ -279,15 +279,15 @@ for <T, E> concept std::detail::expected_result<expected<T, E>, std::detail::exp
 for <T, E> concept std::tryable<expected<T, E>> {
   using value_type = T;
   using residual_type = std::detail::unexpected_value<E>;
-  bool has_value(expected<T, E>& value) { return value.has_value(); }
-  [[borrowed_from(value)]] T take_value(expected<T, E> value) {
+  constexpr bool has_value(expected<T, E>& value) { return value.has_value(); }
+  [[borrowed_from(value)]] constexpr T take_value(expected<T, E> value) {
     if constexpr (std::meta::type<T>().is_void()) {
       std::move(value).value();
     } else {
       return std::move(value).value();
     }
   }
-  residual_type take_residual(expected<T, E> value) {
+  constexpr residual_type take_residual(expected<T, E> value) {
     return unexpected(std::move(value).error());
   }
 };

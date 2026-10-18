@@ -1,10 +1,20 @@
 // A source class family can provide distinct value, void and borrowed profiles.
 // Selection changes the source definition, not the rules for checked borrows.
+enum Content<T> { value(T payload) };
 class Packet<T, E> {
-  T payload;
+  mut Content<T> payload;
 public:
-  Packet(T value) : payload(std::move(value)) {}
-  T& value() { return this.payload; }
+  constexpr Packet(T value) : payload(Content<T>::value(std::move(value))) {}
+  constexpr T& value() {
+    switch (this.payload) {
+    case Content<T>::value(auto& value): return value;
+    }
+  }
+  constexpr T take() && {
+    switch (std::move(this.payload)) {
+    case Content<T>::value(value): return std::move(value);
+    }
+  }
   int kind() { return 1; }
 };
 
@@ -25,6 +35,17 @@ public:
 
 int inspect<T, E>(Packet<T, E>& value) { return value.kind(); }
 
+// The same enum-backed source class executes at compile time and at runtime.
+// Borrowed profiles still obey their runtime owner dependency; this does not
+// introduce persistent reference constants.
+constexpr int consume_packet() {
+  Packet<int, int> packet{42};
+  return std::move(packet).take();
+}
+constexpr Packet<int, int> frozen{42};
+static_assert(frozen.value() == 42);
+static_assert(consume_packet() == 42);
+
 int main() {
   Packet<int, int> owned{42};
   Packet<void, int> empty{};
@@ -32,6 +53,6 @@ int main() {
   Packet<int&, int> borrowed{owner};
   empty.value();
   // `owner` must still be alive and cannot be mutated while this borrow is used.
-  return owned.value() == 42 && borrowed.value() == 7 &&
+  return consume_packet() == 42 && owned.value() == 42 && borrowed.value() == 7 &&
       inspect(owned) == 1 && inspect(empty) == 2 && inspect(borrowed) == 3 ? 0 : 1;
 }

@@ -1,30 +1,29 @@
 #include <std/memory>
-#include <std/panic>
 
 enum Signal<T> { empty, value(T payload), error(int code) };
+enum Content<T> { value(T payload) };
 class Packet<T> {
-  mut Signal<T> state;
+  mut Content<T> state;
 public:
-  constexpr Packet(T value) : state(Signal<T>::value(std::move(value))) {}
+  constexpr Packet(T value) : state(Content<T>::value(std::move(value))) {}
   constexpr bool has_value() {
     switch (this.state) {
-    case Signal<T>::empty: return false;
-    case Signal<T>::value: return true;
-    case Signal<T>::error: return false;
+    case Content<T>::value: return true;
     }
   }
   constexpr T& value() {
     switch (this.state) {
-    case Signal<T>::value(auto& value): return value;
-    case Signal<T>::empty: std::panic("empty");
-    case Signal<T>::error: std::panic("error");
+    case Content<T>::value(auto& value): return value;
+    }
+  }
+  constexpr mut T& value() mut {
+    switch (this.state) {
+    case Content<T>::value(mut auto& value): return value;
     }
   }
   constexpr T take() && {
     switch (std::move(this.state)) {
-    case Signal<T>::value(value): return std::move(value);
-    case Signal<T>::empty: std::panic("empty");
-    case Signal<T>::error(code): std::panic("error");
+    case Content<T>::value(value): return std::move(value);
     }
   }
 };
@@ -43,8 +42,21 @@ constexpr int packet_work() {
   return packet.has_value() ? packet.value() : 0;
 }
 constexpr int consumed_work() {
-  mut Packet<int> packet{42};
+  Packet<int> packet{42};
   return std::move(packet).take();
+}
+constexpr int mutated_work() {
+  mut Packet<int> packet{40};
+  packet.value() += 2;
+  return packet.value();
+}
+constexpr int empty_work() {
+  Signal<int> signal = Signal<int>::empty;
+  switch (signal) {
+  case Signal<int>::empty: return 42;
+  case Signal<int>::value(value): return value;
+  case Signal<int>::error(code): return code;
+  }
 }
 struct Counter {
   int value;
@@ -62,7 +74,7 @@ constexpr int record_work() {
   return packet.value().x + packet.value().y;
 }
 constexpr int owning_work() {
-  mut Packet<std::unique_ptr<int>> packet{std::make_unique<int>(42)};
+  Packet<std::unique_ptr<int>> packet{std::make_unique<int>(42)};
   auto owner = std::move(packet).take();
   return *owner;
 }
@@ -84,7 +96,7 @@ struct RuntimeOnly {
   ~RuntimeOnly() {}
 };
 int runtime_only() {
-  mut Packet<RuntimeOnly> packet{RuntimeOnly(42)};
+  Packet<RuntimeOnly> packet{RuntimeOnly(42)};
   auto result = std::move(packet).take();
   return result.value;
 }
@@ -96,13 +108,16 @@ static_assert(frozen_record.value().x == 40);
 static_assert(payload_work() == 42);
 static_assert(packet_work() == 42);
 static_assert(consumed_work() == 42);
+static_assert(mutated_work() == 42);
+static_assert(empty_work() == 42);
 static_assert(callable_work() == 42);
 static_assert(record_work() == 42);
 static_assert(owning_work() == 42);
 static_assert(twins_work() == 42);
 int main() {
   return payload_work() == 42 && packet_work() == 42 &&
-         consumed_work() == 42 && callable_work() == 42 &&
+         consumed_work() == 42 && mutated_work() == 42 && empty_work() == 42 &&
+         callable_work() == 42 &&
          record_work() == 42 && owning_work() == 42 && twins_work() == 42 &&
          runtime_only() == 42 ? 0 : 1;
 }

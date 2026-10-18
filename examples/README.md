@@ -239,7 +239,7 @@ is a teaching helper, not a production server.
 | `165-borrowed-payload-results.gti` | source-defined class and enum results with owning string errors and reference successes; checked selection and `borrowed_from` relay the exact external owner when `?` consumes the wrapper |
 | `166-source-optional.gti` | stable `std::optional` over ordinary payload-enum storage, `std::nullopt`, move assignment, consuming `value()` and `?` propagation |
 | `167-callable-result-types.gti` | computed callable result types used by an unrelated source-defined mapping wrapper; no builtin combinator |
-| `168-source-value-profiles.gti` | disjoint void/reference class profiles with an ordinary fallback, generic forwarding, and checked borrowing |
+| `168-source-value-profiles.gti` | disjoint void/reference class profiles, enum-backed constexpr construction and consumption, generic forwarding, and checked borrowing |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

@@ -8999,6 +8999,56 @@ every prerequisite in the release matrix below is complete.
 The release phase owns the following explicit acceptance matrix. These are
 requirements to implement and verify, not permission to drop old behavior:
 
+The borrowed-wrapper prerequisite remains in progress. Its general rule is a
+source class retaining a complete, alternative-guarded external dependency set
+through one nominal field, not an exception for `expected`. All retained paths
+and alternative guards must share that field prefix; projection removes that
+prefix from every obligation or declines the projection. Constructor summaries
+currently require an empty source body and exact typed initializers. Sibling
+borrowed fields and arbitrary post-initialization dependency replacement need
+their own general composition proof, not selective dropping of dependencies.
+
+Constructor publication must be explicit in MIR: initialize the exact field
+from the checked value, publish its entire origin/access/guard group into an
+escaping Stored field group while the producer remains live, then retire the
+producer group. Independently reconstruct and compare every normal exit with
+that field publication. An empty alternative requires known-empty typed
+evidence and must not invent an owner loan. Consuming reference extraction may
+retain only an external referent; receiver-owned storage cannot escape the
+consumed shell. The reference profile reads the selected field while consuming
+the wrapper; it does not require moving an enum subfield out separately.
+
+Focused work has established a compiling/running empty-wrapper case and an
+independent constructor-publication checker with mutations for missing or
+substituted origins, guards, access, field initialization and publication.
+The nonempty wrapper still fails the older body/program verifier boundaries;
+integration is not validated or released. Remaining acceptance includes exact
+receiver-entry and constructor-publication integration, source dangling/alias
+rejections, malformed receiver/field/loan mutations, native lifecycle runs and
+the release matrix below. Passing a standalone summary checker is not evidence
+that the whole program is safe or ready to release.
+
+The enum constant-execution prerequisite now passes its focused compiler and
+native differential tests: exact alternatives, class-contained enum fields,
+read-only/mutable observations, consuming extraction, transient owning payloads
+and persistent passive constants use the verified MIR executor. Runtime-only
+payloads remain valid runtime instantiations of generic constexpr declarations.
+Example 168 demonstrates the same enum-backed source class at compile time and
+runtime. These results do not yet validate the production expected cutover or
+introduce persistent reference constants.
+
+Combinator compatibility remains an explicit integration goal. The source draft
+uses ordinary value/void invocation profiles and checked-reference mapper
+parameters; named value-returning lambdas reach native execution. Fresh lambdas
+(including existing borrowing captures) and namespace function items still need
+general call-scoped temporary-reference admission with exact capture dependencies,
+non-escape, full-expression cleanup and invocation capability proofs. Do not
+replace a named callback's environment with an implicit ownership copy. The
+current void-mapping native probe also exposes a backend vocabulary rejection
+after verified MIR; that path is not release-ready. The draft header remains
+outside the prelude until these compatibility gates, constructor publication,
+ordinary implicit-return construction and the complete release matrix pass.
+
 1. **Storage and type-dependent surface:** source classes and private enums
    express owned, void-success and read-only-reference-success profiles.
    Choose general type projection/selection or disjoint generic-definition
@@ -9244,10 +9294,13 @@ successful empty returns additionally need a general explicit constructor opt-in
   source-class fields, borrowed observations and consuming receivers. Transient
   owner payloads must follow the ordinary selected-variant cleanup recipe;
   persistent constants remain passive. Constructor fields require explicit
-  canonical publication stages. Focused `testConstexprPayloadEnums` and
-  `constexpr_payload_enum_runtime` cover the implementation; acceptance remains
-  pending their focused proof, malformed-MIR, native differential and complete
-  production-cutover gates. No AST payload interpreter is introduced.
+  canonical publication stages. Focused `testConstexprPayloadEnums`, all 26
+  constexpr compiler cases and `constexpr_payload_enum_runtime` pass with the
+  optimized host compiler, including malformed variant/publication checks,
+  mutable and read-only observations, consuming receiver cleanup, C++20/23
+  O0/O1/O2/O3 differential execution and sanitizer/no-elide checks. Complete
+  production-cutover compatibility and release gates remain pending. No AST
+  payload interpreter is introduced.
 - **Remaining scope:** Stored references, shared/virtual/recursive owning
   cleanup, raw-memory/provider allocation protocols,
   in-place constructor targets without an explicit canonical field-write schedule,
