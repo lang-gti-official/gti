@@ -7579,10 +7579,10 @@ private:
                                  found->second == loan;
                         });
         if (!endsHere) {
-          const auto exact = previous == nullptr
-                                 ? uniqueSemanticLoanEndpoints.end()
-                                 : uniqueSemanticLoanEndpoints.find(
-                                       previous->semanticLoan);
+          const auto exact =
+              previous == nullptr
+                  ? uniqueSemanticLoanEndpoints.end()
+                  : uniqueSemanticLoanEndpoints.find(previous->semanticLoan);
           if (exact != uniqueSemanticLoanEndpoints.end() && exact->second != 0)
             endpoint = exact->second;
           else {
@@ -14224,7 +14224,8 @@ private:
   bool exitsJoined = false;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
-  std::unordered_map<SemanticLoanId, HirStatementId> uniqueSemanticLoanEndpoints;
+  std::unordered_map<SemanticLoanId, HirStatementId>
+      uniqueSemanticLoanEndpoints;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;

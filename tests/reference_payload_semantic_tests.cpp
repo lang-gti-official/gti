@@ -387,6 +387,12 @@ enum Observed { ready(int& value), failed(std::string error) };
   if (fail) return Observed::failed(std::string("bad"));
   return Observed::ready(owner);
 }
+int inspect(Observed& result) {
+  switch (result) {
+    case Observed::ready(value): return value;
+    case Observed::failed(auto& error): return int(error.size());
+  }
+}
 )gti";
   for (const bool exclusive : {false, true}) {
     const auto observed = lang::Frontend().analyze(
@@ -395,6 +401,7 @@ enum Observed { ready(int& value), failed(std::string error) };
 int main() {
   int owner = 3;
   mut auto result = produce(owner, true);
+  if (inspect(result) != 3) return 1;
   switch (result) {
     case Observed::ready(value): return value;
 )gti" +
@@ -451,6 +458,71 @@ int main() {
     expect(
         changed && !lang::verifyMirProgram(forged).valid(),
         "an external dependency cannot authorize physical enum field storage");
+    auto omitted = observed.mir;
+    bool omittedDependency = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(omitted)) {
+      for (auto &loan : function.body.loans) {
+        if (loan.kind != lang::MirLoanKind::Local || loan.referenceSelection ||
+            loan.parent == 0 || loan.storedDependency == 0)
+          continue;
+        loan.storedDependency = 0;
+        omittedDependency = true;
+        break;
+      }
+      if (omittedDependency)
+        break;
+    }
+    expect(
+        omittedDependency && !lang::verifyMirProgram(omitted).valid(),
+        "physical child reborrows retain their parent's external dependency");
+    auto missingSelection = observed.mir;
+    bool removedSelection = false;
+    for (auto &function :
+         lang::MirProgramTestAccess::functions(missingSelection)) {
+      for (auto &loan : function.body.loans) {
+        const auto *parent = function.body.findLoan(loan.parent);
+        if (!loan.referenceSelection || !parent || !parent->entry)
+          continue;
+        loan.referenceSelection.reset();
+        removedSelection = true;
+        break;
+      }
+      if (removedSelection)
+        break;
+    }
+    expect(removedSelection &&
+               !lang::verifyMirProgram(missingSelection).valid(),
+           "unguarded scalar projection cannot omit its exact selection proof");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto detached = observed.mir;
+      bool altered = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(detached)) {
+        for (auto &block : function.body.blocks) {
+          for (auto &instruction : block.instructions) {
+            if (instruction.operation != lang::MirOperation::PayloadExtract ||
+                instruction.payloadExtractionKind !=
+                    lang::PayloadExtractionKind::BorrowValue)
+              continue;
+            if (mutation == 0)
+              instruction.payloadExtractionKind =
+                  lang::PayloadExtractionKind::CopyValue;
+            else if (mutation == 1)
+              instruction.enumVariant = 0;
+            else
+              instruction.operands.front().place = 0;
+            altered = true;
+            break;
+          }
+          if (altered)
+            break;
+        }
+        if (altered)
+          break;
+      }
+      expect(
+          altered && !lang::verifyMirProgram(detached).valid(),
+          "owned field dependency requires exact borrow mode, tag and carrier");
+    }
   }
   for (const std::string body :
        {"result = produce(owner, true); return int(error.size());",

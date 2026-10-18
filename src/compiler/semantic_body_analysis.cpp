@@ -4976,6 +4976,12 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             payload.binding.retainedLoan = createRetainedLoan(
                 *carrier, symbol, SemanticLoanKind::Reference, payload.source,
                 place, place.root, place.receiver, access, true, parent);
+            if (const auto *ancestor = semanticModel.findLoan(parent);
+                ancestor && ancestor->storedDependency != 0) {
+              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
+              loan.storedDependency = ancestor->storedDependency;
+              semanticModel.recordLoan(std::move(loan));
+            }
             // The binding is born at this arm's entry, not at the switch
             // subject's full expression. Keep its endpoint lexical until
             // arm-local NLL creation/endpoint plans are represented.
