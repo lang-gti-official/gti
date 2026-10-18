@@ -123,6 +123,12 @@ public:
     }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
+      for (const SemanticLoanId loan : statement.endedLoans) {
+        const auto [entry, inserted] =
+            uniqueSemanticLoanEndpoints.emplace(loan, statement.id);
+        if (!inserted && entry->second != statement.id)
+          entry->second = 0;
+      }
       if (statement.kind == HirStatementKind::Return) {
         ++exitCount;
       }
@@ -7485,6 +7491,7 @@ private:
     const bool transferableBorrowedResult =
         call.loan &&
         (value.info.type.kind == SemanticType::Class ||
+         value.info.type.kind == SemanticType::Enum ||
          mirFallibleBorrowReferent(value.info.type).has_value()) &&
         value.info.category == ValueCategory::Value &&
         value.info.traits.movable && value.info.traits.containsBorrowedState;
@@ -7549,7 +7556,8 @@ private:
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = loan});
       removeLoanFromState(loan, scopes, bindingLoans);
-      // HIR can also end this consumed capability at the enclosing statement.
+      // HIR can also end this consumed capability at a later last-use statement
+      // when a result retains its external origins under a new identity.
       // The call has already emitted its exact executable endpoint; remember
       // only that statement's acknowledgement rather than accepting arbitrary
       // inactive loans (or emitting a second EndBorrow).
@@ -7571,9 +7579,17 @@ private:
                                  found->second == loan;
                         });
         if (!endsHere) {
-          const auto enclosing = enclosingTransferredLoanEndpoints.find(loan);
-          if (enclosing != enclosingTransferredLoanEndpoints.end())
-            endpoint = enclosing->second;
+          const auto exact = previous == nullptr
+                                 ? uniqueSemanticLoanEndpoints.end()
+                                 : uniqueSemanticLoanEndpoints.find(
+                                       previous->semanticLoan);
+          if (exact != uniqueSemanticLoanEndpoints.end() && exact->second != 0)
+            endpoint = exact->second;
+          else {
+            const auto enclosing = enclosingTransferredLoanEndpoints.find(loan);
+            if (enclosing != enclosingTransferredLoanEndpoints.end())
+              endpoint = enclosing->second;
+          }
         }
         callTransferredLoanEndpoints.insert_or_assign(loan, endpoint);
       }
@@ -14209,6 +14225,7 @@ private:
   bool exitsJoined = false;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
+  std::unordered_map<SemanticLoanId, HirStatementId> uniqueSemanticLoanEndpoints;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;
