@@ -5505,6 +5505,11 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   return result;
 }
 
+[[nodiscard]] bool
+independentlyEmptyConditionalReturn(const MirProgram &program,
+                                    const MirFunctionInstance &function,
+                                    MirBlockId block);
+
 [[nodiscard]] MirVerificationResult
 verifyMirFunctionBorrowSummary(const MirProgram &program,
                                const MirFunctionInstance &instance) {
@@ -5797,7 +5802,9 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           block.terminator.value->type.arguments.size() == 1 &&
           block.terminator.value->type.arguments.front() ==
               instance.returnType.arguments.back();
-      if (fallibleBorrowErrorReturn || independentTextLiteral) {
+      if (fallibleBorrowErrorReturn || independentTextLiteral ||
+          (instance.returnType.kind == SemanticType::Enum &&
+           independentlyEmptyConditionalReturn(program, instance, block.id))) {
         continue;
       }
       return verificationFailure(
@@ -12594,6 +12601,26 @@ private:
   }
 };
 
+[[nodiscard]] bool
+independentlyEmptyConditionalReturn(const MirProgram &program,
+                                    const MirFunctionInstance &function,
+                                    MirBlockId block) {
+  CompleteBorrowSummaryVerification summaries(program);
+  if (!summaries.query(function.id))
+    return false;
+  const auto *flow = summaries.observations(function.body, function.id);
+  if (!flow || !flow->verification.valid())
+    return false;
+  const auto returned =
+      std::find_if(flow->normalReturns.begin(), flow->normalReturns.end(),
+                   [&](const auto &item) { return item.block == block; });
+  return returned != flow->normalReturns.end() && returned->dependencies &&
+         returned->dependencies->dependencies.empty() &&
+         !returned->dependencies->possibleAlternatives.empty() &&
+         completeBorrowSetHasTypedShape(program, function.returnType,
+                                        *returned->dependencies);
+}
+
 // Address identity and owner provenance are independent. A selected reference
 // must retain every possible external origin of the exact carrier snapshot;
 // neither the first origin nor the selection's attached field/tag is evidence
@@ -12855,12 +12882,14 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
   };
   std::unordered_set<MirLoanId> proving;
   std::unordered_set<MirLoanId> proved;
+  std::unordered_map<MirLoanId, MirBorrowDependencySet> provenFacts;
   const auto proveGuarded = [&](auto &&self, const MirLoan &loan) -> bool {
     if (proved.contains(loan.id))
       return true;
     if (!proving.insert(loan.id).second)
       return false;
     bool valid = false;
+    CompleteBorrowFact evidence;
     const auto *source = body.findPlace(loan.source);
     if (loan.entry) {
       const auto entry = source && source->root == MirPlaceRootKind::Binding
@@ -12868,6 +12897,8 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
                                    program, body, owner, source->binding)
                              : std::nullopt;
       valid = entry && entry->group == loan.id;
+      if (valid)
+        evidence = entry->dependencies;
     } else if (const auto found = loanProducers.find(loan.id);
                found != loanProducers.end() && found->second) {
       const auto &producer = *found->second;
@@ -12879,6 +12910,8 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
                 loan.producedBy == producer.hirValue && fact &&
                 loanDependencies(loan) == fact->dependencies;
+        if (valid)
+          evidence = fact;
       } else if (producer.kind == MirInstructionKind::Borrow &&
                  producer.operands.size() == 1 &&
                  producer.operands.front().kind == MirOperandKind::Loan) {
@@ -12893,18 +12926,59 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
                 loan.designatedFields == input->designatedFields &&
                 loan.conditions == input->conditions &&
                 loan.additionalDependencies == input->additionalDependencies;
+        if (valid)
+          evidence = provenFacts.at(input->id);
       }
     }
     proving.erase(loan.id);
-    if (valid)
+    if (valid) {
       proved.insert(loan.id);
+      provenFacts.emplace(loan.id, std::move(*evidence));
+    }
     return valid;
   };
-  for (const auto &loan : body.loans)
-    if (guarded(loan) && !proveGuarded(proveGuarded, loan))
+  for (const auto &loan : body.loans) {
+    bool needsProof = guarded(loan);
+    if (const auto found = loanProducers.find(loan.id);
+        found != loanProducers.end() && found->second) {
+      const auto &producer = *found->second;
+      if (producer.kind == MirInstructionKind::Borrow &&
+          producer.operands.size() == 1 &&
+          producer.operands.front().kind == MirOperandKind::Loan) {
+        const auto *input = body.findLoan(producer.operands.front().loan);
+        needsProof |= input && guarded(*input);
+      }
+      if (producer.result && *producer.result <= flow.values.size()) {
+        const auto &fact = flow.values[*producer.result - 1];
+        needsProof |=
+            fact && std::any_of(fact->dependencies.begin(),
+                                fact->dependencies.end(), [](const auto &item) {
+                                  return !item.conditions.empty();
+                                });
+      }
+    }
+    if (needsProof && !proveGuarded(proveGuarded, loan))
       return verificationFailure(body, owner,
                                  "conditional loan lacks its exact typed entry "
                                  "or executable origin group");
+  }
+  for (const auto &returned : flow.normalReturns) {
+    if (!returned.dependencies ||
+        std::none_of(returned.dependencies->dependencies.begin(),
+                     returned.dependencies->dependencies.end(),
+                     [](const auto &item) { return !item.conditions.empty(); }))
+      continue;
+    const auto *block = body.findBlock(returned.block);
+    const auto published = block && block->terminator.returnLoan
+                               ? provenFacts.find(*block->terminator.returnLoan)
+                               : provenFacts.end();
+    if (published == provenFacts.end() ||
+        !equalCompleteBorrowSets(published->second, returned.dependencies))
+      return verificationFailure(body, owner,
+                                 "conditional return does not publish the "
+                                 "complete returned value's origins",
+                                 returned.block);
+  }
   bool needsTransportProof = std::any_of(
       body.loans.begin(), body.loans.end(),
       [](const MirLoan &loan) { return loan.referenceSelection.has_value(); });
