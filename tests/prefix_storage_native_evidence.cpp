@@ -11,6 +11,7 @@
 
 #include "cpp_backend_test_support.h"
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -337,6 +338,51 @@ const int byte_copy_probe = [] {
   mir_lifetime_slot<Tracked, true> copied;
   copied.construct(original);
   if (copied.get().copies != 1) std::abort();
+
+  // Retirement empties the MIR slot even when a trivial representation can
+  // remain alive until storage reuse. Const subobjects and a nontrivial copy
+  // constructor must still observe the newly constructed object each time.
+  struct Passive {
+    const int id;
+    explicit Passive(int value) : id(value) {}
+    Passive(const Passive &other) : id(other.id + 1) {}
+  };
+  static_assert(std::is_trivially_destructible_v<Passive>);
+  static_assert(!std::is_trivially_copyable_v<Passive>);
+  mir_lifetime_slot<Passive> source_slot;
+  mir_lifetime_slot<Passive> destination_slot;
+  for (int i = 0; i != 128; ++i) {
+    source_slot.construct(i);
+    destination_slot.construct(std::move(source_slot.get()));
+    source_slot.destroy();
+    if (destination_slot.get().id != i + 1) std::abort();
+    destination_slot.destroy();
+  }
+  int destructions = 0;
+  struct Nontrivial {
+    int *count;
+    explicit Nontrivial(int *value, bool fail = false) : count(value) {
+      if (fail) throw 2;
+    }
+    ~Nontrivial() { ++*count; }
+  };
+  static_assert(!std::is_trivially_destructible_v<Nontrivial>);
+  {
+    mir_lifetime_slot<Nontrivial, true> slot;
+    slot.construct(&destructions);
+    slot.destroy();
+    if (destructions != 1) std::abort();
+    try { slot.construct(&destructions, true); } catch (int) {}
+    if (destructions != 1) std::abort();
+    slot.construct(&destructions);
+  }
+  if (destructions != 2) std::abort();
+  try {
+    mir_lifetime_slot<Nontrivial, true> slot;
+    slot.construct(&destructions);
+    throw 1;
+  } catch (int) {}
+  if (destructions != 3) std::abort();
   return 0;
 }();
 }
@@ -566,6 +612,31 @@ int main(int argc, char **argv) {
           run.built && run.exitStatus == 0,
           "byte-preserving storage transport must run clean under ASan/UBSan");
     }
+  }
+
+  // Physical trivial objects may outlive retirement; logical slot guards
+  // must continue rejecting access, double retirement and live-slot reuse.
+  for (const auto &[name, operation, fragment] :
+       {std::array<std::string_view, 3>{
+            "retired-read", "slot.construct(7); slot.destroy(); slot.get();",
+            "verified MIR lifetime slot was read while empty"},
+        {"retired-drop", "slot.construct(7); slot.destroy(); slot.destroy();",
+         "verified MIR lifetime slot was dropped while empty"},
+        {"live-reuse", "slot.construct(7); slot.construct(8);",
+         "verified MIR lifetime slot was constructed twice"}}) {
+    const auto artifact =
+        emitArtifact(std::string(name), "int main() { return 0; }");
+    if (artifact.empty())
+      continue;
+    std::ofstream(artifact, std::ios::app)
+        << "\nnamespace { const int retirement_guard = [] { "
+           "::gti_internal::backend::mir_lifetime_slot<int> slot; "
+        << operation << " return 0; }(); }\n";
+    const auto run = buildAndRun(compiler, artifact, directory,
+                                 std::string(name), "c++23", "-O3", "");
+    expect(run.built && run.exitStatus != 0 &&
+               run.stderrText.find(fragment) != std::string::npos,
+           "retirement must preserve the slot guard: " + std::string(name));
   }
 
   // Every misuse scenario trips exactly the surface that reaches it first:
