@@ -86,11 +86,8 @@ int main() {
   if (inspect(idle) != 0 || inspect(copied) != 0 || inspect(returned) != 0)
     return 1;
   if (inspect(item) != 3 || inspect(pair) != 7) return 2;
-  switch (std::move(returned)) {
-    case Event<int32_t&>::idle: return 0;
-    case Event<int32_t&>::item(value): return 3;
-    case Event<int32_t&>::pair(first, second): return 4;
-  }
+  auto moved = std::move(returned);
+  return inspect(moved);
 }
 """, 0, ""),
         "array-substitution": (PASSIVE + """
@@ -622,7 +619,7 @@ int main() { auto event = Event<void>::idle; return 0; }
 """, "GTI-S2067", "payload"),
         "reference-temporary-owner": (PASSIVE + """
 int main() { auto event = Event<int32_t&>::item(3); return 0; }
-""", "GTI-S2017", "temporary"),
+""", "GTI-S2067", "stable dependency origins"),
         "reference-local-escape": (PASSIVE + """
 Event<int32_t&> dangling() {
   int32_t local = 3;

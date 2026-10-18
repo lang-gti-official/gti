@@ -1744,8 +1744,10 @@ alternative has a known empty set; it must not borrow an unrelated argument
 just because another alternative needs one. This also applies after generic
 reference substitution and when multiple other alternatives contain borrows:
 the selected typed alternative, not the type-wide number of reference paths,
-determines whether initialization needs external owners. A shared-reference enum may be
-copied when its other fields permit copying. An exclusive-reference field makes
+determines whether initialization needs external owners. Source-bodied empty
+factories establish that complete fact through their return expressions; a bare
+declaration or missing dependency metadata does not establish an empty proof.
+A shared-reference enum may be copied when its other fields permit copying. An exclusive-reference field makes
 the complete enum move-only, including when nested in another enum.
 
 Selecting a direct reference field proves the active tag and retains all of
