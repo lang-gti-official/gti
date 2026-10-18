@@ -5458,7 +5458,9 @@ private:
            .constructionProof = emptyProof});
     else
       body.contextualConstructions.push_back(
-          {.source = initializer, .value = id});
+          {.source = initializer,
+           .value = id,
+           .constructionProof = model.contextualConstructionProof(*initializer)});
     return id;
   }
 

@@ -975,10 +975,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const HirValue *argument = value == nullptr || value->operands.empty()
                                      ? nullptr
                                      : body.findValue(value->operands.front());
+      const auto &proof = entry.constructionProof;
       const ResolvedConstructionInfo *construction =
-          entry.source == nullptr
-              ? nullptr
-              : semantics.findContextualConstruction(*entry.source);
+          proof && proof->source() == entry.source &&
+                  proof->snapshot() == semantics.analysisSeal().programSnapshot
+              ? &proof->construction()
+              : nullptr;
       const HirConstructorInstance *target =
           value != nullptr && value->constructorTarget
               ? program.findConstructorInstance(*value->constructorTarget)

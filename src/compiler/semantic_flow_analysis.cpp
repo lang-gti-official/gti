@@ -3017,7 +3017,6 @@ auto SemanticVisitor::Impl::declarationConstructionApplies(
   if (!expr || declaredType.kind != SemanticType::Class ||
       declaredType.classId == 0 || declaredType.classId > classes.size() ||
       initializerType == SemanticType::Unknown ||
-      initializerType == SemanticType::NullPtr ||
       initializerType == declaredType) {
     return false;
   }
@@ -8572,8 +8571,11 @@ auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
   if (!query || !function || function->id != query->function ||
       lambdaDepth != 0)
     return;
-  collectRawResultFields(rawPointerFields(expression.get()),
-                         function->bodyDeclaration()->parameters(),
+  const auto fields =
+      expression && recordsDeclarationConversion(*expression)
+          ? contextualConstructionRawFields(*expression, currentReturnType)
+          : rawPointerFields(expression.get());
+  collectRawResultFields(fields, function->bodyDeclaration()->parameters(),
                          function->parameterTypes, false);
 }
 

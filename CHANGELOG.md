@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.448.0 — One-step declared return initialization
+
+- Explicitly declared value returns use the same single implicit constructor or
+  conversion operator as typed declarations. Calls and assignments keep exact
+  types; access, ownership, borrow checks and cleanup remain enforced, and
+  implicit conversions never chain.
+- `std::optional<T>` accepts one exact payload through `implicit optional(T)`.
+  Return `std::nullopt` or `std::string("ready")` directly from an optional-string
+  function; named move-only payloads still require `std::move`.
+
 ## 0.447.0 — Callable result-type reflection
 
 - Add `std::meta::callable_return_type<F>` for exact logical results of

@@ -1,0 +1,118 @@
+// Return initialization is the same selected call as explicit construction.
+#include <std/meta>
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+struct Wrapper {
+  Tracked kept;
+  implicit Wrapper(Tracked value) : kept(std::move(value)) {}
+};
+
+Wrapper implicit_wrap(Tracked value) {
+  Tracked local{99};
+  return std::move(value);
+}
+Wrapper explicit_wrap(Tracked value) {
+  Tracked local{99};
+  return Wrapper(std::move(value));
+}
+
+// A constructor may borrow its input for the call without returning a borrow.
+struct Snapshot {
+  int value;
+  implicit Snapshot(Tracked& source) : value(source.read()) {}
+};
+Snapshot snapshot() {
+  Tracked local{11};
+  return local;
+}
+
+struct Reading {
+  int value;
+  Reading(int source) : value(source) {
+    std::println(std::to_string(source + 100));
+  }
+  ~Reading() { std::println(std::to_string(-this.value - 100)); }
+  implicit operator Tracked() { return Tracked(this.value); }
+};
+Tracked implicit_read() { return Reading(9); }
+Tracked explicit_read() { return Tracked(Reading(9)); }
+
+struct Failing {
+  Tracked kept;
+  int ratio;
+  implicit Failing(Tracked value, int divisor = 0)
+      : kept(std::move(value)), ratio(20 / divisor) {}
+};
+Failing implicit_failure() {
+  Tracked local{88};
+  return Tracked(8);
+}
+Failing explicit_failure() {
+  Tracked local{88};
+  return Failing(Tracked(8));
+}
+
+std::optional<std::string> label(bool present) {
+  if (!present) { return std::nullopt; }
+  return std::string("ready");
+}
+std::optional<std::string> owned_label(std::string value) {
+  return std::move(value);
+}
+std::optional<int> number(int value) { return value; }
+std::meta::callable_return_type<F> maybe_like<F>(F& factory, bool present) {
+  if (!present) { return std::nullopt; }
+  return factory();
+}
+
+int run(int selected) {
+  if (selected == 1) {
+    Failing value = implicit_failure();
+    return value.ratio;
+  }
+  if (selected == 2) {
+    Failing value = explicit_failure();
+    return value.ratio;
+  }
+  {
+    Wrapper value = implicit_wrap(Tracked(7));
+    std::println(std::to_string(value.kept.read()));
+  }
+  {
+    Wrapper value = explicit_wrap(Tracked(7));
+    std::println(std::to_string(value.kept.read()));
+  }
+  {
+    Tracked value = implicit_read();
+    std::println(std::to_string(value.read()));
+  }
+  {
+    Tracked value = explicit_read();
+    std::println(std::to_string(value.read()));
+  }
+  Snapshot saved = snapshot();
+  std::println(std::to_string(saved.value));
+  auto ready = label(true);
+  if (!ready || ready.value().view() != "ready" || label(false)) { return 1; }
+  std::string text = "owned";
+  auto owned = owned_label(std::move(text));
+  if (owned.value().view() != "owned" || number(17).value() != 17) { return 2; }
+  auto factory = []() -> std::optional<int> { return 75; };
+  auto projected = maybe_like(factory, true);
+  if (maybe_like(factory, false)) { return 3; }
+  std::println(std::to_string(projected.value()));
+  return 0;
+}
+int main(int argc, std::vector<std::string> argv) { return run(argc - 1); }

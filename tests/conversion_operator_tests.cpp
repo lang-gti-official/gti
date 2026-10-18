@@ -263,7 +263,56 @@ int main() { return 0; }
 )gti",
            "GTI-S2003", "Cannot initialize 'widened'");
 
-  // No other context converts.
+  accepted(R"gti(
+struct Reading {
+  int value;
+  Reading(int source) : value(source) {}
+  implicit operator int() { return this.value; }
+};
+int read(Reading value) { return value; }
+int main() { return read(Reading(7)) - 7; }
+)gti",
+           "a declared return uses one implicit conversion operator");
+  accepted(R"gti(
+struct Source {
+  int value = 7;
+  implicit operator int() { return this.value; }
+};
+T convert<T>(Source value) { return value; }
+int main() { return convert<int>(Source()) - 7; }
+)gti",
+           "a concrete generic return retains its implicit operator selection");
+  rejected(R"gti(
+struct End {
+  End(int value) {}
+  implicit End(Source& value) {}
+};
+struct Source { implicit operator End() { return End(7); } };
+End make(Source& value) { return value; }
+int main() { return 0; }
+)gti",
+           "GTI-S2122", "ambiguous");
+  rejected(R"gti(
+#include <std/optional>
+#include <std/string>
+std::optional<std::string> label() { return "ready"; }
+int main() { return 0; }
+)gti",
+           "GTI-S2003", "Cannot return");
+  rejected(R"gti(
+#include <std/optional>
+#include <std/string>
+std::optional<std::string> label(std::string named) { return named; }
+int main() { return 0; }
+)gti",
+           "GTI-S2018", "deleted copy constructor");
+  rejected(R"gti(
+#include <std/optional>
+int take(std::optional<int> value) { return 0; }
+int main() { return take(7); }
+)gti",
+           "GTI-S2003", "parameter requires");
+  // Calls, assignment and operands still require exact types.
   rejected(ids + "int take(UserId id) { return 0; }\n"
                  "int main() { RawId raw{int64_t(1)}; return take(raw); }\n",
            "GTI-S2003", "parameter requires 'UserId'");
