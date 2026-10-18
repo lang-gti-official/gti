@@ -12626,6 +12626,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               retained->storedDependency != produced.storedDependency ||
               retained->additionalDependencies != produced.additionalDependencies ||
               retained->designatedFields != produced.designatedFields ||
+              retained->conditions != produced.conditions ||
               (retained->access != produced.access &&
                retained->access != AccessMode::Mutable))
             return false;

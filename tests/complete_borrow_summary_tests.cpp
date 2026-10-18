@@ -154,7 +154,8 @@ int main() {
     const auto result = analyze(R"gti(
 #include <std/panic>
 enum Selected { empty, value(int& owner) };
-[[borrowed_from(input)]] int& selected(mut Selected input) {
+[[borrowed_from(input)]] int& selected(mut Selected input, int& other) {
+  int ignored = other;
   switch (std::move(input)) {
   case Selected::value(owner): return owner;
   case Selected::empty: std::panic("empty");
@@ -189,6 +190,59 @@ int main() { return 0; }
         expect(!lang::verifyMirProgram(malformed).valid(),
                "reference contract rejects erased guard/path/owner and "
                "strengthened authority");
+      }
+      for (int mutation = 0; mutation < 5; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        auto &body = changed.body;
+        auto published = std::find_if(body.loans.begin(), body.loans.end(),
+                                     [](const auto &loan) {
+          return loan.kind == lang::MirLoanKind::Return;
+        });
+        auto selected = std::find_if(body.loans.begin(), body.loans.end(),
+                                    [](const auto &loan) {
+          return loan.referenceSelection.has_value();
+        });
+        expect(published != body.loans.end() && selected != body.loans.end(),
+               "selected scalar return has separate activation/publication");
+        if (published == body.loans.end() || selected == body.loans.end())
+          continue;
+        if (mutation == 0) {
+          for (auto &block : body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                  instruction.loan == selected->id)
+                instruction.loan = published->id;
+        } else if (mutation == 1) {
+          published->conditions = selected->referenceSelection->conditions;
+        } else if (mutation == 2) {
+          ++selected->producedBy;
+        } else if (mutation == 3) {
+          selected->access = lang::AccessMode::Mutable;
+          published->access = lang::AccessMode::Mutable;
+        } else {
+          const auto other = std::find_if(
+              body.places.begin(), body.places.end(), [](const auto &place) {
+            return place.type == lang::SemanticType::Int32 &&
+                   place.root == lang::MirPlaceRootKind::Binding &&
+                   place.projections.size() == 1 &&
+                   place.projections.front().kind ==
+                       lang::MirProjectionKind::Dereference;
+          });
+          expect(other != body.places.end(), "unrelated formal referent exists");
+          if (other == body.places.end())
+            continue;
+          published->source = other->id;
+          selected->source = other->id;
+          auto &mapping = changed.completeReturnBorrow->dependencies.front();
+          mapping.parameter = 1;
+          mapping.sourceFields.clear();
+          mapping.sourceConditions.clear();
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "selected return rejects missing retirement, forged activation, "
+               "access strengthening and mutually substituted origin claims");
       }
     }
   }
