@@ -317,6 +317,80 @@ int main() {
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";
   {
+    const auto stagedSource = analyze(
+        token +
+        "Token staged() { return Token::item(7); } int main() { return 0; }");
+    if (const auto *function = stagedSource.mir.findFunctionInstance(
+            functionId(stagedSource, "staged"))) {
+      auto staged = function->body;
+      lang::MirInstructionId fresh = 1;
+      for (const auto &block : staged.blocks)
+        for (const auto &instruction : block.instructions)
+          fresh = std::max(fresh, instruction.id + 1);
+      lang::MirInstructionId constructor = 0;
+      for (auto &block : staged.blocks) {
+        for (std::size_t index = 0; index < block.instructions.size();
+             ++index) {
+          auto &producer = block.instructions[index];
+          if (producer.operation != lang::MirOperation::PayloadConstruct ||
+              producer.operands.size() != 1)
+            continue;
+          const auto source = producer.operands.front();
+          const auto *sourceValue = staged.findValue(source.value);
+          if (!sourceValue)
+            continue;
+          constructor = producer.id;
+          auto info = sourceValue->info;
+          info.category = lang::ValueCategory::Value;
+          const auto prepared =
+              static_cast<lang::MirValueId>(staged.values.size() + 1);
+          const auto sourceHir = sourceValue->sourceValue;
+          staged.values.push_back({.id = prepared,
+                                   .sourceValue = sourceHir,
+                                   .info = info,
+                                   .definitionBlock = block.id,
+                                   .definition = fresh});
+          producer.callSite = producer.hirValue;
+          producer.parameterTypes = {source.type};
+          producer.operands = {{.kind = lang::MirOperandKind::Value,
+                                .value = prepared,
+                                .type = source.type}};
+          lang::MirInstruction input{
+              .id = fresh,
+              .kind = lang::MirInstructionKind::CallInput,
+              .hirValue = sourceHir,
+              .callSite = producer.callSite,
+              .callInputRole = lang::MirCallInputRole::Argument,
+              .callInputKind = lang::HirCallInputKind::Value,
+              .result = prepared,
+              .operands = {source},
+              .info = info};
+          block.instructions.insert(block.instructions.begin() + index, input);
+          ++index;
+        }
+      }
+      expect(constructor != 0 && lang::rebuildMirValueUses(staged) &&
+                 lang::verifyMirBody(staged).valid(),
+             "typed payload construction reuses ordered argument staging");
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto invalid = staged;
+        for (auto &block : invalid.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id == fresh && mutation == 0)
+              instruction.callInputIndex = 1;
+            if (instruction.id == constructor && mutation == 1)
+              instruction.callSite = 0;
+            if (instruction.id == constructor && mutation == 2)
+              instruction.parameterTypes = {lang::SemanticType::Bool};
+            if (instruction.id == constructor && mutation == 3)
+              instruction.receiver = instruction.operands.front();
+          }
+        expect(!lang::verifyMirBody(invalid).valid(),
+               "payload staging rejects wrong index/site/type/receiver");
+      }
+    }
+  }
+  {
     // This is a shape-query fixture, not a well-typed admitted program. The
     // separate program and live-flow proofs cannot be replaced by this query.
     lang::MirBody body;

@@ -5888,21 +5888,6 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                  typeSpelling(enumerator.payloadTypes[index]) + "'.",
              "GTI-S2067");
     }
-    // Closed payload alternatives may own active-cleanup class values. Stored
-    // borrowed state remains outside this family because the variant would
-    // otherwise outlive or relocate an untracked referent.
-    if (typeTraits(actual).containsBorrowedState) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2067", DiagnosticPhase::Semantics,
-          expressionToken(call.arguments()[index]),
-          "Payload type '" + typeSpelling(actual) +
-              "' carries borrowed state and cannot live inside a variant "
-              "alternative.");
-      diagnostic.hints.emplace_back(
-          "Payload alternatives may own values, but they cannot store GTI "
-          "references or other borrowed-state carriers.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
   }
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
@@ -5925,6 +5910,16 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   // not enable reference-bearing payloads.
   if (auto complete = payloadBorrowDependencySet(call, enumerator))
     semanticModel.recordBorrowDependencySet(call, std::move(*complete));
+  else if (std::any_of(enumerator.payloadTypes.begin(),
+                       enumerator.payloadTypes.end(),
+                       [&](const SemanticType &field) {
+                         return field.kind == SemanticType::Reference ||
+                                typeTraits(field).containsBorrowedState;
+                       }))
+    report(call.paren(),
+           "Borrowed payload construction requires complete, stable dependency "
+           "origins for every retained field.",
+           "GTI-S2067");
   currentType = enumerator.symbol.type;
 }
 
