@@ -3412,6 +3412,28 @@ private:
     return id;
   }
 
+  [[nodiscard]] bool completeEmptyBorrowValue(HirValueId source,
+                                              const MirOperand &operand,
+                                              const SemanticType &type) const {
+    const auto *value = findValue(source);
+    const auto *lowered = operand.kind == MirOperandKind::Value
+                              ? output.findValue(operand.value)
+                              : nullptr;
+    // No loan is needed only when both representations preserve the same
+    // complete, typed dependency-free alternative. A missing loan or missing
+    // dependency set is not evidence of emptiness; the program verifier still
+    // independently reconstructs the producer and storage flow.
+    return type.kind == SemanticType::Enum && value &&
+           value->info.type == type && value->borrowDependencies &&
+           value->borrowDependencies->dependencies.empty() &&
+           !value->borrowDependencies->possibleAlternatives.empty() &&
+           lowered && lowered->info.type == type &&
+           lowered->borrowDependencies &&
+           lowered->borrowDependencies->dependencies.empty() &&
+           lowered->borrowDependencies->possibleAlternatives ==
+               value->borrowDependencies->possibleAlternatives;
+  }
+
   [[nodiscard]] MirValueId mirValueFor(const HirValue &value) {
     if (const auto found = loweredValues.find(value.id);
         found != loweredValues.end()) {
@@ -12360,7 +12382,10 @@ private:
         }
       }
     } else if (binding != nullptr &&
-               binding->info.traits.containsBorrowedState && statement.value) {
+               binding->info.traits.containsBorrowedState && statement.value &&
+               !(operands.size() == 1 &&
+                 completeEmptyBorrowValue(*statement.value, operands.front(),
+                                          binding->info.type))) {
       valid = false;
     }
     MirInstruction initialize{
@@ -13888,25 +13913,13 @@ private:
       } else {
         result = valueOperand(*statement.value);
         const HirValue *value = findValue(*statement.value);
-        const auto *returnedValue =
-            result && result->kind == MirOperandKind::Value
-                ? output.findValue(result->value)
-                : nullptr;
         // A known dependency-free active alternative has no authority to
         // export. Preserve its complete typed fact for independent program
         // verification rather than inventing a loan or inferring emptiness
         // from loanForValue returning zero.
         const bool completeEmpty =
-            value && value->info.type == output.returnType &&
-            output.returnType.kind == SemanticType::Enum &&
-            value->borrowDependencies &&
-            value->borrowDependencies->dependencies.empty() &&
-            !value->borrowDependencies->possibleAlternatives.empty() &&
-            returnedValue && returnedValue->info.type == output.returnType &&
-            returnedValue->borrowDependencies &&
-            returnedValue->borrowDependencies->dependencies.empty() &&
-            returnedValue->borrowDependencies->possibleAlternatives ==
-                value->borrowDependencies->possibleAlternatives;
+            result && completeEmptyBorrowValue(*statement.value, *result,
+                                               output.returnType);
         if (value != nullptr && value->info.traits.containsBorrowedState &&
             !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
