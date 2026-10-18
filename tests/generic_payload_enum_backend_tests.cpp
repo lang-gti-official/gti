@@ -1253,6 +1253,12 @@ int main() {
   expect(movedPublication.canGenerateCode(),
          "consuming switch uses independently checked enum move publication");
   if (movedPublication.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      expect(gti_test::emitCpp(movedPublication, standard)
+                     .contents.find("payload move published in its binding") !=
+                 std::string::npos,
+             "enum move keeps its source shell but directly constructs its "
+             "adjacent binding destination");
     for (int mutation = 0; mutation < 3; ++mutation) {
       auto malformed = movedPublication.mir;
       bool changed = false;
