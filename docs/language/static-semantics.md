@@ -446,8 +446,9 @@ contextually typed call, or a function name. Function arguments and assignment n
 The same one-step selection initializes an explicitly declared value return
 type from a return operand. For example, `Celsius read() { return 21; }` uses
 `implicit Celsius(int)`. This includes functions, methods and explicitly typed
-lambdas; a type-parameter destination is checked during concrete generic
-reanalysis. The destination is a fresh result, while the constructor argument
+lambdas; destinations containing open type parameters, including computed
+type projections, are checked during concrete generic reanalysis. The
+destination is a fresh result, while the constructor argument
 keeps its ordinary ownership checks: returning a named move-only source of a
 different type requires `std::move(source)`. Existing exact-type named return
 movement is unchanged. Reference returns do not construct temporaries, and

@@ -4524,11 +4524,11 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   }
   // Contextual initialization produces a fresh destination value; do not
   // mistake the original argument's place category for a copy of that value.
-  // A type-parameter destination has no constructor set until concrete
-  // reanalysis, which performs this same selection and ownership check.
+  // An open destination, including a computed type projection, does not have
+  // its definitive constructor set until concrete reanalysis, which performs
+  // this same selection and ownership check.
   const bool deferredInitialization =
-      !instanceAnalysisActive &&
-      currentReturnType.kind == SemanticType::TypeParameter;
+      !instanceAnalysisActive && containsOpenTypeParameter(currentReturnType);
   if (!contextualInitialization && !deferredInitialization &&
       !isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
     const ImplicitReturnMoveStatus implicitMove =
