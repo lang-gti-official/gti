@@ -423,6 +423,45 @@ int main() {
                    .find("explicit-return-borrow=1") != std::string::npos,
            "deterministic program serialization preserves explicit intent");
   }
+  {
+    const auto result = analyze(R"gti(
+enum Forwarded { empty, value(int& owner) };
+[[borrowed_from(owner)]] Forwarded make(int& owner, bool empty) {
+  if (empty) return Forwarded::empty;
+  return Forwarded::value(owner);
+}
+[[borrowed_from(owner)]] Forwarded relay(int& owner) {
+  return make(owner, false);
+}
+int main() { return 0; }
+)gti");
+    const auto id = functionId(result, "relay");
+    const auto *function = result.mir.findFunctionInstance(id);
+    if (result.canGenerateCode() && function) {
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        const auto binding = changed.parameterBindings.front();
+        for (auto &place : changed.body.places) {
+          if (place.root != lang::MirPlaceRootKind::Binding ||
+              place.binding != binding)
+            continue;
+          if (mutation == 0) place.initiallyAvailable = false;
+          if (mutation == 1) place.foreignStorage = true;
+          if (mutation == 2 && !place.projections.empty()) ++place.symbol;
+          if (mutation == 3 && !place.projections.empty()) place.key.reset();
+          if (mutation == 4 && !place.projections.empty())
+            place.access = lang::AccessMode::Mutable;
+        }
+        if (mutation == 5)
+          changed.parameterTypes.front() = lang::SemanticType::Int32;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "forwarded formal reference requires exact typed, available, "
+               "same-identity referent with no strengthened access");
+      }
+    }
+  }
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";
