@@ -1,6 +1,10 @@
 #include "gti/charconv.h"
 
 #include <charconv>
+
+#ifdef GTI_USE_PORTABLE_CHARCONV
+#include "absl/strings/charconv.h"
+#endif
 #include <cstddef>
 #include <limits>
 #include <string>
@@ -16,15 +20,37 @@ uint32_t parse(gti_c_string_view input, uint64_t offset, uint32_t format,
       (input.data == nullptr && input.length != 0) || format > 3) {
     return 1;
   }
-  const auto style = format == 1   ? std::chars_format::fixed
-                     : format == 2 ? std::chars_format::scientific
-                     : format == 3 ? std::chars_format::hex
-                                   : std::chars_format::general;
+#ifdef GTI_USE_PORTABLE_CHARCONV
+  using FloatFormat = absl::chars_format;
+#else
+  using FloatFormat = std::chars_format;
+#endif
+  const auto style = format == 1   ? FloatFormat::fixed
+                     : format == 2 ? FloatFormat::scientific
+                     : format == 3 ? FloatFormat::hex
+                                   : FloatFormat::general;
   // Even zero-offset pointer arithmetic requires a nonnull base.
   const char *base = input.data == nullptr ? "" : input.data;
   T value{};
+#ifdef GTI_USE_PORTABLE_CHARCONV
+  const char *first = base + offset;
+  const char *last = base + input.length;
+  const char *digits = first;
+  if (digits != last && *digits == '-') {
+    ++digits;
+  }
+  // Abseil additionally accepts 0x in decimal modes. Preserve from_chars'
+  // grammar: fixed/general consume only the signed zero; scientific rejects
+  // it because there is no exponent. Hex mode already excludes the prefix.
+  if (format != 3 && last - digits >= 2 && digits[0] == '0' &&
+      (digits[1] == 'x' || digits[1] == 'X')) {
+    last = digits + 1;
+  }
+  const auto result = absl::from_chars(first, last, value, style);
+#else
   const auto result =
       std::from_chars(base + offset, base + input.length, value, style);
+#endif
   *position = static_cast<uint64_t>(result.ptr - base);
   if (result.ec == std::errc::invalid_argument) {
     return 1;

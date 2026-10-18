@@ -293,6 +293,93 @@ int main() {
              "slot");
     }
   }
+  const auto cleanupForwarding = lang::Frontend().analyze(
+      "single-action-cleanup.gti", R"(
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+class Single {
+  Resource child;
+public:
+  Single() : child(Resource()) {}
+};
+class Multiple {
+  Resource first;
+  Resource second;
+public:
+  Multiple() : first(Resource()), second(Resource()) {}
+};
+class WithDestructor {
+  Resource child;
+public:
+  WithDestructor() : child(Resource()) {}
+  ~WithDestructor() {}
+};
+enum Choice { none, left(Resource value), right(Resource value) };
+enum Pair { none, both(Resource first, Resource second) };
+int main() {
+  Single single{};
+  Multiple multiple{};
+  WithDestructor destructor{};
+  auto choice = Choice::right(Resource());
+  auto pair = Pair::both(Resource(), Resource());
+  return 0;
+}
+)",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(
+      cleanupForwarding.canGenerateCode(),
+      "unrelated single/multiple-action cleanup wrappers reach verified MIR");
+  if (!cleanupForwarding.canGenerateCode())
+    for (const auto &diagnostic : cleanupForwarding.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (cleanupForwarding.canGenerateCode()) {
+    const auto text = gti_test::emitCpp(cleanupForwarding).contents;
+    for (const auto &instance : cleanupForwarding.hir.classInstances()) {
+      const auto name = instance.source->name().lexeme;
+      if (name != "Single" && name != "Multiple" && name != "WithDestructor")
+        continue;
+      const auto start = text.find("constexpr (__gti_cleanup_instance == " +
+                                   std::to_string(instance.id) + ")");
+      const auto end = text.find("else { static_assert", start);
+      expect(start != std::string::npos && end != std::string::npos,
+             "each exact class cleanup descriptor has an emitted adapter");
+      if (start == std::string::npos || end == std::string::npos)
+        continue;
+      const auto adapter = text.substr(start, end - start);
+      expect((adapter.find("mir_cleanup_sequence_v1 sequence") ==
+              std::string::npos) == (name == "Single"),
+             "only a destructor-free singleton class recipe tail-forwards");
+      if (name == "Single")
+        expect(
+            adapter.find("(record, unwinding);") != std::string::npos,
+            "singleton cleanup forwards the original record and unwind mode");
+    }
+    for (const auto &enumeration : cleanupForwarding.mir.payloadEnums()) {
+      const auto cleanup =
+          lang::mirUniqueCleanupType(cleanupForwarding.mir, enumeration.type);
+      expect(cleanup.has_value(),
+             "an owned enum has a complete cleanup recipe");
+      if (!cleanup)
+        continue;
+      const auto expression = lang::cppMirCleanupValueExpression(
+          cleanupForwarding.mir, *cleanup, "value", "record", "unwinding");
+      const bool singletonAlternatives = enumeration.variants.size() == 3;
+      expect((expression.find("mir_cleanup_sequence_v1") ==
+              std::string::npos) == singletonAlternatives,
+             "distinct singleton alternatives forward, but two simultaneous "
+             "children retain ordered secondary-failure handling");
+      if (singletonAlternatives)
+        expect(
+            expression.find("(record, unwinding)") != std::string::npos &&
+                expression.find("return true;") != std::string::npos,
+            "enum forwarding retains incoming failure state and empty success");
+    }
+  }
   const auto projected =
       lang::Frontend().analyze("projected-enum-borrow.gti", R"(
 enum Event<T> { item(T value) };
@@ -950,5 +1037,81 @@ int main() { discard(Message::Value(Resource(1))); return 0; }
                  owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
                  [](const auto &item) { return item.code == "GTI-B0001"; }),
          "unsupported owning-enum packs retain their source diagnostic");
+  const auto referenceEntry = lang::Frontend().analyze(
+      "enum-reference-entry.gti", R"gti(
+enum Reading { empty, value(int& owner) };
+bool is_ready(Reading& reading) {
+  switch (reading) {
+  case Reading::empty: return false;
+  case Reading::value: return true;
+  }
+}
+int main() {
+  int owner = 7;
+  auto reading = Reading::value(owner);
+  return is_ready(reading) ? 0 : 1;
+}
+)gti", {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(referenceEntry.canGenerateCode(),
+         "reference enum formal has independently verified guarded inventory");
+  if (referenceEntry.canGenerateCode()) {
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      expect(!gti_test::emitCpp(referenceEntry, standard).contents.empty(),
+             "abstract enum reference inventory does not require native class fields");
+    const auto referenceLowered = gti_test::lowerProgram(
+        referenceEntry, referenceEntry.mir, referenceEntry.mir);
+    const lang::CppMirBodyEmissionMap referenceMap(
+        lang::buildCppMirBodyEmissionMapRows(referenceLowered,
+                                            lang::CppStandard::Cpp23));
+    for (const bool entryAddress : {false, true}) {
+      auto addressed = referenceEntry.mir;
+      bool tested = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(addressed)) {
+        for (const auto &place : function.body.places) {
+          if (tested || place.projections.size() != 3 ||
+              place.projections[1].kind != lang::MirProjectionKind::Field)
+            continue;
+          tested = true;
+          lang::MirLoan addressLoan;
+          addressLoan.id = function.body.loans.size() + 1;
+          addressLoan.kind = entryAddress ? lang::MirLoanKind::Parameter
+                                         : lang::MirLoanKind::Local;
+          addressLoan.source = place.id;
+          addressLoan.entry = entryAddress;
+          function.body.loans.push_back(addressLoan);
+          if (!entryAddress) {
+            lang::MirInstruction borrow;
+            borrow.id = 10000;
+            borrow.kind = lang::MirInstructionKind::Borrow;
+            borrow.loan = addressLoan.id;
+            borrow.info.type = place.type;
+            borrow.operands.push_back({.kind = lang::MirOperandKind::Loan,
+                                       .loan = 2,
+                                       .type = place.type});
+            function.body.blocks.front().instructions.insert(
+                function.body.blocks.front().instructions.begin(), borrow);
+          }
+          const lang::CppMirBodyEmitter rejected(addressed, referenceMap);
+          expect(!rejected.supportsBodyText(
+                     {lang::MirBodyKind::Function, function.id}),
+                 "an abstract enum path cannot hide a runtime Borrow or entry address");
+        }
+      }
+      expect(tested, "runtime address rejection fixture finds its abstract path");
+    }
+    auto forged = referenceEntry.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged))
+      for (auto &place : function.body.places)
+        if (!changed && place.sourceValue == 0 &&
+            place.root == lang::MirPlaceRootKind::Binding &&
+            place.projections.size() == 3 &&
+            place.projections[1].kind == lang::MirProjectionKind::Field) {
+          place.projections[1].field = 0;
+          changed = true;
+        }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "provenance-only enum path still requires an exact typed payload field");
+  }
   return failures == 0 ? 0 : 1;
 }

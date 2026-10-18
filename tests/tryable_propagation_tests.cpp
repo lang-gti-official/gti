@@ -331,8 +331,8 @@ int main() {
   if (nativePayloadResult.canGenerateCode()) {
     auto missingNativeEvidence = nativePayloadResult.mir;
     bool changed = false;
-    for (auto &function : lang::MirProgramTestAccess::functions(
-             missingNativeEvidence)) {
+    for (auto &function :
+         lang::MirProgramTestAccess::functions(missingNativeEvidence)) {
       for (auto &value : function.body.values) {
         if (value.borrowDependencies &&
             value.info.type.kind == lang::SemanticType::Enum) {
@@ -352,7 +352,8 @@ int main() {
 [[c_abi]] struct InvalidNative { int& owner; };
 enum InvalidEvent { value(InvalidNative native), empty };
 int main() { return 0; }
-)gti", "GTI-S2064", "outside the bounded C ABI record field set");
+)gti",
+           "GTI-S2064", "outside the bounded C ABI record field set");
 
   const std::string types = R"gti(
 struct Rejected {
