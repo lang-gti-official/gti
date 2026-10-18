@@ -58776,6 +58776,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.definedFailure.propagation ==
                 FailurePropagationKind::Constructor;
         const bool consumingCall =
+            (instruction.kind == MirInstructionKind::Compute &&
+             instruction.operation == MirOperation::PayloadConstruct &&
+             instruction.callSite != 0 &&
+             hasCompleteCallInputSchedule(body, instruction)) ||
             (instruction.kind == MirInstructionKind::Call &&
              (instruction.intrinsic == IntrinsicKind::None ||
               (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
@@ -60057,6 +60061,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             {
               return false;
             }
+          }
+          if (instruction.operation == MirOperation::PayloadConstruct) {
+            // Reference payloads consume the same ordered address stages as
+            // ordinary calls. Their runtime record stores those addresses;
+            // leaving them pending would mistake the next initializer for
+            // an intervening use of an unconsumed reference argument.
+            if (!hasCompleteCallInputSchedule(body, instruction))
+              return false;
+            std::vector<MirValueId> consumed;
+            for (const auto &operand : instruction.operands)
+              if (const auto *stage = borrowStagedCallInput(body, operand)) {
+                if (!stage->result)
+                  return false;
+                consumed.push_back(*stage->result);
+              }
+            if (!consumeStagedBorrows(consumed))
+              return false;
           }
           continue;
         }
