@@ -131,8 +131,10 @@ The rule runs where the exact `nullptr_t` construction does, for declarations
 and field constructor initializers, and explicitly declared value returns
 through `visitReturnStmt`. A selected contextual construction/conversion
 already produces a fresh destination, so return checking does not reinterpret
-the original argument place as a copy of that destination. A type-parameter
-return destination defers selection to concrete semantic reanalysis. Ordinary
+the original argument place as a copy of that destination. A return destination
+containing open type parameters, including a computed type projection, defers
+selection to concrete semantic reanalysis. Concrete instances still enforce the
+one-step selection and ordinary access and ownership checks. Ordinary
 exact-type implicit return movement is unchanged.
 It does not run for `constexpr` or
 range-element bindings, reference fields, unions, abstract classes,

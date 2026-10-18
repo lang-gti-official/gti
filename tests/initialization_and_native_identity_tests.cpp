@@ -2,6 +2,7 @@
 #include "gti/frontend.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
@@ -14,12 +15,19 @@ int main() {
       ++failures;
     }
   };
-  const auto analyze = [](const std::string &source) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto analyze = [&](const std::string &source,
+                           bool withStandardLibrary = false) {
+    if (withStandardLibrary)
+      return lang::Frontend().analyze(
+          root / "tests" / "initialization-native-identity.gti", source,
+          {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
     return lang::Frontend().analyze("initialization-native-identity.gti",
                                     source);
   };
-  const auto rejected = [&](const std::string &source, const char *code) {
-    auto result = analyze(source);
+  const auto rejected = [&](const std::string &source, const char *code,
+                            bool withStandardLibrary = false) {
+    auto result = analyze(source, withStandardLibrary);
     const bool located =
         std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
                     [&](const auto &d) {
@@ -135,6 +143,7 @@ public:
   // Return initialization shares exact selection, access and ownership with
   // declarations; the destination is fresh even when its source is a place.
   const auto returned = analyze(R"gti(
+#include <std/meta>
 struct Score {
   int value;
   implicit Score(int initial, int offset = 2) : value(initial + offset) {}
@@ -143,6 +152,14 @@ struct Score {
 };
 Score score(int value) { return value; }
 T construct<T>(int value) { return value; }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+struct GenericBox<T> {
+  T value;
+  implicit GenericBox(T initial) : value(std::move(initial)) {}
+};
+GenericBox<T> boxed<T>(int value) { return value; }
 struct Factory { Score make(int value) { return value; } };
 int main() {
   auto produce = [](int value) -> Score { return value; };
@@ -151,9 +168,14 @@ int main() {
   Factory factory{};
   Score third = factory.make(3);
   Score fourth = produce(4);
-  return first.value + second.value + third.value + fourth.value - 18;
+  auto signature = score;
+  Score fifth = reflected(signature, 5);
+  GenericBox<int> sixth = boxed<int>(6);
+  return first.value + second.value + third.value + fourth.value +
+         fifth.value + sixth.value - 31;
 }
-)gti");
+)gti",
+                                true);
   expect(
       returned.canGenerateCode(),
       "declared function, generic, method and lambda returns construct once");
@@ -215,6 +237,44 @@ T construct<T>(int value) { return value; }
 int main() { Explicit value = construct<Explicit>(1); return 0; }
 )gti",
            "GTI-S2003");
+  rejected(R"gti(
+#include <std/meta>
+struct Explicit { Explicit(int value) {} };
+Explicit exact(int value) { return Explicit(value); }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+int main() {
+  auto shape = exact;
+  Explicit result = reflected(shape, 1);
+  return 0;
+}
+)gti",
+           "GTI-S2003", true);
+  rejected(R"gti(
+#include <std/meta>
+struct Middle { implicit Middle(int value) {} };
+struct End { implicit End(Middle value) {} };
+End exact(Middle value) { return End(value); }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+int main() {
+  auto shape = exact;
+  End result = reflected(shape, 1);
+  return 0;
+}
+)gti",
+           "GTI-S2003", true);
+  rejected(R"gti(
+struct GenericBox<T> {
+  T value;
+  implicit GenericBox(T initial) : value(std::move(initial)) {}
+};
+GenericBox<T> boxed<T>(int value) { return value; }
+int main() { auto result = boxed<bool>(1); return 0; }
+)gti",
+           "GTI-S2003", true);
   // Explicit constructors and the declaration-only nullptr exception do not
   // become implicit at returns.
   rejected("struct Plain { Plain(int value) {} };\n"
