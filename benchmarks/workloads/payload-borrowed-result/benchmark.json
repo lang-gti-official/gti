@@ -6,6 +6,8 @@
   "minimum_sample_seconds": 0.1,
   "variants": [
     {"name": "source", "kind": "gti", "source": "source.gti", "execution_profile": "single-threaded"},
-    {"name": "builtin", "kind": "gti", "source": "builtin.gti", "execution_profile": "single-threaded"}
+    {"name": "builtin", "kind": "gti", "source": "builtin.gti", "execution_profile": "single-threaded"},
+    {"name": "source-observed", "kind": "gti", "source": "source-observed.gti", "execution_profile": "single-threaded"},
+    {"name": "builtin-consumed", "kind": "gti", "source": "builtin-consumed.gti", "execution_profile": "single-threaded"}
   ]
 }

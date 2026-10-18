@@ -1,0 +1,43 @@
+#include <std/string>
+#include <std/format>
+
+#ifdef ALLOCATION_COUNTS
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+}
+#endif
+
+expected<int&, std::string> lookup(int& owner, uint64_t index) {
+  if (index % uint64_t(4) == uint64_t(0))
+    return unexpected(std::string("some sufficiently long text to force allocated string storage"));
+  return owner;
+}
+
+int main() {
+  mut uint64_t total = uint64_t(0);
+#ifdef ALLOCATION_COUNTS
+  adoption_count_begin();
+#endif
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(10000000); i += uint64_t(1)) {
+    int owner = int(i % uint64_t(1024));
+    mut auto result = lookup(owner, i);
+    if (result)
+      total += uint64_t(result.value());
+    else {
+      std::string error = std::move(result).error();
+      total += uint64_t(error.size());
+    }
+  }
+#ifdef ALLOCATION_COUNTS
+  adoption_count_end();
+#endif
+  if (total != uint64_t(3992407840)) return 1;
+  std::println("GTI-BENCH-1 digest:00000000edf74f20 work-units:10000000");
+#ifdef ALLOCATION_COUNTS
+  std::println("allocations {} bytes {}", adoption_allocations(), adoption_bytes());
+#endif
+  return 0;
+}
