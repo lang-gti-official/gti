@@ -84,6 +84,28 @@ int main() {
         borrowed + owned + empty})
     accepted(definitions + client);
 
+  accepted(owned + empty + borrowed + R"(
+concept Profile<P> {
+  typename payload_type;
+  int inspect(P& packet);
+};
+for <T, E> concept Profile<Packet<T, E>> {
+  using payload_type = T;
+  int inspect(Packet<T, E>& packet) { return packet.kind(); }
+};
+int inspect_profile<P>(P& packet) requires Profile<P> {
+  return Profile<P>::inspect(packet);
+}
+int main() {
+  Packet<int, int> owned{1};
+  Packet<void, int> empty{};
+  int owner = 7;
+  Packet<int&, int> borrowed{owner};
+  return inspect_profile(owned) + inspect_profile(empty) +
+      inspect_profile(borrowed) - 6;
+}
+)");
+
   rejected(owned + owned, "GTI-S2006", "Duplicate declaration");
   rejected(owned + empty + empty, "GTI-S2006", "Duplicate declaration");
   rejected("class Packet<T&, E> {}; class Packet<T, E&> {};", "GTI-S2006",

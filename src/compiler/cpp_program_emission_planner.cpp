@@ -2368,11 +2368,11 @@ public:
       // value-initializing inactive payload bytes. No source value can observe
       // those bytes, and zeroing them needlessly couples scalar payload bits
       // to the discriminant when native optimizers combine return paths.
-      output << name << "() noexcept {}\n";
+      output << "constexpr " << name << "() noexcept {}\n";
       writeIndent();
       output << "template <std::size_t Index, typename... Args>\n";
       writeIndent();
-      output << "explicit " << name
+      output << "constexpr explicit " << name
              << "(std::in_place_index_t<Index> selected, Args &&...args)"
                 " : __gti_value(selected, std::forward<Args>(args)...) {}\n";
       writeIndent();
@@ -9616,6 +9616,26 @@ public:
           output << ')';
         if (expected)
           output << '}';
+        return;
+      }
+      if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum) {
+        const auto *enumeration = mir.findPayloadEnum(*type);
+        const auto &node = *aggregate->value;
+        if (!enumeration || node.identity != type->enumId ||
+            node.variant >= enumeration->variants.size() ||
+            node.elements.size() !=
+                enumeration->variants[node.variant].payloadTypes.size())
+          throw std::logic_error(
+              "payload constant differs from its exact variant");
+        emitSemanticType(*type);
+        output << "{std::in_place_index<" << node.variant + 1 << ">";
+        for (std::size_t index = 0; index < node.elements.size(); ++index) {
+          output << ", ";
+          emitConstant(
+              node.elements[index],
+              &enumeration->variants[node.variant].payloadTypes[index]);
+        }
+        output << '}';
         return;
       }
       if (aggregate->value->kind == ConstantAggregateKind::Array) {

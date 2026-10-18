@@ -2761,7 +2761,7 @@ void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
     info.tracksCaller = target->tracksCaller;
   } else if (intrinsicTerminalFailureOutcome(info.intrinsic)) {
     info.neverReturns = true;
-    info.tracksCaller = info.intrinsic == IntrinsicKind::Panic;
+    info.tracksCaller = intrinsicTracksCaller(info.intrinsic);
   }
   suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));
@@ -3585,15 +3585,15 @@ integerArithmeticIntrinsic(IntrinsicKind intrinsic) {
   case IntrinsicKind::IntegerSaturatingMultiply:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
                                       IntegerArithmeticMode::Saturating};
-  case IntrinsicKind::IntegerCheckedAdd:
+  case IntrinsicKind::IntegerAddOverflows:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Add,
-                                      IntegerArithmeticMode::CheckedResult};
-  case IntrinsicKind::IntegerCheckedSubtract:
+                                      IntegerArithmeticMode::OverflowPredicate};
+  case IntrinsicKind::IntegerSubtractOverflows:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Subtract,
-                                      IntegerArithmeticMode::CheckedResult};
-  case IntrinsicKind::IntegerCheckedMultiply:
+                                      IntegerArithmeticMode::OverflowPredicate};
+  case IntrinsicKind::IntegerMultiplyOverflows:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
-                                      IntegerArithmeticMode::CheckedResult};
+                                      IntegerArithmeticMode::OverflowPredicate};
   default:
     return std::nullopt;
   }

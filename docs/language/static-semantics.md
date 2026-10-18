@@ -1836,7 +1836,7 @@ operations. Ordinary exact typing, ownership transfer, borrow checks, and
 source-written reference/receiver restrictions apply to every instantiation.
 Concrete type and `uint64_t` value-generic arguments retain canonical declaration and
 type/value identity throughout evaluation. A non-static instance method must
-have a read-only or mutable, non-consuming receiver of a supported structural
+have a read-only, mutable, or consuming receiver of a supported structural
 class or struct. Its body
 may use supported automatic value bindings, exact assignment, scalar compound
 assignment, increment and decrement, blocks, returns, ordinary and constexpr
@@ -1845,7 +1845,7 @@ recursion, and calls to available constexpr definitions. Calling the same
 function at runtime remains an ordinary GTI call with the same language
 semantics.
 
-Read-only or mutable arithmetic, bitwise, comparison, subscript, dereference, and call
+Read-only, mutable, or supported consuming arithmetic, bitwise, comparison, subscript, dereference, and call
 operators may also be `constexpr` under those same signature and structural
 receiver rules. Ordinary overload resolution selects the exact target; no
 reversed operands, new conversions, or alternate lookup is introduced. Both
@@ -1997,11 +1997,20 @@ and heap operations. Each request allows at most 1024 allocation identities and
 byte), independent of target layout. Exhaustion is a semantic diagnostic.
 
 Shared ownership, virtual/recursive owning destruction, raw-memory/provider
-allocation protocols, stored-reference carriers, payload enums, unions and
+allocation protocols, stored-reference carriers, unions and
 inherited objects require further constant-execution profiles. They are not
 enabled by their public library names. These new lifetime operations never
 fall back to AST execution. Example 153 demonstrates transient scratch storage
 and runtime parity.
+
+Payload enums also execute in constant contexts when every possible field has
+a supported concrete type. Their exact active alternative survives construction,
+matching, copying, assignment and checked borrowed observation, including when
+nested in ordinary source classes. Consuming methods and enum matches transfer
+their active fields using the normal ownership rules. Transient exclusive owner
+payloads are permitted only within the evaluation request; persistent constants
+remain passive and cannot retain references. The evaluator uses verified MIR,
+including active-variant cleanup, rather than a second enum execution model.
 
 ## 3.12 Compile-Time Iteration And Reflection
 

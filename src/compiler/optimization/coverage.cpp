@@ -192,9 +192,9 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::IntegerSaturatingAdd:
   case IntrinsicKind::IntegerSaturatingSubtract:
   case IntrinsicKind::IntegerSaturatingMultiply:
-  case IntrinsicKind::IntegerCheckedAdd:
-  case IntrinsicKind::IntegerCheckedSubtract:
-  case IntrinsicKind::IntegerCheckedMultiply:
+  case IntrinsicKind::IntegerAddOverflows:
+  case IntrinsicKind::IntegerSubtractOverflows:
+  case IntrinsicKind::IntegerMultiplyOverflows:
   case IntrinsicKind::TextViewFromAddress:
   case IntrinsicKind::CStringFromAddress:
   case IntrinsicKind::OptionalStorageHasValue:
@@ -308,6 +308,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::Panic:
     return barrier("explicit terminal failure with bounded message capture");
   case IntrinsicKind::FailEmptyOwner:
+  case IntrinsicKind::FailInactiveValue:
+  case IntrinsicKind::FailInactiveError:
     return barrier("explicit terminal empty-owner access failure");
   case IntrinsicKind::Count:
     break;

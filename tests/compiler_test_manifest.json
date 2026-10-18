@@ -674,6 +674,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprPayloadEnums",
+      "suite": "constexpr"
+    },
+    {
       "name": "testConstexprAllocation",
       "suite": "constexpr"
     },

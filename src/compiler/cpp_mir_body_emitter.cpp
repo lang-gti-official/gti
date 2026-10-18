@@ -28712,7 +28712,7 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
       (!parameters.empty() &&
        instruction.operands.front().type != parameters.front()) ||
       instruction.neverReturns != terminal.has_value() ||
-      instruction.tracksCaller != panic ||
+      instruction.tracksCaller != intrinsicTracksCaller(instruction.intrinsic) ||
       instruction.parameterTypes != parameters ||
       instruction.definedFailure.propagation != FailurePropagationKind::None ||
       instruction.localFailureSites.size() != 1 ||
@@ -45890,17 +45890,17 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
-        (instruction.intrinsic == IntrinsicKind::IntegerCheckedAdd ||
-         instruction.intrinsic == IntrinsicKind::IntegerCheckedSubtract ||
-         instruction.intrinsic == IntrinsicKind::IntegerCheckedMultiply)) {
+        (instruction.intrinsic == IntrinsicKind::IntegerAddOverflows ||
+         instruction.intrinsic == IntrinsicKind::IntegerSubtractOverflows ||
+         instruction.intrinsic == IntrinsicKind::IntegerMultiplyOverflows)) {
       if (!instruction.result || instruction.operands.size() != 2 ||
-          instruction.info.type.arguments.size() != 2) {
+          instruction.info.type != SemanticType::Bool) {
         throw std::logic_error(
-            "verified MIR checked-result intrinsic lost its exact shape");
+            "verified MIR integer overflow predicate lost its exact shape");
       }
       output << "__gti_mir_v_" << *instruction.result << " = "
              << cppIntegerArithmeticIntrinsicSpelling(instruction.intrinsic)
-             << '<' << typeSpelling(instruction.info.type.arguments[1]) << ">(";
+             << '(';
       emitOperand(instruction.operands[0]);
       output << ", ";
       emitOperand(instruction.operands[1]);
@@ -49977,12 +49977,12 @@ cppIntegerArithmeticIntrinsicSpelling(IntrinsicKind intrinsic) {
     return "::gti_internal::backend::saturating_sub";
   case IntrinsicKind::IntegerSaturatingMultiply:
     return "::gti_internal::backend::saturating_mul";
-  case IntrinsicKind::IntegerCheckedAdd:
-    return "::gti_internal::backend::checked_add";
-  case IntrinsicKind::IntegerCheckedSubtract:
-    return "::gti_internal::backend::checked_sub";
-  case IntrinsicKind::IntegerCheckedMultiply:
-    return "::gti_internal::backend::checked_mul";
+  case IntrinsicKind::IntegerAddOverflows:
+    return "::gti_internal::backend::integer_add_overflow_flag";
+  case IntrinsicKind::IntegerSubtractOverflows:
+    return "::gti_internal::backend::integer_subtract_overflow_flag";
+  case IntrinsicKind::IntegerMultiplyOverflows:
+    return "::gti_internal::backend::integer_multiply_overflow_flag";
   default:
     return {};
   }
@@ -62610,22 +62610,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               typeRow(instruction.info.type)) {
             continue;
           }
-          // A checked-result intrinsic produces its failure inside the
-          // Expected value — no edges — and spells as the shipped helper
-          // with the error type as its template argument.
-          if ((instruction.intrinsic == IntrinsicKind::IntegerCheckedAdd ||
-               instruction.intrinsic == IntrinsicKind::IntegerCheckedSubtract ||
+          // Overflow queries return a mathematical fact. Result-carrier
+          // construction and error policy remain ordinary source calls.
+          if ((instruction.intrinsic == IntrinsicKind::IntegerAddOverflows ||
+               instruction.intrinsic == IntrinsicKind::IntegerSubtractOverflows ||
                instruction.intrinsic ==
-                   IntrinsicKind::IntegerCheckedMultiply) &&
+                   IntrinsicKind::IntegerMultiplyOverflows) &&
               !instruction.functionTarget && instruction.result &&
               instruction.localFailureSites.empty() &&
               instruction.operands.size() == 2 &&
               std::all_of(instruction.operands.begin(),
                           instruction.operands.end(), valueOperand) &&
-              instruction.info.type.kind == SemanticType::Expected &&
-              instruction.info.type.arguments.size() == 2 &&
-              typeRow(instruction.info.type) &&
-              typeRow(instruction.info.type.arguments[1])) {
+              instruction.info.type == SemanticType::Bool &&
+              typeRow(instruction.info.type)) {
             continue;
           }
           if (explicitFailureCall(instruction)) {

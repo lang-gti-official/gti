@@ -1811,13 +1811,26 @@ private:
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
   [[nodiscard]] bool
   conditionalReferenceReturn(const SemanticType &result,
-                             std::span<const SemanticType> parameters) const;
+                             std::span<const SemanticType> parameters,
+                             const SemanticType &receiver = SemanticType::Unknown) const;
   // Normalize one already checked return expression before end-of-body
   // summary publication. Failure is unknown/invalid, never an empty proof.
   // The caller still enforces ordinary child-loan escape and availability.
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteReturnBorrow(const FunctionInfo &function,
                                  const SemanticBorrowDependencySet &complete);
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteBorrow(const FunctionInfo &function,
+                           std::span<const Parameter> parameters,
+                           ReceiverMutability receiverMutability,
+                           const SemanticBorrowDependencySet &complete);
+  void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
+  std::optional<FunctionBorrowDependencySummary> completeConstructorBorrow(
+      const ResolvedConstructionInfo &construction, const SourceSpan &site);
+  std::optional<FunctionBorrowDependencySummary> completeBorrowQuery(
+      const InstanceAnalysisKey &key, const SemanticType &result,
+      std::span<const SemanticType> parameters, const Token &name,
+      const SourceSpan &site, const ConstructorDecl *constructor = nullptr);
   std::optional<FunctionBorrowDependencySummary> completeFunctionReturnBorrow(
       const CallableCandidate &function,
       const std::vector<SemanticType> &typeArguments,

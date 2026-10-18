@@ -161,6 +161,17 @@ and exact underlying integer domain. `EnumConstant`, exact-type comparisons and
 enumerator switch labels execute here, including enum locals, record fields and
 array elements in mutable builders. Value reads of resolved enumerators lower
 to constants; explicit place formation and source borrowing rules are unchanged.
+Payload enums retain their exact concrete type, active variant and ordered
+active fields in immutable constant aggregates. Existing `PayloadConstruct`,
+`PayloadExtract` and switch MIR execute their ordinary verified selection rules;
+there is no payload-enum AST interpreter. Constant argument checking validates
+the exact variant and every active field recursively. Checked observations use
+executor-local locations including the variant and field index, so an inactive
+or moved field cannot be read. Consuming receivers own their incoming snapshot;
+active enum cleanup follows the canonical selected-variant recipe, including
+transient exclusive owners. Neither stored references nor live allocations may
+persist in constants. These operations share the existing work and lifetime
+limits and cannot fall back to AST execution.
 Passive Expected/Unexpected values share the immutable typed aggregate
 representation: exact wrapper type, active state and one exact payload (none
 for void success). Construction, state tests, extraction, eager `value_or`,

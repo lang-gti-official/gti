@@ -276,17 +276,11 @@ public:
                // through the constructor record, as the backend expects.
                (initializer.targetType.kind == SemanticType::Lambda &&
                 field->info.traits.containsBorrowedState) ||
-               (initializer.targetType.kind == SemanticType::Enum &&
-                std::any_of(program.enumDeclarations().begin(),
-                            program.enumDeclarations().end(),
-                            [&](const HirEnum &enumeration) {
-                              return enumeration.type ==
-                                         initializer.targetType &&
-                                     !enumeration.payload;
-                            }))) &&
+               initializer.targetType.kind == SemanticType::Enum) &&
               (field->info.traits.drop == DropKind::Trivial ||
                ((initializer.targetType.kind == SemanticType::Class ||
                  initializer.targetType.kind == SemanticType::Lambda ||
+                 initializer.targetType.kind == SemanticType::Enum ||
                  initializer.targetType.kind == SemanticType::Array ||
                  initializer.targetType.kind == SemanticType::Expected) &&
                 !field->requiresActiveCleanup)) &&
@@ -295,8 +289,10 @@ public:
               // Borrow and EndBorrow shape publishes its dependencies.
               (!field->info.traits.containsBorrowedState ||
                (constructor != nullptr &&
-                constructor->borrowOrigin == BorrowOriginKind::Argument &&
+                (constructor->borrowOrigin == BorrowOriginKind::Argument ||
+                 constructor->completeBorrow.has_value()) &&
                 (initializer.targetType.kind == SemanticType::Class ||
+                 initializer.targetType.kind == SemanticType::Enum ||
                  initializer.targetType.kind == SemanticType::Lambda)));
           const MirDropObligationId owningStageSource =
               constructorRollbackStageEligible(initializer)
@@ -3423,7 +3419,7 @@ private:
     // complete, typed dependency-free alternative. A missing loan or missing
     // dependency set is not evidence of emptiness; the program verifier still
     // independently reconstructs the producer and storage flow.
-    return type.kind == SemanticType::Enum && value &&
+    return (type.kind == SemanticType::Enum || type.kind == SemanticType::Class) && value &&
            value->info.type == type && value->borrowDependencies &&
            value->borrowDependencies->dependencies.empty() &&
            !value->borrowDependencies->possibleAlternatives.empty() &&

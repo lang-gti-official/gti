@@ -969,6 +969,27 @@ programConstantMatchesType(const ConstantValue &constant,
       return programConstantMatchesType(node.elements[0],
                                         type.arguments[error ? 1 : 0], program);
     }
+    if (type.kind == SemanticType::Enum &&
+        aggregate->value->kind == ConstantAggregateKind::PayloadEnum) {
+      const auto &node = *aggregate->value;
+      if (node.identity != type.enumId || !node.fields.empty())
+        return false;
+      if (!program)
+        return true;
+      const auto *enumeration = program->findPayloadEnum(type);
+      if (!enumeration || enumeration->requiresActiveCleanup ||
+          enumeration->traits.containsBorrowedState ||
+          node.variant >= enumeration->variants.size())
+        return false;
+      const auto &variant = enumeration->variants[node.variant];
+      if (node.elements.size() != variant.payloadTypes.size())
+        return false;
+      for (std::size_t index = 0; index < node.elements.size(); ++index)
+        if (!programConstantMatchesType(node.elements[index],
+                                        variant.payloadTypes[index], program))
+          return false;
+      return true;
+    }
     if (type.kind != SemanticType::Class || type.classId == 0 ||
         aggregate->value->kind != ConstantAggregateKind::Object ||
         aggregate->value->identity != type.classId) {
@@ -6804,7 +6825,7 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            !instruction.receiver && !instruction.destination &&
            instruction.info.type == SemanticType::Void &&
            instruction.neverReturns == terminal.has_value() &&
-           instruction.tracksCaller == panic &&
+           instruction.tracksCaller == intrinsicTracksCaller(instruction.intrinsic) &&
            instruction.operands.size() == parameters.size() &&
            (parameters.empty() ||
             instruction.operands.front().type == parameters.front()) &&
@@ -9796,6 +9817,27 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     const bool callable = instruction.kind == MirInstructionKind::Call ||
                           instruction.kind == MirInstructionKind::Construct;
+    if (const auto arithmetic = integerArithmeticIntrinsic(instruction.intrinsic)) {
+      if (instruction.kind != MirInstructionKind::Call || !instruction.result ||
+          instruction.receiver || instruction.destination ||
+          instruction.functionTarget || instruction.constructorTarget ||
+          instruction.lambdaTarget || instruction.bodyTarget ||
+          instruction.operands.size() != 2 ||
+          instruction.parameterTypes.size() != 2 ||
+          !constantIntegerDomain(instruction.operands[0].type) ||
+          instruction.operands[0].type != instruction.operands[1].type ||
+          instruction.parameterTypes[0] != instruction.operands[0].type ||
+          instruction.parameterTypes[1] != instruction.operands[1].type ||
+          instruction.info.type !=
+              (arithmetic->mode == IntegerArithmeticMode::OverflowPredicate
+                   ? SemanticType::Bool
+                   : instruction.operands[0].type) ||
+          instruction.info.category != ValueCategory::Value ||
+          instruction.definedFailure.mayUnwind() ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.lifecycle.empty())
+        return false;
+    }
     const bool stagedPayload = stagedPayloadConstruction(instruction);
     if (!instruction.borrowFields.empty() &&
         (!callable || instruction.borrowOrigin == BorrowOriginKind::None ||

@@ -4607,6 +4607,8 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     const Token &paren, std::span<const ExprPtr> arguments,
     CallReceiverMode receiverMode) -> bool {
   if (function.receiverMutability == ReceiverMutability::Consuming &&
+      !conditionalReferenceReturn(function.returnType, function.parameterTypes,
+                                   function.dispatchOwner) &&
       (function.returnType.kind == SemanticType::Reference ||
        function.returnBorrowOrigin != BorrowOriginKind::None ||
        typeTraits(function.returnType).containsBorrowedState)) {
@@ -7316,17 +7318,21 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.
   if (function.returnType.kind == SemanticType::Enum ||
+      (function.returnType.kind == SemanticType::Class &&
+       typeTraits(function.returnType).containsBorrowedState) ||
       conditionalReferenceReturn(function.returnType,
-                                 function.parameterTypes)) {
+                                 function.parameterTypes, function.dispatchOwner)) {
     const auto complete = completeFunctionReturnBorrow(
         function, resolved.typeArguments, resolved.valueArguments,
         tokenSpan(expressionToken(call.callee())));
     const auto instantiated =
         complete ? instantiateCompleteCallBorrow(call, resolved, *complete)
                  : std::nullopt;
-    if (instantiated)
+    if (instantiated) {
+      resolved.borrowFields = complete->dependencies;
+      semanticModel.record(call, resolved);
       semanticModel.recordBorrowDependencySet(call, *instantiated);
-    else
+    } else
       semanticModel.clearBorrowDependencySet(call);
   }
   recordSelectedCallOccurrence(call, std::move(resolved));

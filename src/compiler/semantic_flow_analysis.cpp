@@ -2108,6 +2108,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         switch (intrinsic) {
         case IntrinsicKind::Panic:
         case IntrinsicKind::FailEmptyOwner:
+        case IntrinsicKind::FailInactiveValue:
+        case IntrinsicKind::FailInactiveError:
           anchor(token);
           addFailureOutcome(operation,
                             intrinsicTerminalFailureOutcome(intrinsic)->code,
@@ -2327,9 +2329,9 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::IntegerSaturatingAdd:
         case IntrinsicKind::IntegerSaturatingSubtract:
         case IntrinsicKind::IntegerSaturatingMultiply:
-        case IntrinsicKind::IntegerCheckedAdd:
-        case IntrinsicKind::IntegerCheckedSubtract:
-        case IntrinsicKind::IntegerCheckedMultiply:
+        case IntrinsicKind::IntegerAddOverflows:
+        case IntrinsicKind::IntegerSubtractOverflows:
+        case IntrinsicKind::IntegerMultiplyOverflows:
         case IntrinsicKind::None:
         case IntrinsicKind::Count:
           break;
@@ -2926,12 +2928,18 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
 }
 
 auto SemanticVisitor::Impl::analyze(const ExprPtr &expr) -> SemanticType {
-  return expr ? analyze(*expr) : SemanticType::Unknown;
+  return analyze(expr, OccurrenceRole::Reference | OccurrenceRole::Read);
 }
 
 auto SemanticVisitor::Impl::analyze(const ExprPtr &expr, OccurrenceRole roles)
     -> SemanticType {
-  return expr ? analyze(*expr, roles) : SemanticType::Unknown;
+  if (!expr)
+    return SemanticType::Unknown;
+  const auto result = analyze(*expr, roles);
+  if (exprAs<Get>(expr.get()))
+    if (const auto complete = completeBorrowDependencySet(expr))
+      semanticModel.recordBorrowDependencySet(*expr, *complete);
+  return result;
 }
 
 auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
@@ -6727,7 +6735,8 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
       receiver ? semanticModel.findExpression(*receiver) : nullptr;
   return info != nullptr && info->category == ValueCategory::Value &&
          info->type.kind == SemanticType::Class && info->traits.movable &&
-         !info->traits.containsBorrowedState;
+         (!info->traits.containsBorrowedState ||
+          completeBorrowDependencySet(receiver).has_value());
 }
 
 auto SemanticVisitor::Impl::receiverModeForObject(
@@ -10522,9 +10531,9 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
     case IntrinsicKind::IntegerSaturatingAdd:
     case IntrinsicKind::IntegerSaturatingSubtract:
     case IntrinsicKind::IntegerSaturatingMultiply:
-    case IntrinsicKind::IntegerCheckedAdd:
-    case IntrinsicKind::IntegerCheckedSubtract:
-    case IntrinsicKind::IntegerCheckedMultiply:
+    case IntrinsicKind::IntegerAddOverflows:
+    case IntrinsicKind::IntegerSubtractOverflows:
+    case IntrinsicKind::IntegerMultiplyOverflows:
     case IntrinsicKind::EnumUnderlyingValue:
     case IntrinsicKind::ObjectSize:
     case IntrinsicKind::ObjectAlignment:

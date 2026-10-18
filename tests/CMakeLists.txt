@@ -2638,6 +2638,14 @@ if(Python3_Interpreter_FOUND)
             --ownership-checks
   )
   add_test(
+    NAME constexpr_payload_enum_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_payload_enum.gti"
+            --ownership-checks
+  )
+  add_test(
     NAME constexpr_allocation_example
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"

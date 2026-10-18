@@ -1522,6 +1522,7 @@ struct MirConstructorInstance {
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowParameters;
+  std::optional<FunctionBorrowDependencySummary> completeBorrow;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;

@@ -1163,6 +1163,10 @@
         "required": false,
         "types": [
           {
+            "type": "generic_argument_profile_clause",
+            "named": true
+          },
+          {
             "type": "generic_signature_pattern_clause",
             "named": true
           }
@@ -3077,6 +3081,38 @@
           },
           {
             "type": "user_type",
+            "named": true
+          },
+          {
+            "type": "void",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "generic_argument_profile_clause",
+    "named": true,
+    "fields": {
+      "pattern": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "mut",
+            "named": false
+          },
+          {
+            "type": "reference_declarator",
+            "named": true
+          },
+          {
+            "type": "type",
             "named": true
           },
           {
