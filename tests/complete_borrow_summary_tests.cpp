@@ -151,6 +151,71 @@ int main() {
     return lang::HirFunctionInstanceId{0};
   };
   {
+    const auto result = analyze(R"gti(
+#include <std/panic>
+enum Selected { empty, value(int& owner) };
+[[borrowed_from(input)]] int& selected(mut Selected input) {
+  switch (std::move(input)) {
+  case Selected::value(owner): return owner;
+  case Selected::empty: std::panic("empty");
+  }
+}
+int main() { return 0; }
+)gti");
+    const auto id = functionId(result, "selected");
+    const auto *function = result.mir.findFunctionInstance(id);
+    expect(function && function->completeReturnBorrow &&
+               function->completeReturnBorrow->dependencies.size() == 1 &&
+               function->completeReturnBorrow->possibleAlternatives.empty() &&
+               function->completeReturnBorrow->dependencies.front()
+                   .resultFields.empty() &&
+               function->completeReturnBorrow->dependencies.front()
+                       .sourceConditions.size() == 1,
+           "selected reference return retains its guarded external source");
+    if (function && function->completeReturnBorrow) {
+      for (int mutation = 0; mutation < 4; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        auto &mapping = changed.completeReturnBorrow->dependencies.front();
+        if (mutation == 0)
+          mapping.sourceConditions.clear();
+        else if (mutation == 1)
+          mapping.sourceFields.clear();
+        else if (mutation == 2)
+          mapping.access = lang::AccessMode::Mutable;
+        else
+          changed.completeReturnBorrow->dependencies.clear();
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "reference contract rejects erased guard/path/owner and "
+               "strengthened authority");
+      }
+    }
+  }
+  {
+    const auto result = analyze(R"gti(
+enum Exclusive { empty, value(mut int& owner) };
+void hold(mut int& owner) { auto carrier = Exclusive::value(owner); }
+int main() { return 0; }
+)gti");
+    if (result.canGenerateCode()) {
+      auto malformed = result.mir;
+      bool changed = false;
+      for (auto &payload : lang::MirProgramTestAccess::payloads(malformed))
+        for (const auto &variant : payload.variants)
+          for (const auto &field : variant.payloadTypes)
+            if (field.kind == lang::SemanticType::Reference &&
+                field.referenceAccess == lang::AccessMode::Mutable) {
+              expect(!payload.traits.copyable,
+                     "exclusive stored capability is move-only");
+              payload.traits.copyable = true;
+              changed = true;
+            }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "MIR rejects copyable exclusive-reference enum metadata");
+    }
+  }
+  {
     const std::string declaration =
         "enum Reading { error, value(int& owner) };\n";
     const std::string inspect = R"gti(
