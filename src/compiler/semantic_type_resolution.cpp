@@ -4476,6 +4476,43 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
   }
   const bool fallibleBorrowFromCall =
       isFallibleBorrowType(type) && transientBorrowProduction(initializer);
+  // A complete producer fact can prove that this value has no external
+  // owners even when other alternatives of its type store several borrows.
+  // Absence of evidence is not an empty set: check the concrete alternative
+  // inventory and every applicable reference path before accepting it.
+  if (const auto complete = completeBorrowDependencySet(initializer);
+      complete && complete->dependencies.empty() &&
+      !complete->possibleAlternatives.empty()) {
+    const auto inventory = storedReferenceInventory(type);
+    const auto alternatives = storedBorrowAlternativeInventory(type);
+    bool ownerless = inventory && alternatives;
+    if (ownerless)
+      for (const auto &alternative : complete->possibleAlternatives) {
+        if (std::find(alternatives->begin(), alternatives->end(),
+                      alternative) == alternatives->end()) {
+          ownerless = false;
+          break;
+        }
+        for (const auto &path : *inventory) {
+          const auto conditions = storedConditionSymbols(type, path.conditions);
+          if (!conditions ||
+              std::all_of(conditions->begin(), conditions->end(),
+                          [&](const auto &condition) {
+                            return std::find(alternative.conditions.begin(),
+                                             alternative.conditions.end(),
+                                             condition) !=
+                                   alternative.conditions.end();
+                          })) {
+            ownerless = false;
+            break;
+          }
+        }
+        if (!ownerless)
+          break;
+      }
+    if (ownerless)
+      return;
+  }
   if (storedReferencePaths(type).size() > 1) {
     const auto dependencies = storedBorrowDependencies(initializer);
     if (dependencies.empty()) {
