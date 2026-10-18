@@ -1,0 +1,11 @@
+#include <std/json>
+#include <std/optional>
+#include <std/map>
+#include <std/string>
+
+int main() {
+  auto optional = std::json::decode<std::optional<int>>("7");
+  if (!optional) { return 1; }
+  auto dictionary = std::json::decode<std::map<std::string, int>>("{\"a\":1}");
+  return dictionary ? 0 : 2;
+}
