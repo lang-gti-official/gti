@@ -9,7 +9,8 @@ project(gti_installed_library_smoke LANGUAGES C CXX)
 include(CTest)
 find_package(GTI CONFIG REQUIRED)
 
-add_executable(gti_installed_charconv_smoke ../runtime_charconv_tests.cpp)
+add_executable(gti_installed_charconv_smoke ../runtime_charconv_tests.cpp
+               ../runtime_charconv_parser_tests.cpp)
 target_link_libraries(gti_installed_charconv_smoke PRIVATE GTI::runtime)
 target_compile_features(gti_installed_charconv_smoke PRIVATE cxx_std_20)
 add_test(NAME installed_charconv_boundary COMMAND gti_installed_charconv_smoke)
