@@ -30,6 +30,7 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "tryable_propagation.gti"
     conditional_source = pathlib.Path(__file__).parent / "fixtures" / "reference_payload_tryable.gti"
+    last_use_source = pathlib.Path(__file__).parent / "fixtures" / "multi_owner_reference_last_use.gti"
     example = pathlib.Path(__file__).parent.parent / "examples" / "159-tryable-propagation.gti"
     borrowed_example = pathlib.Path(__file__).parent.parent / "examples" / "165-borrowed-payload-results.gti"
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
@@ -99,6 +100,13 @@ def main():
             assert (shown.returncode, shown.stdout, shown.stderr) == (0, "", ""), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
             print(f"tryable propagation: {name} passed", flush=True)
+            last_use = pathlib.Path(directory) / f"multi-owner-last-use-{name}"
+            built = run([str(compiler), str(last_use_source), *flags,
+                         "-o", str(last_use), *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            shown = run([str(last_use)])
+            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "", ""), \
+                (name, shown.returncode, shown.stdout, shown.stderr)
 
 
 if __name__ == "__main__":

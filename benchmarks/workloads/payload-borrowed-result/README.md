@@ -1,12 +1,18 @@
 # Reference payload results versus built-in fallible borrows
 
-Both variants perform ten million lookups. Success borrows the current local
+All variants perform ten million lookups. Success borrows the current local
 integer without copying or allocating it; every fourth lookup instead owns the
-same 61-byte error string. The source enum consumes its wrapper in a match; the
-built-in expected observes its selected payload before ordinary scope cleanup.
-Each owned error is destroyed once. Both check the full sum before printing the
-same benchmark record. This comparison does not measure protocol dispatch or
-claim that the two types expose identical public APIs.
+same 61-byte error string. Compare matching contracts:
+
+- `source` consumes the enum and moves its error into an arm-local owner;
+  `builtin-consumed` moves the expected error into an ordinary local owner.
+- `source-observed` borrows the enum's error field; `builtin` observes the
+  expected error before ordinary scope cleanup.
+
+Each owned error is destroyed once. All check the full sum before printing the
+same benchmark record. Consumed versus observed results are useful additional
+cost information, not a parity claim. This comparison does not measure protocol
+dispatch or claim identical public APIs.
 
 Run `scripts/benchmark_compare.py --gti <compiler> --cxx <native-compiler>
 --optimization 2 --cpp-standard c++23 --warmup 3 --runs 30 --seed 178
