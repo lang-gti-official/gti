@@ -34491,7 +34491,9 @@ loanHasCppPointerCarrier(const MirProgram &program,
     std::size_t producers = 0;
     for (const auto &block : body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.loan == loan.id) {
+        if (instruction.loan == loan.id &&
+            (instruction.kind == MirInstructionKind::Borrow ||
+             instruction.kind == MirInstructionKind::Call)) {
           const bool returnedAddress =
               instruction.kind == MirInstructionKind::Call &&
               loanProducingReferenceCall(program, body, loan) == &instruction;

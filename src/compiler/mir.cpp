@@ -7198,6 +7198,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       instruction.borrowOrigin != BorrowOriginKind::None &&
       instruction.successResultDrop && instruction.result &&
       (instruction.info.type.kind == SemanticType::Class ||
+       instruction.info.type.kind == SemanticType::Enum ||
        fallibleBorrowCarrier) &&
       instruction.info.category == ValueCategory::Value &&
       instruction.info.traits.movable &&

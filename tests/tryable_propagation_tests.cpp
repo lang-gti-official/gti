@@ -102,6 +102,32 @@ int main() {
            "consuming reference publication fixture must verify");
     if (!proof.canGenerateCode())
       continue;
+    bool checkedOwningBorrowedCall = false;
+    for (const auto &function : proof.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.functionTarget || !instruction.loan ||
+              instruction.info.type.kind != lang::SemanticType::Enum ||
+              instruction.info.traits.drop != lang::DropKind::Lexical ||
+              !instruction.definedFailure.mayUnwind())
+            continue;
+          checkedOwningBorrowedCall = true;
+          expect(instruction.successResultDrop &&
+                     block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                     block.terminator.invokeInstruction == instruction.id,
+                 "borrowed owning enum calls publish only on Invoke success");
+          auto malformed = proof.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto &bad = changed->body.blocks[block.id - 1];
+          bad.terminator.kind = lang::MirTerminatorKind::Goto;
+          bad.terminator.invokeInstruction = 0;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "borrowed owning enum results cannot erase their failure edge");
+        }
+    expect(checkedOwningBorrowedCall,
+           "conditional result fixture exercises success-only enum publication");
     for (int mutation = 0; mutation < 4; ++mutation) {
       auto malformed = proof.mir;
       bool changed = false;

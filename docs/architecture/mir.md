@@ -328,9 +328,12 @@ dependency group in `transferredFrom`; this is a handoff claim, not a live
 reborrow parent. Body verification requires an existing, distinct group only
 for a transfer-mode producer. Program verification must separately prove the
 closed field-transfer prefix and preserve external ancestry after the old
-carrier retires. The records alone grant no borrowing authority;
-stored-reference payload admission remains closed pending complete selected-owner
-verification. The declaration format also retains exact external storage
+carrier retires. The records alone grant no borrowing authority: independent
+complete-value flow reconstructs every selected external origin, access mode and
+active-alternative guard. A passive carrier with several reference fields keeps
+that complete fact only across its exact sealed extraction prefix, until the
+last field is transferred; ordinary whole-value moves still invalidate it.
+The declaration format also retains exact external storage
 names. Earlier versions record
 checked borrowing capture modes, each concrete environment's invocation
 capability, per-dependency loan parents, and exact stateless GTI function-pointer
@@ -339,6 +342,14 @@ carrier origins; mutable captures make the environment non-copyable and require
 exclusive invocation. Composed carriers retain every dependency and ancestor,
 including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
+
+A cleanup-owning borrowed result uses the same success-only call publication
+protocol whether its source type is a class or payload enum. A failure-capable
+producer initializes its result obligation only on the Invoke success edge;
+the failed call publishes neither the result nor its dependent reference.
+Borrow metadata does not turn an owning result into a reference-only call or
+permit unconditional result initialization. MIR independently rejects missing
+failure edges and malformed result activation.
 
 Function rows retain optional declaration-relative complete result dependency
 contracts. For the initial known-empty enum slice, MIR independently validates

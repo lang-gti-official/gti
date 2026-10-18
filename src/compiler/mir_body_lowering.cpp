@@ -7485,6 +7485,7 @@ private:
     const bool transferableBorrowedResult =
         call.loan &&
         (value.info.type.kind == SemanticType::Class ||
+         value.info.type.kind == SemanticType::Enum ||
          mirFallibleBorrowReferent(value.info.type).has_value()) &&
         value.info.category == ValueCategory::Value &&
         value.info.traits.movable && value.info.traits.containsBorrowedState;
