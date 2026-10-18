@@ -289,6 +289,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsUnknownMemory = true,
                     .invokesRuntime = true,
                     .mayTrap = true},          // Panic
+    MirEffectTraits{.mayTrap = true}, // FailEmptyOwner
     MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
     // Promotion consumes the unique owner. Exhaustion aborts before cleanup;
     // successful publication does not execute the pointee's source body.
@@ -646,6 +647,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "require-key",
     "require-container-argument",
     "panic",
+    "fail-empty-owner",
     "shared-owner-empty",
     "shared-owner-from-unique",
     "shared-owner-clone",

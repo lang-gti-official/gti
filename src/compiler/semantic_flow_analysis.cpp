@@ -2107,9 +2107,10 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         const Token token = callableToken(call->callee());
         switch (intrinsic) {
         case IntrinsicKind::Panic:
+        case IntrinsicKind::FailEmptyOwner:
           anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::Panic,
-                            DefinedFailureDetail::ExplicitPanic);
+          addFailureOutcome(operation, intrinsicTerminalFailureOutcome(intrinsic)->code,
+                            intrinsicTerminalFailureOutcome(intrinsic)->detail);
           break;
         case IntrinsicKind::FunctionPointerInvoke:
           // The erased signature preserves GTI failure propagation but not
@@ -5877,6 +5878,11 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   for (std::size_t index = 0; index < common; ++index) {
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
+    const auto &field = enumerator.payloadTypes[index];
+    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
+        isOwnerDependentTextExpression(call.arguments()[index]))
+      reportOwnerDependentTextStorage(call.arguments()[index],
+                                      "stored in a payload-enum field");
     if (actual != SemanticType::Unknown &&
         !callArgumentMatches(enumerator.payloadTypes[index], actual,
                              call.arguments()[index])) {

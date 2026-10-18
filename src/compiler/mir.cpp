@@ -6786,13 +6786,15 @@ validFailureInstructionShape(const MirInstruction &instruction) {
     return false;
   }
   if (intrinsicBooleanFailureOutcome(instruction.intrinsic) ||
-      instruction.intrinsic == IntrinsicKind::Panic) {
+      intrinsicTerminalFailureOutcome(instruction.intrinsic)) {
     const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
-    const SemanticType parameter =
-        panic ? SemanticType::StringView : SemanticType::Bool;
+    const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic);
+    const std::vector<SemanticType> parameters =
+        panic ? std::vector<SemanticType>{SemanticType::StringView}
+              : terminal ? std::vector<SemanticType>{}
+                         : std::vector<SemanticType>{SemanticType::Bool};
     const DefinedFailureOutcome expected =
-        panic ? DefinedFailureOutcome{DefinedFailureCode::Panic,
-                                      DefinedFailureDetail::ExplicitPanic}
+        terminal ? *terminal
               : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
     return instruction.kind == MirInstructionKind::Call &&
            !instruction.functionTarget && !instruction.constructorTarget &&
@@ -6800,11 +6802,11 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            !instruction.callableInvocation && !instruction.result &&
            !instruction.receiver && !instruction.destination &&
            instruction.info.type == SemanticType::Void &&
-           instruction.neverReturns == panic &&
+           instruction.neverReturns == terminal.has_value() &&
            instruction.tracksCaller == panic &&
-           instruction.operands.size() == 1 &&
-           instruction.operands.front().type == parameter &&
-           instruction.parameterTypes == std::vector<SemanticType>{parameter} &&
+           instruction.operands.size() == parameters.size() &&
+           (parameters.empty() || instruction.operands.front().type == parameters.front()) &&
+           instruction.parameterTypes == parameters &&
            instruction.definedFailure.propagation ==
                FailurePropagationKind::None &&
            instruction.definedFailure.localOrigins.size() == 1 &&
@@ -9831,7 +9833,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           instruction.callerLocation->line < 1)) ||
         ((instruction.neverReturns || instruction.tracksCaller) &&
          !instruction.functionTarget &&
-         instruction.intrinsic != IntrinsicKind::Panic) ||
+         !intrinsicTerminalFailureOutcome(instruction.intrinsic)) ||
         (instruction.ownership &&
          instruction.ownership->kind == OwnershipEventKind::ConsumeReceiver &&
          (!callInput ||
@@ -10773,7 +10775,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  instruction.intrinsic == IntrinsicKind::None &&
                  !instruction.constructorTarget) ||
                 (!instruction.functionTarget &&
-                 (instruction.intrinsic == IntrinsicKind::Panic ||
+                 (intrinsicTerminalFailureOutcome(instruction.intrinsic) ||
                   instruction.intrinsic == IntrinsicKind::ThreadScope ||
                   instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
                   instruction.intrinsic == IntrinsicKind::CStringFromAddress ||

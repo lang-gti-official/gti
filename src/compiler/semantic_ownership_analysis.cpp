@@ -2511,6 +2511,12 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
   for (std::size_t index = 0; index < enumerator.payloadTypes.size(); ++index) {
     const auto &field = enumerator.payloadTypes[index];
     const auto &argument = call.arguments()[index];
+    // Text-view provenance is expression-dependent, not represented by the
+    // type's ordinary reference-field inventory. An empty inventory cannot
+    // certify an owner-dependent text value as dependency-free.
+    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
+        isOwnerDependentTextExpression(argument))
+      return std::nullopt;
     const StoredField storedField = &enumerator.declaration->payload[index];
     const auto symbols = storedFieldSymbols(
         enumerator.symbol.type, std::span<const StoredField>(&storedField, 1));
@@ -4134,6 +4140,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "panic") {
     return IntrinsicKind::Panic;
+  }
+  if (name == "fail_empty_owner") {
+    return IntrinsicKind::FailEmptyOwner;
   }
   return IntrinsicKind::None;
 }
@@ -10767,7 +10776,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic == IntrinsicKind::Panic) {
+  if (intrinsicTerminalFailureOutcome(intrinsic)) {
+    const bool panic = intrinsic == IntrinsicKind::Panic;
     std::vector<SemanticType> argumentTypes;
     for (const auto &argument : expr.arguments()) {
       argumentTypes.push_back(analyze(argument));
@@ -10775,11 +10785,12 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     for (const auto &argument : expr.typeArguments()) {
       validateType(argument);
     }
-    if (!expr.typeArguments().empty() || argumentTypes.size() != 1 ||
-        argumentTypes.front() != SemanticType::StringView) {
+    if (!expr.typeArguments().empty() ||
+        (panic ? argumentTypes != std::vector<SemanticType>{SemanticType::StringView}
+               : !argumentTypes.empty())) {
       report(expr.paren(),
-             "Panic requires one counted text-view message and no type "
-             "arguments.",
+             panic ? "Panic requires one counted text-view message and no type arguments."
+                   : "Terminal owner failure requires no arguments or type arguments.",
              "GTI-S2019");
     }
     currentType = SemanticType::Void;
@@ -10788,7 +10799,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
                                .parameterTypes = std::move(argumentTypes),
                                .intrinsic = intrinsic,
                                .neverReturns = true,
-                               .tracksCaller = true});
+                               .tracksCaller = panic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

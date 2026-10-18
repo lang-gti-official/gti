@@ -429,6 +429,7 @@ enum class IntrinsicKind {
   RequireKey,
   RequireContainerArgument,
   Panic,
+  FailEmptyOwner,
   SharedOwnerEmpty,
   SharedOwnerFromUnique,
   SharedOwnerClone,
@@ -528,6 +529,21 @@ enum class IntrinsicKind {
   ThreadScope,
   Count,
 };
+
+// Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] inline std::optional<DefinedFailureOutcome>
+intrinsicTerminalFailureOutcome(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::Panic:
+    return DefinedFailureOutcome{DefinedFailureCode::Panic,
+                                 DefinedFailureDetail::ExplicitPanic};
+  case IntrinsicKind::FailEmptyOwner:
+    return DefinedFailureOutcome{DefinedFailureCode::EmptyOwnerAccess,
+                                 DefinedFailureDetail::MemberAccess};
+  default:
+    return std::nullopt;
+  }
+}
 
 // These checks consume a source-computed condition, not a storage object.
 // The declaration-bound intrinsic selects the failure family; neither MIR
