@@ -11847,6 +11847,23 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
       consumer->constructorTarget &&
       consumer->constructorKind == ConstructorKind::Ordinary &&
       consumer->intrinsic == IntrinsicKind::None && stage->info.traits.movable;
+  // A payload alternative is another exact ordered by-value consumer. Keep
+  // the already constructed argument in its prepared slot; its source must
+  // not be recopied after evaluation of later payload fields.
+  const bool payloadConstruction =
+      consumer && consumer->kind == MirInstructionKind::Compute &&
+      consumer->operation == MirOperation::PayloadConstruct &&
+      consumer->enumOwner && consumer->enumVariant &&
+      stage->callInputRole == MirCallInputRole::Argument &&
+      stage->info.type.kind == SemanticType::Class &&
+      stage->info.traits.movable &&
+      uses.front().kind == MirValueUseKind::InstructionOperand &&
+      uses.front().operandIndex == stage->callInputIndex &&
+      stage->callInputIndex < consumer->parameterTypes.size() &&
+      consumer->parameterTypes[stage->callInputIndex] == stage->info.type &&
+      stage->callInputIndex < consumer->operands.size() &&
+      consumer->operands[stage->callInputIndex].kind == MirOperandKind::Value &&
+      consumer->operands[stage->callInputIndex].type == stage->info.type;
   // General final-address construction uses the same prepared ownership slot.
   const bool prefixConstruction =
       consumer && consumer->kind == MirInstructionKind::Call &&
@@ -11905,8 +11922,8 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
       stage->callInputRole == MirCallInputRole::Argument &&
       stage->callInputIndex < consumer->scopedThreadTasks.size() &&
       stage->info.traits.movable;
-  if ((!allocation && !construction && !prefixConstruction && !rawTransfer &&
-       !sourceCall && !scopedCall) ||
+  if ((!allocation && !construction && !payloadConstruction &&
+       !prefixConstruction && !rawTransfer && !sourceCall && !scopedCall) ||
       consumer->callSite != stage->callSite ||
       stage->callInputIndex >= consumer->operands.size() ||
       consumer->operands[stage->callInputIndex].value != id ||
@@ -38598,6 +38615,13 @@ private:
   void emitPayloadConstructOperand(const ScalarBodyFacts &facts,
                                    const MirInstruction &instruction,
                                    const MirOperand &operand) {
+    if (operand.kind == MirOperandKind::Value) {
+      if (const auto *stage =
+              materializedConstructorArgumentStage(facts.body, operand.value)) {
+        output << "__gti_mir_p_" << *stage->destination << ".take()";
+        return;
+      }
+    }
     if (operand.type.kind == SemanticType::Reference) {
       const auto *stage = definitionFor(facts.body, operand);
       if (!stage || stage->kind != MirInstructionKind::CallInput ||

@@ -1151,6 +1151,48 @@ int main() {
           "provenance-only enum/class path still requires exact typed fields");
     }
   }
+  if (classReferenceEntry.canGenerateCode()) {
+    const auto lowered = gti_test::lowerProgram(
+        classReferenceEntry, classReferenceEntry.mir, classReferenceEntry.mir);
+    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+        lowered, lang::CppStandard::Cpp23));
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto forged = classReferenceEntry.mir;
+      lang::HirFunctionInstanceId altered = 0;
+      for (auto &function : lang::MirProgramTestAccess::functions(forged))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (mutation < 3 &&
+                instruction.kind == lang::MirInstructionKind::CallInput &&
+                instruction.info.type.kind == lang::SemanticType::Class &&
+                instruction.preparedParameterDrop) {
+              if (mutation == 0)
+                instruction.callInputRole = lang::MirCallInputRole::Receiver;
+              else if (mutation == 1)
+                ++instruction.callInputIndex;
+              else
+                instruction.info.type = lang::SemanticType::Int32;
+              altered = function.id;
+            }
+            if (mutation >= 3 &&
+                instruction.operation == lang::MirOperation::PayloadConstruct &&
+                !instruction.operands.empty()) {
+              if (mutation == 3)
+                instruction.operands.push_back(instruction.operands.front());
+              else
+                instruction.lifecycle.clear();
+              altered = function.id;
+            }
+          }
+      const lang::CppMirBodyEmitter rejected(forged, map);
+      expect(
+          altered && !lang::verifyMirProgram(forged).valid() &&
+              !rejected.supportsBodyText(
+                  {lang::MirBodyKind::Function, altered}),
+          "prepared class payload rejects altered role/index/type, duplicate "
+          "SSA use and missing ownership transfer");
+    }
+  }
   const auto publishedCall = lang::Frontend().analyze(
       "owning-enum-call-publication.gti", R"gti(
 #include <std/string>
