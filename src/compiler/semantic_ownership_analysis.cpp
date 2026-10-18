@@ -4560,6 +4560,32 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
                          : SemanticLoanId{0}}};
 }
 
+auto SemanticVisitor::Impl::resolvedBorrowVariable(
+    const Variable &variable) const -> const Symbol * {
+  const auto *info = semanticModel.findExpression(variable);
+  if (info == nullptr)
+    return resolve(variable.name());
+  if (info->symbol == 0)
+    return nullptr;
+  const auto exact = [&](const Symbol &symbol) {
+    return symbolForDeclaration(symbol.declaration) == info->symbol;
+  };
+  // Initializers are resolved before their new binding is installed. A later
+  // retention query must use that resolved identity, even when the new local
+  // shadows the initializer's spelling. Never rebind an analyzed expression.
+  for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
+    if (const auto found = scope->find(variable.name().lexeme);
+        found != scope->end() && exact(found->second))
+      return &found->second;
+  const auto &symbols = currentNamespaceSymbols();
+  for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth)
+    if (const auto found = symbols.find(
+            qualifiedName(currentNamespace, depth - 1, variable.name().lexeme));
+        found != symbols.end() && exact(found->second))
+      return &found->second;
+  return nullptr;
+}
+
 auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
     -> const ExprPtr * {
   if (!expression) {
@@ -4589,7 +4615,7 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
       return &unary->right();
   }
   if (const auto *variable = exprAs<Variable>(expression.get())) {
-    const Symbol *symbol = resolve(variable->name());
+    const Symbol *symbol = resolvedBorrowVariable(*variable);
     if (symbol != nullptr &&
         (symbol->type.kind == SemanticType::Reference ||
          typeTraits(symbol->type).containsBorrowedState) &&
@@ -4893,7 +4919,7 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     }
   }
   if (const auto *variable = exprAs<Variable>(expression.get())) {
-    const Symbol *symbol = resolve(variable->name());
+    const Symbol *symbol = resolvedBorrowVariable(*variable);
     if (symbol != nullptr && symbol->retainedLoan != 0) {
       return RetainedLoanSource{.loan = symbol->retainedLoan,
                                 .carrier = variable};
@@ -7165,7 +7191,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       while (const auto *group = exprAs<Grouping>(copyExpression))
         copyExpression = group->expression().get();
       const auto *named = exprAs<Variable>(copyExpression);
-      const auto *copied = named ? resolve(named->name()) : nullptr;
+      const auto *copied = named ? resolvedBorrowVariable(*named) : nullptr;
       const auto *retained = copied && copied->retainedLoan != 0
                                  ? semanticModel.findLoan(copied->retainedLoan)
                                  : nullptr;
