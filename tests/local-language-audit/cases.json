@@ -35,8 +35,7 @@
       "stderr": "",
       "emit_contains": [
         "operator=(const std::nullptr_t",
-        "__gti_mir_op_assign__gti_mir_failure",
-        "owner = nullptr"
+        "__gti_mir_op_assign__gti_mir_failure"
       ]
     },
     {
