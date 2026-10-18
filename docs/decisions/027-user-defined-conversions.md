@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-GTI requires exact types at calls, returns, and assignment. Before this
+GTI originally required exact types at calls, returns, and assignment. Before this
 decision, a class could convert to another type only through a constructor
 of the target or a named method, apart from the contextual `operator bool`
 of conditions. Declarations gained a bounded exception in 0.426.0: a
@@ -26,7 +26,7 @@ A class may declare conversion operators, `operator Target()`. They are
 explicit by default. `Target(value)` calls one, including the keyword forms
 `int(value)` and `bool(value)` and an alias of the target. Writing `implicit`
 first, as for constructors, additionally admits the operator in declaration
-initialization, `Target name = value;`, and nowhere else. GTI has no
+initialization, `Target name = value;`, and explicitly declared value returns. GTI has no
 `explicit` keyword.
 
 - **One shared selection.** A conversion from a class `U` to `Target` has two
@@ -39,7 +39,7 @@ initialization, `Target name = value;`, and nowhere else. GTI has no
   declaration considers only implicit constructors and implicit operators.
 - **One step.** No conversion chains: a conversion operator never composes
   with a constructor, another conversion operator, or a numeric conversion.
-- **No other contexts.** Calls, returns, assignment, operator operands, `auto`
+- **No other contexts.** Calls, assignment, operator operands, `auto`
   inference, and brace construction are unchanged and never consult
   conversion operators. Contextual `operator bool` keeps its contexts;
   `bool(value)` calls it explicitly and `bool flag = value;` needs
@@ -61,11 +61,26 @@ initializer. HIR lowers both as a receiver-only call of the selected
 function. MIR and the backend add no conversion rule; they execute the
 selected call.
 
+## Revision: Declared return initialization (2026-10-18)
+
+The declaration-only restriction is revised: `return expression;` initializes
+an explicitly declared value return type with the same single implicit
+constructor/operator selection. A return has one exact destination and no
+call-site overload ranking, so requiring a temporary binding adds verbosity
+without strengthening ownership. The source keeps constructor/member-call
+copy, move, borrowing, access and failure checks; a named move-only conversion
+argument still requires explicit transfer. Reference and borrow-carrying target
+exclusions remain, and there are no conversion chains. Concrete generic return
+destinations select and verify their calls during ordinary instance reanalysis.
+The source-defined `optional(T)` constructor opts in through `implicit`, without
+compiler recognition of optional. Example 166 demonstrates both optional and
+an unrelated user-defined result.
+
 ## Consequences
 
 Conversions are visible where they happen. An explicit conversion names its
-target, and an implicit one is limited to a declaration whose type is
-written beside it. Adding an implicit operator cannot change which function
+target, and an implicit one is limited to a declaration or return whose
+destination type is explicitly declared. Adding an implicit operator cannot change which function
 a call selects, because calls never convert. Adding an operator or
 constructor that creates a second path makes existing conversions ambiguous
 instead of silently selecting one; `Target{value}` still selects a
