@@ -580,6 +580,22 @@ int main() {
   expect(formatted == lang::Formatter().format(formatted) &&
              analyze(formatted).canGenerateCode(),
          "unsafe member requirements round-trip through formatting");
+  const auto mutableRequirement = analyze(R"(
+struct Counter {
+  mut int value = 1;
+  int advance(int amount) mut { this.value += amount; return this.value; }
+};
+int advance<T>(mut T& value)
+  requires requires(mut T& receiver, int amount) {
+    { receiver.advance(amount) } -> int;
+  } {
+  return value.advance(2);
+}
+int main() { mut Counter value{}; return advance(value) - 3; }
+)");
+  expect(mutableRequirement.canGenerateCode(),
+         "a mutable requirement retains receiver access without qualifying "
+         "its synthetic non-reference type argument");
   const auto hoverOffset = source.find("unsafe_reads<T> =") + 1;
   const auto hover = lang::LanguageQueries().hover(
       frontend, frontend.sourceGraph.entryUnit(), hoverOffset);

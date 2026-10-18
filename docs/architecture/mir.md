@@ -863,6 +863,17 @@ parent without gaining mutable access; parent activity, CFG containment,
 non-escape and child-before-parent endpoints remain mandatory and independently
 verified.
 
+Native emission tail-forwards a cleanup recipe only when its verified schedule
+contains one possible action: a class with no source destructor and exactly one
+aggregate child, or an enum whose every alternative has at most one cleanup
+child. It passes the original failure record and unwinding mode and returns the
+child's result; an empty alternative returns success. A cleanup sequence does
+not establish a failure context before its first action. After the sole action
+fails, the otherwise-created context would be activated and immediately
+destroyed, with no later action able to observe it or raise a second failure.
+Child sequencing, source-destructor and multi-child recipes, and the caller's
+native retirement after either success or primary failure remain unchanged.
+
 Canonical storage identity preserves the concrete executable place and its
 field projections through address-preserving place-valued SSA operations.
 This is distinct from a lifetime dependency origin, which may deliberately

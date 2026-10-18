@@ -703,6 +703,9 @@ private:
       auto requirement = memberRequirement(previous());
       TypeRef receiver = requirement->receiver();
       receiver.reference.reset();
+      // The synthetic constraint argument names the referent type. Keep
+      // receiver access on the requirement, not on this non-reference type.
+      receiver.referenceMutability.reset();
       const std::size_t application = expression.applications.size();
       std::vector<TypeRef> arguments{std::move(receiver),
                                      requirement->result()};

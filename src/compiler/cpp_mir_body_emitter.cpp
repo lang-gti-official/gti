@@ -28,6 +28,11 @@
 
 namespace lang {
 namespace {
+[[nodiscard]] const MirInstruction *
+storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan);
+[[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirPlace &place);
 bool exactConstructorPermission(const MirProgram &program,
                                 const MirInstruction &instruction) {
   if (instruction.unsafeOperation == UnsafeOperationKind::None)
@@ -117,18 +122,32 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
     const auto *enumeration = program.findPayloadEnum(type.type);
     if (enumeration == nullptr)
       throw std::logic_error("MIR payload cleanup lost its variant table");
-    // A nested sequence must not shadow the sequence whose record/unwinding
-    // expressions initialize it: C++ puts the new name in scope before its
-    // initializer. Each recursive scope therefore needs a distinct name.
-    const std::string sequence = "__gti_sum_sequence_" + std::to_string(depth);
-    std::string expression =
-        "([&]() { ::gti_internal::backend::mir_cleanup_sequence_v1 " +
-        sequence + "(" + arguments +
-        ", &::gti_internal::backend::__gti_failure_artifact_descriptor_v1); ";
+    std::vector<std::size_t> activeChildren(enumeration->variants.size());
     for (const auto &child : type.aggregate) {
       if (!child.payloadVariant || !child.payloadField ||
           *child.payloadVariant >= enumeration->variants.size())
         throw std::logic_error("MIR payload cleanup lost its field selection");
+      ++activeChildren[*child.payloadVariant];
+    }
+    // A selected alternative with at most one cleanup action cannot acquire a
+    // second failure. Before its first step a cleanup sequence only stores the
+    // incoming record/unwinding values; it establishes no failure context.
+    // Tail-forward that one action (or success for an empty alternative),
+    // leaving sequencing inside the child and native retirement to its caller.
+    const bool singleAction =
+        std::all_of(activeChildren.begin(), activeChildren.end(),
+                    [](std::size_t count) { return count <= 1; });
+    // A nested sequence must not shadow the sequence whose record/unwinding
+    // expressions initialize it: C++ puts the new name in scope before its
+    // initializer. Each recursive scope therefore needs a distinct name.
+    const std::string sequence = "__gti_sum_sequence_" + std::to_string(depth);
+    std::string expression = "([&]() { ";
+    if (!singleAction)
+      expression += "::gti_internal::backend::mir_cleanup_sequence_v1 " +
+                    sequence + "(" + arguments +
+                    ", &::gti_internal::backend::"
+                    "__gti_failure_artifact_descriptor_v1); ";
+    for (const auto &child : type.aggregate) {
       const std::string alternative = std::to_string(*child.payloadVariant + 1);
       std::string field = "::gti_internal::backend::payload_get<" +
                           alternative + ">(" + receiver +
@@ -136,6 +155,14 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                           std::to_string(*child.payloadField);
       if (cppRequiresBytePreservingTransport(program, child.type))
         field += ".get()";
+      if (singleAction) {
+        expression += "if (" + receiver +
+                      ".__gti_value.index() == " + alternative + ") return " +
+                      cleanupValueExpression(program, child, field, record,
+                                             unwinding, depth + 1) +
+                      "; ";
+        continue;
+      }
       expression +=
           "if (" + receiver + ".__gti_value.index() == " + alternative +
           " && !" + sequence + ".step(" +
@@ -143,7 +170,8 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                                  sequence + ".unwinding()", depth + 1) +
           ")) return false; ";
     }
-    return expression + "return " + sequence + ".success(); }())";
+    return expression + "return " +
+           (singleAction ? "true" : sequence + ".success()") + "; }())";
   }
   if (type.type.kind == SemanticType::Expected ||
       type.type.kind == SemanticType::Unexpected) {
@@ -8937,6 +8965,7 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
   const MirBlock *returnBlock = nullptr;
   const MirBlock *transferBlock = nullptr;
   const MirInstruction *transferInstruction = nullptr;
+  const MirInstruction *erasedReturnBorrow = nullptr;
   std::size_t initializations = 0;
   std::size_t transfers = 0;
   for (const MirBlock &block : body.blocks) {
@@ -8946,12 +8975,18 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
                       return instruction.id == producer->id;
                     });
     if (containsProducer) {
+      const auto *returnLoan = block.terminator.returnLoan
+                                   ? body.findLoan(*block.terminator.returnLoan)
+                                   : nullptr;
+      erasedReturnBorrow = returnLoan
+                               ? storedValueReturnLoanProducer(body, *returnLoan)
+                               : nullptr;
       if (returnBlock != nullptr ||
           block.terminator.kind != MirTerminatorKind::Return ||
           !block.terminator.value ||
           block.terminator.value->kind != MirOperandKind::Value ||
           block.terminator.value->value != valueId ||
-          block.terminator.returnLoan ||
+          (block.terminator.returnLoan && !erasedReturnBorrow) ||
           !block.terminator.successLifecycle.empty()) {
         return {};
       }
@@ -9004,7 +9039,9 @@ payloadEnumFreshReturnPublication(const MirProgram &program,
     }
     const bool cleanupOnly =
         instruction.kind == MirInstructionKind::Lifecycle ||
-        instruction.kind == MirInstructionKind::Drop;
+        instruction.kind == MirInstructionKind::Drop ||
+        instruction.kind == MirInstructionKind::EndBorrow ||
+        &instruction == erasedReturnBorrow;
     if (afterProducer &&
         (!cleanupOnly || !instruction.localFailureSites.empty() ||
          !instruction.definedFailure.empty())) {
@@ -27136,6 +27173,8 @@ private:
 
   void scanPlace(const MirBody &body, const MirPlace &place) {
     requireType(place.type);
+    if (nonRuntimeEnumProjection(program, body, place))
+      return;
     const CppMirEmissionEncoding root = classifyCppMirPlaceRootKind(place.root);
     if (root == CppMirEmissionEncoding::Invalid) {
       add(CppMirBodyEmissionIssueKind::InvalidPlaceRootKind, 0, 0,
@@ -34366,6 +34405,116 @@ loanHasCppPointerCarrier(const MirProgram &program,
          elementBorrowLoanProducer(body, loan) == nullptr;
 }
 
+// Enum reference inventories include guarded abstract referent paths. Those
+// paths are checked provenance, not unconditional native field reads (the
+// field may belong to an inactive alternative). An actual selection obtains
+// its address from PayloadExtract. Admit only an exact typed path with no
+// runtime address/storage use, including implicit entry-loan initialization.
+[[nodiscard]] bool nonRuntimeEnumProjection(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Binding || place.projections.empty())
+    return false;
+  const auto root = std::find_if(
+      body.places.begin(), body.places.end(), [&](const auto &candidate) {
+        return candidate.root == MirPlaceRootKind::Binding &&
+               candidate.binding == place.binding &&
+               candidate.symbol == place.symbol && candidate.projections.empty();
+      });
+  if (root == body.places.end())
+    return false;
+  SemanticType type = root->type;
+  bool enumField = false;
+  for (const auto &projection : place.projections) {
+    if (projection.kind == MirProjectionKind::Dereference &&
+        type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+      type = SemanticType(type.arguments.front());
+      continue;
+    }
+    if (projection.kind != MirProjectionKind::Field ||
+        type.kind != SemanticType::Enum)
+      return false;
+    const SemanticType *field = nullptr;
+    for (const auto &enumeration : program.payloadEnums()) {
+      if (enumeration.type != type)
+        continue;
+      for (const auto &variant : enumeration.variants) {
+        if (variant.payloadTypes.size() != variant.payloadSymbols.size())
+          return false;
+        for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+          if (variant.payloadSymbols[index] == projection.field) {
+            if (field)
+              return false;
+            field = &variant.payloadTypes[index];
+          }
+      }
+    }
+    if (!field)
+      return false;
+    type = *field;
+    enumField = true;
+  }
+  if (!enumField || type != place.type)
+    return false;
+  const auto uses = [&](const auto &operand) { return operand.place == place.id; };
+  const auto usesAny = [&](const auto &operands) {
+    return std::any_of(operands.begin(), operands.end(), uses);
+  };
+  for (const auto &block : body.blocks) {
+    const auto &edge = block.terminator;
+    if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
+        usesAny(edge.elseArguments) ||
+        std::any_of(edge.switchTargets.begin(), edge.switchTargets.end(),
+                    [&](const auto &target) { return usesAny(target.arguments); }))
+      return false;
+    for (const auto &instruction : block.instructions)
+      if (instruction.destination == place.id ||
+          instruction.successResultDestination == place.id ||
+          instruction.retainedOwnerPlace == place.id ||
+          (instruction.receiver && uses(*instruction.receiver)) ||
+          usesAny(instruction.operands))
+        return false;
+  }
+  for (const auto &drop : body.dropObligations)
+    if (drop.place == place.id)
+      return false;
+  for (const auto &range : body.rangeIterations)
+    if (range.owner == place.id || range.rangeCarrier == place.id ||
+        range.iterator == place.id || range.sentinel == place.id ||
+        range.element == place.id)
+      return false;
+  for (const auto &loan : body.loans) {
+    if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
+      continue;
+    if (loan.entry)
+      return false;
+    std::size_t producers = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.loan == loan.id) {
+          const bool returnedAddress =
+              instruction.kind == MirInstructionKind::Call &&
+              loanProducingReferenceCall(program, body, loan) == &instruction;
+          const bool selectedAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.referenceSelection &&
+              borrowedPayloadExtract(body, loan.referenceSelection->value);
+          const bool transferredAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.kind == MirLoanKind::Return &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Loan &&
+              instruction.operands.front().place == 0;
+          if (!returnedAddress && !selectedAddress && !transferredAddress)
+            return false;
+          ++producers;
+        }
+    if (producers != 1)
+      return false;
+  }
+  return true;
+}
+
 // A selected accessor may name a private nested receiver path solely as
 // checked provenance. Its returned pointer (or copied carrier) is the runtime
 // value, not a request to evaluate that path in the caller. Keep exact field
@@ -35247,6 +35396,8 @@ public:
                << place.id << ";\n";
         continue;
       }
+      if (nonRuntimeEnumProjection(program, facts.body, place))
+        continue;
       if (provenanceOnlyProjectedPlace(program, representations, facts.body,
                                        place))
         continue;
@@ -56886,6 +57037,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (payloadEnumArgumentMetadataPlace(program_, body, place)) {
       continue;
     }
+    if (nonRuntimeEnumProjection(program_, body, place) && typeRow(place.type))
+      continue;
     if (objectAllocationForPlace(body, place.id)) {
       if (!failureForm || !typeRow(place.type.arguments.front()))
         return false;

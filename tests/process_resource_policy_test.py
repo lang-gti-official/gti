@@ -52,9 +52,12 @@ def main():
     environment = dict(os.environ,
                        ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
-    for name in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY"):
-        environment.pop(name, None)
     if arguments.installed:
+        # Installed evidence must ignore build-tree resource overrides. In
+        # build-tree mode, CTest supplies the exact runtime archive; release
+        # compilers deliberately have no embedded source/build fallback.
+        for name in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY"):
+            environment.pop(name, None)
         environment.update(installed_resources(compiler))
     else:
         environment.update(GTI_STDLIB_PATH=str(root / "stdlib"),

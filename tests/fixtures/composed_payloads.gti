@@ -23,6 +23,16 @@ public:
 
 enum Packet<T> { empty, item(T value) };
 enum Pair<T, U> { empty, items(T first, U second) };
+enum SingleChoice { empty, left(Resource value), right(Resource value) };
+
+// Neither this wrapper nor its enum child adds a source destructor. Each
+// schedule has at most one active action, including when that action fails.
+class SingleWrapper {
+  Packet<Resource> child;
+public:
+  SingleWrapper(int id, int by = 1)
+      : child(Packet<Resource>::item(Resource(id, by))) {}
+};
 
 std::experimental::optional<Packet<Resource>> find(int id) {
   return std::experimental::optional<Packet<Resource>>(
@@ -61,6 +71,14 @@ int run(int phase) {
     auto never = Pair<Packet<Resource>, int>::items(
         Packet<Resource>::item(Resource(50, zero)), 1 / zero);
     return 1;
+  }
+  if (phase == 5) {
+    auto wrapper = SingleWrapper(60, zero);
+    return 0;
+  }
+  if (phase == 6) {
+    auto wrapper = SingleWrapper(70, zero);
+    return 1 / zero;
   }
   {
     auto result = consume_optional();
@@ -121,6 +139,12 @@ int run(int phase) {
       if (pointer->read() != 8) { return 11; }
       break;
     }
+  }
+  {
+    auto wrapper = SingleWrapper(9);
+    auto empty = SingleChoice::empty;
+    auto left = SingleChoice::left(Resource(10));
+    auto right = SingleChoice::right(Resource(11));
   }
   return 0;
 }
