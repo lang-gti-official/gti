@@ -1,5 +1,37 @@
 # Compiler Verification
 
+## Callable-result projection prerequisites (0.446.0)
+
+`callable_return_type` covers exact result projection for signatures, function
+items, lambdas and native pointers, contextual item inference, void/reference
+metadata, invalid operands, retained unsafe-call requirements and confined
+callback escape rejection. It rejects malformed projection declarations,
+substituted MIR result types and incompatible class-publication destinations.
+`callable_return_type_lsp` checks the diagnostic's UTF-16 range and repair.
+`callable_return_type_runtime` runs example 167 and an owned source-class/result
+enum client with `transform`, `transform_error` and `and_then` under C++20/C++23,
+O0/O1/O3, disabled elision and ASan/UBSan. This is prerequisite evidence, not a
+replacement for production expected or proof of its complete migration matrix.
+
+A staged generic callback's class result can now use the existing exact
+`classValuePublicationSlot` query, matching the writer's established slot
+selection. In particular, direct local initialization is no longer rejected
+by a probe that admitted only the temporary-borrow subset. The producer,
+single consumer, destination type, Invoke success and cleanup proofs remain
+unchanged; this does not grant a new semantic lifetime or bypass MIR checking.
+
+The paired `benchmarks/callable-result-projection.gti` workload compares a
+projected result with `-D EXPLICIT_RESULT`, doing 20 million scalar mappings.
+On Apple Silicon, optimized native text was byte-identical (SHA-256
+`0acd832389e4b4b353da25becc508d32378e9183ea14468b558eb801ad702e6f`), and both
+executables were 125,040 bytes. Alternating 12 executions, excluding the first
+two per version, gave medians of 82.68 ms projected and 84.08 ms explicit;
+the identical machine code makes this timing difference noise, not a speedup.
+The projection adds type metadata, not runtime storage or allocation calls.
+One fresh build of each variant took 0.41 s / 79.53 MB maximum RSS projected
+and 0.39 s / 79.04 MB explicit. These short build samples are descriptive,
+not a statistically significant compile-time regression claim.
+
 ## Class results of callable invocations (0.442.1)
 
 - **Defect.** A lambda call returning a class without a default constructor
@@ -61,11 +93,13 @@
 - **Out of scope.** Reading a nested field of a class call result, as in
   `build(1).inner.id`, and reading a field of a construction that takes a
   call result, as in `Holder(build(5)).p.id`, still report `GTI-B0001` for a
-  source function and a lambda alike. A lambda passed to a generic callable
+  source function and a lambda alike. At this release a lambda passed to a generic callable
   parameter whose class result initializes a variable or is passed by value,
   as in `int run<F>(F f) { Plain v = f(2); return v.id; }`, also still fails;
   the staged callable's transformed invocation admits a class result only as
-  a direct return, a borrowed receiver or an Expected payload.
+  a direct return, a borrowed receiver or an Expected payload. The later
+  callable-result prerequisite slice above extends that probe to the writer's
+  existing checked class-publication slots, including local initialization.
 
 ## Constructor text-view lifetimes (0.440.3)
 

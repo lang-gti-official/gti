@@ -133,7 +133,8 @@ substituteTemplateType(SemanticType type,
     }
   }
   for (SemanticType &argument : type.arguments) {
-    argument = substituteTemplateType(std::move(argument), substitution, program);
+    argument =
+        substituteTemplateType(std::move(argument), substitution, program);
   }
   if (type.kind == SemanticType::Class ||
       type.kind == SemanticType::FunctionSignature) {
@@ -144,10 +145,12 @@ substituteTemplateType(SemanticType type,
     type.arguments = std::move(expanded);
   }
   for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument = substituteTemplateType(std::move(argument), substitution, program);
+    argument =
+        substituteTemplateType(std::move(argument), substitution, program);
   }
   for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument = substituteTemplateType(std::move(argument), substitution, program);
+    argument =
+        substituteTemplateType(std::move(argument), substitution, program);
   }
   const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
     for (CompileTimeValue &value : values) {
@@ -183,8 +186,9 @@ substituteTemplateType(SemanticType type,
   if (program != nullptr && type.kind == SemanticType::Class &&
       type.arguments.size() == 1 && type.valueArguments.empty()) {
     const auto *declaration = program->findClassDeclaration(type.classId);
-    if (declaration != nullptr && declaration->computedTypeProjection ==
-                                      ComputedTypeProjectionKind::CallableReturn) {
+    if (declaration != nullptr &&
+        declaration->computedTypeProjection ==
+            ComputedTypeProjectionKind::CallableReturn) {
       if (const auto *result = type.arguments.front().callableReturnType())
         return *result;
     }
@@ -357,8 +361,8 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
   }
 
   CppMirCallableTemplateSignature result{
-      .returnType =
-          substituteTemplateType(declaration.returnType, ownerSubstitution, &program)};
+      .returnType = substituteTemplateType(declaration.returnType,
+                                           ownerSubstitution, &program)};
   result.parameterTypes.reserve(declaration.parameters.size());
   for (const LoweredParameter &parameter : declaration.parameters) {
     result.parameterTypes.push_back(
@@ -380,8 +384,8 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
           instance.typeArguments, instance.valueArguments)) {
     return std::nullopt;
   }
-  if (substituteTemplateType(result.returnType, functionSubstitution, &program) !=
-      instance.returnType) {
+  if (substituteTemplateType(result.returnType, functionSubstitution,
+                             &program) != instance.returnType) {
     return std::nullopt;
   }
   std::vector<SemanticType> concreteParameters;

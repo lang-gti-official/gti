@@ -2847,9 +2847,8 @@ auto SemanticVisitor::Impl::containsClosureObjectType(const SemanticType &type)
                      containsClosureObjectType);
 }
 
-auto SemanticVisitor::Impl::containsExactType(const SemanticType &type,
-                                              const SemanticType &candidate) const
-    -> bool {
+auto SemanticVisitor::Impl::containsExactType(
+    const SemanticType &type, const SemanticType &candidate) const -> bool {
   if (candidate != SemanticType::Unknown && type == candidate) {
     return true;
   }

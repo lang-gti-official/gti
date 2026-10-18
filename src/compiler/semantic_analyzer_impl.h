@@ -2748,7 +2748,7 @@ private:
   [[nodiscard]] static bool containsClosureObjectType(const SemanticType &type);
 
   [[nodiscard]] bool containsExactType(const SemanticType &type,
-                                      const SemanticType &candidate) const;
+                                       const SemanticType &candidate) const;
 
   [[nodiscard]] bool containsDisallowedCallableCaptureState(
       const SemanticType &type, std::unordered_set<ClassId> &visiting,
