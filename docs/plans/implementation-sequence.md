@@ -8741,8 +8741,16 @@ factory returns, and eleven malformed stage/signature/group/parent/producer/
 return-proof mutations. The nested proof binds the exact staged SSA producer
 to its live external authority; overlapping places alone grant no permission.
 Evidence is `/private/tmp/gti-reference-nested-test.log`. This is frontend/MIR
-evidence, not native runtime acceptance. Fresh exclusive nested-carrier transfer
-and the remaining runtime/failure/platform gates remain explicit obligations.
+evidence, not native runtime acceptance. The next increment admits fresh
+exclusive nested-carrier transfer only with an exact single-use SSA/stage chain
+and immediate retirement of the consumed group at successful publication.
+Local construction passes independently verified MIR; an escaping mutable
+factory still reaches the legacy single-origin return-access check and remains
+an integration obligation. Missing retirement, duplicate source use and
+substituted stage are covered by additional malformed fixtures awaiting that
+return-summary integration. The existing native runtime matrix now includes
+nested shared/exclusive construction and subsequent owner reuse; runtime,
+failure and platform gates remain required.
 
 An error-only input to a reference-returning operation cannot manufacture an
 origin: if its verified normal-return contract requires an impossible active
