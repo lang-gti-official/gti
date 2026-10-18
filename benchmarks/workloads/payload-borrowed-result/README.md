@@ -14,4 +14,8 @@ Run `scripts/benchmark_compare.py --gti <compiler> --cxx <native-compiler>
 The harness retains source/compiler identities, native build costs, executable
 sizes and paired runtime samples. Measure allocations separately with a native
 allocator counter; timing and an expected allocation count are not allocation
-measurement evidence.
+measurement evidence. Define `ALLOCATION_COUNTS` and link
+`tests/fixtures/stdlib_adoption_allocation_counts.cpp` for an untimed build.
+The counter window covers the loop, including every error's cleanup, and ends
+before formatting. It observes GTI's process allocation provider and legacy
+aligned allocation boundary, and checks each release's identity.

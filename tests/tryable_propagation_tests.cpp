@@ -192,6 +192,17 @@ int main() {
   accepted(multipleOwners,
            "passive consuming payloads retain each field's independent owner "
            "through scalar result publication");
+  for (const auto *owner : {"first", "second"}) {
+    auto conflicting = multipleOwners;
+    const auto declaration = conflicting.find(std::string("  int ") + owner);
+    expect(declaration != std::string::npos,
+           "multiple-owner fixture has the selected physical local");
+    if (declaration != std::string::npos)
+      conflicting.insert(declaration + 2, "mut ");
+    conflicting.insert(conflicting.find("  return selected =="),
+                       std::string("  ") + owner + " = 19;\n");
+    rejected(conflicting, "GTI-S2017", "borrow");
+  }
   const auto multipleOwnerProof = analyze(multipleOwners);
   if (multipleOwnerProof.canGenerateCode()) {
     for (int mutation = 0; mutation < 5; ++mutation) {

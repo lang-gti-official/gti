@@ -12186,6 +12186,9 @@ completeBorrowSourcePath(const MirProgram &program,
   for (const auto &loan : body.loans) {
     if (!loan.referenceSelection)
       continue;
+    const auto *selected = body.findValue(loan.referenceSelection->value);
+    if (!selected || checkedHandoffs.contains(selected->definitionBlock))
+      continue;
     const auto handoff = mir_detail::selectedReferenceHandoff(body, loan);
     if (!handoff || !checkedHandoffs.insert(handoff->block).second)
       continue;
