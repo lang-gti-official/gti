@@ -12720,11 +12720,17 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
           // identifies whether this is an abstract caller-owned referent.
           // Only that exact entry ancestry is transferred into parentless
           // local authority; concrete earlier parents remain live parents.
+          const auto *entrySource = body.findPlace(transferredGroup->source);
+          const auto entry =
+              entrySource && entrySource->root == MirPlaceRootKind::Binding
+                  ? completeBorrowParameterEntryFact(program, body, owner,
+                                                     entrySource->binding)
+                  : std::nullopt;
           const auto parent = expected.parent == transferredGroup->id
                                   ? MirLoanId{0}
                                   : expected.parent;
           if ((expected.parent == transferredGroup->id &&
-               !transferredGroup->entry) ||
+               (!entry || entry->group != transferredGroup->id)) ||
               actual.parent != parent)
             continue;
         }
@@ -12775,39 +12781,49 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const CompleteBorrowCallSummaryLookup &callSummary,
     const CompleteBorrowFlow *observed) {
-  // Nonempty conditional borrowing is not admitted until its full loan/tag
-  // proof is implemented. Do not silently ignore newly represented guards.
+  // Guarded dependencies require executable origin evidence in addition to
+  // the ordinary body-local liveness/exclusion proof. Every possible origin
+  // remains protected; a guard does not make an unknown origin optional.
   const auto conditionalMapping = [](const BorrowedFieldOrigin &field) {
     return !field.resultConditions.empty() || !field.sourceConditions.empty();
   };
+  const auto reconstructed =
+      observed
+          ? CompleteBorrowFlow{}
+          : reconstructCompleteBorrowFlow(program, body, owner, callSummary);
+  const auto &flow = observed ? *observed : reconstructed;
+  if (!flow.verification.valid())
+    return flow.verification;
   if (body.kind == MirBodyKind::Function)
     if (const auto *function = program.findFunctionInstance(owner);
         function != nullptr &&
         std::any_of(function->returnBorrowFields.begin(),
-                    function->returnBorrowFields.end(), conditionalMapping))
+                    function->returnBorrowFields.end(), conditionalMapping) &&
+        !callSummary(function->id))
       return verificationFailure(body, owner,
-                                 "conditional result dependencies require an "
-                                 "implemented complete-set contract proof");
-  for (const auto &loan : body.loans) {
-    if (!loan.conditions.empty())
-      return verificationFailure(
-          body, owner,
-          "conditional primary loan dependencies require "
-          "an implemented active-alternative proof");
-    for (const auto &dependency : loan.additionalDependencies)
-      if (!dependency.conditions.empty())
-        return verificationFailure(body, owner,
-                                   "conditional loan dependencies require "
-                                   "an implemented active-alternative proof");
-  }
+                                 "conditional result dependencies lack an "
+                                 "independent complete-set contract proof");
+  std::unordered_map<MirLoanId, const MirInstruction *> loanProducers;
   std::unordered_map<MirValueId, const MirInstruction *> producers;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
       if (std::any_of(instruction.borrowFields.begin(),
-                      instruction.borrowFields.end(), conditionalMapping))
+                      instruction.borrowFields.end(), conditionalMapping) &&
+          (!instruction.functionTarget ||
+           !callSummary(*instruction.functionTarget)))
         return verificationFailure(body, owner,
                                    "conditional call dependencies require an "
-                                   "implemented complete-set contract proof");
+                                   "independent complete-set contract proof");
+      if (instruction.loan &&
+          instruction.kind != MirInstructionKind::EndBorrow &&
+          instruction.kind != MirInstructionKind::ActivateBorrow &&
+          instruction.kind != MirInstructionKind::ParkRangeCursor &&
+          instruction.kind != MirInstructionKind::RestoreRangeCursor) {
+        const auto [entry, inserted] =
+            loanProducers.emplace(*instruction.loan, &instruction);
+        if (!inserted)
+          entry->second = nullptr;
+      }
       if (instruction.result) {
         const auto [entry, inserted] =
             producers.emplace(*instruction.result, &instruction);
@@ -12815,6 +12831,76 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
           entry->second = nullptr;
       }
     }
+  const auto guarded = [](const MirLoan &loan) {
+    return !loan.conditions.empty() ||
+           std::any_of(loan.additionalDependencies.begin(),
+                       loan.additionalDependencies.end(), [](const auto &item) {
+                         return !item.conditions.empty();
+                       });
+  };
+  const auto loanDependencies = [](const MirLoan &loan) {
+    std::vector<MirLoanDependency> result{
+        {.source = loan.source,
+         .parent = loan.parent,
+         .designatedFields = loan.designatedFields,
+         .access = loan.access,
+         .conditions = loan.conditions}};
+    result.insert(result.end(), loan.additionalDependencies.begin(),
+                  loan.additionalDependencies.end());
+    return result;
+  };
+  std::unordered_set<MirLoanId> proving;
+  std::unordered_set<MirLoanId> proved;
+  const auto proveGuarded = [&](auto &&self, const MirLoan &loan) -> bool {
+    if (proved.contains(loan.id))
+      return true;
+    if (!proving.insert(loan.id).second)
+      return false;
+    bool valid = false;
+    const auto *source = body.findPlace(loan.source);
+    if (loan.entry) {
+      const auto entry = source && source->root == MirPlaceRootKind::Binding
+                             ? completeBorrowParameterEntryFact(
+                                   program, body, owner, source->binding)
+                             : std::nullopt;
+      valid = entry && entry->group == loan.id;
+    } else if (const auto found = loanProducers.find(loan.id);
+               found != loanProducers.end() && found->second) {
+      const auto &producer = *found->second;
+      if ((producer.kind == MirInstructionKind::Call ||
+           (producer.kind == MirInstructionKind::Compute &&
+            producer.operation == MirOperation::PayloadConstruct)) &&
+          producer.result && *producer.result <= flow.values.size()) {
+        const auto &fact = flow.values[*producer.result - 1];
+        valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
+                loan.producedBy == producer.hirValue && fact &&
+                loanDependencies(loan) == fact->dependencies;
+      } else if (producer.kind == MirInstructionKind::Borrow &&
+                 producer.operands.size() == 1 &&
+                 producer.operands.front().kind == MirOperandKind::Loan) {
+        const auto *input = body.findLoan(producer.operands.front().loan);
+        // Publication transfers the complete already-proved group. The body
+        // verifier additionally requires it live at this exact instruction,
+        // and forbids using an expired group or independently fabricated loan.
+        valid = input && input->id != loan.id && guarded(*input) &&
+                self(self, *input) && loan.kind == MirLoanKind::Return &&
+                loan.escapes && loan.parent == 0 &&
+                loan.source == input->source && loan.access == input->access &&
+                loan.designatedFields == input->designatedFields &&
+                loan.conditions == input->conditions &&
+                loan.additionalDependencies == input->additionalDependencies;
+      }
+    }
+    proving.erase(loan.id);
+    if (valid)
+      proved.insert(loan.id);
+    return valid;
+  };
+  for (const auto &loan : body.loans)
+    if (guarded(loan) && !proveGuarded(proveGuarded, loan))
+      return verificationFailure(body, owner,
+                                 "conditional loan lacks its exact typed entry "
+                                 "or executable origin group");
   bool needsTransportProof = std::any_of(
       body.loans.begin(), body.loans.end(),
       [](const MirLoan &loan) { return loan.referenceSelection.has_value(); });

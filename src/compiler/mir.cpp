@@ -2785,7 +2785,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           instruction.kind != MirInstructionKind::Construct &&
           instruction.kind != MirInstructionKind::CallInput &&
           !(instruction.kind == MirInstructionKind::Compute &&
-            instruction.operation == MirOperation::Closure)) {
+            (instruction.operation == MirOperation::Closure ||
+             stagedPayloadConstruction(instruction)))) {
         return failure(body, owner,
                        "only borrow, call, construct, and call-input "
                        "instructions may produce a loan",
@@ -2828,7 +2829,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
   std::unordered_set<MirLoanId> fieldMappedLoans;
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.loan && !instruction.borrowFields.empty())
+      if (instruction.loan && (!instruction.borrowFields.empty() ||
+                               stagedPayloadConstruction(instruction)))
         fieldMappedLoans.insert(*instruction.loan);
       if (instruction.kind != MirInstructionKind::Drop ||
           instruction.lifecycle.size() != 1 ||
@@ -4711,6 +4713,14 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             selectedOriginFromParent = operandFromParent(
                 instruction.operands[instruction.borrowArgument]);
           }
+          // Payload fields are independently bound to their exact ordered
+          // argument facts by program verification. This body-local check
+          // additionally requires a real staged input through the declared
+          // parent, then applies the ordinary liveness/exclusion rules below.
+          if (stagedPayloadConstruction(instruction))
+            selectedOriginFromParent =
+                std::any_of(instruction.operands.begin(),
+                            instruction.operands.end(), operandFromParent);
           const bool derivedCallResult =
               instruction.kind == MirInstructionKind::Call &&
               body.loans[loan - 1].kind == MirLoanKind::CallResult;
@@ -4718,7 +4728,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               (instruction.kind == MirInstructionKind::Call ||
                instruction.kind == MirInstructionKind::Construct ||
                (instruction.kind == MirInstructionKind::Compute &&
-                instruction.operation == MirOperation::Closure)) &&
+                (instruction.operation == MirOperation::Closure ||
+                 stagedPayloadConstruction(instruction)))) &&
               body.loans[loan - 1].kind == MirLoanKind::Stored;
           if ((!derivedCallResult && !derivedStoredCarrier) ||
               !selectedOriginFromParent) {
@@ -10332,7 +10343,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::Compute:
       return !instruction.receiver &&
              (!instruction.loan ||
-              instruction.operation == MirOperation::Closure) &&
+              instruction.operation == MirOperation::Closure ||
+              stagedPayloadConstruction(instruction)) &&
              (instruction.operation == MirOperation::FunctionItem
                   ? instruction.functionTarget.has_value()
                   : !instruction.functionTarget) &&

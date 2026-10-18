@@ -169,24 +169,11 @@ int main() {
                       (reversed ? unrelated + inspect : inspect + unrelated) +
                       "int main() { return 0; }\n",
                   {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
-      expect(result.syntaxValid && !result.semanticValid &&
-                 !result.canGenerateCode(),
-             "conditional constraint staging keeps source admission closed");
-      bool onlyAdmission = !result.diagnostics.empty();
-      for (const auto &diagnostic : result.diagnostics) {
-        const bool gate =
-            diagnostic.code == "GTI-S2067" &&
-            (diagnostic.message ==
-                 "Payload enums do not yet store reference fields." ||
-             diagnostic.message.find(
-                 "is not a supported owning or passive enum payload.") !=
-                 std::string::npos);
-        if (!gate) {
-          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-          onlyAdmission = false;
-        }
-      }
-      expect(onlyAdmission,
+      expect(result.syntaxValid && result.semanticValid,
+             "conditional constraints admit complete borrowed producers");
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      expect(result.diagnostics.empty(),
              "conditional constraint has no unrelated semantic failure");
       bool inspected = false;
       for (const auto &statement : result.program.declarations()) {
@@ -200,8 +187,13 @@ int main() {
                        lang::BorrowOriginKind::Argument &&
                    function->returnBorrowParameter == 0,
                "conditional result retains its explicit formal constraint");
-        expect(function && !function->completeReturnBorrow,
-               "an errored function cannot publish a complete result proof");
+        expect(
+            function && function->completeReturnBorrow &&
+                function->completeReturnBorrow->dependencies.size() == 1 &&
+                function->completeReturnBorrow->possibleAlternatives.size() ==
+                    2,
+            "valid returns publish both the borrowed and dependency-free "
+            "domains");
         const auto *owner =
             result.semantics.findBinding(syntax->parameters().front());
         bool foundProducer = false;
@@ -232,9 +224,8 @@ int main() {
       }
       expect(inspected, "conditional constraint declaration was inspected");
     }
-    // Admission diagnostics are deliberately still present in this staged
-    // increment. A bad explicit constraint must add its own owning-layer
-    // diagnostic; the payload gate is not evidence that it was checked.
+    // Bad explicit constraints require their own owning-layer diagnostic;
+    // unrelated admission failures are not evidence that they were checked.
     for (const auto &[source, expectedCode] :
          std::vector<std::pair<std::string, std::string>>{
              {declaration +
