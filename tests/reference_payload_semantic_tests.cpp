@@ -300,6 +300,16 @@ int main() {
   auto result = Reading::value(owner, mutate(owner));
   return 0;
 }
+)gti",
+           R"gti(
+enum Reading { empty, value(int& owner) };
+enum Outer { empty, wrapped(Reading reading, int extra) };
+int mutate(mut int& owner) { owner = 7; return 1; }
+int main() {
+  mut int owner = 3;
+  auto result = Outer::wrapped(Reading::value(owner), mutate(owner));
+  return 0;
+}
 )gti"}) {
     const auto result = analyze(source);
     expect(result.syntaxValid && !result.semanticValid,
