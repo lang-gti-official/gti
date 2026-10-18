@@ -9,6 +9,12 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.446.1 — Quiet internal include checks
+
+- Keep missing-include probes and proposed-fix checks out of the CLI progress
+  stream. Failed builds and checks retain their include suggestions without
+  repeated internal loading, parsing and checking output.
+
 ## 0.446.0 — Optional standard-library mutation results
 
 - Apply `[[discardable]]` to emplacement, associative insertion and erasure,

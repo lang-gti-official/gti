@@ -233,6 +233,9 @@ void addIncludeSuggestions(
     overrides[name] = *result.sources.find(name);
   }
   FrontendOptions trialOptions = options;
+  // Header probes and proposed-fix checks are internal diagnostic work, not
+  // additional user compilations. Keep their phases out of the caller's sink.
+  trialOptions.progress = nullptr;
   trialOptions.suggestIncludes = false;
   trialOptions.requireEntryPoint = false;
   trialOptions.toolingOccurrences = true;
