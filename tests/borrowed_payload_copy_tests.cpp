@@ -41,6 +41,14 @@ int main() {
     Holder copied = original;
     Holder again = (copied);
     if (inspect(again) != 17) return 1;
+    {
+      Holder again = again;
+      if (inspect(again) != 17) return 5;
+      {
+        auto again = again;
+        if (inspect(again) != 17) return 6;
+      }
+    }
     Pair pair = Pair::both(first, second);
     Pair pair_copy = pair;
     if (inspect_pair(pair_copy) != 46) return 2;
@@ -137,5 +145,18 @@ int main() {
 }
 )gti",
          "a shared copy protects every additional owner");
+  reject(prefix + R"gti(
+int main() {
+  mut int owner = 17;
+  Carrier value = Carrier(owner);
+  Holder held = Holder::item(value);
+  {
+    Holder held = held;
+    owner = 23;
+    return inspect(held);
+  }
+}
+)gti",
+         "shadowed copies still protect the original external owner");
   return failures ? 1 : 0;
 }

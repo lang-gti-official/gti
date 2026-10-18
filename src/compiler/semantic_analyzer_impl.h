@@ -2149,6 +2149,9 @@ private:
   [[nodiscard]] const ExprPtr *
   storedBorrowSource(const ExprPtr &expression) const;
 
+  [[nodiscard]] const Symbol *
+  resolvedBorrowVariable(const Variable &variable) const;
+
   [[nodiscard]] std::vector<SemanticLoanDependency>
   storedBorrowDependencies(const ExprPtr &expression);
   [[nodiscard]] std::vector<SemanticLoanDependency>
