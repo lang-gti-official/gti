@@ -4561,7 +4561,8 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
            "GTI-S2017");
     return;
   }
-  if (!hasStableBorrowStorage(initializer)) {
+  if (!expressionNeverReturns(initializer.get()) &&
+      !hasStableBorrowStorage(initializer)) {
     report(expressionToken(initializer),
            "Reference initializer is derived from temporary storage that "
            "does not outlive the binding.",
@@ -5002,6 +5003,10 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
            "Mutable reference return requires a mutable value.", "GTI-S2017");
     return;
   }
+  // A typed terminal expression publishes no reference. Keep ordinary type,
+  // category and access checks above, but there is no escaping loan to prove.
+  if (expressionNeverReturns(value.get()))
+    return;
   if (analyzeRawReferenceReturn(value)) {
     return;
   }

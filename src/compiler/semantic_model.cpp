@@ -736,6 +736,17 @@ SemanticModel::callerLocationProof(const Expr &expression) const {
                                      analysisSeal().programSnapshot);
 }
 
+std::optional<SemanticNoNormalBorrowResultProof>
+SemanticModel::noNormalBorrowResultProof(const Call &call) const {
+  const auto *selected = findCall(call);
+  if (!selected || !selected->noNormalBorrowResult ||
+      selected->intrinsic != IntrinsicKind::None || !selected->function ||
+      selected->dispatch != CallDispatch::Static || !selected->neverReturns)
+    return std::nullopt;
+  return SemanticNoNormalBorrowResultProof(call, *selected,
+                                           analysisSeal().programSnapshot);
+}
+
 const RawReferenceAssertionInfo *
 SemanticModel::findRawReferenceAssertion(const Expr &expression) const {
   const auto found = rawReferenceAssertions.find(&expression);
@@ -2767,7 +2778,7 @@ void SemanticModel::recordPayloadPattern(const Expr &expression,
 
 void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   if (const FunctionInfo *target = findFunction(info.function)) {
-    info.neverReturns = target->neverReturns;
+    info.neverReturns = target->neverReturns || info.noNormalBorrowResult;
     info.tracksCaller = target->tracksCaller;
   } else if (intrinsicTerminalFailureOutcome(info.intrinsic)) {
     info.neverReturns = true;

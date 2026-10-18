@@ -305,6 +305,13 @@ const expectedPropagationRow = fixtureLines.findIndex((line) =>
   line.includes("return ?result;"),
 );
 requireCaptureCount(expectedPropagationRow, "?", "operator", 1);
+const sourceExpectedRow = fixtureLines.findIndex((line) =>
+  line.includes("source_result_highlight()"),
+);
+requireCapture(sourceExpectedRow, "expected", "type");
+requireCaptureCount(sourceExpectedRow, "expected", "type.builtin", 0);
+requireCapture(sourceExpectedRow + 1, "unexpected", "function.call");
+requireCaptureCount(sourceExpectedRow + 1, "unexpected", "keyword", 0);
 
 const groupedFieldRow = fixtureLines.findIndex((line) =>
   line.includes("grouped_value"),

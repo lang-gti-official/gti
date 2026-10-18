@@ -2699,16 +2699,17 @@ equal payload types at different indices, alignment, nested carriers/arrays,
 native construction/move/assignment failures and exact retirement counts;
 source runtime tests retain failure-cleanup and sanitizer coverage.
 
-Cleanup-free enum fields use the same destination-construction policy through
-their existing MIR initializer-record publication. The exact source constructor,
-declared field, root value, unique initializer and immediately following full-
-expression boundary must agree; an explicit `Initialize` takes precedence over
-that record route. The enum must be borrow-free, trivial to drop and free of
-relocation failure, with no other runtime use or value-rooted place. Its native
-empty field shell is replaced directly at the producer, preserving operand
-order and avoiding a whole-enum temporary assignment. Substituted fields,
-duplicated roots, borrowed state, effects and mismatched boundaries retain the
-ordinary staged path or fail representation admission.
+Cleanup-free enum fields may fuse a producer with its exact adjacent constructor
+`Initialize`. The source constructor, declared field, root value, unique
+initializer, destination and following full-expression boundary must agree.
+The enum must have only scalar payload fields, be borrow-free, trivial to drop
+and move-assignable, with no other runtime use or value-rooted place. The native
+carrier independently asserts trivial move assignment. Assigning the fresh
+alternative directly into the private initialized empty shell preserves operand
+order and the source publication point without a redundant staged enum or native
+object-lifetime restart. This is a representation operation, not a source
+assignment. Substituted fields, duplicated roots, borrowed state, effects and
+mismatched boundaries retain the ordinary staged path or fail admission.
 
 A bounded closed-tag-domain proof exposes an exhaustive switch's impossible
 default edge to the native optimizer. It independently matches the exact
@@ -2724,8 +2725,18 @@ operands against its solved projected-place availability. Constructor bodies
 begin after required fields are initialized, and destructor bodies precede
 automatic field retirement. The focused moved-enum-field/observer regression
 retains that invariant alongside the general projected-field ownership tests.
-Constructor/destructor bodies, local/value roots, consuming or mutable
-receivers, moved state, intervening effects and incomplete/substituted rows do
+An exact passive transfer extends that entry proof to a consuming source
+method: a direct, still-available enum field moves into an unavailable local
+match subject through adjacent `Move`, `Initialize` and full-expression
+instructions. Producer/result identity, source field/type/traits, destination,
+available-to-moved ownership metadata and the matching final boundary must all
+agree. The enum carries neither active cleanup nor borrowed state. No other
+instruction may precede the switch, and the original no-backedge and complete
+alternative checks still apply. The destination inherits a valid discriminant
+from that exact transfer; a local declaration or an exhaustive switch alone
+establishes nothing.
+Constructor/destructor bodies, unrelated local/value roots, mutable receivers,
+previously moved state, intervening effects and incomplete/substituted rows do
 not qualify. This distinction excludes the carrier's private empty/vacant
 shells; an exhaustive-case count alone is never sufficient. The proof emits
 `mir_closed_enum_unreachable_v1` only on that switch edge. Ordinary MIR
@@ -2733,6 +2744,8 @@ shells; an exhaustive-case count alone is never sufficient. The proof emits
 abort/diagnostic behavior. Mutation tests cover omitted, duplicate, substituted
 and mistyped cases, unavailable sources, wrong fields/formals, effectful entry,
 changed defaults and backedges.
+Transfer mutations additionally cover altered producers, initialization targets,
+availability, ownership endpoints and intervening cleanup/raw effects.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
@@ -2804,6 +2817,17 @@ array of concrete generic class elements uses each element's private tag
 constructor and never assumes that the public class has a zero-argument
 constructor. This remains a backend-only rollback representation and does not
 add a GTI constructor or observable initialized value.
+A payload enum's private inactive alternative contains no active payload or
+borrow, including when its alternatives mix owning values and references.
+Construction-only empty-state admission may therefore recurse through such an
+enum field. It does not make direct reference fields default-constructible or
+authorize reassignment of borrowed objects. Publication still proves the exact
+producer, field `Initialize`, value-to-field reparent and rollback schedule.
+Borrow-carrying producers additionally retain their complete dependency set:
+nonempty sets require the corresponding checked field-loan publication, while
+empty sets require explicit selected-alternative evidence. The native move
+carries existing reference addresses; it never invents a pointer to an inactive
+payload.
 Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field

@@ -11,6 +11,15 @@ Generic binder identities, optional `class` spelling and dirty dependency
 overlays follow the existing snapshot/navigation protocol; the LSP does not
 perform generic substitution itself.
 
+Production-migration checkpoint: editor grammar support below is staged; the
+compiler/prelude cutover and end-to-end LSP validation are not yet complete.
+The source-defined global `expected` class and `unexpected` function use ordinary
+type/function symbols, generic syntax, and call occurrences. Neither spelling is
+an editor keyword or builtin-type exception. Tree-sitter uses `user_type` and
+`call_expression`, while semantic highlighting and navigation continue to follow
+the compiler-selected library declaration. Formatting uses the same generic-type
+rules as unrelated imported classes; it does not reserve these identifiers.
+
 The LSP is an adapter over compiler-owned semantics:
 
 Concrete static methods on interfaces use the same compiler-owned method

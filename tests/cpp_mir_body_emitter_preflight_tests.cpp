@@ -38,6 +38,117 @@ void testDischargedCompoundOperatorVocabulary() {
       "proved successful path exactly matches C++ semantics");
 }
 
+void testConsumedPassivePayloadTagObservation() {
+  const auto frontend =
+      analyzeWithStandardLibrary("consumed-payload-tag.gti", R"(
+enum Packet { empty, number(int value) };
+class Envelope {
+  mut Packet packet;
+public:
+  Envelope(int value) : packet(Packet::number(value)) {}
+  int take() && {
+    switch (std::move(this.packet)) {
+    case Packet::empty: return 0;
+    case Packet::number(value): return value;
+    }
+  }
+};
+int main() { return Envelope(42).take() == 42 ? 0 : 1; }
+)");
+  expect(frontend.canGenerateCode(), "consumed passive enum should lower");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  constexpr std::string_view closedDomain = "mir_closed_enum_unreachable_v1";
+  std::size_t observed = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (!hir || !hir->source || hir->source->name().lexeme != "take")
+      continue;
+    const auto *entry = function.body.findBlock(function.body.entry);
+    if (!entry || entry->terminator.kind != lang::MirTerminatorKind::Switch)
+      continue;
+    ++observed;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const auto text =
+        emitter.emitBodyText(address, "consumed-payload-domain", 1);
+    expect(text.emitted() && text.text.find(closedDomain) != std::string::npos,
+           "exact passive entry transfer preserves the initialized tag domain");
+    if (entry->instructions.size() != 3) {
+      expect(false,
+             "consumed enum fixture retains move/init/boundary schedule");
+      continue;
+    }
+    for (int mutation = 0; mutation != 15; ++mutation) {
+      auto forged = frontend.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          forged.findFunctionInstance(function.id));
+      auto &block = changed->body.blocks[entry->id - 1];
+      auto &move = block.instructions[0];
+      auto &initialize = block.instructions[1];
+      auto &source = changed->body.places[move.operands.front().place - 1];
+      auto &subject = changed->body.places[block.terminator.value->place - 1];
+      switch (mutation) {
+      case 0:
+        move.ownership->before = lang::OwnershipStateSet::Moved;
+        break;
+      case 1:
+        move.ownership->after = lang::OwnershipStateSet::Available;
+        break;
+      case 2:
+        move.operands.front().kind = lang::MirOperandKind::Copy;
+        break;
+      case 3:
+        initialize.operands.front().value = 0;
+        break;
+      case 4:
+        initialize.destination = source.id;
+        break;
+      case 5:
+        subject.initiallyAvailable = true;
+        break;
+      case 6:
+        source.projections.front().field += 1;
+        break;
+      case 7:
+        source.root = lang::MirPlaceRootKind::Value;
+        break;
+      case 8:
+        block.instructions.back().kind = lang::MirInstructionKind::Drop;
+        break;
+      case 9:
+        block.instructions.back().ownership.reset();
+        break;
+      case 10:
+        changed->receiverMutability = lang::ReceiverMutability::ReadOnly;
+        break;
+      case 11:
+        move.rawMemoryAccess = true;
+        break;
+      case 12:
+        block.terminator.switchTargets.pop_back();
+        break;
+      case 13:
+        move.intrinsic = lang::IntrinsicKind::None;
+        break;
+      case 14:
+        initialize.info.category = lang::ValueCategory::Value;
+        break;
+      }
+      const lang::CppMirBodyEmitter rejected(forged, map);
+      const auto result =
+          rejected.emitBodyText(address, "forged-transfer-domain", 1);
+      expect(!result.emitted() ||
+                 result.text.find(closedDomain) == std::string::npos,
+             "altered producer, transfer, availability, effects or domain "
+             "cannot justify unreachable");
+    }
+  }
+  expect(observed == 1, "fixture exercises one consumed passive enum match");
+}
+
 void testPassivePayloadTagObservation() {
   const auto frontend = analyze("passive-payload-tag.gti", R"(
 enum State<T> { empty, value(T value) };
@@ -222,13 +333,22 @@ int main() {
                    text.text.find(publication) != std::string::npos,
                "passive enum fields construct directly at their MIR "
                "publication point");
-        for (int mutation = 0; mutation != 7; ++mutation) {
+        for (int mutation = 0; mutation != 13; ++mutation) {
           auto forged = frontend.mir;
           auto *changed = const_cast<lang::MirConstructorInstance *>(
               forged.findConstructorInstance(constructor.id));
           auto *producer =
               findPreflightInstruction(changed->body, instruction.id);
+          auto *payload = const_cast<lang::MirPayloadEnum *>(
+              forged.findPayloadEnum(producer->info.type));
           switch (mutation) {
+          case 11:
+            payload->traits.moveAssignable = false;
+            break;
+          case 12:
+            payload->variants.back().payloadTypes.front() =
+                lang::SemanticType::String;
+            break;
           case 0:
             ++changed->initializers.front().field;
             break;
@@ -252,6 +372,23 @@ int main() {
             break;
           case 6:
             producer->info.traits.containsBorrowedState = true;
+            break;
+          case 7:
+          case 8:
+          case 9:
+          case 10:
+            for (auto &item : changed->body.blocks[block.id - 1].instructions) {
+              if (item.kind != lang::MirInstructionKind::Initialize)
+                continue;
+              if (mutation == 7)
+                item.constructorInitializer = 0;
+              if (mutation == 8)
+                item.hirValue = 0;
+              if (mutation == 9)
+                item.operands.front().value = 0;
+              if (mutation == 10)
+                item.destination.reset();
+            }
             break;
           }
           const lang::CppMirBodyEmitter rejected(forged, map);
@@ -7094,6 +7231,8 @@ constexpr NamedTest kTests[] = {
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
     {"testPassivePayloadTagObservation", testPassivePayloadTagObservation},
+    {"testConsumedPassivePayloadTagObservation",
+     testConsumedPassivePayloadTagObservation},
     {"testPayloadObserverRequiresCompleteReceiver",
      testPayloadObserverRequiresCompleteReceiver},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},

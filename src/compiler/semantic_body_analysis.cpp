@@ -4508,6 +4508,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    if (expressionNeverReturns(stmt.value().get()))
+      return;
     // Snapshot scalar-reference origins at this return point, before arm
     // cleanup or a subsequent body demand changes its local loan state.
     // Selection already discharged the tag guard; a scalar result must not
@@ -13380,8 +13382,8 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
     -> bool {
   // Only evaluated subexpressions contribute. In particular, a lambda body,
   // type query, or an unselected short-circuit operand cannot terminate its
-  // enclosing expression. The resolved declaration, never its spelling, owns
-  // the terminal-call fact.
+  // enclosing expression. A resolved declaration or an exact semantic
+  // excluded-normal-result proof, never a spelling, owns terminality.
   const auto anyTerminal = [&](const ExprList &values) {
     return std::any_of(values.begin(), values.end(), [&](const ExprPtr &value) {
       return expressionNeverReturns(value.get());

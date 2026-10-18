@@ -1298,7 +1298,27 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const bool expectedTerminal =
           (value.kind == HirValueKind::Call &&
            intrinsicTerminalFailureOutcome(value.intrinsic)) ||
-          (contractTarget != nullptr && contractTarget->neverReturns);
+          (contractTarget != nullptr && contractTarget->neverReturns) ||
+          value.noNormalBorrowResultProof.has_value();
+      if (const auto &proof = value.noNormalBorrowResultProof; proof) {
+        const auto &selected = proof->call();
+        if (value.kind != HirValueKind::Call ||
+            value.intrinsic != IntrinsicKind::None || !contractTarget ||
+            contractTarget->neverReturns ||
+            value.dispatch != CallDispatch::Static ||
+            proof->source() != value.source ||
+            proof->snapshot() != semantics.analysisSeal().programSnapshot ||
+            selected.function != contractTarget->declaration ||
+            selected.returnType.kind != SemanticType::Reference ||
+            selected.returnType != contractTarget->returnType ||
+            selected.parameterTypes != value.parameterTypes ||
+            selected.dispatchOwner != value.dispatchOwner ||
+            !selected.noNormalBorrowResult || !selected.neverReturns ||
+            value.borrowDependencies) {
+          result.errors.emplace_back("HIR impossible normal result lost its "
+                                     "exact semantic call proof");
+        }
+      }
       const bool expectedTracking =
           (value.kind == HirValueKind::Call &&
            intrinsicTracksCaller(value.intrinsic)) ||

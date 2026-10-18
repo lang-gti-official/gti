@@ -1337,6 +1337,7 @@ struct ResolvedCallInfo {
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   bool neverReturns = false;
+  bool noNormalBorrowResult = false;
   bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
@@ -2017,6 +2018,25 @@ struct SemanticAnalysisSeal {
 makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
                          const SourceGraph *sourceGraph = nullptr);
 
+// A call-local terminal fact is distinct from declaration noreturn. Only the
+// semantic query that excludes every normal result supplier can issue this
+// exact source/selection proof; MIR independently reconstructs the exclusion.
+class SemanticNoNormalBorrowResultProof {
+public:
+  [[nodiscard]] const Call *source() const { return source_; }
+  [[nodiscard]] const ResolvedCallInfo &call() const { return call_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticNoNormalBorrowResultProof(const Call &source, ResolvedCallInfo call,
+                                    std::uint64_t snapshot)
+      : source_(&source), call_(std::move(call)), snapshot_(snapshot) {}
+  const Call *source_;
+  ResolvedCallInfo call_;
+  std::uint64_t snapshot_;
+};
+
 // Caller provenance belongs to the analyzed source occurrence, including one
 // first analyzed in a concrete generic body. HIR cannot invent a new origin.
 class SemanticCallerLocationProof {
@@ -2147,6 +2167,8 @@ public:
   findCallerLocation(const Expr &expression) const;
   [[nodiscard]] std::optional<SemanticCallerLocationProof>
   callerLocationProof(const Expr &expression) const;
+  [[nodiscard]] std::optional<SemanticNoNormalBorrowResultProof>
+  noNormalBorrowResultProof(const Call &call) const;
 
   [[nodiscard]] const RawReferenceAssertionInfo *
   findRawReferenceAssertion(const Expr &expression) const;

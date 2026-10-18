@@ -971,18 +971,22 @@ int load() { return 1; }
           (string_literal))))
     (function_declaration
       (type
-        (expected_type
-          (type
-            (primitive_type))
-          (type
-            (primitive_type))))
+        (user_type
+          (identifier)
+          (type_argument_clause
+            (type
+              (primitive_type))
+            (type
+              (primitive_type)))))
       (identifier)
       (parameter_clause)
       (block
         (return_statement
           (initializer_expression
-            (primary_expression
-              (unexpected_expression
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
                 (primary_expression
                   (literal
                     (string_literal)))))))))
@@ -1448,20 +1452,24 @@ expected<int, int> forward(expected<int, int> result) {
 (source_file
   (function_declaration
     (type
-      (expected_type
-        (type
-          (primitive_type))
-        (type
-          (primitive_type))))
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (primitive_type))
+          (type
+            (primitive_type)))))
     (identifier)
     (parameter_clause
       (parameter
         (type
-          (expected_type
-            (type
-              (primitive_type))
-            (type
-              (primitive_type))))
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (primitive_type))
+              (type
+                (primitive_type)))))
         (identifier)))
     (block
       (return_statement

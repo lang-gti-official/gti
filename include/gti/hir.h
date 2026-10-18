@@ -256,6 +256,7 @@ struct HirValue {
   // Checked source control-flow contracts, retained independently of the
   // backend's private status-returning failure convention.
   bool neverReturns = false;
+  std::optional<SemanticNoNormalBorrowResultProof> noNormalBorrowResultProof;
   bool tracksCaller = false;
   std::optional<CallerLocationOrigin> callerLocation;
   std::optional<SemanticCallerLocationProof> callerLocationProof;

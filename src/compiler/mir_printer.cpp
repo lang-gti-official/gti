@@ -1661,6 +1661,7 @@ private:
     output << " function-pointer-lambda=";
     optional(value.functionPointerLambdaTarget);
     output << " noreturn=" << value.neverReturns
+           << " no-normal-borrow-result=" << value.noNormalBorrowResult
            << " track-caller=" << value.tracksCaller
            << " caller-site=" << value.callerLocationSite
            << " forward-caller=" << value.forwardsCallerLocation

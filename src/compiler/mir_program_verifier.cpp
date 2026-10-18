@@ -2465,7 +2465,9 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const std::function<bool(HirFunctionInstanceId)> &completeReturnProof,
     const std::function<bool(HirConstructorInstanceId)>
-        &completeConstructorProof) {
+        &completeConstructorProof,
+    const std::function<bool(const MirBody &, std::size_t, MirInstructionId)>
+        &noNormalResultProof) {
   if (auto entries = verifyStoredEntryPaths(program, body, owner);
       !entries.valid()) {
     return entries;
@@ -3272,7 +3274,8 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
               block.id, instruction.id);
         }
         if (instruction.kind == MirInstructionKind::Call &&
-            (target->neverReturns != instruction.neverReturns ||
+            ((target->neverReturns || instruction.noNormalBorrowResult) !=
+                 instruction.neverReturns ||
              target->tracksCaller != instruction.tracksCaller)) {
           return verificationFailure(
               body, owner,
@@ -3710,6 +3713,20 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
           return verificationFailure(
               body, owner,
               "independently empty call result must not invent an owner loan",
+              block.id, instruction.id);
+        continue;
+      }
+      if (instruction.noNormalBorrowResult) {
+        // Query independently reconstructed exact input-domain exclusion
+        // before allowing an absent result loan. The mutable MIR flag alone
+        // cannot authorize this path; unknown or forged domains fail here.
+        if (!instruction.neverReturns || instruction.result ||
+            instruction.loan || instruction.successResultDrop ||
+            instruction.successResultDestination ||
+            !noNormalResultProof(body, owner, instruction.id))
+          return verificationFailure(
+              body, owner,
+              "terminal result exclusion lacks independent input-domain proof",
               block.id, instruction.id);
         continue;
       }
@@ -6673,16 +6690,18 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     const std::function<bool(HirFunctionInstanceId)> &completeReturnProof,
     const std::function<bool(HirConstructorInstanceId)>
         &completeConstructorProof,
+    const std::function<bool(const MirBody &, std::size_t, MirInstructionId)>
+        &noNormalResultProof,
     const std::function<bool(const MirFunctionInstance &, MirBlockId)>
         &emptyReturn) {
   MirVerificationResult result;
   appendVerification(result,
                      verifyMirCallableMetadata(program, program.module(), 0,
                                                nullptr, completeReturnProof));
-  appendVerification(result,
-                     verifyMirBorrowProducers(program, program.module(), 0,
-                                              completeReturnProof,
-                                              completeConstructorProof));
+  appendVerification(result, verifyMirBorrowProducers(program, program.module(),
+                                                      0, completeReturnProof,
+                                                      completeConstructorProof,
+                                                      noNormalResultProof));
   for (const MirClassInstance &instance : program.classInstances()) {
     appendVerification(result, verifyMirCallableMetadata(
                                    program, instance.fieldInitializers,
@@ -6690,23 +6709,25 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     appendVerification(
         result, verifyMirBorrowProducers(program, instance.fieldInitializers,
                                          instance.id, completeReturnProof,
-                                         completeConstructorProof));
+                                         completeConstructorProof,
+                                         noNormalResultProof));
     appendVerification(result, verifyMirCallableMetadata(
                                    program, instance.staticFieldInitializers,
                                    instance.id, nullptr, completeReturnProof));
-    appendVerification(result, verifyMirBorrowProducers(
-                                   program, instance.staticFieldInitializers,
-                                   instance.id, completeReturnProof,
-                                   completeConstructorProof));
+    appendVerification(result,
+                       verifyMirBorrowProducers(
+                           program, instance.staticFieldInitializers,
+                           instance.id, completeReturnProof,
+                           completeConstructorProof, noNormalResultProof));
   }
   for (const MirFunctionInstance &instance : program.functionInstances()) {
     appendVerification(result, verifyMirCallableMetadata(program, instance.body,
                                                          instance.id, &instance,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof,
-                                         completeConstructorProof));
+        result, verifyMirBorrowProducers(
+                    program, instance.body, instance.id, completeReturnProof,
+                    completeConstructorProof, noNormalResultProof));
     appendVerification(
         result,
         verifyMirFunctionBorrowSummary(
@@ -6719,9 +6740,9 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
                                                          instance.id, nullptr,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof,
-                                         completeConstructorProof));
+        result, verifyMirBorrowProducers(
+                    program, instance.body, instance.id, completeReturnProof,
+                    completeConstructorProof, noNormalResultProof));
     appendVerification(
         result, verifyMirConstructorBorrowSummary(
                     program, instance, completeConstructorProof(instance.id)));
@@ -6731,18 +6752,18 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
                                                          instance.id, nullptr,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof,
-                                         completeConstructorProof));
+        result, verifyMirBorrowProducers(
+                    program, instance.body, instance.id, completeReturnProof,
+                    completeConstructorProof, noNormalResultProof));
   }
   for (const MirLambdaInstance &instance : program.lambdaInstances()) {
     appendVerification(result, verifyMirCallableMetadata(program, instance.body,
                                                          instance.id, nullptr,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id,
-                                         completeReturnProof,
-                                         completeConstructorProof));
+        result, verifyMirBorrowProducers(
+                    program, instance.body, instance.id, completeReturnProof,
+                    completeConstructorProof, noNormalResultProof));
   }
   return result;
 }
@@ -11743,6 +11764,7 @@ struct CompleteBorrowFlow {
   // does not trust the extraction's attached dependency annotations.
   std::vector<CompleteBorrowFact> payloadSelectionSources;
   std::vector<CompleteBorrowReturnFact> normalReturns;
+  std::unordered_set<MirInstructionId> noNormalBorrowResults;
 };
 
 struct CompleteBorrowSourcePath {
@@ -12296,7 +12318,10 @@ completeBorrowSourcePath(const MirProgram &program,
   const auto callResult =
       [&](const State &state, const MirInstruction &instruction,
           const MirFunctionInstance &target,
-          const FunctionBorrowDependencySummary &summary) -> Fact {
+          const FunctionBorrowDependencySummary &summary,
+          BorrowResultDomainStatus *domainStatus = nullptr) -> Fact {
+    if (domainStatus)
+      *domainStatus = BorrowResultDomainStatus::Unknown;
     using Availability = BorrowSupplierAvailability;
     std::vector<Availability> availability(summary.dependencies.size(),
                                            Availability::Unknown);
@@ -12443,6 +12468,8 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     const auto domain =
         restrictCompleteBorrowResultDomain(summary, availability);
+    if (domainStatus)
+      *domainStatus = domain.status;
     if (domain.status != BorrowResultDomainStatus::Known)
       return std::nullopt;
     MirBorrowDependencySet result{.possibleAlternatives =
@@ -12923,6 +12950,26 @@ completeBorrowSourcePath(const MirProgram &program,
       observations.values[parameter.value - 1] =
           state.values[parameter.value - 1];
     for (const auto &instruction : block.instructions) {
+      if (flow.incoming[block.id - 1] && instruction.noNormalBorrowResult &&
+          instruction.kind == MirInstructionKind::Call &&
+          instruction.dispatch == CallDispatch::Static &&
+          instruction.intrinsic == IntrinsicKind::None &&
+          instruction.functionTarget) {
+        const auto *target =
+            program.findFunctionInstance(*instruction.functionTarget);
+        const auto *summary = target ? callSummary(target->id, false) : nullptr;
+        if (target && summary && !target->neverReturns &&
+            target->returnType.kind == SemanticType::Reference &&
+            target->parameterTypes == instruction.parameterTypes &&
+            target->returnType ==
+                SemanticType::referenceTo(instruction.info.type,
+                                          instruction.info.access)) {
+          BorrowResultDomainStatus status = BorrowResultDomainStatus::Unknown;
+          (void)callResult(state, instruction, *target, *summary, &status);
+          if (status == BorrowResultDomainStatus::NoNormalResult)
+            observations.noNormalBorrowResults.insert(instruction.id);
+        }
+      }
       if (flow.incoming[block.id - 1] && instruction.result &&
           *instruction.result <= observations.payloadSelectionSources.size() &&
           instruction.kind == MirInstructionKind::Compute &&
@@ -13276,6 +13323,24 @@ public:
     return &*flows[owner - 1];
   }
 
+  bool excludesNormalResult(const MirBody &body, std::size_t owner,
+                            MirInstructionId instruction) {
+    const auto *observed = observations(body, owner);
+    if (!observed) {
+      auto found = terminalFlows.find(&body);
+      if (found == terminalFlows.end()) {
+        auto flow = reconstructCompleteBorrowFlow(
+            program, body, owner, [&](std::size_t target, bool constructing) {
+              return constructing ? queryConstructor(target) : query(target);
+            });
+        found = terminalFlows.emplace(&body, std::move(flow)).first;
+      }
+      observed = &found->second;
+    }
+    return observed->verification.valid() &&
+           observed->noNormalBorrowResults.contains(instruction);
+  }
+
 private:
   enum class State { Unqueried, Visiting, Complete };
   const MirProgram &program;
@@ -13285,6 +13350,7 @@ private:
   std::vector<State> constructorStates;
   std::vector<std::optional<FunctionBorrowDependencySummary>> constructorSummaries;
   std::vector<std::optional<CompleteBorrowFlow>> constructorFlows;
+  std::unordered_map<const MirBody *, CompleteBorrowFlow> terminalFlows;
   MirVerificationResult verification;
 
   bool constructorFieldPublication(const MirConstructorInstance &constructor,
@@ -13672,6 +13738,14 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
     return !field.resultConditions.empty() || !field.sourceConditions.empty();
   };
   const bool needsOriginGroups =
+      std::any_of(body.blocks.begin(), body.blocks.end(),
+                  [](const auto &block) {
+                    return std::any_of(
+                        block.instructions.begin(), block.instructions.end(),
+                        [](const auto &instruction) {
+                          return instruction.noNormalBorrowResult;
+                        });
+                  }) ||
       std::any_of(body.loans.begin(), body.loans.end(),
                   [](const auto &loan) {
                     return !loan.conditions.empty() ||
@@ -13708,6 +13782,15 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
   std::unordered_map<MirValueId, const MirInstruction *> producers;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
+      if (instruction.noNormalBorrowResult &&
+          (!instruction.neverReturns || instruction.result ||
+           instruction.loan || instruction.successResultDrop ||
+           instruction.successResultDestination ||
+           !flow.noNormalBorrowResults.contains(instruction.id)))
+        return verificationFailure(body, owner,
+                                   "impossible normal result lacks exact "
+                                   "input-domain proof or publishes a result",
+                                   block.id, instruction.id);
       if (std::any_of(instruction.borrowFields.begin(),
                       instruction.borrowFields.end(), conditionalMapping) &&
           (!(instruction.functionTarget && callSummary(*instruction.functionTarget, false)) &&
@@ -18628,6 +18711,11 @@ verifyMirProgramContracts(const MirProgram &program) {
                   [&](HirConstructorInstanceId id) {
                     return completeBorrowSummaries.queryConstructor(id) !=
                            nullptr;
+                  },
+                  [&](const MirBody &body, std::size_t owner,
+                      MirInstructionId instruction) {
+                    return completeBorrowSummaries.excludesNormalResult(
+                        body, owner, instruction);
                   },
                   [&](const MirFunctionInstance &function, MirBlockId block) {
                     return completeBorrowSummaries.query(function.id) &&
