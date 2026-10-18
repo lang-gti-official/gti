@@ -23,7 +23,7 @@ class optional<std::move_constructible T> {
 public:
   optional() {}
   implicit optional(nullopt_t empty) {}
-  optional(T value) : state(detail::optional_state<T>::engaged(std::move(value))) {}
+  implicit optional(T value) : state(detail::optional_state<T>::engaged(std::move(value))) {}
   optional(optional<T>& other) = delete;
   optional(optional<T>&& other) = default;
 

@@ -5,18 +5,35 @@
 
 std::optional<std::string> label(bool present) {
   if (!present) {
-    std::optional<std::string> none = std::nullopt;
-    return none;
+    return std::nullopt;
   }
-  return std::optional<std::string>(std::string("ready"));
+  // `return "ready";` would need two conversions and remains invalid.
+  return std::string("ready");
 }
 
 std::optional<std::size_t> length(bool present) {
   std::string text = ?label(present);
-  return std::optional<std::size_t>(text.size());
+  return text.size();
+}
+
+// The same language rule applies to ordinary user types, without optional
+// recognition. Exactly one constructor declared implicit can initialize a return.
+struct Reading {
+  int degrees;
+  implicit Reading(int value) : degrees(value) {}
+};
+Reading reading(int value) { return value; }
+
+// A named move-only argument still requires an explicit ownership transfer.
+std::optional<std::string> own_label(std::string text) {
+  return std::move(text);
 }
 
 int main() {
+  if (reading(21).degrees != 21 ||
+      own_label(std::string("owned")).value().size() != std::size_t(5)) {
+    return 1;
+  }
   std::println(std::to_string(length(true).value()));
   std::println(length(false).has_value() ? "present" : "missing");
   mut std::optional<std::string> slot{};
