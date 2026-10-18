@@ -54,6 +54,21 @@ struct Completion {
 constexpr Completion finish() { return; }
 static_assert(finish().code == 42);
 
+// A passive source result can replace an array element. The checked write
+// happens only after the producer succeeds; an invalid index follows normal
+// defined-failure cleanup rather than publishing an out-of-bounds value.
+bool replace_completion(int index) {
+  mut Completion completions[2] = {Completion(1), Completion(2)};
+  completions[index] = finish();
+  return completions[1].code == 42;
+}
+int embedded_completion() {
+  auto content = Content<Completion>::value(finish());
+  switch (content) {
+  case Content<Completion>::value(auto& completion): return completion.code;
+  }
+}
+
 mut int retired = 0;
 class Ticket {
 public:
@@ -77,6 +92,6 @@ int main() {
   Packet<int&, int> borrowed{owner};
   empty.value();
   // `owner` must still be alive and cannot be mutated while this borrow is used.
-  return retired == 1 && finish().code == 42 && consume_packet() == 42 && owned.value() == 42 && borrowed.value() == 7 &&
+  return retired == 1 && replace_completion(1) && embedded_completion() == 42 && finish().code == 42 && consume_packet() == 42 && owned.value() == 42 && borrowed.value() == 7 &&
       inspect(owned) == 1 && inspect(empty) == 2 && inspect(borrowed) == 3 ? 0 : 1;
 }

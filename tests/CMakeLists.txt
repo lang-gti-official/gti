@@ -3805,6 +3805,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(borrowed_enum_scalar_sibling_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME contextual_borrowed_construction_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/contextual_borrowed_construction_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(contextual_borrowed_construction_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME consuming_retained_field_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_retained_field_test.py"

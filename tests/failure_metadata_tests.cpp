@@ -1885,10 +1885,26 @@ void testCallerLocationAssignments() {
   expect(!built.metadata.siteFor(forgedDetector),
          "report admission alone must not resolve as a detector origin");
   const auto *descriptor = site ? built.metadata.findSite(*site) : nullptr;
-  expect(descriptor && descriptor->outcomes == forgedDetector.outcomes &&
+  const std::vector<lang::DefinedFailureOutcome> trackedOutcomes{
+      {lang::DefinedFailureCode::Panic,
+       lang::DefinedFailureDetail::ExplicitPanic},
+      {lang::DefinedFailureCode::InvalidExpectedAccess,
+       lang::DefinedFailureDetail::ValueOnError},
+      {lang::DefinedFailureCode::InvalidExpectedAccess,
+       lang::DefinedFailureDetail::ErrorOnValue}};
+  expect(descriptor &&
+             std::is_permutation(
+                 descriptor->outcomes.begin(), descriptor->outcomes.end(),
+                 trackedOutcomes.begin(), trackedOutcomes.end()) &&
              descriptor->logicalSource == "main.gti" && descriptor->line == 2,
-         "caller site reports the exact caller anchor with bounded panic "
+         "caller site reports the exact caller anchor with bounded terminal "
          "admission");
+  for (const auto &outcome : trackedOutcomes) {
+    auto forged = forgedDetector;
+    forged.outcomes = {outcome};
+    expect(!built.metadata.siteFor(forged),
+           "tracked terminal report cannot manufacture a local detector");
+  }
   auto wrongLine = origin;
   ++wrongLine.line;
   expect(!built.metadata.callerSiteFor(wrongLine),

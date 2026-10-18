@@ -13944,13 +13944,19 @@ private:
                 }
                 if (summarizedEntry != 0 &&
                     output.loans[normalized - 1].storedDependency !=
-                        summarizedEntry) {
+                        summarizedEntry &&
+                    !temporaryCarrierLoans().contains(summarizedEntry)) {
                   (void)appendInstruction(
                       {.kind = MirInstructionKind::EndBorrow,
                        .hirValue = *statement.value,
                        .loan = summarizedEntry});
                   removeLoanFromState(summarizedEntry, scopes, bindingLoans);
                 }
+                // A fresh borrowed receiver may still need this parameter
+                // authority while destroying its shell. In that case the
+                // ordinary temporary-drop/scope-exit schedule retires the
+                // Stored child and then the parameter, after publication of
+                // the independent external return capability.
                 borrow = {.kind = MirOperandKind::Loan,
                           .loan = normalized,
                           .type = value->info.type};

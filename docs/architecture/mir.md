@@ -75,8 +75,11 @@ site ID, and whether the enclosing tracked function forwards its incoming token.
 `MirBody::hasCallerLocation` must agree with its concrete function declaration.
 `FailureMetadata` binds caller anchors separately from actual detector origins;
 the artifact descriptor admits the union of genuine detector outcomes and the
-explicit-panic outcome at caller anchors. A caller anchor does not invent a
-local failure or make a failure-free wrapper fallible.
+bounded caller-tracked terminal outcomes at caller anchors: explicit panic,
+inactive success access, and inactive error access. A caller anchor does not
+invent a local detector or make a failure-free wrapper fallible. Inline and
+cold record publication both select that same verified caller token; the
+detected category and detail remain those of the exact intrinsic.
 
 The trusted `Panic` intrinsic reads one text view and is terminal, caller-tracked,
 and a conservative optimizer barrier. At detection it selects the caller token
@@ -87,7 +90,8 @@ ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
 instruction, body, and caller-assignment facts (`mir-v111`, `mir-body-v91`).
 
-The first caller-token consumer is panic. This does not change
+Caller-token consumers are panic and the identity-bound inactive-result
+failure operations used by source result classes. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
 tracking through native function pointers, or implement a call stack.
 

@@ -1,0 +1,18 @@
+#include <std/string>
+#include <std/vector>
+
+struct Packet {
+  int value;
+  Packet(int value) : value(value) {}
+};
+struct Guard {
+  ~Guard() { std::println(9); }
+};
+Packet make(int divisor) { return Packet(12 / divisor); }
+int main(int argc, std::vector<std::string> args) {
+  Guard guard{};
+  mut Packet packets[2] = {Packet(3), Packet(4)};
+  packets[argc] = make(argc == 3 ? 0 : 1);
+  std::println(packets[1].value);
+  return 0;
+}

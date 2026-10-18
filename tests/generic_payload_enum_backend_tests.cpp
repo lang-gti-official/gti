@@ -1688,5 +1688,117 @@ int main() {
              "proof");
     }
   }
+  const auto arrayPath = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/passive_result_array_assignment.gti";
+  std::ifstream arrayInput(arrayPath);
+  const std::string arraySource{std::istreambuf_iterator<char>(arrayInput), {}};
+  const auto arrayResult = lang::Frontend().analyze(
+      arrayPath, arraySource, {compositionLibrary / "prelude.gti"}, {},
+      {compositionLibrary});
+  expect(
+      arrayResult.canGenerateCode(),
+      "passive source call result has verified checked array assignment MIR");
+  if (arrayResult.canGenerateCode()) {
+    const auto lowered =
+        gti_test::lowerProgram(arrayResult, arrayResult.mir, arrayResult.mir);
+    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+        lowered, lang::CppStandard::Cpp23));
+    expect(
+        lang::CppMirBodyEmitter(arrayResult.mir, map).analyzeProgram().ready(),
+        "passive source call result publishes through checked array "
+        "assignment");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto malformed = arrayResult.mir;
+      bool changed = false;
+      lang::HirFunctionInstanceId entry = 0;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
+          continue;
+        entry = function.id;
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::Assign ||
+                instruction.info.type.kind != lang::SemanticType::Class ||
+                instruction.localFailureSites.empty())
+              continue;
+            if (mutation == 0)
+              instruction.localFailureSites.clear();
+            if (mutation == 1)
+              instruction.definedFailure.localOrigins.clear();
+            if (mutation == 2)
+              instruction.preparedParameterDrop = 1;
+            if (mutation == 3) {
+              expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                         block.terminator.invokeInstruction == instruction.id,
+                     "lexical-trait passive array write owns its failure edge");
+              block.terminator.kind = lang::MirTerminatorKind::Goto;
+              block.terminator.invokeInstruction = 0;
+              block.terminator.failureRecord = 0;
+              block.terminator.elseTarget = 0;
+            }
+            changed = true;
+          }
+      }
+      expect(changed && !lang::CppMirBodyEmitter(malformed, map)
+                             .supportsFailureBodyText(
+                                 {lang::MirBodyKind::Function, entry}),
+             "checked array assignment cannot erase its exact failure/storage "
+             "contract");
+      if (mutation == 3)
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "MIR independently rejects a missing passive array write edge");
+    }
+  }
+  const auto payloadPath = std::filesystem::path(__FILE__).parent_path() /
+                           "fixtures/passive_result_payload.gti";
+  std::ifstream payloadInput(payloadPath);
+  const std::string payloadSource{std::istreambuf_iterator<char>(payloadInput),
+                                  {}};
+  const auto payloadResult = lang::Frontend().analyze(
+      payloadPath, payloadSource, {compositionLibrary / "prelude.gti"}, {},
+      {compositionLibrary});
+  expect(
+      payloadResult.canGenerateCode(),
+      "ordinary passive calls can supply enum fields and constructor fields");
+  if (payloadResult.canGenerateCode()) {
+    const auto lowered = gti_test::lowerProgram(
+        payloadResult, payloadResult.mir, payloadResult.mir);
+    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+        lowered, lang::CppStandard::Cpp23));
+    expect(lang::CppMirBodyEmitter(payloadResult.mir, map)
+               .analyzeProgram()
+               .ready(),
+           "passive source call results stage at their producer before enum "
+           "publication");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = payloadResult.mir;
+      bool changed = false;
+      for (auto &constructor :
+           lang::MirProgramTestAccess::constructors(malformed))
+        for (auto &block : constructor.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.operation != lang::MirOperation::PayloadConstruct ||
+                instruction.operands.empty())
+              continue;
+            const auto *value =
+                constructor.body.findValue(instruction.operands.front().value);
+            if (!value || value->info.type.kind != lang::SemanticType::Class)
+              continue;
+            if (mutation == 0)
+              instruction.operands.push_back(instruction.operands.front());
+            if (mutation == 1)
+              instruction.enumVariant = 999;
+            if (mutation == 2)
+              instruction.operands.front().type = lang::SemanticType::Int32;
+            changed = true;
+          }
+      expect(
+          changed && !lang::verifyMirProgram(malformed).valid() &&
+              !lang::CppMirBodyEmitter(malformed, map).analyzeProgram().ready(),
+          "passive enum field rejects duplicate use and altered variant/type");
+    }
+  }
   return failures == 0 ? 0 : 1;
 }

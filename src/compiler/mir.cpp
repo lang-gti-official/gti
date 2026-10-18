@@ -4564,6 +4564,53 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               return permitted;
             };
             const MirOperand *resolved = callInputSource(operand);
+            if (instruction.kind == MirInstructionKind::Call &&
+                instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                instruction.receiver == operand &&
+                instruction.borrowFields.size() == 1 &&
+                operand.kind == MirOperandKind::Value) {
+              const auto *stage =
+                  mir_detail::definitionFor(body, operand.value);
+              const auto *shell =
+                  stage && stage->loan ? body.findLoan(*stage->loan) : nullptr;
+              const auto *place = body.findPlace(resolved->place);
+              const auto carrier =
+                  place ? findMirTemporaryCarrierDependency(body, *place)
+                        : MirTemporaryCarrierDependency{};
+              const auto &result = body.loans[loan - 1];
+              const auto &mapping = instruction.borrowFields.front();
+              // A fresh carrier's physical shell and external stored group
+              // are distinct authorities. Follow their exact staged identity
+              // to the original parameter, not an overlapping owner. Shared
+              // extraction can coexist with cleanup of the still-live shell.
+              if (stage && stage->kind == MirInstructionKind::CallInput &&
+                  stage->callInputRole == MirCallInputRole::Receiver &&
+                  stage->callSite == instruction.callSite &&
+                  (stage->callInputKind ==
+                       HirCallInputKind::ReadTemporaryBorrow ||
+                   stage->callInputKind ==
+                       HirCallInputKind::MutableTemporaryBorrow) &&
+                  shell && carrier && shell->source == place->id &&
+                  shell->kind == MirLoanKind::CallArgument &&
+                  shell->storedDependency == carrier.loan->id &&
+                  carrier.loan->parent == parent &&
+                  carrier.loan->additionalDependencies.empty() &&
+                  carrier.loan->access == AccessMode::ReadOnly &&
+                  result.kind == MirLoanKind::CallResult &&
+                  result.access == AccessMode::ReadOnly &&
+                  result.additionalDependencies.empty() &&
+                  carrier.loan->source == result.source &&
+                  mapping.origin == BorrowOriginKind::Receiver &&
+                  mapping.access == AccessMode::ReadOnly &&
+                  mapping.resultFields.empty() &&
+                  mapping.resultConditions.empty() &&
+                  mapping.sourceFields == carrier.loan->designatedFields &&
+                  mapping.sourceConditions == carrier.loan->conditions &&
+                  active[shell->id - 1] == MirLoanFlowState::Active &&
+                  active[carrier.loan->id - 1] == MirLoanFlowState::Active &&
+                  active[parent - 1] == MirLoanFlowState::Active)
+                return true;
+            }
             bool movedCarrier = resolved->kind == MirOperandKind::Move;
             if (resolved->kind == MirOperandKind::Value) {
               const MirValue *value = body.findValue(resolved->value);
@@ -6307,10 +6354,25 @@ namespace {
       definition->callInputRole == MirCallInputRole::Receiver &&
       definition->callInputKind == HirCallInputKind::MutableTemporaryBorrow) {
     const MirPlace *place = body.findPlace(definition->operands.front().place);
+    if (place != nullptr && place->traits.containsBorrowedState) {
+      const auto carrier = findMirTemporaryCarrierDependency(body, *place);
+      const auto *shell = body.findLoan(definition->loan.value_or(0));
+      // The consuming invocation aliases the fresh materialization, never
+      // its external referents. Its separate mutable shell capability must
+      // retain the producer's complete stored group until the call retires.
+      // The program verifier independently checks that group's exact origins,
+      // access modes and conditional alternatives against the target summary.
+      if (!carrier || shell == nullptr ||
+          shell->kind != MirLoanKind::CallArgument || shell->parent != 0 ||
+          shell->source != place->id ||
+          shell->storedDependency != carrier.loan->id ||
+          shell->producedBy != definition->callSite ||
+          shell->access != AccessMode::Mutable)
+        return false;
+    }
     return expectedUseKind == MirValueUseKind::InstructionReceiver &&
            place != nullptr && !place->initiallyAvailable &&
            place->type.kind == SemanticType::Class && place->traits.movable &&
-           !place->traits.containsBorrowedState &&
            definition->operands.front().kind == MirOperandKind::BorrowWrite &&
            findMirTemporaryMaterialization(body, *place, definition->hirValue)
                    .producer != nullptr;
@@ -7209,10 +7271,25 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   // forms that keep a closed instruction because semantics folds their
   // arithmetic and conversion into one origin. An assignment that replaces an
   // owning value still needs the destination's own unwinding rule.
+  // Ordinary source classes retain lexical-drop traits even when their
+  // generated representation has no active cleanup. A bounds-only assignment
+  // with no lifecycle transition still fails before committing anything. Its
+  // failure edge is required independently of backend transfer eligibility;
+  // owning replacements instead attach this origin to CleanupBeforeAssign.
+  const bool checkedClassCommit =
+      instruction.info.type.kind == SemanticType::Class &&
+      instruction.operation == MirOperation::Assign &&
+      instruction.definedFailure.propagation == FailurePropagationKind::None &&
+      instruction.definedFailure.localOrigins.size() == 1 &&
+      instruction.definedFailure.localOrigins.front().outcomes ==
+          std::vector<DefinedFailureOutcome>{
+              {DefinedFailureCode::IndexOutOfBounds,
+               DefinedFailureDetail::FixedArray}};
   const bool trivialCommitDestination =
       instruction.kind == MirInstructionKind::Assign &&
       instruction.lifecycle.empty() &&
-      instruction.info.traits.drop == DropKind::Trivial &&
+      (instruction.info.traits.drop == DropKind::Trivial ||
+       checkedClassCommit) &&
       !instruction.info.traits.containsBorrowedState;
   const bool locallyFailingBorrowIntrinsic =
       (instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||

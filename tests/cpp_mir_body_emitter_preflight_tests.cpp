@@ -548,11 +548,14 @@ public:
   RightError(int value) : divisor(value) {}
   ~RightError() { int right_failure = 2 / this.divisor; }
 };
+enum LeftResult { value(int payload), error(LeftError failure) };
+enum OtherLeftResult { value(bool payload), error(LeftError failure) };
+enum RightResult { value(int payload), error(RightError failure) };
 int many(int divisor) {
-  expected<int, LeftError> first = unexpected(LeftError(divisor));
-  expected<int, LeftError> second = unexpected(LeftError(divisor));
-  expected<bool, LeftError> different_type = unexpected(LeftError(divisor));
-  expected<int, RightError> different_recipe = unexpected(RightError(divisor));
+  LeftResult first = LeftResult::error(LeftError(divisor));
+  LeftResult second = LeftResult::error(LeftError(divisor));
+  OtherLeftResult different_type = OtherLeftResult::error(LeftError(divisor));
+  RightResult different_recipe = RightResult::error(RightError(divisor));
   return 3 / divisor;
 }
 int main() { return many(1); }
@@ -583,7 +586,8 @@ int main() { return many(1); }
             continue;
           const auto *drop = function.body.findDropObligation(
               instruction.lifecycle.front().source);
-          if (!drop || drop->dropType.type.kind != lang::SemanticType::Class)
+          if (!drop || (drop->dropType.type.kind != lang::SemanticType::Class &&
+                        drop->dropType.type.kind != lang::SemanticType::Enum))
             continue;
           ++drops;
           if (std::find(recipes.begin(), recipes.end(), drop->dropType) ==
@@ -3311,7 +3315,12 @@ void testConditionalExpectedArgumentReceiverAdmission() {
       const auto *producer =
           value ? findPreflightInstruction(entry->body, value->definition)
                 : nullptr;
-      if (producer && producer->intrinsic == lang::IntrinsicKind::ExpectedValue)
+      const auto *target =
+          producer && producer->functionTarget
+              ? frontend.hir.findFunctionInstance(*producer->functionTarget)
+              : nullptr;
+      if (producer && producer->kind == lang::MirInstructionKind::Call &&
+          target && target->source && target->source->name().lexeme == "value")
         stages.push_back(instruction.id);
     }
   }
@@ -4238,8 +4247,9 @@ int main() { return exercise(1, 2); }
     return;
   const auto function = std::find_if(
       frontend.mir.functionInstances().begin(),
-      frontend.mir.functionInstances().end(), [](const auto &candidate) {
-        return !candidate.owner && candidate.parameterTypes.size() == 2;
+      frontend.mir.functionInstances().end(), [&](const auto &candidate) {
+        const auto *hir = frontend.hir.findFunctionInstance(candidate.id);
+        return hir && hir->source && hir->source->name().lexeme == "exercise";
       });
   expect(function != frontend.mir.functionInstances().end(),
          "plain Expected payload fixture has its source function");
@@ -4252,10 +4262,11 @@ int main() { return exercise(1, 2); }
   const lang::MirInstruction *stage = nullptr;
   for (const auto &block : function->body.blocks)
     for (const auto &instruction : block.instructions) {
-      if (instruction.kind == lang::MirInstructionKind::Construct)
+      if (instruction.kind == lang::MirInstructionKind::Construct &&
+          instruction.operands.size() == 2)
         construct = &instruction;
       if (instruction.kind == lang::MirInstructionKind::Initialize &&
-          instruction.info.type.kind == lang::SemanticType::Expected)
+          instruction.info.type.kind == lang::SemanticType::Class)
         initialize = &instruction;
       if (instruction.kind == lang::MirInstructionKind::CallInput)
         stage = &instruction;
@@ -4263,7 +4274,8 @@ int main() { return exercise(1, 2); }
   expect(
       construct && initialize && stage && construct->definedFailure.empty() &&
           construct->operands.size() == 2 && construct->lifecycle.size() == 1 &&
-          initialize->lifecycle.size() == 2,
+          initialize->lifecycle.size() == 1 &&
+          stage->preparedParameterDrop.has_value(),
       "nonraising constructor retains prepared arguments and two ownership "
       "stages");
   if (!construct || !initialize || !stage)
@@ -4277,14 +4289,11 @@ int main() { return exercise(1, 2); }
         function->mayRaiseDefinedFailure
             ? emitter.emitFailureBodyText(address, "plain-payload", 1)
             : emitter.emitBodyText(address, "plain-payload", 1);
-    expect(text.emitted() &&
-               text.text.find(".construct_from([&]() { return ") !=
-                   std::string::npos,
+    expect(text.emitted() && text.text.find(".construct(") != std::string::npos,
            "nonraising payload executes at Construct in its explicit lifetime "
            "slot");
     expect(
-        text.text.find(".construct(std::move(__gti_mir_v_") !=
-                std::string::npos &&
+        text.text.find(".take())") != std::string::npos &&
             text.text.find(".destroy();") != std::string::npos,
         "Expected publication consumes the payload and retires its old shell");
     for (int mutation = 0; mutation != 5; ++mutation) {
@@ -4307,8 +4316,9 @@ int main() { return exercise(1, 2); }
         producer->parameterTypes.front() = lang::SemanticType::Bool;
       const lang::CppMirBodyEmitter rejected(forged, map);
       expect(
-          !rejected.supportsBodyText(address) &&
-              !rejected.supportsFailureBodyText(address),
+          !lang::verifyMirProgram(forged).valid() ||
+              (!rejected.supportsBodyText(address) &&
+               !rejected.supportsFailureBodyText(address)),
           "forged Expected payload construction/publication must fail closed");
     }
   }
@@ -4354,7 +4364,7 @@ int main() {
         for (const auto &instruction : block.instructions) {
           if (!instruction.result || !instruction.loan ||
               instruction.kind != lang::MirInstructionKind::Call ||
-              instruction.info.type.kind != lang::SemanticType::Expected ||
+              instruction.info.type.kind != lang::SemanticType::Class ||
               instruction.info.category != lang::ValueCategory::Place)
             continue;
           const auto text =
@@ -4422,22 +4432,27 @@ void testExpectedFieldHasOnlyPayloadStorage() {
     std::size_t fields = 0;
     bool nested = false;
     for (const auto &place : entry->body.places) {
-      if (place.root != lang::MirPlaceRootKind::Value ||
+      if (place.root != lang::MirPlaceRootKind::Loan ||
           place.projections.empty())
         continue;
-      const auto *value = entry->body.findValue(place.value);
-      const auto *producer =
-          value ? findPreflightInstruction(entry->body, value->definition)
-                : nullptr;
-      if (!producer ||
-          producer->intrinsic != lang::IntrinsicKind::ExpectedValue)
+      const auto *loan = entry->body.findLoan(place.loan);
+      const lang::MirInstruction *producer = nullptr;
+      for (const auto &block : entry->body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (loan && instruction.hirValue == loan->producedBy &&
+              instruction.loan == place.loan &&
+              instruction.kind == lang::MirInstructionKind::Call)
+            producer = &instruction;
+      if (!producer || producer->kind != lang::MirInstructionKind::Call ||
+          !producer->functionTarget || !producer->loan ||
+          producer->info.category != lang::ValueCategory::Place)
         continue;
       ++fields;
       nested |= place.projections.size() == 2;
       expect(text.text.find("__gti_mir_p_" + std::to_string(place.id)) ==
                  std::string::npos,
              "a payload field must not declare or access independent storage");
-      expect(text.text.find("(*__gti_mir_ref_v_" + std::to_string(place.value) +
+      expect(text.text.find("(*__gti_mir_loan_" + std::to_string(place.loan) +
                             ").") != std::string::npos,
              "a payload field must access its checked extraction address");
       for (int mutation = 0; mutation != 2; ++mutation) {
@@ -4498,8 +4513,10 @@ int main() {
     return;
   const auto text =
       emitter.emitFailureBodyText(address, "native-expected-copy", 1);
-  expect(text.text.find("copied Expected initializes") != std::string::npos,
-         "native Expected copy constructs one final binding slot");
+  expect(text.text.find("class copy load") != std::string::npos &&
+             text.text.find("publishes at its consuming initialize") !=
+                 std::string::npos,
+         "source result copy constructs one final class binding slot");
   auto mutated = frontend.mir;
   auto *function = const_cast<lang::MirFunctionInstance *>(
       mutated.findFunctionInstance(entry->id));
@@ -4508,7 +4525,7 @@ int main() {
     for (std::size_t index = 1; index < block.instructions.size(); ++index) {
       auto &instruction = block.instructions[index];
       if (instruction.kind == lang::MirInstructionKind::Initialize &&
-          instruction.info.type.kind == lang::SemanticType::Expected &&
+          instruction.info.type.kind == lang::SemanticType::Class &&
           block.instructions[index - 1].kind ==
               lang::MirInstructionKind::Load &&
           instruction.lifecycle.size() == 1) {
@@ -4518,19 +4535,28 @@ int main() {
     }
   }
   expect(changed, "native Expected copy mutation finds binding activation");
-  expect(
-      !lang::CppMirBodyEmitter(mutated, map).supportsFailureBodyText(address),
-      "native Expected copy cannot lose its destination lexical drop");
+  expect(!lang::verifyMirProgram(mutated).valid(),
+         "native Expected copy cannot lose its destination lexical drop");
   auto cleanupMutation = frontend.mir;
   auto *cleanupFunction = const_cast<lang::MirFunctionInstance *>(
       cleanupMutation.findFunctionInstance(entry->id));
   bool changedCleanup = false;
   for (auto &block : cleanupFunction->body.blocks) {
     for (auto &instruction : block.instructions) {
-      if (instruction.kind == lang::MirInstructionKind::CleanupBeforeAssign &&
-          instruction.replacementCleanup &&
-          instruction.replacementCleanup->type.kind ==
-              lang::SemanticType::Expected) {
+      if (instruction.kind == lang::MirInstructionKind::Assign &&
+          instruction.info.type.kind == lang::SemanticType::Class &&
+          instruction.destination) {
+        const auto drop = std::find_if(
+            cleanupFunction->body.dropObligations.begin(),
+            cleanupFunction->body.dropObligations.end(), [&](const auto &item) {
+              return item.place == *instruction.destination;
+            });
+        if (drop == cleanupFunction->body.dropObligations.end())
+          continue;
+        expect(!instruction.replacementCleanup &&
+                   !drop->dropType.requiresActiveCleanup,
+               "passive source result assignment has no active cleanup");
+        instruction.replacementCleanup = drop->dropType;
         instruction.replacementCleanup->requiresActiveCleanup = true;
         changedCleanup = true;
       }
@@ -4538,8 +4564,7 @@ int main() {
   }
   expect(changedCleanup,
          "native Expected assignment has a passive cleanup recipe");
-  expect(!lang::CppMirBodyEmitter(cleanupMutation, map)
-              .supportsFailureBodyText(address),
+  expect(!lang::verifyMirProgram(cleanupMutation).valid(),
          "native Expected assignment cannot fuse across active cleanup");
 }
 
@@ -5911,394 +5936,108 @@ int main() {
 // arithmetic preserves the enclosing frame's cleanup edge.
 
 void testExpectedExtractionStateAdmissionFailsClosed() {
-  const lang::FrontendResult frontend =
-      analyzeWithStandardLibrary("cpp-mir-expected-extraction-state.gti", R"(
-expected<int32_t, int32_t> first_state = int32_t(7);
-expected<int32_t, int32_t> second_state = int32_t(8);
-
-// Each checked division keeps its body failure-capable, so propagation is
-// admitted through the failure form under test.
-expected<int32_t, int32_t>
-forward(expected<int32_t, int32_t> result, int32_t divisor) {
-  int32_t checked = int32_t(1) / divisor;
+  // Source-defined propagation invokes ordinary checked protocol operations.
+  // The former builtin's zero-site extraction/state-branch shortcut no longer
+  // exists: wrong-state access retains the callee's defined-failure edge.
+  const auto frontend =
+      analyzeWithStandardLibrary("source-result-propagation-proof.gti", R"(
+expected<int, int> forward(expected<int, int> result, int divisor) {
+  int checked = 1 / divisor;
   return ?result;
 }
-
-expected<int32_t, int32_t> forward_globals(int32_t divisor) {
-  int32_t checked = int32_t(1) / divisor;
-  bool ignored = second_state.has_value();
-  return ?first_state;
-}
-
-int32_t main() {
-  expected<int32_t, int32_t> result = int32_t(7);
-  expected<int32_t, int32_t> forwarded = forward(result, int32_t(1));
-  expected<int32_t, int32_t> global_forwarded = forward_globals(int32_t(1));
-  return forwarded.has_value() && global_forwarded.has_value()
-             ? forwarded.value() + global_forwarded.value() - int32_t(14)
-             : int32_t(1);
+int main() {
+  auto success = forward(expected<int, int>(7), 1);
+  auto failure = forward(expected<int, int>(unexpected(9)), 1);
+  return success.value() + failure.error() - 16;
 }
 )");
-  expect(frontend.canGenerateCode(),
-         "the Expected extraction-state fixture should pass the frontend");
-  if (!frontend.canGenerateCode()) {
+  expect(
+      frontend.canGenerateCode(),
+      "source result propagation must lower through ordinary protocol calls");
+  if (!frontend.canGenerateCode())
     return;
-  }
-
-  const auto forwardHir =
-      std::find_if(frontend.hir.functionInstances().begin(),
-                   frontend.hir.functionInstances().end(),
-                   [](const lang::HirFunctionInstance &candidate) {
-                     return candidate.source != nullptr &&
-                            candidate.source->name().lexeme == "forward";
-                   });
-  const lang::MirFunctionInstance *forward =
-      forwardHir == frontend.hir.functionInstances().end()
-          ? nullptr
-          : frontend.mir.findFunctionInstance(forwardHir->id);
-  const auto globalForwardHir = std::find_if(
-      frontend.hir.functionInstances().begin(),
-      frontend.hir.functionInstances().end(),
-      [](const lang::HirFunctionInstance &candidate) {
-        return candidate.source != nullptr &&
-               candidate.source->name().lexeme == "forward_globals";
-      });
-  const lang::MirFunctionInstance *globalForward =
-      globalForwardHir == frontend.hir.functionInstances().end()
-          ? nullptr
-          : frontend.mir.findFunctionInstance(globalForwardHir->id);
-  const lang::MirBlock *stateBranch = nullptr;
-  const auto findInstruction = [](const lang::MirBody &body,
-                                  lang::MirInstructionId id) {
-    for (const lang::MirBlock &block : body.blocks) {
-      for (const lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.id == id) {
-          return &instruction;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "source result protocol bodies must have complete native admission");
+  unsigned protocolCalls = 0;
+  unsigned trackedFailures = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    const bool propagationBody =
+        hir && hir->source && hir->source->name().lexeme == "forward";
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        expect(
+            instruction.intrinsic != lang::IntrinsicKind::ExpectedValue &&
+                instruction.intrinsic != lang::IntrinsicKind::ExpectedError &&
+                instruction.operation != lang::MirOperation::ExpectedHasValue,
+            "source propagation must not recover builtin extraction authority");
+        if (instruction.intrinsic == lang::IntrinsicKind::FailInactiveValue ||
+            instruction.intrinsic == lang::IntrinsicKind::FailInactiveError) {
+          ++trackedFailures;
+          expect(instruction.neverReturns && instruction.tracksCaller &&
+                     instruction.forwardsCallerLocation &&
+                     instruction.localFailureSites.size() == 1,
+                 "source observers retain tracked terminal checked-access "
+                 "failure");
+          for (unsigned mutation = 0; mutation != 3; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *body = lang::findMirBody(
+                malformed, {lang::MirBodyKind::Function, function.id});
+            auto *changed = findPreflightInstruction(*body, instruction.id);
+            if (mutation == 0)
+              changed->localFailureSites.clear();
+            if (mutation == 1)
+              changed->neverReturns = false;
+            if (mutation == 2)
+              changed->callerLocationSite = 0;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "checked source failure cannot lose its site, terminal or "
+                   "caller proof");
+          }
+        }
+        if (!propagationBody ||
+            instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.functionTarget)
+          continue;
+        const auto *target =
+            frontend.hir.findFunctionInstance(*instruction.functionTarget);
+        if (!target || !target->source)
+          continue;
+        const auto name = target->source->name().lexeme;
+        if (name != "has_value" && name != "take_value" &&
+            name != "take_residual")
+          continue;
+        ++protocolCalls;
+        for (unsigned mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          auto *changed = findPreflightInstruction(*body, instruction.id);
+          if (mutation == 0)
+            changed->functionTarget.reset();
+          if (mutation == 1) {
+            expect(!changed->parameterTypes.empty(),
+                   "result protocol operation has its checked carrier input");
+            if (changed->parameterTypes.empty())
+              continue;
+            changed->parameterTypes.front() = lang::SemanticType::Bool;
+          }
+          if (mutation == 2)
+            changed->info.type = lang::SemanticType::Void;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "ordinary propagation cannot substitute its target, input or "
+                 "output contract");
         }
       }
     }
-    return static_cast<const lang::MirInstruction *>(nullptr);
-  };
-  const auto findMutableInstruction = [](lang::MirBody &body,
-                                         lang::MirInstructionId id) {
-    for (lang::MirBlock &block : body.blocks) {
-      for (lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.id == id) {
-          return &instruction;
-        }
-      }
-    }
-    return static_cast<lang::MirInstruction *>(nullptr);
-  };
-  if (forward != nullptr) {
-    for (const lang::MirBlock &block : forward->body.blocks) {
-      if (block.terminator.kind != lang::MirTerminatorKind::Branch ||
-          !block.terminator.value ||
-          block.terminator.value->kind != lang::MirOperandKind::Value) {
-        continue;
-      }
-      const lang::MirValue *condition =
-          forward->body.findValue(block.terminator.value->value);
-      const lang::MirInstruction *definition =
-          condition == nullptr
-              ? nullptr
-              : findInstruction(forward->body, condition->definition);
-      if (definition != nullptr &&
-          definition->kind == lang::MirInstructionKind::Compute &&
-          definition->operation == lang::MirOperation::ExpectedHasValue) {
-        stateBranch = &block;
-        break;
-      }
-    }
   }
-  bool zeroSiteExtractions = false;
-  if (forward != nullptr && stateBranch != nullptr) {
-    for (const lang::MirBlockId target :
-         {stateBranch->terminator.target, stateBranch->terminator.elseTarget}) {
-      const lang::MirBlock *extraction = forward->body.findBlock(target);
-      if (extraction == nullptr) {
-        continue;
-      }
-      zeroSiteExtractions =
-          zeroSiteExtractions ||
-          std::any_of(
-              extraction->instructions.begin(), extraction->instructions.end(),
-              [](const lang::MirInstruction &instruction) {
-                return instruction.kind == lang::MirInstructionKind::Call &&
-                       (instruction.intrinsic ==
-                            lang::IntrinsicKind::ExpectedValue ||
-                        instruction.intrinsic ==
-                            lang::IntrinsicKind::ExpectedError) &&
-                       instruction.localFailureSites.empty();
-              });
-    }
-  }
-  expect(forward != nullptr && stateBranch != nullptr && zeroSiteExtractions,
-         "propagation should lower zero-site Expected extractions behind one "
-         "matching state branch");
-  if (forward == nullptr || stateBranch == nullptr || !zeroSiteExtractions) {
-    return;
-  }
-
-  const lang::CppMirBodyEmissionMap map(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
-  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                     .owner = forward->id};
-  const lang::CppMirBodyEmitter canonical(frontend.mir, map);
-  expect(canonical.supportsFailureBodyText(address),
-         "the canonical state-proven propagation body should remain admitted");
-
-  lang::MirProgram extraPredecessor = frontend.mir;
-  auto &extraFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-      extraPredecessor.functionInstances());
-  lang::MirFunctionInstance &extraForward = extraFunctions.at(forward->id - 1);
-  extraForward.body.blocks.push_back(
-      {.id = static_cast<lang::MirBlockId>(extraForward.body.blocks.size() + 1),
-       .terminator = {.kind = lang::MirTerminatorKind::Goto,
-                      .target = stateBranch->terminator.target},
-       .reachable = true});
-  const lang::CppMirBodyEmitter extraPredecessorEmitter(extraPredecessor, map);
-  expect(!extraPredecessorEmitter.supportsFailureBodyText(address),
-         "a zero-site Expected extraction with an unproven incoming edge "
-         "must fail backend admission");
-
-  lang::MirProgram reversedState = frontend.mir;
-  auto &reversedFunctions =
-      const_cast<std::vector<lang::MirFunctionInstance> &>(
-          reversedState.functionInstances());
-  lang::MirFunctionInstance &reversedForward =
-      reversedFunctions.at(forward->id - 1);
-  lang::MirBlock *reversedBranch =
-      reversedForward.body.findBlock(stateBranch->id);
-  expect(reversedBranch != nullptr,
-         "the propagation state branch should survive the forged copy");
-  if (reversedBranch != nullptr) {
-    std::swap(reversedBranch->terminator.target,
-              reversedBranch->terminator.elseTarget);
-    const lang::CppMirBodyEmitter reversedStateEmitter(reversedState, map);
-    expect(!reversedStateEmitter.supportsFailureBodyText(address),
-           "a zero-site Expected extraction without its matching state edge "
-           "must fail backend admission");
-  }
-
-  const lang::MirValue *stateConditionValue =
-      stateBranch->terminator.value
-          ? forward->body.findValue(stateBranch->terminator.value->value)
-          : nullptr;
-  const lang::MirInstruction *stateCondition =
-      stateConditionValue == nullptr
-          ? nullptr
-          : findInstruction(forward->body, stateConditionValue->definition);
-  const lang::MirValue *carrierValue =
-      stateCondition != nullptr && stateCondition->operands.size() == 1 &&
-              stateCondition->operands.front().kind ==
-                  lang::MirOperandKind::Value
-          ? forward->body.findValue(stateCondition->operands.front().value)
-          : nullptr;
-  const lang::MirInstruction *carrierLoad =
-      carrierValue != nullptr
-          ? findInstruction(forward->body, carrierValue->definition)
-          : nullptr;
-  const lang::MirBlock *successStateBlock =
-      forward->body.findBlock(stateBranch->terminator.target);
-  const lang::MirBlock *errorStateBlock =
-      forward->body.findBlock(stateBranch->terminator.elseTarget);
-  const auto findExtraction = [](const lang::MirBlock *block,
-                                 lang::IntrinsicKind intrinsic) {
-    if (block == nullptr) {
-      return static_cast<const lang::MirInstruction *>(nullptr);
-    }
-    const auto found =
-        std::find_if(block->instructions.begin(), block->instructions.end(),
-                     [&](const lang::MirInstruction &instruction) {
-                       return instruction.intrinsic == intrinsic &&
-                              instruction.localFailureSites.empty();
-                     });
-    return found == block->instructions.end() ? nullptr : &*found;
-  };
-  const lang::MirInstruction *successStateExtraction =
-      findExtraction(successStateBlock, lang::IntrinsicKind::ExpectedValue);
-  const lang::MirInstruction *errorStateExtraction =
-      findExtraction(errorStateBlock, lang::IntrinsicKind::ExpectedError);
-  const lang::MirPlace *carrierSource =
-      carrierLoad != nullptr && carrierLoad->operands.size() == 1
-          ? forward->body.findPlace(carrierLoad->operands.front().place)
-          : nullptr;
-  expect(carrierLoad != nullptr && carrierSource != nullptr &&
-             successStateExtraction != nullptr &&
-             successStateExtraction->receiver &&
-             errorStateExtraction != nullptr && errorStateExtraction->receiver,
-         "the named propagation fixture should expose its exact checked and "
-         "extracted carrier schedule");
-  if (carrierLoad != nullptr && carrierSource != nullptr &&
-      successStateExtraction != nullptr && successStateExtraction->receiver &&
-      errorStateExtraction != nullptr && errorStateExtraction->receiver) {
-    const auto forgeLoanCarriers =
-        [&](std::optional<lang::IntrinsicKind> mismatchedExtraction) {
-          lang::MirProgram forged = frontend.mir;
-          auto &functions =
-              const_cast<std::vector<lang::MirFunctionInstance> &>(
-                  forged.functionInstances());
-          lang::MirBody &body = functions.at(forward->id - 1).body;
-          lang::MirInstruction *load =
-              findMutableInstruction(body, carrierLoad->id);
-          lang::MirInstruction *success =
-              findMutableInstruction(body, successStateExtraction->id);
-          lang::MirInstruction *error =
-              findMutableInstruction(body, errorStateExtraction->id);
-
-          const lang::MirLoanId firstLoan =
-              body.loans.empty() ? 1 : body.loans.back().id + 1;
-          const lang::MirLoanId secondLoan = firstLoan + 1;
-          body.loans.push_back({.id = firstLoan,
-                                .kind = lang::MirLoanKind::Local,
-                                .source = carrierSource->id,
-                                .access = lang::AccessMode::ReadOnly});
-          body.loans.push_back({.id = secondLoan,
-                                .kind = lang::MirLoanKind::Local,
-                                .source = carrierSource->id,
-                                .access = lang::AccessMode::ReadOnly});
-
-          const lang::MirPlaceId firstPlace =
-              body.places.empty() ? 1 : body.places.back().id + 1;
-          const lang::MirPlaceId secondPlace = firstPlace + 1;
-          const auto loanPlace = [&](lang::MirPlaceId id,
-                                     lang::MirLoanId loan) {
-            lang::MirPlace place = *carrierSource;
-            place.id = id;
-            place.root = lang::MirPlaceRootKind::Loan;
-            place.binding = 0;
-            place.symbol = 0;
-            place.capture = 0;
-            place.temporary = 0;
-            place.value = 0;
-            place.loan = loan;
-            place.projections.clear();
-            place.key.reset();
-            return place;
-          };
-          body.places.push_back(loanPlace(firstPlace, firstLoan));
-          body.places.push_back(loanPlace(secondPlace, secondLoan));
-
-          load->operands.front().place = firstPlace;
-          success->receiver->place =
-              mismatchedExtraction == lang::IntrinsicKind::ExpectedValue
-                  ? secondPlace
-                  : firstPlace;
-          error->receiver->place =
-              mismatchedExtraction == lang::IntrinsicKind::ExpectedError
-                  ? secondPlace
-                  : firstPlace;
-          return forged;
-        };
-
-    const lang::MirProgram matchingLoanCarrier =
-        forgeLoanCarriers(std::nullopt);
-    expect(lang::CppMirBodyEmitter(matchingLoanCarrier, map)
-               .supportsFailureBodyText(address),
-           "matching loan-root carriers should preserve propagation "
-           "admission");
-    const lang::MirProgram distinctValueLoan =
-        forgeLoanCarriers(lang::IntrinsicKind::ExpectedValue);
-    expect(!lang::CppMirBodyEmitter(distinctValueLoan, map)
-                .supportsFailureBodyText(address),
-           "a state proof for one loan must not admit ExpectedValue from a "
-           "different loan root");
-    const lang::MirProgram distinctErrorLoan =
-        forgeLoanCarriers(lang::IntrinsicKind::ExpectedError);
-    expect(!lang::CppMirBodyEmitter(distinctErrorLoan, map)
-                .supportsFailureBodyText(address),
-           "a state proof for one loan must not admit ExpectedError from a "
-           "different loan root");
-  }
-
-  expect(globalForward != nullptr,
-         "the symbol-carrier propagation fixture should lower to MIR");
-  if (globalForward == nullptr) {
-    return;
-  }
-  const lang::MirBodyAddress globalAddress{.kind = lang::MirBodyKind::Function,
-                                           .owner = globalForward->id};
-  const lang::CppMirBodyEmitter globalCanonical(frontend.mir, map);
-  expect(globalCanonical.supportsFailureBodyText(globalAddress),
-         "canonical propagation from a global Expected should be admitted");
-
-  lang::MirProgram distinctSymbols = frontend.mir;
-  auto &symbolFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-      distinctSymbols.functionInstances());
-  lang::MirBody &symbolBody = symbolFunctions.at(globalForward->id - 1).body;
-  lang::MirInstruction *successExtraction = nullptr;
-  lang::MirInstruction *errorExtraction = nullptr;
-  for (lang::MirBlock &block : symbolBody.blocks) {
-    if (block.terminator.kind != lang::MirTerminatorKind::Branch) {
-      continue;
-    }
-    lang::MirBlock *success = symbolBody.findBlock(block.terminator.target);
-    lang::MirBlock *error = symbolBody.findBlock(block.terminator.elseTarget);
-    if (success == nullptr || error == nullptr) {
-      continue;
-    }
-    const auto findExtraction = [](lang::MirBlock &candidate,
-                                   lang::IntrinsicKind intrinsic) {
-      const auto found = std::find_if(
-          candidate.instructions.begin(), candidate.instructions.end(),
-          [&](const lang::MirInstruction &instruction) {
-            return instruction.intrinsic == intrinsic &&
-                   instruction.localFailureSites.empty();
-          });
-      return found == candidate.instructions.end() ? nullptr : &*found;
-    };
-    successExtraction =
-        findExtraction(*success, lang::IntrinsicKind::ExpectedValue);
-    errorExtraction =
-        findExtraction(*error, lang::IntrinsicKind::ExpectedError);
-    if (successExtraction != nullptr && errorExtraction != nullptr) {
-      break;
-    }
-  }
-  const lang::MirPlace *provenPlace =
-      successExtraction != nullptr && successExtraction->receiver
-          ? symbolBody.findPlace(successExtraction->receiver->place)
-          : nullptr;
-  const auto alternate =
-      provenPlace == nullptr
-          ? symbolBody.places.end()
-          : std::find_if(symbolBody.places.begin(), symbolBody.places.end(),
-                         [&](const lang::MirPlace &place) {
-                           return place.root ==
-                                      lang::MirPlaceRootKind::Symbol &&
-                                  place.type == provenPlace->type &&
-                                  place.symbol != provenPlace->symbol;
-                         });
-  expect(successExtraction != nullptr && errorExtraction != nullptr &&
-             provenPlace != nullptr && alternate != symbolBody.places.end(),
-         "the global propagation fixture should retain two distinct symbol "
-         "carriers and both zero-site extractions");
-  if (successExtraction != nullptr && errorExtraction != nullptr &&
-      provenPlace != nullptr && alternate != symbolBody.places.end()) {
-    successExtraction->receiver->place = alternate->id;
-    const lang::CppMirBodyEmitter distinctSymbolEmitter(distinctSymbols, map);
-    expect(!distinctSymbolEmitter.supportsFailureBodyText(globalAddress),
-           "a has-value proof for one symbol must not admit extraction from "
-           "a distinct symbol-root Expected carrier");
-
-    lang::MirProgram distinctErrorSymbols = frontend.mir;
-    auto &errorFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-        distinctErrorSymbols.functionInstances());
-    lang::MirBody &errorBody = errorFunctions.at(globalForward->id - 1).body;
-    lang::MirInstruction *forgedError =
-        findMutableInstruction(errorBody, errorExtraction->id);
-    expect(forgedError != nullptr && forgedError->receiver,
-           "the copied global propagation body should retain ExpectedError");
-    if (forgedError != nullptr && forgedError->receiver) {
-      forgedError->receiver->place = alternate->id;
-      const lang::CppMirBodyEmitter distinctErrorEmitter(distinctErrorSymbols,
-                                                         map);
-      expect(!distinctErrorEmitter.supportsFailureBodyText(globalAddress),
-             "a has-value proof for one symbol must not admit ExpectedError "
-             "from a distinct symbol-root carrier");
-    }
-  }
+  expect(protocolCalls == 3 && trackedFailures >= 2,
+         "success/residual propagation and both checked observer failures are "
+         "covered");
+  if (protocolCalls != 3 || trackedFailures < 2)
+    std::cerr << "source propagation coverage: operations=" << protocolCalls
+              << " checked failures=" << trackedFailures << '\n';
 }
 
 void testDeclarationOnlyCallBoundary() {

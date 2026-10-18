@@ -9111,6 +9111,20 @@ protocol conformance serve those global names. Legacy internal carrier paths
 still need retirement after production compatibility is established. Runnable
 example 169 and the production API fixture cover the public cutover; their
 registration does not itself establish passing release evidence.
+The next checkpoint has focused evidence for implicit borrowed-wrapper
+construction and fresh consuming reference relay: 24 native cases covering
+C++20/23, optimization levels, no-elision and sanitizers, plus independent
+constructor/dependency mutation and dangling/alias rejection tests. Ordinary
+call-result payload publication and fixed-array replacement now have focused
+proof tests and 40 native cases covering success, bounds/producer failure,
+cleanup and caller attribution. The source-class preflight suite also passes;
+its old builtin extraction shortcuts have been replaced by ordinary protocol,
+checked-access and loan-projection proof tests. This is not full-suite or
+release acceptance. Literal-backed text forwarding through storing generic
+factories, the complete API compatibility matrix, and scalar runtime
+performance remain open goals. The installed compiler's acceptance of a
+local-string-backed error view is recorded in issue #234 and must not be
+preserved as compatibility.
 Parallel prerequisite work extends complete dependency proofs through a class's
 enum field and executes payload enums in verified-MIR constant queries. The
 initial field projection requires every dependency and alternative guard to

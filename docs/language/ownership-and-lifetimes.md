@@ -1774,6 +1774,16 @@ wrapper does not move those owners. A consuming method may return a selected
 external reference after retiring the wrapper, but cannot return a reference
 to the wrapper's own storage.
 
+An implicit constructor uses the same complete dependency proof in variable
+initialization and return conversion. The original expression remains the
+constructor input; the constructed result carries a distinct checked set.
+A fresh wrapper can also be consumed immediately, and an ordinary reference
+return can relay the extracted external reference. The temporary's mutable
+shell loan retains its producer's complete stored group through invocation;
+retiring that shell does not retire the caller's referent. A relay must still
+obey its own parameter-origin/access contract and cannot escape a local owner
+or permit mutation while a returned shared reference remains live.
+
 A reference accessor on a statically known reference-free alternative can
 still be called when its checked body has no normal result for that
 alternative. The compiler preserves the call's failure or nontermination;
