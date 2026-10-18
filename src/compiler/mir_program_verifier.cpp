@@ -2420,7 +2420,9 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
 
 [[nodiscard]] MirVerificationResult
 verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
-                         std::size_t owner) {
+                         std::size_t owner,
+                         const std::function<bool(HirFunctionInstanceId)>
+                             &completeReturnProof) {
   if (auto entries = verifyStoredEntryPaths(program, body, owner);
       !entries.valid()) {
     return entries;
@@ -3634,6 +3636,29 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             block.id, instruction.id);
       }
 
+      const auto *resultValue = instruction.result
+                                    ? body.findValue(*instruction.result)
+                                    : nullptr;
+      // A value's complete conditional contract carries permissions per
+      // dependency. The declaration's legacy scalar access remains unchanged.
+      // Its independently reconstructed callee summary and caller value-flow
+      // proof are both mandatory; an attached empty set alone proves nothing.
+      const auto *completeResult =
+          target && instruction.kind == MirInstructionKind::Call &&
+                  instruction.intrinsic == IntrinsicKind::None &&
+                  target->returnType.kind == SemanticType::Enum &&
+                  resultValue && resultValue->borrowDependencies &&
+                  completeReturnProof(target->id)
+              ? &*resultValue->borrowDependencies
+              : nullptr;
+      if (completeResult && completeResult->dependencies.empty()) {
+        if (instruction.loan)
+          return verificationFailure(
+              body, owner,
+              "independently empty call result must not invent an owner loan",
+              block.id, instruction.id);
+        continue;
+      }
       if (instruction.borrowOrigin == BorrowOriginKind::None) {
         if (instruction.loan || instruction.borrowPlace) {
           return verificationFailure(
@@ -3683,7 +3708,13 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             block.id, instruction.id);
       }
       const MirLoan *loan = body.findLoan(*instruction.loan);
-      if (loan == nullptr || loan->access != instruction.borrowAccess) {
+      const bool exactGroupedAccess =
+          loan && completeResult && !completeResult->dependencies.empty() &&
+          loan->kind == MirLoanKind::Stored && !loan->entry && !loan->escapes &&
+          loan->producedBy == instruction.hirValue &&
+          loan->access == completeResult->dependencies.front().access;
+      if (loan == nullptr ||
+          (loan->access != instruction.borrowAccess && !exactGroupedAccess)) {
         return verificationFailure(
             body, owner,
             "call-result loan access does not match its borrow "
@@ -6517,27 +6548,30 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
   appendVerification(
       result, verifyMirCallableMetadata(program, program.module(), 0, nullptr));
   appendVerification(result,
-                     verifyMirBorrowProducers(program, program.module(), 0));
+                     verifyMirBorrowProducers(program, program.module(), 0,
+                                              completeReturnProof));
   for (const MirClassInstance &instance : program.classInstances()) {
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.fieldInitializers,
                                           instance.id));
     appendVerification(
         result, verifyMirBorrowProducers(program, instance.fieldInitializers,
-                                         instance.id));
+                                         instance.id, completeReturnProof));
     appendVerification(
         result, verifyMirCallableMetadata(
                     program, instance.staticFieldInitializers, instance.id));
     appendVerification(
         result, verifyMirBorrowProducers(
-                    program, instance.staticFieldInitializers, instance.id));
+                    program, instance.staticFieldInitializers, instance.id,
+                    completeReturnProof));
   }
   for (const MirFunctionInstance &instance : program.functionInstances()) {
     appendVerification(result,
                        verifyMirCallableMetadata(program, instance.body,
                                                  instance.id, &instance));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id));
+        result, verifyMirBorrowProducers(program, instance.body, instance.id,
+                                         completeReturnProof));
     appendVerification(
         result,
         verifyMirFunctionBorrowSummary(
@@ -6549,7 +6583,8 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id));
+        result, verifyMirBorrowProducers(program, instance.body, instance.id,
+                                         completeReturnProof));
     appendVerification(result,
                        verifyMirConstructorBorrowSummary(program, instance));
   }
@@ -6557,13 +6592,15 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id));
+        result, verifyMirBorrowProducers(program, instance.body, instance.id,
+                                         completeReturnProof));
   }
   for (const MirLambdaInstance &instance : program.lambdaInstances()) {
     appendVerification(
         result, verifyMirCallableMetadata(program, instance.body, instance.id));
     appendVerification(
-        result, verifyMirBorrowProducers(program, instance.body, instance.id));
+        result, verifyMirBorrowProducers(program, instance.body, instance.id,
+                                         completeReturnProof));
   }
   return result;
 }

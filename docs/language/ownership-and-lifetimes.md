@@ -1702,9 +1702,36 @@ Concrete generic callable instances and owning wrappers retain the same
 obligations, including enum elements in storage-backed collections and inline
 optional storage. No ownership rule follows merely from a generic argument's
 spelling. Polymorphic enum callable transport, direct enum lambda capture, direct array
-payloads, stored-reference owners, compiler-private or native
+payloads, stored-reference class owners, compiler-private or native
 layout records, and polymorphic bases remain diagnosed rather than inventing
 indirect cleanup state.
+
+Reference-bearing payload enums retain a complete dependency set rather than
+one unconditional owner: each entry records an external origin, access mode,
+field path and active-alternative guards. Nested enum values preserve those
+paths during construction, calls, movement and return. A reference-free
+alternative has a known empty set; it must not borrow an unrelated argument
+just because another alternative needs one. A shared-reference enum may be
+copied when its other fields permit copying. An exclusive-reference field makes
+the complete enum move-only, including when nested in another enum.
+
+Selecting a direct reference field proves the active tag and retains all of
+that field's possible external owners. Consuming the enum retires its old
+dependency group before activating the selected references; moving the enum
+does not move their referents. A returned selection publishes a separate return
+capability and retires the local selection at the same boundary. MIR verifies
+the executable selection, origin set, access and retirement, rather than
+accepting matching return annotations as proof. Source-defined propagation can
+therefore consume a borrowed-success/owned-error enum and forward the selected
+success reference while preserving ordinary residual cleanup. A `has_value`
+predicate alone grants no permission to project an unchecked alternative.
+
+Construction and transport of nested reference-bearing enums do not yet permit
+consuming an outer alternative into a new reference-bearing *value* pattern
+binding. That nested value handoff remains a diagnosed structural goal, separate
+from selecting a direct reference field; it needs its own transfer/retirement
+proof. Neither this boundary nor the source-defined propagation protocol is a
+special rule for a standard-library type.
 
 The semantic `GTI-S2061` check implements the recursive active-cleanup
 restriction after the more-specific unique-owner, private-storage, and
