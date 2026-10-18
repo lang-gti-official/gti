@@ -135,6 +135,12 @@ public:
 /// The exact return type of method `I` of `T`.
 @compiler_type("meta_return_type") struct return_type<T, uint64_t I> {};
 
+/// Exact result type of a function signature, selected GTI function item,
+/// native function pointer or lambda. This is metadata only: it neither calls
+/// the function nor grants unsafe access or a borrowed-result lifetime.
+/// Callable classes use method/operator reflection to select a declaration.
+@compiler_type("meta_callable_return_type") struct callable_return_type<F> {};
+
 /// `list<constructor<T, 0>, ...>` over the declared constructors of `T`.
 @compiler_type("meta_constructor_list") struct constructor_list<T> {};
 

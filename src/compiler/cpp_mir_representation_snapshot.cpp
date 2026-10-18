@@ -121,7 +121,8 @@ struct TemplateSubstitution {
 
 [[nodiscard]] SemanticType
 substituteTemplateType(SemanticType type,
-                       const TemplateSubstitution &substitution) {
+                       const TemplateSubstitution &substitution,
+                       const LoweredProgram *program = nullptr) {
   if (type.kind == SemanticType::TypeParameter ||
       type.kind == SemanticType::TypePack) {
     const auto found = std::find_if(
@@ -132,7 +133,7 @@ substituteTemplateType(SemanticType type,
     }
   }
   for (SemanticType &argument : type.arguments) {
-    argument = substituteTemplateType(std::move(argument), substitution);
+    argument = substituteTemplateType(std::move(argument), substitution, program);
   }
   if (type.kind == SemanticType::Class ||
       type.kind == SemanticType::FunctionSignature) {
@@ -143,10 +144,10 @@ substituteTemplateType(SemanticType type,
     type.arguments = std::move(expanded);
   }
   for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument = substituteTemplateType(std::move(argument), substitution);
+    argument = substituteTemplateType(std::move(argument), substitution, program);
   }
   for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument = substituteTemplateType(std::move(argument), substitution);
+    argument = substituteTemplateType(std::move(argument), substitution, program);
   }
   const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
     for (CompileTimeValue &value : values) {
@@ -177,6 +178,15 @@ substituteTemplateType(SemanticType type,
       } else if (found->second.kind == CompileTimeValue::Parameter) {
         type.arrayLengthParameterId = found->second.parameterId;
       }
+    }
+  }
+  if (program != nullptr && type.kind == SemanticType::Class &&
+      type.arguments.size() == 1 && type.valueArguments.empty()) {
+    const auto *declaration = program->findClassDeclaration(type.classId);
+    if (declaration != nullptr && declaration->computedTypeProjection ==
+                                      ComputedTypeProjectionKind::CallableReturn) {
+      if (const auto *result = type.arguments.front().callableReturnType())
+        return *result;
     }
   }
   return type;
@@ -348,11 +358,11 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
 
   CppMirCallableTemplateSignature result{
       .returnType =
-          substituteTemplateType(declaration.returnType, ownerSubstitution)};
+          substituteTemplateType(declaration.returnType, ownerSubstitution, &program)};
   result.parameterTypes.reserve(declaration.parameters.size());
   for (const LoweredParameter &parameter : declaration.parameters) {
     result.parameterTypes.push_back(
-        substituteTemplateType(parameter.type, ownerSubstitution));
+        substituteTemplateType(parameter.type, ownerSubstitution, &program));
   }
   if (!containsOnlyFunctionDependence(result.returnType,
                                       declaration.genericParameters) ||
@@ -370,7 +380,7 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
           instance.typeArguments, instance.valueArguments)) {
     return std::nullopt;
   }
-  if (substituteTemplateType(result.returnType, functionSubstitution) !=
+  if (substituteTemplateType(result.returnType, functionSubstitution, &program) !=
       instance.returnType) {
     return std::nullopt;
   }
@@ -378,7 +388,7 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
   for (const SemanticType &parameter : result.parameterTypes)
     SemanticType::appendExpandedArgument(
         concreteParameters,
-        substituteTemplateType(parameter, functionSubstitution));
+        substituteTemplateType(parameter, functionSubstitution, &program));
   if (concreteParameters != instance.parameterTypes)
     return std::nullopt;
   return result;
