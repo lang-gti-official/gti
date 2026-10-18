@@ -2443,7 +2443,8 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
               selectedReferenceDependencies(semanticPlace(argument))) {
         for (auto dependency : *selectedOrigins) {
           if ((dependency.place.root == 0 && !dependency.place.receiver) ||
-              !dependency.protectsStorage ||
+              (!dependency.protectsStorage &&
+               !hasCheckedExternalBorrowOrigin(dependency)) ||
               semanticModel.findForeignStorage(dependency.place.root) !=
                   nullptr ||
               (field.referenceAccess == AccessMode::Mutable &&
