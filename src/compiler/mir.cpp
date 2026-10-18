@@ -4784,6 +4784,84 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                                }) == 1 &&
                  std::any_of(binding->second.begin(), binding->second.end(),
                              inheritedParent));
+            if (movedCarrier && exactAncestry &&
+                instruction.kind == MirInstructionKind::Call &&
+                instruction.functionTarget &&
+                instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                body.loans[loan - 1].kind == MirLoanKind::CallResult) {
+              const auto *stage = callInputDefinition(operand);
+              const auto &result = body.loans[loan - 1];
+              const auto uses = stage && stage->result
+                                    ? body.usesOf(*stage->result)
+                                    : std::vector<MirValueUse>{};
+              const bool exactStage =
+                  stage && stage->result && stage->preparedParameterDrop &&
+                  stage->callSite == instruction.callSite &&
+                  stage->callInputRole == MirCallInputRole::Argument &&
+                  stage->callInputIndex == instruction.borrowArgument &&
+                  stage->callInputIndex < instruction.parameterTypes.size() &&
+                  instruction.parameterTypes[stage->callInputIndex] ==
+                      stage->info.type &&
+                  stage->info.type.kind != SemanticType::Reference &&
+                  stage->info.traits.containsBorrowedState &&
+                  stage->callInputKind == HirCallInputKind::MoveValue &&
+                  uses.size() == 1 &&
+                  uses.front().kind == MirValueUseKind::InstructionOperand &&
+                  uses.front().instruction == instruction.id &&
+                  uses.front().operandIndex == stage->callInputIndex &&
+                  std::any_of(instruction.lifecycle.begin(),
+                              instruction.lifecycle.end(), [&](const auto &e) {
+                    return e.kind == MirLifecycleEventKind::TransferOut &&
+                           e.source == *stage->preparedParameterDrop &&
+                           !e.conditional && !e.failureCleanup;
+                  });
+              const auto transfersAtPublication = [&](MirLoanId transferred) {
+                if (!exactStage || !inheritedParent(transferred))
+                  return false;
+                const auto &group = body.loans[transferred - 1];
+                if (active[transferred - 1] != MirLoanFlowState::Active ||
+                    !sameCanonicalPlace(
+                        canonicalPlace(body, group.source, bindingLoans, active),
+                        canonicalPlace(body, result.source, bindingLoans, active)) ||
+                    (result.access == AccessMode::Mutable &&
+                     group.access != AccessMode::Mutable))
+                  return false;
+                const MirBlock *continuation = &block;
+                auto next = std::find_if(
+                    block.instructions.begin(), block.instructions.end(),
+                    [&](const auto &candidate) {
+                      return candidate.id == instruction.id;
+                    });
+                if (next == block.instructions.end())
+                  return false;
+                ++next;
+                if (next == block.instructions.end() &&
+                    block.terminator.kind == MirTerminatorKind::Invoke &&
+                    block.terminator.invokeInstruction == instruction.id) {
+                  continuation = body.findBlock(block.terminator.target);
+                  if (!continuation)
+                    return false;
+                  next = continuation->instructions.begin();
+                }
+                for (; next != continuation->instructions.end() &&
+                       next->kind == MirInstructionKind::EndBorrow; ++next)
+                  if (next->loan == transferred) {
+                    selectedAlias = transferred;
+                    return true;
+                  }
+                return false;
+              };
+              // The callee's complete return mapping is independently checked
+              // at program level. Here the exact single-use staged move owns
+              // this input group and its normal continuation retires that
+              // group before any access. Only that consumed alias may overlap
+              // the newly published external reference during the handoff.
+              if (transfersAtPublication(operandPlace.throughLoan) ||
+                  (binding != bindingLoans.end() &&
+                   std::any_of(binding->second.begin(), binding->second.end(),
+                               transfersAtPublication)))
+                return true;
+            }
             return movedCarrier &&
                    instruction.borrowOrigin == BorrowOriginKind::Argument &&
                    instruction.borrowArgument <

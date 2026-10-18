@@ -96,6 +96,82 @@ int main() {
     exclusiveConditional.insert(ownerDeclaration, "mut ");
   accepted(exclusiveConditional,
            "conditional exclusive success preserves mutable owner authority");
+  for (const auto &source : {conditionalBorrowed, exclusiveConditional}) {
+    const auto proof = analyze(source);
+    expect(proof.canGenerateCode(),
+           "consuming reference publication fixture must verify");
+    if (!proof.canGenerateCode())
+      continue;
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        auto &body = function.body;
+        for (auto &result : body.loans) {
+          if (changed || result.kind != lang::MirLoanKind::CallResult ||
+              result.carriers.empty())
+            continue;
+          const auto input = std::find_if(
+              body.loans.begin(), body.loans.end(), [&](const auto &candidate) {
+                return candidate.kind == lang::MirLoanKind::Stored &&
+                       !candidate.entry && !candidate.conditions.empty() &&
+                       candidate.source == result.source &&
+                       candidate.parent == result.parent;
+              });
+          if (input == body.loans.end())
+            continue;
+          if (mutation == 0) {
+            // Mutually consistent annotations cannot reattach the returned
+            // reference to a carrier that the invocation has consumed.
+            result.parent = input->id;
+            for (auto &value : body.values)
+              if (value.sourceValue == result.producedBy &&
+                  value.borrowDependencies)
+                for (auto &dependency : value.borrowDependencies->dependencies)
+                  dependency.parent = input->id;
+            changed = true;
+          } else if (mutation == 3) {
+            // Losing the producer's active-variant condition is not repaired
+            // by copying the same incomplete claim into the SSA value.
+            input->conditions.clear();
+            for (auto &value : body.values)
+              if (value.sourceValue == input->producedBy &&
+                  value.borrowDependencies)
+                for (auto &dependency : value.borrowDependencies->dependencies)
+                  dependency.conditions.clear();
+            changed = true;
+          } else {
+            for (auto &block : body.blocks) {
+              if (changed)
+                break;
+              for (auto instruction = block.instructions.begin();
+                   instruction != block.instructions.end(); ++instruction) {
+                if (mutation == 1 &&
+                    instruction->kind == lang::MirInstructionKind::EndBorrow &&
+                    instruction->loan == input->id && block.activeFailure == 0) {
+                  block.instructions.erase(instruction);
+                  changed = true;
+                  break;
+                }
+                if (mutation == 2 &&
+                    instruction->kind == lang::MirInstructionKind::CallInput &&
+                    instruction->callSite == result.producedBy &&
+                    instruction->callInputKind == lang::HirCallInputKind::MoveValue) {
+                  instruction->callInputKind = lang::HirCallInputKind::CopyValue;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      expect(changed, "mutation must select the consumed reference publication");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "consumed reference publication requires exact external ancestry, "
+             "normal-edge retirement, staged move and guarded input facts");
+    }
+  }
   auto exclusiveConflict = exclusiveConditional;
   const auto successReturn = exclusiveConflict.find("return Status(value);");
   expect(successReturn != std::string::npos,
