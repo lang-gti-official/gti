@@ -325,6 +325,12 @@ always includes total elapsed time. A heartbeat means the operation remains
 pending, not that the compiler or native subprocess is proven to be advancing.
 There are no estimated overall percentages or completion times.
 
+Speculative header probes and proposed include-fix checks do not inherit the
+user compilation's progress observer. Include suggestions and their validated
+diagnostic fixes remain available, but internal recovery analyses do not emit
+additional top-level `Loading`, `Parsing` or `Checking` sequences, including
+under `--verbose`.
+
 Source-unit totals come from the canonical loaded graph, including the prelude
 and dependencies. Parsing publishes actual per-unit events; `--verbose` exposes
 those paths and a slow interactive parse shows the current path. Semantic
