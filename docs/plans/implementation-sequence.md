@@ -8965,8 +8965,11 @@ prerequisite checkpoints as full acceptance.
   and allocation-free. Promotion adds move assignment, consuming access,
   `std::nullopt` and source-defined `std::tryable`, retaining GTI-R0008 for
   empty access. Copy construction and copy assignment remain unavailable.
-  Promotion validation is in progress on PR #223; the previous full-suite
-  result is not evidence for the promoted implementation.
+  PR #223 uses an owner-approved focused-validation exception for this release:
+  local safety, native/sanitizer, LSP, example-corpus and performance gates
+  remain required, but integration does not wait for a new complete suite or
+  final Linux rerun. The previous full-suite result is not evidence for the
+  promoted implementation; this exception does not change normal future gates.
 - **Exit gate:** empty/engaged construction, move-only values, assignment,
   destruction, failure, generic constraints, and constexpr-safe constants.
 
