@@ -7178,6 +7178,53 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       : carrier->type.kind == SemanticType::Reference
           ? carrier->type.referenceAccess
           : borrowAccess(carrier->type);
+  if (expression && carrier->type.kind == SemanticType::Reference) {
+    const auto complete = completeBorrowDependencySet(expression);
+    if (complete && complete->possibleAlternatives.empty() &&
+        complete->dependencies.size() > 1 &&
+        std::all_of(complete->dependencies.begin(), complete->dependencies.end(),
+                    [](const auto &dependency) {
+                      return dependency.designatedFields.empty() &&
+                             dependency.conditions.empty();
+                    })) {
+      // A scalar result may select any of several external origins. It has
+      // no aggregate field layout, and cannot reuse one input's loan identity.
+      // Publish a checked reference loan retaining every possible origin, so
+      // ordinary binding uses keep each owner's storage protection live.
+      auto dependencies = complete->dependencies;
+      for (auto &dependency : dependencies) {
+        if (carrierAccess == AccessMode::Mutable &&
+            dependency.access != AccessMode::Mutable)
+          return; // Ordinary reference binding owns the access diagnostic.
+        reportBorrowConflict(
+            expressionToken(expression),
+            conflictingLoans(dependency.place, carrierAccess, dependency.parent),
+            "Cannot retain this reference while an overlapping borrow may "
+            "still be live.");
+        dependency.access = carrierAccess;
+      }
+      const auto &primary = dependencies.front();
+      const auto id = createRetainedLoan(
+          *carrier, carrierSymbol, SemanticLoanKind::Reference,
+          expression.get(), primary.place, primary.place.root,
+          primary.place.receiver, carrierAccess, primary.protectsStorage,
+          primary.parent);
+      if (id == 0)
+        return;
+      auto loan = *semanticModel.findLoan(id);
+      loan.additionalDependencies.assign(dependencies.begin() + 1,
+                                         dependencies.end());
+      semanticModel.recordLoan(std::move(loan));
+      for (const auto &dependency : dependencies) {
+        if (dependency.protectsStorage)
+          registerStorageLoan(dependency.place.root, dependency.place.receiver, id);
+        if (dependency.parent != 0)
+          recordSemanticLoanUseForLoan(dependency.parent);
+      }
+      semanticModel.recordBindingLoan(binding, id);
+      return;
+    }
+  }
   const bool retainedStoredBorrow =
       (carrier->type.kind != SemanticType::Reference && info != nullptr &&
        info->traits.containsBorrowedState) ||
