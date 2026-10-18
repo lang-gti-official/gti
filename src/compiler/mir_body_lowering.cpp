@@ -110,6 +110,7 @@ public:
     for (const HirValue &consumer : source.values) {
       if (!consumer.callPlan ||
           !(consumer.functionTarget ||
+            consumer.kind == HirValueKind::PayloadConstruction ||
             (consumer.constructorTarget &&
              consumer.constructorKind == ConstructorKind::Ordinary))) {
         continue;
@@ -9990,7 +9991,44 @@ private:
     if (instruction.operation == MirOperation::None) {
       valid = false;
     }
+    std::vector<MirDropObligationId> payloadPreparedDrops;
+    std::vector<MirLoanId> payloadTemporaryLoans;
+    const bool stagedPayload =
+        value->kind == HirValueKind::PayloadConstruction && value->callPlan;
+    if (stagedPayload) {
+      if (value->callPlan->receiver ||
+          value->callPlan->arguments.size() != value->operands.size()) {
+        valid = false;
+        return;
+      }
+      instruction.callSite = value->id;
+      for (const auto &argument : value->callPlan->arguments) {
+        const auto previousFailure = preparedCallArgumentFailure;
+        if (!payloadPreparedDrops.empty() || !payloadTemporaryLoans.empty())
+          preparedCallArgumentFailure =
+              PreparedCallArgumentFailure{.argument = argument.value};
+        auto operand =
+            argument.kind == HirCallInputKind::CopyValue
+                ? copyArgumentOperand(argument.value, argument.parameterType)
+                : argumentOperand(argument.value, argument.parameterType);
+        preparedCallArgumentFailure = previousFailure;
+        if (terminated())
+          return;
+        auto prepared = prepareCallInput(
+            value->id, argument.value, argument.parameterType, argument.kind,
+            MirCallInputRole::Argument, argument.parameterIndex,
+            std::move(operand), true, argument.defaultArgument);
+        instruction.parameterTypes.push_back(argument.parameterType);
+        instruction.operands.push_back(std::move(prepared.operand));
+        if (prepared.parameterDrop)
+          payloadPreparedDrops.push_back(prepared.parameterDrop);
+        if (prepared.loan)
+          payloadTemporaryLoans.push_back(prepared.loan);
+      }
+    }
     for (std::size_t index = 0; index < value->operands.size(); ++index) {
+      if (stagedPayload)
+        break;
       const HirValueId operand = value->operands[index];
       if (instruction.operation == MirOperation::Closure &&
           index < instruction.closureCaptureModes.size() &&
@@ -10043,20 +10081,31 @@ private:
     instruction.result = resultFor(*value);
     if (value->kind == HirValueKind::PayloadConstruction &&
         instruction.result && value->borrowDependencies) {
-      // Empty sets already have exact constructor-alternative evidence.
-      // Nonempty conditional sets will be bound to real MIR loans by the
-      // borrowed-construction path, never by manufacturing an empty loan.
-      if (!value->borrowDependencies->dependencies.empty()) {
+      // appendValue transports the complete semantic fact; independently
+      // checked ordered inputs establish its origins at program verification.
+      const auto &complete =
+          output.values[*instruction.result - 1].borrowDependencies;
+      if (!complete || (!complete->dependencies.empty() && !stagedPayload)) {
         valid = false;
         return;
       }
-      output.values[*instruction.result - 1].borrowDependencies =
-          MirBorrowDependencySet{
-              .possibleAlternatives =
-                  value->borrowDependencies->possibleAlternatives};
+      if (!complete->dependencies.empty()) {
+        const auto &primary = complete->dependencies.front();
+        const auto loan =
+            createLoan(MirLoanKind::Stored, primary.source, primary.access,
+                       value->id, 0, 0, primary.parent);
+        output.loans[loan - 1].designatedFields = primary.designatedFields;
+        output.loans[loan - 1].conditions = primary.conditions;
+        output.loans[loan - 1].additionalDependencies.assign(
+            complete->dependencies.begin() + 1, complete->dependencies.end());
+        instruction.loan = loan;
+        valueLoans.insert_or_assign(value->id, loan);
+        if (!scopes.empty())
+          scopes.back().loans.push_back(loan);
+      }
     }
     if (value->kind == HirValueKind::ArrayInitializer ||
-        value->kind == HirValueKind::PayloadConstruction ||
+        (value->kind == HirValueKind::PayloadConstruction && !stagedPayload) ||
         value->kind == HirValueKind::Unexpected ||
         value->kind == HirValueKind::Lambda) {
       for (std::size_t index = 0; index < value->operands.size(); ++index) {
@@ -10068,6 +10117,12 @@ private:
         const HirValueId operand = value->operands[index];
         transferTemporaryOut(instruction, operand);
       }
+    }
+    for (const auto drop : payloadPreparedDrops) {
+      if (!removeTemporary(drop))
+        valid = false;
+      appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
+                                    .source = drop});
     }
     if (value->kind != HirValueKind::PayloadExtraction ||
         value->info.category != ValueCategory::Place)
@@ -10155,6 +10210,12 @@ private:
       }
     }
     (void)appendInstruction(std::move(instruction));
+    for (auto loan = payloadTemporaryLoans.rbegin();
+         loan != payloadTemporaryLoans.rend(); ++loan) {
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+      removeLoanFromState(*loan, scopes, bindingLoans);
+    }
     endConsumedCallResultLoans(value->operands, *value);
     emittedValues.insert(id);
   }
