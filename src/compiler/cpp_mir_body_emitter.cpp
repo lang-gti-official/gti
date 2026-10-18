@@ -58545,11 +58545,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             place) {
       return false;
     }
-    // An independently owned Expected extraction can precede a later
-    // conditional argument. Its shell and prepared payload keep their exact
-    // MIR activation/cleanup schedule; neither changes the borrowed address.
-    // Share the extraction witness with class publication, then prove the
-    // prepared argument's sole handoff across every normal/failure edge.
+    // An independently owned method result can precede a later conditional
+    // argument. Its moved receiver and prepared result keep their exact MIR
+    // activation/cleanup schedule; neither changes this borrowed address.
+    // Share the ordinary publication witnesses, then prove the prepared
+    // argument's sole handoff across every normal/failure edge.
     std::unordered_set<MirInstructionId> ownedExtractionInputs;
     for (const auto &operand : consumer->operands) {
       const auto *input = definitionFor(body, operand);
@@ -58567,6 +58567,56 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           input->unsafeOperation != UnsafeOperationKind::None ||
           !input->definedFailure.empty() || !input->localFailureSites.empty())
         continue;
+      const auto prepared = stagedClassResultForResult(body, *input->result);
+      const auto *call = prepared.producer;
+      const auto *callee =
+          call && call->functionTarget
+              ? program_.findFunctionInstance(*call->functionTarget)
+              : nullptr;
+      const auto *receiver = call && call->receiver
+                                 ? definitionFor(body, *call->receiver)
+                                 : nullptr;
+      const auto *move = receiver && receiver->operands.size() == 1
+                             ? definitionFor(body, receiver->operands.front())
+                             : nullptr;
+      const auto *receiverSource =
+          move && move->operands.size() == 1
+              ? body.findPlace(move->operands.front().place)
+              : nullptr;
+      if (prepared.stage == input && prepared.consumer == consumer &&
+          prepared.slot && prepared.drop && call && callee && receiver &&
+          move && receiverSource &&
+          receiverSource->root == MirPlaceRootKind::Binding &&
+          receiverSource->projections.empty() &&
+          !sameMirPlaceRoot(*receiverSource, *place) &&
+          !receiverSource->traits.containsBorrowedState &&
+          !call->info.traits.containsBorrowedState &&
+          call->kind == MirInstructionKind::Call &&
+          call->intrinsic == IntrinsicKind::None &&
+          call->dispatch == CallDispatch::Static && call->operands.empty() &&
+          call->successResultDrop && !call->successResultDestination &&
+          !call->loan && !call->rawMemoryAccess &&
+          call->unsafeOperation == UnsafeOperationKind::None && !move->loan &&
+          !move->rawMemoryAccess &&
+          move->unsafeOperation == UnsafeOperationKind::None &&
+          !receiver->loan && !receiver->rawMemoryAccess &&
+          receiver->unsafeOperation == UnsafeOperationKind::None &&
+          callee->definitionKind == MirDefinitionKind::Source &&
+          callee->linkage == LanguageLinkage::Gti && !callee->requiresUnsafe &&
+          call->receiver->kind == MirOperandKind::Value &&
+          consumedReceiverStageSlot(body, call->receiver->value) != nullptr &&
+          invokePairedInstruction(body, call->id) &&
+          ownedArgumentReachesConsumer(
+              body, body.findValue(*input->result)->definitionBlock, input->id,
+              *input->result, *prepared.slot, *prepared.drop, consumer)) {
+        ownedExtractionInputs.insert(move->id);
+        ownedExtractionInputs.insert(receiver->id);
+        ownedExtractionInputs.insert(call->id);
+        ownedExtractionInputs.insert(input->id);
+        continue;
+      }
+      // Legacy intrinsic producers retain their original exact witness until
+      // the remaining internal Expected representation is retired.
       const auto extraction =
           ownedExpectedExtractionProducer(body, input->operands.front().value);
       if (!extraction || extraction.value->info.traits.containsBorrowedState ||

@@ -5761,7 +5761,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     target->rawPointerFields = rawFields;
     if (target->bindingKind == SemanticBindingKind::LocalVariable &&
         target->type.kind != SemanticType::Reference &&
-        initializerType == declaredType && !contextualConstruction) {
+        initializerType == declaredType) {
       const auto complete = completeBorrowDependencySet(initializer);
       if (complete && !complete->possibleAlternatives.empty())
         target->completeBorrowSet = complete;

@@ -3021,12 +3021,18 @@ auto SemanticVisitor::Impl::declarationConstructionApplies(
     return false;
   }
   // A union's initializer selects a member rather than a constructor, an
-  // abstract class has no complete object, and a borrow-carrying result needs
-  // the stored-borrow bookkeeping of a construction expression.
+  // abstract class has no complete object. Conditional borrowed results use
+  // a separately proved synthetic result, preserving the original argument.
   const ClassInfo &owner = classInfo(declaredType.classId);
-  if (owner.kind == ClassKind::Union || owner.abstract ||
-      typeTraits(declaredType).containsBorrowedState) {
+  if (owner.kind == ClassKind::Union || owner.abstract) {
     return false;
+  }
+  if (typeTraits(declaredType).containsBorrowedState) {
+    const auto inventory = storedReferenceInventory(declaredType);
+    if (!inventory ||
+        std::none_of(inventory->begin(), inventory->end(),
+                     [](const auto &path) { return !path.conditions.empty(); }))
+      return false;
   }
   // An initializer typed by its destination has no type of its own with which
   // to select a constructor.

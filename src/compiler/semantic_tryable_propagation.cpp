@@ -207,12 +207,10 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                   "'?' uses.",
                   "Restore the standard library's prelude.");
   }
-  if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
-      currentFunctionDeclaration->isConstexpr()) {
-    return reject("Error propagation through 'std::tryable' is not yet "
-                  "available in a constexpr function.",
-                  "Test the value explicitly in constant code.");
-  }
+  // A constant invocation uses the same selected calls, branch, residual
+  // construction and cleanup as runtime. The staged HIR closure admits only
+  // available constexpr definitions, and verified MIR executes those calls;
+  // the protocol has no separate constant-evaluation semantics.
 
   // The operand is passed like a by-value argument: a temporary or an
   // explicit std::move moves, and a named place is copied.

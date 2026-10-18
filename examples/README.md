@@ -66,6 +66,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
+| Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -236,10 +237,11 @@ is a teaching helper, not a production server.
 | `162-experimental-optional.gti` | the source-defined `std::experimental::optional` holding a move-only record, `?` moving it out or returning an empty optional, and `std::experimental::nullopt` |
 | `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
 | `164-payload-composition.gti` | a source-defined optional containing another owning payload enum, consuming nested patterns, and a fixed-array payload |
-| `165-borrowed-payload-results.gti` | source-defined class and enum results with owning string errors and reference successes; checked selection and `borrowed_from` relay the exact external owner when `?` consumes the wrapper; an enum-backed class retains a conditional external borrow and can extract it through a consuming method |
+| `165-borrowed-payload-results.gti` | source-defined class and enum results with owning string errors and reference successes; checked selection and `borrowed_from` relay the exact external owner when `?` consumes the wrapper; an enum-backed class retains a conditional external borrow and can extract it through a consuming method; an extra command-line argument demonstrates defined failure on the known-empty alternative without manufacturing a reference |
 | `166-source-optional.gti` | stable `std::optional`, one-step declared returns and their ownership boundary, ordinary payload-enum storage, move assignment, consuming `value()` and `?` propagation |
 | `167-callable-result-types.gti` | computed callable result types used by an unrelated source-defined mapping wrapper; no builtin combinator |
 | `168-source-value-profiles.gti` | disjoint void/reference class profiles, enum-backed constexpr construction and consumption, generic forwarding, and checked borrowing |
+| `169-source-expected.gti` | global source-defined `expected`, value/void/reference results, constexpr, `?`, borrowing mapper captures, error mapping and checked extraction from a temporary result |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

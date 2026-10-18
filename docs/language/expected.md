@@ -5,6 +5,14 @@ types carry no recoverable error alternative, although execution may still
 raise a defined runtime failure. GTI does not provide exception handling or
 implicit error conversion.
 
+`expected` is an ordinary source-defined class family in the implicit prelude,
+not a reserved type expression. It deliberately remains a global name rather
+than `std::expected`. Its owned, void and read-only-reference profiles store
+private payload enums; `unexpected(error)` is an ordinary global factory for
+the error constructor argument. Construction, observers, mapping and propagation
+use general class, enum and protocol rules, not native C++ `std::expected`.
+No include is necessary; `<std/expected>` is a compatibility header.
+
 Results also compose in `constexpr` functions when both alternatives are
 supported passive constant values (`T` may be `void`). The same construction,
 state checks, observers, prefix `?`, assignment and field/array operations run
@@ -60,9 +68,9 @@ if (!result.has_value()) {
 int value = result.value();
 ```
 
-An expected object is contextually convertible to `bool`. The compiler checks
-the supported `has_value()`, `value()`, `error()`, and `value_or(fallback)`
-observers. `value()` requires the value state and `error()` requires the error
+An expected object is contextually convertible to `bool`. Its source methods
+provide `has_value()`, `value()`, `error()`, and `value_or(fallback)` observers.
+`value()` requires the value state and `error()` requires the error
 state. Accessing the inactive state is the defined runtime-failure category
 `GTI-R0009` (`invalid_expected_access`); it never throws native
 `bad_expected_access`, relies on an assertion, or has undefined behavior.

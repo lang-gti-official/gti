@@ -939,6 +939,14 @@ set_tests_properties(class_argument_profiles_runtime PROPERTIES TIMEOUT 180)
 add_test(NAME empty_return_construction_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/empty_return_construction_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(empty_return_construction_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME source_expected_production_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/source_expected_production.gti" --ownership-checks)
+set_tests_properties(source_expected_production_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME source_expected_example_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/169-source-expected.gti" --ownership-checks)
+set_tests_properties(source_expected_example_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)
@@ -2665,6 +2673,14 @@ if(Python3_Interpreter_FOUND)
             --ownership-checks
   )
   add_test(
+    NAME constexpr_tryable_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_tryable.gti"
+            --ownership-checks
+  )
+  add_test(
     NAME fresh_callable_borrow_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
@@ -3775,6 +3791,20 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(borrowed_enum_field_cleanup_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME borrowed_enum_terminal_contexts_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_enum_terminal_contexts_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(borrowed_enum_terminal_contexts_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME borrowed_enum_scalar_sibling_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_enum_scalar_sibling_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(borrowed_enum_scalar_sibling_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME consuming_retained_field_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_retained_field_test.py"
@@ -4619,6 +4649,13 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/optional_contract_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
+    add_test(
+      NAME source_expected_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/source_expected_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(source_expected_lsp PROPERTIES TIMEOUT 120)
     add_test(
       NAME expected_transform_error_lsp
       COMMAND "${Python3_EXECUTABLE}"

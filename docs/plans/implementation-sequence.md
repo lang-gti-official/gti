@@ -9054,9 +9054,9 @@ void-mapping native rejection was traced to loss of semantic class-definition
 family identity at callable-signature substitution. The lowered program now
 preserves that family identity, so the backend checks the already selected
 concrete profile without reimplementing source selection or changing object-type
-identity. The draft header remains
-outside the prelude until these compatibility gates, constructor publication,
-ordinary implicit-return construction and the complete release matrix pass.
+identity. The working branch now defines the source classes in the prelude
+to exercise production clients. This cutover remains unreleased until the
+compatibility, constructor publication and complete release matrix pass.
 
 1. **Storage and type-dependent surface:** source classes and private enums
    express owned, void-success and read-only-reference-success profiles.
@@ -9097,13 +9097,20 @@ Production migration is in progress. The first implementation checkpoint extends
 ordinary class argument-pattern families to disjoint void/reference profiles and
 an ordinary type-parameter fallback. This lets a source carrier spell each
 profile's methods and storage directly, instead of introducing expected-specific
-type selection. Production expected has not been switched yet. The remaining
-matrix above, including constexpr and cutover evidence, remains required.
+type selection. The production cutover is staged on the implementation branch,
+not released. The remaining matrix above, including constexpr and cutover
+evidence, remains required.
 Historical optional-release validation exceptions do not apply to this campaign.
 
-The source API draft is staged in `stdlib/std/expected.gti` but is not imported
-by the prelude yet. It uses ordinary class profiles, enum state, and protocol
-conformance; the compiler's reserved expected syntax still serves production.
+The source API is now defined in `stdlib/prelude.gti` on the implementation
+branch; `stdlib/std/expected.gti` is a compatibility header. This preserves
+global availability without making ordinary includes transitive. Lexical
+reservations for `expected` and `unexpected`
+are removed there: ordinary class profiles, enum state, constructors and
+protocol conformance serve those global names. Legacy internal carrier paths
+still need retirement after production compatibility is established. Runnable
+example 169 and the production API fixture cover the public cutover; their
+registration does not itself establish passing release evidence.
 Parallel prerequisite work extends complete dependency proofs through a class's
 enum field and executes payload enums in verified-MIR constant queries. The
 initial field projection requires every dependency and alternative guard to

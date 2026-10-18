@@ -2319,7 +2319,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
         resolved.borrowOrigin = BorrowOriginKind::Argument;
         resolved.borrowArgument = summary->dependencies.front().parameter;
       }
-      if (construction != nullptr)
+      if (contextualConstruction && construction != nullptr)
+        resolved.contextualBorrowDependencies = *dependencies;
+      else if (construction != nullptr)
         semanticModel.recordBorrowDependencySet(*construction, *dependencies);
       else if (!dependencies->dependencies.empty())
         report(paren,
@@ -5199,13 +5201,16 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   // scalar result against the declared parameter inventory before consulting
   // the older single-path carrier relay. This does not authorize the local
   // carrier shell: its storage check above remains independent.
-  if (function != nullptr &&
-      conditionalReferenceReturn(function->returnType,
-                                 function->parameterTypes,
-                                 function->ownerClass ? openClassType(function->ownerClass)
-                                                      : SemanticType::Unknown) &&
+  const auto completeResult = completeBorrowDependencySet(value);
+  const bool conditionalSignature =
+      function && conditionalReferenceReturn(
+                      function->returnType, function->parameterTypes,
+                      function->ownerClass ? openClassType(function->ownerClass)
+                                           : SemanticType::Unknown);
+  if (function != nullptr && (conditionalSignature || completeResult) &&
       valueInfo->category == ValueCategory::Place) {
-    auto dependencies = storedBorrowDependencies(value);
+    auto dependencies = completeResult ? completeResult->dependencies
+                                       : storedBorrowDependencies(value);
     if (!dependencies.empty() &&
         std::all_of(dependencies.begin(), dependencies.end(),
                     [&](const auto &dependency) {
@@ -5218,8 +5223,14 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                     })) {
       for (auto &dependency : dependencies)
         dependency.access = function->returnType.referenceAccess;
+      auto constrained = *function;
+      // An ordinary reference signature already selected its one owner.
+      // A complete accessor result can prove that relay, but cannot silently
+      // replace the enclosing function's inferred contract with another one.
+      if (!conditionalSignature)
+        constrained.explicitReturnBorrowOrigin = true;
       if (normalizedCompleteReturnBorrow(
-              *function, {.dependencies = std::move(dependencies)}))
+              constrained, {.dependencies = std::move(dependencies)}))
         return;
     }
   }
@@ -5798,6 +5809,16 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
     -> bool {
   if (!expression || !visiting.insert(expression.get()).second) {
     return false;
+  }
+  if (const auto *construction =
+          semanticModel.findContextualConstruction(*expression);
+      construction && construction->contextualBorrowDependencies) {
+    const auto &dependencies =
+        construction->contextualBorrowDependencies->dependencies;
+    return !dependencies.empty() &&
+           std::all_of(
+               dependencies.begin(), dependencies.end(),
+               [](const auto &dependency) { return dependency.place.valid(); });
   }
   if (exprAs<Variable>(expression.get()) != nullptr) {
     if (const ExprPtr *source = storedBorrowSource(expression)) {

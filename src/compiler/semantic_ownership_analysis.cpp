@@ -1773,6 +1773,10 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
     -> std::optional<SemanticBorrowDependencySet> {
   if (!expression)
     return std::nullopt;
+  if (const auto *construction =
+          semanticModel.findContextualConstruction(*expression);
+      construction && construction->contextualBorrowDependencies)
+    return construction->contextualBorrowDependencies;
   if (const auto *complete = semanticModel.findBorrowDependencySet(*expression))
     return *complete;
   if (const auto *group = exprAs<Grouping>(expression.get()))
@@ -7373,16 +7377,23 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   // they cannot be copied onto a reference loan to the external referent.
   if (expression && carrier->type.kind != SemanticType::Reference &&
       !isFallibleBorrowType(carrier->type)) {
-    if (const auto *complete =
-            semanticModel.findBorrowDependencySet(*expression);
-        complete && complete->dependencies.empty() &&
+    const auto *contextual =
+        semanticModel.findContextualConstruction(*expression);
+    const auto *complete =
+        contextual && contextual->contextualBorrowDependencies
+            ? &*contextual->contextualBorrowDependencies
+            : semanticModel.findBorrowDependencySet(*expression);
+    if (complete && complete->dependencies.empty() &&
         !complete->possibleAlternatives.empty()) {
       // A verified selected alternative with no external dependency has no
       // origin-bearing loan to create. Keep the complete value fact on the
       // binding; unknown/missing evidence must still take the checked path.
       return;
     }
-    const auto dependencies = semanticModel.findBorrowDependencies(*expression);
+    const auto dependencies =
+        complete
+            ? std::span<const SemanticLoanDependency>(complete->dependencies)
+            : semanticModel.findBorrowDependencies(*expression);
     if (!dependencies.empty()) {
       // A named shared copy preserves the complete dependency group; it is
       // not a new constructor/call publication. Reuse the existing alias
@@ -7397,7 +7408,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       const auto *retained = copied && copied->retainedLoan != 0
                                  ? semanticModel.findLoan(copied->retainedLoan)
                                  : nullptr;
-      const auto *complete = semanticModel.findBorrowDependencySet(*expression);
       if (copied && retained && complete && copied->completeBorrowSet &&
           copied->bindingKind == SemanticBindingKind::LocalVariable &&
           copied->valueState == ValueState::Available &&

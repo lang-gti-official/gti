@@ -12252,12 +12252,61 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return fromOperand(state, operand);
   };
+  const auto disjointRecordFields = [&](const CanonicalPlace &left,
+                                        const CanonicalPlace &right) {
+    if (left.ambiguous || right.ambiguous || !sameRoot(left, right) ||
+        left.projections.empty() || right.projections.empty())
+      return false;
+    const auto &a = left.projections.front();
+    const auto &b = right.projections.front();
+    if (a.kind != MirProjectionKind::Field ||
+        b.kind != MirProjectionKind::Field || !a.field || !b.field ||
+        a.field == b.field)
+      return false;
+    // Prove distinct storage from the concrete record, not just distinct
+    // projection labels. Union fields, unknown roots, and indirect paths
+    // retain conservative invalidation. Whole-object writes still overlap
+    // every field. A borrowed field's external owner is not its storage root.
+    SemanticType rootType = SemanticType::Unknown;
+    if (left.root == MirPlaceRootKind::This) {
+      const auto *record = constructor
+                               ? program.findClassInstance(constructor->owner)
+                           : function && function->owner
+                               ? program.findClassInstance(*function->owner)
+                               : nullptr;
+      if (record)
+        rootType = record->type;
+    } else {
+      for (std::size_t index = 0; index < identities.size(); ++index) {
+        if (!identities[index].projections.empty() ||
+            !sameRoot(left, identities[index]))
+          continue;
+        if (rootType != SemanticType::Unknown &&
+            rootType != body.places[index].type)
+          return false;
+        rootType = body.places[index].type;
+      }
+    }
+    const auto *record = uniqueMirClassInstanceForType(program, rootType);
+    if (!record || record->kind == ClassKind::Union || record->unionLayout ||
+        record->cOpaqueHandle)
+      return false;
+    const auto declared = [&](SymbolId symbol) {
+      return std::count_if(record->declaredFields.begin(),
+                           record->declaredFields.end(),
+                           [&](const auto &field) {
+                             return field.symbol == symbol;
+                           }) == 1;
+    };
+    return declared(a.field) && declared(b.field);
+  };
   const auto invalidate = [&](State &state, MirPlaceId id) {
     if (!id || id > identities.size())
       return;
     const auto &key = identities[id - 1];
     for (std::size_t index = 0; index < identities.size(); ++index)
-      if (key.ambiguous || sameRoot(key, identities[index]))
+      if (key.ambiguous || (sameRoot(key, identities[index]) &&
+                            !disjointRecordFields(key, identities[index])))
         state.places[index].reset();
     if (key.ambiguous) {
       for (auto &fact : state.values)

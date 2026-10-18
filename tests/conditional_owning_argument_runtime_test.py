@@ -38,10 +38,20 @@ def receiver_cases():
         (("later", "class", "failure"),
          (70, "owner accepted\n10\n20\n", division)),
     ]
+    ordinary = fixture.with_name("consuming_owned_conditional_argument.gti")
+    division_line = next(i + 1 for i, text in enumerate(ordinary.read_text().splitlines())
+                         if "12 / value" in text)
+    division = (f"{ordinary.name}:{division_line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
+    cases[ordinary.stem] = [
+        ((), (0, "accepted\n7\n12\n", "")),
+        (("failure",), (70, "7\n", division)),
+    ]
     return cases
 
 
 if __name__ == "__main__":
     main(names=("conditional_owning_argument_receivers",
-                "conditional_expected_argument_receiver"),
+                "conditional_expected_argument_receiver",
+                "consuming_owned_conditional_argument"),
          cases=receiver_cases())
