@@ -80,6 +80,7 @@ public:
   void reset() mut { this.state = detail::optional_state<T>::empty; }
 
   /// Destroys the old value before construction; failure leaves this empty.
+  [[discardable]]
   mut T& emplace<Args...>(Args... args) mut {
     this.reset();
     this.state = detail::optional_state<T>::engaged(T(args...));

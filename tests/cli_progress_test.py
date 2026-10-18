@@ -175,6 +175,24 @@ def main():
         assert "Building" not in failed_check.stderr, failed_check.stderr
         assert "Native" not in failed_check.stderr and "Finished" not in failed_check.stderr
 
+        # Missing-include recovery parses candidate headers and checks proposed
+        # fixes. These internal trials must not restart top-level progress.
+        (root / "main.gti").write_text(
+            "int main() { std::vector<int> values{}; return 0; }\n")
+        for command in (["build", "--no-cache"], ["check"]):
+            for verbosity in ([], ["--verbose"]):
+                recovery = run([*command, "--progress=plain", "--color=never",
+                                *verbosity], 65)
+                output = recovery.stderr
+                assert "Add #include <std/vector>" in output, output
+                assert len(re.findall(r"^\s*Loading  source graph$", output, re.M)) == 1, output
+                assert len(re.findall(r"^\s*Parsing  \d+ source units$", output, re.M)) == 1, output
+                assert len(re.findall(r"^\s*Checking  progress$", output, re.M)) == 1, output
+                assert "Failed" in output and "Finished" not in output, output
+        quiet_recovery = run(["check", "--progress=never"], 65)
+        assert "Add #include <std/vector>" in quiet_recovery.stderr
+        assert not re.search(r"^\s*(Loading|Parsing|Checking)  ", quiet_recovery.stderr, re.M)
+
         # Parent target waits are live; captured child telemetry stays disabled
         # and completed diagnostic/output replay remains name-ordered.
         (root / "main.gti").write_text("int main() { return 0; }\n")

@@ -53,6 +53,40 @@ std::vector<lang::FixIt> fixes(const lang::FrontendResult &result) {
   return out;
 }
 
+void internalTrialsDoNotReportProgress() {
+  struct Counter final : lang::ProgressObserver {
+    int loads = 0;
+    int parses = 0;
+    int checks = 0;
+    void onProgress(const lang::ProgressEvent &event) noexcept override {
+      if (event.kind != lang::ProgressKind::Begin)
+        return;
+      if (event.phase == lang::ProgressPhase::Loading)
+        ++loads;
+      if (event.phase == lang::ProgressPhase::Parsing)
+        ++parses;
+      if (event.phase == lang::ProgressPhase::Checking)
+        ++checks;
+    }
+  } counter;
+  Fixture f;
+  f.options.progress = &counter;
+  f.write("api.gti", "struct ProgressValue { int value = 7; };\n");
+  const auto result =
+      f.analyze("int main() { ProgressValue item{}; return item.value; }\n");
+  const auto suggestions = fixes(result);
+  expect(result.includeSuggestionsRequested &&
+             std::any_of(suggestions.begin(), suggestions.end(),
+                         [](const auto &fix) {
+                           return fix.replacement.find(
+                                      "#include \"api.gti\"") !=
+                                  std::string::npos;
+                         }),
+         "silent internal trials must still validate a usable include fix");
+  expect(counter.loads == 1 && counter.parses == 1 && counter.checks == 1,
+         "only the original analysis reports loading, parsing and checking");
+}
+
 void projectDeclarations() {
   Fixture f;
   f.write("api.gti", R"(
@@ -290,6 +324,7 @@ void declaredDependencies() {
 } // namespace
 
 int main() {
+  internalTrialsDoNotReportProgress();
   projectDeclarations();
   missingOverloadDeclarations();
   snapshotsAndAlternatives();
