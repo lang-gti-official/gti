@@ -37,6 +37,21 @@ def main():
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
                   ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-tryable-propagation-") as directory:
+        exclusive_source = pathlib.Path(directory) / "exclusive-reference.gti"
+        exclusive_text = conditional_source.read_text().replace("int&", "mut int&")
+        exclusive_text = exclusive_text.replace("int owner = 42;", "mut int owner = 42;")
+        exclusive_text = exclusive_text.replace("return Status(value);", "value += 1; return Status(value);")
+        exclusive_text = exclusive_text.replace(
+            "success.code == 42 && failure.code == 5",
+            "success.code == 43 && failure.code == 5 && owner == 43")
+        exclusive_source.write_text(exclusive_text)
+        failure_source = pathlib.Path(directory) / "failing-reference-factory.gti"
+        failure_text = conditional_source.read_text().replace(
+            'if (fail) return Reading::failed(std::string("error"));',
+            'int divisor = fail ? 0 : 1;\n'
+            '  int checked = owner / divisor;\n'
+            '  if (fail) return Reading::failed(std::string("error"));')
+        failure_source.write_text(failure_text)
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / f"tryable-propagation-{name}"
             command = [str(compiler), str(source), *flags, "-o", str(binary), *native]
@@ -65,6 +80,22 @@ def main():
                          "-o", str(conditional), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             shown = run([str(conditional)])
+            assert (shown.returncode, shown.stdout, shown.stderr) == (0, "", ""), \
+                (name, shown.returncode, shown.stdout, shown.stderr)
+            failed = pathlib.Path(directory) / f"failing-reference-factory-{name}"
+            built = run([str(compiler), str(failure_source), *flags,
+                         "-o", str(failed), *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            shown = run([str(failed)])
+            assert shown.returncode == 1 and not shown.stdout, (name, shown)
+            assert "runtime error[GTI-R0002]" in shown.stderr, (name, shown.stderr)
+            assert "AddressSanitizer" not in shown.stderr and "UndefinedBehaviorSanitizer" not in shown.stderr, \
+                (name, shown.stderr)
+            exclusive = pathlib.Path(directory) / f"exclusive-reference-{name}"
+            built = run([str(compiler), str(exclusive_source), *flags,
+                         "-o", str(exclusive), *native])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            shown = run([str(exclusive)])
             assert (shown.returncode, shown.stdout, shown.stderr) == (0, "", ""), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
             print(f"tryable propagation: {name} passed", flush=True)

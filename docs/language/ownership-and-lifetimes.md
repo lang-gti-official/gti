@@ -865,6 +865,11 @@ ends. A live overlapping child borrow is not exempted by this rule. Ordinary
 accessors and operators preserve the selected stored field's permission and
 origin rather than using the carrier's first dependency. Caller metadata is
 checked against the callee's actual returned origins before backend entry.
+A scalar reference result that can select between several external owners
+retains every possible owner, even though the reference itself has no stored
+field layout. Its local aliases preserve that full origin set. Conflicting
+writes to either owner are rejected while the reference is live; ordinary
+last-use analysis releases those protections after its final use.
 See [`109-borrowed-aggregates.gti`](../../examples/109-borrowed-aggregates.gti)
 for an application context borrowing four different service types and moving
 through a generic relay, then composing the same dependencies through fresh
