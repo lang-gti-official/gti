@@ -440,6 +440,7 @@ struct HirDirectInitialization {
 struct HirContextualConstruction {
   const Expr *source = nullptr;
   HirValueId value = 0;
+  std::optional<SemanticContextualConstructionProof> constructionProof;
 };
 
 struct HirEmptyReturnConstruction {
