@@ -504,6 +504,17 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
           continue;
         }
         GenericSubstitution substitution = baseSubstitution;
+        // The candidate's exact item type is known before checking a result
+        // projection which may itself depend on that callable parameter.
+        // Bind it first, then compare the fully substituted contract. This
+        // does not infer a callable from its desired return type.
+        const SemanticType candidateItem = SemanticType::functionItemType(
+            candidate.id, candidate.returnType, candidate.parameterTypes);
+        if (!target.parameterPack && index < target.parameterTypes.size() &&
+            !inferOuter(inferOuter, target.parameterTypes[index], candidateItem,
+                        substitution)) {
+          continue;
+        }
         bool matchesContract = true;
         if (threadTask) {
           SemanticType result = contract->ownedTransport->destinationType;
@@ -517,7 +528,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
                 (!signature.inferResultFromInstantiation &&
-                 !exactMatch(exactMatch, signature.returnType,
+                 !exactMatch(exactMatch, substituteType(signature.returnType, substitution),
                              candidate.returnType, substitution))) {
               matchesContract = false;
               break;
@@ -4058,6 +4069,21 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.arguments.size() < classInfo(*classId).genericParameters.size())
     resolveClassGenericDefaults(*classId);
   const ClassInfo &declaration = classInfo(*classId);
+  if (declaration.compilerType == CompilerTypeKind::MetaCallableReturnType &&
+      type.arguments.size() == 1) {
+    const SemanticType subject = typeOf(type.arguments.front());
+    if (subject != SemanticType::Unknown &&
+        !containsOpenTypeParameter(subject) && !subject.hasLambdaShape() &&
+        !subject.hasFunctionItemShape() && !subject.hasNativeFunctionShape() &&
+        subject.kind != SemanticType::FunctionSignature) {
+      report(type.name.last(),
+             "Callable return-type reflection requires a function signature, "
+             "a selected function item, a native function pointer, or a lambda "
+             "type; it does not select an overloaded operator().",
+             "GTI-S2023");
+      return;
+    }
+  }
   if (!validateClassPathAliases(type.name, type.name.last()))
     return;
   if (!validateNestedClassAccess(*classId, type.name.last()))

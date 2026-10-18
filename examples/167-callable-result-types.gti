@@ -1,0 +1,24 @@
+// Ordinary source wrappers can name a mapper's result without a builtin
+// combinator or repeating the result type at the call site.
+#include <std/meta>
+
+class Box<T> {
+  mut T value;
+public:
+  Box(T item) : value(std::move(item)) {}
+  T read() requires std::copy_constructible<T> { return this.value; }
+
+  Box<std::meta::callable_return_type<F>> map<F>(F& mapper) && {
+    return Box<std::meta::callable_return_type<F>>(mapper(std::move(this.value)));
+  }
+};
+
+int twice(int value) { return value * 2; }
+
+int main() {
+  auto increment = [](int value) -> int { return value + 1; };
+  auto double_value = twice;
+  auto mapped = Box<int>(20).map(increment).map(double_value);
+  std::println(mapped.read() == 42 ? "mapped 42" : "incorrect");
+  return mapped.read() == 42 ? 0 : 1;
+}

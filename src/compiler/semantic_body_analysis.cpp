@@ -6759,6 +6759,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       case CompilerTypeKind::MetaParameterType:
       case CompilerTypeKind::MetaConstructorParameterType:
       case CompilerTypeKind::MetaReturnType:
+      case CompilerTypeKind::MetaCallableReturnType:
       case CompilerTypeKind::MetaListFirst:
       case CompilerTypeKind::MetaListRest:
         currentType = constructed;

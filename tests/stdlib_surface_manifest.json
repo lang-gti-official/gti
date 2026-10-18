@@ -28,7 +28,7 @@
     "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
     "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
     "stdlib/std/memory.gti": "27d3221ed33ca461825a22a19829c0f8704ffd15afc5eecb833406f1ba4922df",
-    "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
+    "stdlib/std/meta.gti": "6db0c9986cabc8765fbf23a886915466c085e04a115c37a5cb66a9017b6d6931",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0c8a00539429e37eeff64d1a76fc7fd69adf0dd29b126e8c53c5d55929d936cd",
@@ -291,6 +291,13 @@
       "source": "examples/151-c-string-import.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "foreign-style text\n", "stderr": ""}
+    },
+    {
+      "id": "callable-result-types",
+      "mode": "run",
+      "source": "examples/167-callable-result-types.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "mapped 42\n", "stderr": ""}
     },
     {
       "id": "charconv-float",
@@ -1307,6 +1314,13 @@
       "source": "tests/fixtures/source_prefix_complete_elements.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "source-result-combinators",
+      "mode": "run",
+      "source": "tests/fixtures/source_result_combinators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "42\n7\n", "stderr": ""}
     },
     {
       "id": "span",
@@ -2948,6 +2962,7 @@
         "std::meta::alternatives_of",
         "std::meta::arguments_of",
         "std::meta::bases_of",
+        "std::meta::callable_return_type",
         "std::meta::construct",
         "std::meta::constructor::index",
         "std::meta::constructor::line",
@@ -3048,7 +3063,7 @@
         "std::meta::type::primary_name",
         "std::meta::type_of"
       ],
-      "case_ids": ["meta"],
+      "case_ids": ["meta", "callable-result-types", "source-result-combinators"],
       "required_instantiations": ["field enumeration in declaration order", "constexpr field binding in if constexpr", "reflected field read", "type predicates", "declared attribute read", "enumerator enumeration", "base and generic-argument lists", "structural construction", "callable metadata"],
       "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti", "tests/fixtures/reflection_deferred_range.gti", "tests/fixtures/reflection_defaults.gti"]
     },

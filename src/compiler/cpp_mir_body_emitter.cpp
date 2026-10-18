@@ -37761,6 +37761,9 @@ private:
       output << "using __gti_mir_lambda_identity = std::integral_constant<"
                 "std::uint64_t, "
              << closure.lambda->id << ">;\n";
+      writeIndent();
+      output << "using __gti_mir_source_result = "
+             << typeSpelling(closure.lambda->returnType) << ";\n";
       for (std::size_t index = 0; index < closure.captures.size(); ++index) {
         writeIndent();
         const auto &captureType = closure.lambda->captureTypes[index];
@@ -61517,8 +61520,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   (placementDirectReturnCall(program_, representations_, body,
                                              *instruction.result) !=
                        &instruction &&
-                   directTemporaryBorrowForValue(body, *instruction.result)
-                           .producer != &instruction &&
+                   classValuePublicationSlot(program_, body,
+                                             *instruction.result) == nullptr &&
                    expectedPayloadInitialize(
                        program_, body, *instruction.result) == nullptr))) ||
                 instruction.info.type.kind == SemanticType::Lambda)) ||

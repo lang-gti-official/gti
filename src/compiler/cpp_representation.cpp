@@ -1069,7 +1069,8 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   case SemanticType::FunctionItem:
     return type.hasFunctionItemShape()
                ? "::gti_internal::backend::function_item<" +
-                     std::to_string(type.functionId) + ">"
+                     std::to_string(type.functionId) + ", " +
+                     spell(*type.functionItemReturnType()) + ">"
                : "void";
   case SemanticType::Array: {
     const bool pointerElements =
@@ -1105,6 +1106,13 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         program.findClassDeclaration(type.classId);
     if (classInfo == nullptr) {
       return "void";
+    }
+    if (classInfo->computedTypeProjection ==
+        ComputedTypeProjectionKind::CallableReturn) {
+      return type.arguments.size() == 1 && type.valueArguments.empty()
+                 ? "typename ::gti_internal::backend::source_callable_result<" +
+                       spell(type.arguments.front()) + ">::type"
+                 : "";
     }
     if (classInfo->compilerCapability ==
         CompilerCapabilityTypeKind::ErasedObject)
