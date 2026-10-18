@@ -3048,6 +3048,18 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
+  // A source body can establish a complete conditional return contract without
+  // a single unconditional origin (for example, a dependency-free variant).
+  // Each return and each call still requires its independently checked complete
+  // dependency set; a declaration alone cannot supply this authority.
+  const bool completeConditionalReturn =
+      stmt.body() && declaredReturnType.kind == SemanticType::Enum && [&] {
+        const auto inventory = storedReferenceInventory(declaredReturnType);
+        return inventory && std::any_of(inventory->begin(), inventory->end(),
+                                        [](const auto &path) {
+                                          return !path.conditions.empty();
+                                        });
+      }();
   validateOwningPayloadEnumByValueBoundary(
       declaredReturnType, stmt.returnType().name.last(), "function return",
       directOwningPayloadTransport);
@@ -3067,7 +3079,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             functionInfo != nullptr &&
+             !completeConditionalReturn && functionInfo != nullptr &&
              !stmt.hasFunctionAttribute("borrowed_from")) {
     reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   }
