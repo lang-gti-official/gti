@@ -96,6 +96,23 @@ int main() {
     exclusiveConditional.insert(ownerDeclaration, "mut ");
   accepted(exclusiveConditional,
            "conditional exclusive success preserves mutable owner authority");
+  auto exclusiveConflict = exclusiveConditional;
+  const auto successReturn = exclusiveConflict.find("return Status(value);");
+  expect(successReturn != std::string::npos,
+         "conditional fixture has a success reference use");
+  if (successReturn != std::string::npos) {
+    exclusiveConflict.insert(successReturn, "owner = 19; ");
+    rejected(exclusiveConflict, "GTI-S2017", "borrow");
+  }
+  auto exclusiveCopy = exclusiveConditional;
+  const auto consumingOperand = exclusiveCopy.find("?std::move(result)");
+  expect(consumingOperand != std::string::npos,
+         "conditional fixture explicitly consumes its operand");
+  if (consumingOperand != std::string::npos) {
+    exclusiveCopy.replace(consumingOperand,
+                          std::string("?std::move(result)").size(), "?result");
+    rejected(exclusiveCopy, "GTI-S2086", "cannot copy");
+  }
   auto localReference = conditionalBorrowed;
   const auto selectedReturn = localReference.find("return value;");
   expect(selectedReturn != std::string::npos,

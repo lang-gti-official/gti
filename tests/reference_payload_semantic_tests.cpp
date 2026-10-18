@@ -349,6 +349,37 @@ int main() {
       acceptedSemantics(copied);
     }
   }
+  const auto nestedConsumption = analyze(R"gti(
+enum Reading { empty, value(mut int& owner) };
+enum Outer { empty, wrapped(Reading reading) };
+int update(mut int& owner) {
+  mut auto result = Outer::wrapped(Reading::value(owner));
+  switch (std::move(result)) {
+    case Outer::empty: return 1;
+    case Outer::wrapped(inner): {
+      switch (std::move(inner)) {
+        case Reading::empty: return 2;
+        case Reading::value(value): { value = 19; return 0; }
+      }
+    }
+  }
+}
+int main() { mut int owner = 3; return update(owner); }
+)gti");
+  expect(nestedConsumption.syntaxValid && !nestedConsumption.semanticValid,
+         "consuming a nested borrowed-value payload remains a diagnosed "
+         "structural boundary");
+  expect(std::any_of(nestedConsumption.diagnostics.begin(),
+                     nestedConsumption.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2067";
+                     }) &&
+             std::none_of(nestedConsumption.diagnostics.begin(),
+                          nestedConsumption.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }),
+         "nested borrowed-value handoff rejects in semantics, not as an ICE");
   const auto constructed = lang::Frontend().analyze(
       root / "tests" / "reference-payload-constructor.gti", R"gti(
 enum Reading { empty, value(int& owner, int sequence) };
