@@ -486,6 +486,9 @@ T& identity<T>(T& value) {
 This is implicit single-origin lifetime inference, not a general lifetime
 parameter system. Other parameters may contribute ordinary values, but a
 returned borrow may not choose between owners or combine dependencies.
+Explicit complete dependency contracts for reference-bearing payload enums,
+described below, extend this beyond the implicit single-origin form; they do
+not infer an unspecified lifetime relation from an ambiguous signature.
 
 `expected<T&, E>` applies this same inference to a checked read-only borrow.
 The success path publishes the referent together with the receiver, argument,
@@ -1377,6 +1380,16 @@ returning the carrier's own fields, a different parameter's owner, or a local
 is rejected. Consuming or destroying the carrier does not destroy its external
 owner. This same declaration-relative contract is available to protocol
 operations; it is not special treatment of any standard-library wrapper.
+
+For a reference-bearing payload enum, the named parameter may carry several
+checked external dependencies. Its complete contract preserves every active
+field path, alternative guard and access mode. Selecting one reference may
+leave several possible external origins at the call site; all remain protected
+until that scalar reference's endpoint. A consuming match retires the old
+carrier group only after the exact selected references acquire their successor
+authority. This does not authorize a reference to the consumed shell or an
+ordinary owned payload, nor does it infer a lambda lifetime contract beyond
+the lambda rules above.
 
 Two general facilities support this ordinary source wrapper:
 
