@@ -34548,8 +34548,16 @@ loanHasCppPointerCarrier(const MirProgram &program,
       type = SemanticType(type.arguments.front());
       continue;
     }
-    if (projection.kind != MirProjectionKind::Field ||
-        type.kind != SemanticType::Enum)
+    if (projection.kind != MirProjectionKind::Field)
+      return false;
+    if (type.kind == SemanticType::Class) {
+      const auto resolved = resolveMirField(program, type, projection.field);
+      if (!resolved)
+        return false;
+      type = resolved.field->type;
+      continue;
+    }
+    if (type.kind != SemanticType::Enum)
       return false;
     const SemanticType *field = nullptr;
     for (const auto &enumeration : program.payloadEnums()) {

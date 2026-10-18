@@ -3849,8 +3849,11 @@ instantiate payload semantics or invent a layout. An unused dependent family
 may have only an undefined selector primary; an executable concrete application
 must have its exact lowered/MIR instance. Missing concrete instances never
 become `void` fields. The catalog is emitted only for dependently referenced
-families, and rejects textual duplicate keys; native `is_same` assertions also
-reject distinct GTI keys that collapse through native typedef equivalence.
+families, and rejects textual duplicate keys. Full native specializations also
+reject typedef-equivalent duplicate keys as redefinitions, without quadratic
+pairwise comparisons or silently selecting another GTI identity. Such a native
+representation collision remains a backend limitation, not a source legality
+rule; exact-only applications do not demand a selector catalog.
 Enum declaration parameter metadata is serialized and validated for exact
 argument kind/count and consistency across the family's concrete rows.
 

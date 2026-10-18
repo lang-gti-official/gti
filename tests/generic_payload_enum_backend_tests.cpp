@@ -1038,7 +1038,7 @@ int main() { discard(Message::Value(Resource(1))); return 0; }
                  owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
                  [](const auto &item) { return item.code == "GTI-B0001"; }),
          "unsupported owning-enum packs retain their source diagnostic");
-  const auto referenceEntry = lang::Frontend().analyze(
+  const auto directReferenceEntry = lang::Frontend().analyze(
       "enum-reference-entry.gti", R"gti(
 enum Reading { empty, value(int& owner) };
 bool is_ready(Reading& reading) {
@@ -1054,9 +1054,36 @@ int main() {
 }
 )gti",
       {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
-  expect(referenceEntry.canGenerateCode(),
-         "reference enum formal has independently verified guarded inventory");
-  if (referenceEntry.canGenerateCode()) {
+  const auto classReferenceEntry = lang::Frontend().analyze(
+      "enum-class-reference-entry.gti", R"gti(
+class Carrier {
+  int& owner;
+public:
+  Carrier(int& value) : owner(value) {}
+  int read() { return this.owner; }
+};
+enum Holder { none, item(Carrier value) };
+int inspect(Holder& held) {
+  switch (held) {
+    case Holder::none: return 0;
+    case Holder::item(auto& value): return value.read();
+  }
+}
+int main() {
+  int owner = 7;
+  Carrier value = Carrier(owner);
+  Holder held = Holder::item(value);
+  return inspect(held) - 7;
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  for (const auto *entry : {&directReferenceEntry, &classReferenceEntry}) {
+    const auto &referenceEntry = *entry;
+    expect(
+        referenceEntry.canGenerateCode(),
+        "reference enum formal has independently verified guarded inventory");
+    if (!referenceEntry.canGenerateCode())
+      continue;
     for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
       expect(!gti_test::emitCpp(referenceEntry, standard).contents.empty(),
              "abstract enum reference inventory does not require native class "
@@ -1071,7 +1098,7 @@ int main() {
       bool tested = false;
       for (auto &function : lang::MirProgramTestAccess::functions(addressed)) {
         for (const auto &place : function.body.places) {
-          if (tested || place.projections.size() != 3 ||
+          if (tested || place.projections.size() < 3 ||
               place.projections[1].kind != lang::MirProjectionKind::Field)
             continue;
           tested = true;
@@ -1104,20 +1131,25 @@ int main() {
       expect(tested,
              "runtime address rejection fixture finds its abstract path");
     }
-    auto forged = referenceEntry.mir;
-    bool changed = false;
-    for (auto &function : lang::MirProgramTestAccess::functions(forged))
-      for (auto &place : function.body.places)
-        if (!changed && place.sourceValue == 0 &&
-            place.root == lang::MirPlaceRootKind::Binding &&
-            place.projections.size() == 3 &&
-            place.projections[1].kind == lang::MirProjectionKind::Field) {
-          place.projections[1].field = 0;
-          changed = true;
-        }
-    expect(changed && !lang::verifyMirProgram(forged).valid(),
-           "provenance-only enum path still requires an exact typed payload "
-           "field");
+    for (std::size_t field = 1;
+         field != (entry == &classReferenceEntry ? 3 : 2); ++field) {
+      auto forged = referenceEntry.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(forged))
+        for (auto &place : function.body.places)
+          if (!changed && place.sourceValue == 0 &&
+              place.root == lang::MirPlaceRootKind::Binding &&
+              place.projections.size() >= 3 &&
+              place.projections[field].kind == lang::MirProjectionKind::Field) {
+            place.projections[field].field = 0;
+            changed = true;
+          }
+      const lang::CppMirBodyEmitter rejected(forged, referenceMap);
+      expect(
+          changed && !lang::verifyMirProgram(forged).valid() &&
+              !rejected.analyzeProgram().ready(),
+          "provenance-only enum/class path still requires exact typed fields");
+    }
   }
   const auto publishedCall = lang::Frontend().analyze(
       "owning-enum-call-publication.gti", R"gti(
