@@ -233,7 +233,7 @@ is a teaching helper, not a production server.
 | `162-experimental-optional.gti` | the source-defined `std::experimental::optional` holding a move-only record, `?` moving it out or returning an empty optional, and `std::experimental::nullopt` |
 | `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
 | `164-payload-composition.gti` | a source-defined optional containing another owning payload enum, consuming nested patterns, and a fixed-array payload |
-| `165-borrowed-payload-results.gti` | a source-defined result with an owning string error and a reference success; `borrowed_from` relays the external owner when `?` consumes the wrapper |
+| `165-borrowed-payload-results.gti` | source-defined class and enum results with owning string errors and reference successes; checked selection and `borrowed_from` relay the exact external owner when `?` consumes the wrapper |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

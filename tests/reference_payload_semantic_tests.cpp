@@ -349,6 +349,90 @@ int main() {
       acceptedSemantics(copied);
     }
   }
+  const auto nestedConsumption = analyze(R"gti(
+enum Reading { empty, value(mut int& owner) };
+enum Outer { empty, wrapped(Reading reading) };
+int update(mut int& owner) {
+  mut auto result = Outer::wrapped(Reading::value(owner));
+  switch (std::move(result)) {
+    case Outer::empty: return 1;
+    case Outer::wrapped(inner): {
+      switch (std::move(inner)) {
+        case Reading::empty: return 2;
+        case Reading::value(value): { value = 19; return 0; }
+      }
+    }
+  }
+}
+int main() { mut int owner = 3; return update(owner); }
+)gti");
+  expect(nestedConsumption.syntaxValid && !nestedConsumption.semanticValid,
+         "consuming a nested borrowed-value payload remains a diagnosed "
+         "structural boundary");
+  expect(std::any_of(nestedConsumption.diagnostics.begin(),
+                     nestedConsumption.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2067";
+                     }) &&
+             std::none_of(nestedConsumption.diagnostics.begin(),
+                          nestedConsumption.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }),
+         "nested borrowed-value handoff rejects in semantics, not as an ICE");
+  const auto referenceEntry = lang::Frontend().analyze(
+      root / "tests" / "reference-payload-formal.gti", R"gti(
+#include <std/string>
+enum Reading { ready(int& value), failed(std::string error) };
+bool has_value(Reading& result) {
+  switch (result) {
+    case Reading::ready: return true;
+    case Reading::failed: return false;
+  }
+}
+int main() { return 0; }
+)gti",
+      {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  expect(referenceEntry.canGenerateCode(),
+         "enum reference formal has a checked abstract external entry");
+  if (!referenceEntry.canGenerateCode())
+    for (const auto &diagnostic : referenceEntry.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (referenceEntry.canGenerateCode()) {
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = referenceEntry.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        for (auto &loan : function.body.loans) {
+          const auto *source = function.body.findPlace(loan.source);
+          if (!loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+              !source || source->type.kind != lang::SemanticType::Reference ||
+              source->type.arguments.size() != 1 ||
+              source->type.arguments.front().kind != lang::SemanticType::Enum)
+            continue;
+          if (mutation == 0)
+            loan.conditions.clear();
+          else if (mutation == 1)
+            function.body.places[loan.source - 1].binding = 0;
+          else if (mutation == 2)
+            loan.carriers.push_back(source->binding);
+          else if (mutation == 3)
+            loan.parent = loan.id;
+          else
+            function.body.places[loan.source - 1].type.arguments.front() =
+                lang::SemanticType::Int32;
+          changed = true;
+          break;
+        }
+        if (changed)
+          break;
+      }
+      expect(changed, "enum formal mutation finds its abstract entry");
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "abstract enum entry rejects missing guard, formal, wrong "
+             "carrier, parent and referent type");
+    }
+  }
   const auto constructed = lang::Frontend().analyze(
       root / "tests" / "reference-payload-constructor.gti", R"gti(
 enum Reading { empty, value(int& owner, int sequence) };
