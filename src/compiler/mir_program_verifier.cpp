@@ -5505,25 +5505,19 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   return result;
 }
 
-[[nodiscard]] bool
-independentlyVerifiedConditionalReturn(const MirProgram &program,
-                                        const MirFunctionInstance &function);
-
-[[nodiscard]] bool
-independentlyEmptyConditionalReturn(const MirProgram &program,
-                                    const MirFunctionInstance &function,
-                                    MirBlockId block);
-
-[[nodiscard]] MirVerificationResult
-verifyMirFunctionBorrowSummary(const MirProgram &program,
-                               const MirFunctionInstance &instance) {
+[[nodiscard]] MirVerificationResult verifyMirFunctionBorrowSummary(
+    const MirProgram &program, const MirFunctionInstance &instance,
+    bool completeReturnProof = false,
+    const std::function<bool(MirBlockId)> &emptyReturn = {}) {
   const MirBody &body = instance.body;
   // A guarded aggregate has permissions per dependency, not one permission
   // for its entire value. Only the independently reconstructed complete
   // contract may replace the legacy scalar access comparison below.
   const bool completeConditionalResult =
-      instance.returnType.kind == SemanticType::Enum &&
-      independentlyVerifiedConditionalReturn(program, instance);
+      instance.returnType.kind == SemanticType::Enum && completeReturnProof;
+  const bool completeReferenceResult =
+      instance.returnType.kind == SemanticType::Reference &&
+      completeReturnProof;
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
   for (const MirLoan &loan : body.loans) {
     for (const HirBindingId carrier : loan.carriers) {
@@ -5554,7 +5548,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
     return invalidSummary(
         "ordinary reference summary carries unproved restored fields");
   }
-  if (!instance.returnBorrowFields.empty()) {
+  if (!instance.returnBorrowFields.empty() && !completeReferenceResult) {
     const auto paths =
         findStoredCarrierReferences(program, instance.returnType);
     const bool reference = instance.returnType.kind == SemanticType::Reference;
@@ -5659,11 +5653,18 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
               instance.returnBorrowAccess;
+      const auto completeCarrierInventory =
+          completeReferenceResult
+              ? findStoredCarrierReferenceInventory(program, parameter)
+              : std::nullopt;
+      const bool completeCarrier =
+          completeCarrierInventory && !completeCarrierInventory->empty();
       dynamicTextCarrier = (parameter.kind == SemanticType::StringView ||
                             parameter.kind == SemanticType::CString) &&
                            instance.returnType.kind == parameter.kind &&
                            instance.returnBorrowAccess == AccessMode::ReadOnly;
-      if (!exactReference && !exactCarrier && !dynamicTextCarrier) {
+      if (!exactReference && !exactCarrier && !dynamicTextCarrier &&
+          !completeCarrier) {
         return invalidSummary(
             "argument return dependency does not identify one exact "
             "access-compatible reference, stored-reference carrier, or dynamic "
@@ -5814,8 +5815,8 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           block.terminator.value->type.arguments.front() ==
               instance.returnType.arguments.back();
       if (fallibleBorrowErrorReturn || independentTextLiteral ||
-          (instance.returnType.kind == SemanticType::Enum &&
-           independentlyEmptyConditionalReturn(program, instance, block.id))) {
+          (instance.returnType.kind == SemanticType::Enum && emptyReturn &&
+           emptyReturn(block.id))) {
         continue;
       }
       return verificationFailure(
@@ -6147,7 +6148,7 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
         verifiedValueSource = body.findPlace(producer->operands.front().place);
       }
     }
-    if (!instance.returnBorrowFields.empty()) {
+    if (!instance.returnBorrowFields.empty() && !completeReferenceResult) {
       std::vector<MirLoanDependency> actual{
           {.source = loan->source,
            .designatedFields = loan->designatedFields,
@@ -6507,8 +6508,11 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
   return {};
 }
 
-[[nodiscard]] MirVerificationResult
-verifyMirProgramBorrowContracts(const MirProgram &program) {
+[[nodiscard]] MirVerificationResult verifyMirProgramBorrowContracts(
+    const MirProgram &program,
+    const std::function<bool(HirFunctionInstanceId)> &completeReturnProof,
+    const std::function<bool(const MirFunctionInstance &, MirBlockId)>
+        &emptyReturn) {
   MirVerificationResult result;
   appendVerification(
       result, verifyMirCallableMetadata(program, program.module(), 0, nullptr));
@@ -6534,8 +6538,11 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
                                                  instance.id, &instance));
     appendVerification(
         result, verifyMirBorrowProducers(program, instance.body, instance.id));
-    appendVerification(result,
-                       verifyMirFunctionBorrowSummary(program, instance));
+    appendVerification(
+        result,
+        verifyMirFunctionBorrowSummary(
+            program, instance, completeReturnProof(instance.id),
+            [&](MirBlockId block) { return emptyReturn(instance, block); }));
   }
   for (const MirConstructorInstance &instance :
        program.constructorInstances()) {
@@ -6843,6 +6850,12 @@ verifyMirPayloadEnums(const MirProgram &program) {
         if (fieldIndex >= variant.payloadRequiresActiveCleanup.size())
           break;
         const SemanticType &field = variant.payloadTypes[fieldIndex];
+        // Stored mutable references are exclusive capabilities, unlike a
+        // reference expression that can create a shorter reborrow. The
+        // nominal enum cannot advertise whole-value copying for them.
+        if (field.kind == SemanticType::Reference &&
+            field.referenceAccess == AccessMode::Mutable)
+          exact = exact && !enumeration.traits.copyable;
         const std::optional<bool> fieldActive =
             typeRequiresActiveCleanup(field, typeRequiresActiveCleanup);
         exact =
@@ -11540,11 +11553,20 @@ completeBorrowSourcePath(const MirProgram &program,
     std::vector<Fact> places;
   };
   std::vector<const MirInstruction *> definitions(body.values.size());
+  std::unordered_map<MirLoanId, const MirInstruction *> loanDefinitions;
   for (const auto &block : body.blocks)
-    for (const auto &instruction : block.instructions)
+    for (const auto &instruction : block.instructions) {
       if (instruction.result && *instruction.result != 0 &&
           *instruction.result <= definitions.size())
         definitions[*instruction.result - 1] = &instruction;
+      if (instruction.loan && (instruction.kind == MirInstructionKind::Borrow ||
+                               instruction.kind == MirInstructionKind::Call)) {
+        const auto [found, inserted] =
+            loanDefinitions.emplace(*instruction.loan, &instruction);
+        if (!inserted)
+          found->second = nullptr;
+      }
+    }
   const auto join = [](Fact &target, const Fact &incoming) {
     if (!target)
       return false;
@@ -11672,12 +11694,114 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return fact;
   };
-  const auto fromReferenceLoan = [&](const State &state, MirLoanId id) -> Fact {
+  const auto referenceLoanFact = [&](const auto &self, const State &state,
+                                     MirLoanId id, std::size_t depth) -> Fact {
     const auto *loan = body.findLoan(id);
-    if (!loan)
+    if (!loan || depth > body.loans.size())
       return std::nullopt;
     if (loan->referenceSelection)
       return fromSelectedLoan(state, id);
+    if (loan->kind == MirLoanKind::CallResult) {
+      const auto found = loanDefinitions.find(id);
+      const MirInstruction *call =
+          found != loanDefinitions.end() ? found->second : nullptr;
+      if (call && call->kind != MirInstructionKind::Call)
+        return std::nullopt;
+      const auto *target =
+          call && call->functionTarget
+              ? program.findFunctionInstance(*call->functionTarget)
+              : nullptr;
+      if (target && target->completeReturnBorrow) {
+        if (!call->result || !*call->result ||
+            *call->result > state.values.size() ||
+            call->info.category != ValueCategory::Place)
+          return std::nullopt;
+        auto fact = state.values[*call->result - 1];
+        if (!fact || fact->dependencies.empty() ||
+            !fact->possibleAlternatives.empty())
+          return std::nullopt;
+        for (auto &dependency : fact->dependencies) {
+          if (loan->access == AccessMode::Mutable &&
+              dependency.access != AccessMode::Mutable)
+            return std::nullopt;
+          dependency.access = loan->access;
+          dependency.parent = id;
+        }
+        return fact;
+      }
+    }
+    if (loan->kind == MirLoanKind::Return && !loan->entry) {
+      const auto found = loanDefinitions.find(id);
+      const MirInstruction *producer =
+          found != loanDefinitions.end() ? found->second : nullptr;
+      if (!producer || producer->kind != MirInstructionKind::Borrow ||
+          producer->operands.size() != 1)
+        return std::nullopt;
+      const auto &operand = producer->operands.front();
+      Fact fact;
+      if (operand.kind == MirOperandKind::Loan && operand.loan != id) {
+        fact = self(self, state, operand.loan, depth + 1);
+      } else if (operand.kind == MirOperandKind::BorrowRead ||
+                 operand.kind == MirOperandKind::BorrowWrite) {
+        const auto *place = body.findPlace(operand.place);
+        if (place && place->root == MirPlaceRootKind::Loan &&
+            place->projections.empty())
+          fact = self(self, state, place->loan, depth + 1);
+        else if (place && place->type.kind != SemanticType::Reference &&
+                 std::none_of(place->projections.begin(),
+                              place->projections.end(), [](const auto &part) {
+                                return part.kind ==
+                                       MirProjectionKind::Dereference;
+                              }))
+          fact = MirBorrowDependencySet{
+              .dependencies = {
+                  {.source = place->id,
+                   .access = operand.kind == MirOperandKind::BorrowWrite
+                                 ? AccessMode::Mutable
+                                 : AccessMode::ReadOnly}}};
+      }
+      if (!fact || fact->dependencies.empty() ||
+          !fact->possibleAlternatives.empty())
+        return std::nullopt;
+      std::vector<MirLoanDependency> claimed{
+          {.source = loan->source,
+           .designatedFields = loan->designatedFields,
+           .access = loan->access,
+           .conditions = loan->conditions}};
+      claimed.insert(claimed.end(), loan->additionalDependencies.begin(),
+                     loan->additionalDependencies.end());
+      if (claimed.size() != fact->dependencies.size())
+        return std::nullopt;
+      std::vector<bool> matched(claimed.size());
+      for (auto &dependency : fact->dependencies) {
+        if (loan->access == AccessMode::Mutable &&
+            dependency.access != AccessMode::Mutable)
+          return std::nullopt;
+        dependency.access = loan->access;
+        bool found = false;
+        for (std::size_t index = 0; index < claimed.size(); ++index) {
+          const auto &candidate = claimed[index];
+          if (matched[index] || candidate.access != dependency.access ||
+              candidate.designatedFields != dependency.designatedFields ||
+              candidate.conditions != dependency.conditions)
+            continue;
+          const auto actual = canonicalBorrowOrigin(body, dependency.source,
+                                                    bindingLoans, true);
+          const auto asserted =
+              canonicalBorrowOrigin(body, candidate.source, bindingLoans, true);
+          if (actual.ambiguous || asserted.ambiguous ||
+              !sameCanonicalPlace(actual, asserted))
+            continue;
+          matched[index] = true;
+          found = true;
+          break;
+        }
+        if (!found)
+          return std::nullopt;
+        dependency.parent = id;
+      }
+      return fact;
+    }
     if (!body.findPlace(loan->source) || !loan->designatedFields.empty() ||
         !loan->conditions.empty())
       return std::nullopt;
@@ -11696,6 +11820,9 @@ completeBorrowSourcePath(const MirProgram &program,
           {.source = dependency.source, .parent = id, .access = loan->access});
     }
     return fact;
+  };
+  const auto fromReferenceLoan = [&](const State &state, MirLoanId id) {
+    return referenceLoanFact(referenceLoanFact, state, id, 0);
   };
   const auto fromReferencePlace = [&](const State &state,
                                       MirPlaceId id) -> Fact {
@@ -11990,7 +12117,12 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto *target =
           program.findFunctionInstance(*instruction.functionTarget);
       const auto *summary =
-          target && target->returnType == instruction.info.type &&
+          target &&
+                  (target->returnType == instruction.info.type ||
+                   (instruction.info.category == ValueCategory::Place &&
+                    target->returnType ==
+                        SemanticType::referenceTo(instruction.info.type,
+                                                  instruction.info.access))) &&
                   target->parameterTypes == instruction.parameterTypes
               ? callSummary(target->id)
               : nullptr;
@@ -12582,7 +12714,8 @@ private:
   reconstruct(const MirFunctionInstance &function) {
     if (function.definitionKind != MirDefinitionKind::Source ||
         function.neverReturns ||
-        function.returnType.kind != SemanticType::Enum ||
+        (function.returnType.kind != SemanticType::Enum &&
+         function.returnType.kind != SemanticType::Reference) ||
         function.body.kind != MirBodyKind::Function ||
         function.body.returnType != function.returnType)
       return std::nullopt;
@@ -12595,8 +12728,13 @@ private:
     FunctionBorrowDependencySummary summary;
     for (const auto &returned : flow.normalReturns) {
       const auto *block = function.body.findBlock(returned.block);
+      const SemanticType returnedType =
+          function.returnType.kind == SemanticType::Reference &&
+                  function.returnType.arguments.size() == 1
+              ? function.returnType.arguments.front()
+              : function.returnType;
       if (!block || !block->terminator.value ||
-          block->terminator.value->type != function.returnType ||
+          block->terminator.value->type != returnedType ||
           !returned.dependencies ||
           !completeBorrowSetHasTypedShape(program, function.returnType,
                                           *returned.dependencies))
@@ -12619,23 +12757,9 @@ private:
   }
 };
 
-[[nodiscard]] bool
-independentlyVerifiedConditionalReturn(const MirProgram &program,
-                                        const MirFunctionInstance &function) {
-  if (!function.completeReturnBorrow)
-    return false;
-  CompleteBorrowSummaryVerification summaries(program);
-  return summaries.query(function.id) != nullptr;
-}
-
-[[nodiscard]] bool
-independentlyEmptyConditionalReturn(const MirProgram &program,
-                                    const MirFunctionInstance &function,
-                                    MirBlockId block) {
-  CompleteBorrowSummaryVerification summaries(program);
-  if (!summaries.query(function.id))
-    return false;
-  const auto *flow = summaries.observations(function.body, function.id);
+[[nodiscard]] bool independentlyEmptyConditionalReturn(
+    const MirProgram &program, const MirFunctionInstance &function,
+    MirBlockId block, const CompleteBorrowFlow *flow) {
   if (!flow || !flow->verification.valid())
     return false;
   const auto returned =
@@ -13036,10 +13160,16 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
       continue;
     if (!payload && value.borrowDependencies) {
       auto resultType = value.info.type;
-      if (producer && producer->operation == MirOperation::PayloadExtract &&
-          producer->payloadExtractionKind &&
-          isStoredReferenceExtraction(*producer->payloadExtractionKind) &&
-          value.info.category == ValueCategory::Place)
+      if (producer && value.info.category == ValueCategory::Place &&
+          ((producer->operation == MirOperation::PayloadExtract &&
+            producer->payloadExtractionKind &&
+            isStoredReferenceExtraction(*producer->payloadExtractionKind)) ||
+           (producer->kind == MirInstructionKind::Call &&
+            producer->functionTarget &&
+            program.findFunctionInstance(*producer->functionTarget) &&
+            program.findFunctionInstance(*producer->functionTarget)
+                    ->returnType ==
+                SemanticType::referenceTo(value.info.type, value.info.access))))
         resultType =
             SemanticType::referenceTo(value.info.type, value.info.access);
       if (!completeBorrowSetHasTypedShape(program, resultType,
@@ -17734,7 +17864,19 @@ verifyMirProgramContracts(const MirProgram &program) {
   const auto exactActiveCleanup = [&](const SemanticType &type) {
     return typeRequiresActiveCleanup(type, typeRequiresActiveCleanup);
   };
-  appendVerification(result, verifyMirProgramBorrowContracts(program));
+  appendVerification(
+      result, verifyMirProgramBorrowContracts(
+                  program,
+                  [&](HirFunctionInstanceId id) {
+                    return completeBorrowSummaries.query(id) != nullptr;
+                  },
+                  [&](const MirFunctionInstance &function, MirBlockId block) {
+                    return completeBorrowSummaries.query(function.id) &&
+                           independentlyEmptyConditionalReturn(
+                               program, function, block,
+                               completeBorrowSummaries.observations(
+                                   function.body, function.id));
+                  }));
   appendVerification(result, verifyMirDropTargets(program, program.module(), 0,
                                                   exactActiveCleanup));
   for (const MirClassInstance &instance : program.classInstances()) {

@@ -10042,8 +10042,7 @@ private:
                               return dependency.access == AccessMode::Mutable;
                             }))
               payloadConsumedGroups.push_back(group);
-          }
-          else
+          } else
             valid = false;
         }
       }
@@ -10234,7 +10233,8 @@ private:
     (void)appendInstruction(std::move(instruction));
     for (const auto group : payloadConsumedGroups) {
       (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                               .hirValue = value->id, .loan = group});
+                               .hirValue = value->id,
+                               .loan = group});
       removeLoanFromState(group, scopes, bindingLoans);
     }
     for (auto loan = payloadTemporaryLoans.rbegin();
@@ -13686,7 +13686,8 @@ private:
             }
           }
           if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
-               output.loans[borrow.loan - 1].kind == MirLoanKind::Stored) &&
+               output.loans[borrow.loan - 1].kind == MirLoanKind::Stored ||
+               output.loans[borrow.loan - 1].referenceSelection) &&
               output.loans[borrow.loan - 1].producedBy != 0) {
             // A returned reference binding may alias the producing call's
             // own result loan, or the Stored loan of the carrier it was
@@ -13694,6 +13695,9 @@ private:
             // a fresh Return loan from it, exactly as a nested
             // reference-returning call and a returned carrier do above, and
             // retires the body-local capability at this boundary.
+            // A payload selection likewise retains its local activation and
+            // tag proof; changing that loan into an escaping Return would
+            // erase the distinction between selection and publication.
             const MirLoan source = output.loans[borrow.loan - 1];
             const HirValue *returned = findValue(*statement.value);
             const MirLoanId published =
