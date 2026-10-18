@@ -397,5 +397,114 @@ int main() { return 0; }
              "and retirement between argument capture and publication");
     }
   }
+  const auto nested = lang::Frontend().analyze(
+      root / "tests" / "reference-payload-nested-constructor.gti", R"gti(
+enum Reading { empty, value(int& owner) };
+enum Outer { empty, wrapped(Reading reading) };
+[[borrowed_from(owner)]] Outer make(int& owner) {
+  return Outer::wrapped(Reading::value(owner));
+}
+int main() { return 0; }
+)gti",
+      {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  if (!nested.canGenerateCode())
+    for (const auto &diagnostic : nested.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(nested.canGenerateCode(),
+         "nested constructor retains the exact staged producer ancestry");
+  if (nested.canGenerateCode()) {
+    lang::HirFunctionInstanceId owner = 0;
+    lang::MirInstructionId inner = 0, outer = 0;
+    for (const auto &function : nested.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.operation == lang::MirOperation::PayloadConstruct &&
+              instruction.parameterTypes.size() == 1) {
+            owner = function.id;
+            if (instruction.parameterTypes.front().kind ==
+                lang::SemanticType::Enum)
+              outer = instruction.id;
+            else
+              inner = instruction.id;
+          }
+    expect(owner && inner && outer, "nested fixture has two exact producers");
+    for (int mutation = 0; owner && inner && outer && mutation != 5; ++mutation) {
+      auto malformed = nested.mir;
+      auto &body =
+          lang::MirProgramTestAccess::functions(malformed)[owner - 1].body;
+      lang::MirInstruction *innerProducer = nullptr, *outerProducer = nullptr;
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions) {
+          if (instruction.id == inner) innerProducer = &instruction;
+          if (instruction.id == outer) outerProducer = &instruction;
+        }
+      bool changed = false;
+      if (innerProducer && outerProducer && innerProducer->loan &&
+          outerProducer->loan) {
+        auto &retained = body.loans[*innerProducer->loan - 1];
+        auto &published = body.loans[*outerProducer->loan - 1];
+        if (mutation == 0) {
+          published.parent = retained.id;
+          changed = true;
+        } else if (mutation == 1) {
+          retained.producedBy = outerProducer->hirValue;
+          changed = true;
+        } else if (mutation == 2) {
+          innerProducer->loan = outerProducer->loan;
+          changed = true;
+        } else {
+          for (auto &block : body.blocks) {
+              auto &terminator = block.terminator;
+              if (terminator.kind == lang::MirTerminatorKind::Return &&
+                  terminator.returnLoan) {
+                if (mutation == 3)
+                  body.loans[*terminator.returnLoan - 1].conditions.clear();
+                else
+                  terminator.returnLoan = innerProducer->loan;
+                changed = true;
+              }
+          }
+        }
+      }
+      expect(changed, "nested mutation changes its exact proof target");
+      expect(lang::rebuildMirValueUses(body),
+             "nested mutation retains well-formed SSA use records");
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "nested constructor rejects substituted parent/producer/group "
+             "and erased or substituted return dependencies");
+    }
+  }
+  for (const auto *source : {
+           R"gti(
+enum Reading { empty, value(int& owner, int sequence) };
+[[borrowed_from(owner)]] Reading make(int& owner) {
+  return Reading::value(owner, 7);
+}
+int main() {
+  int owner = 3;
+  auto result = make(owner);
+  switch (result) {
+  case Reading::empty: return 1;
+  case Reading::value(value, sequence): return value + sequence - 10;
+  }
+}
+)gti",
+           R"gti(
+enum Reading { empty, value(int& owner) };
+[[borrowed_from(owner)]] Reading make(int& owner, bool fail) {
+  if (fail) return Reading::empty;
+  return Reading::value(owner);
+}
+int main() { return 0; }
+)gti"}) {
+    const auto result = lang::Frontend().analyze(
+        root / "tests" / "reference-payload-factory.gti", source,
+        {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(result.canGenerateCode(),
+           "factory calls and empty/borrowed return paths verify independently");
+  }
   return failures == 0 ? 0 : 1;
 }
