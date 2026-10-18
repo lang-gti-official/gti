@@ -4997,6 +4997,33 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       return;
     }
   }
+  // A selected payload reference can carry an exact external dependency even
+  // when the input carrier has several conditional paths. Prove the complete
+  // scalar result against the declared parameter inventory before consulting
+  // the older single-path carrier relay. This does not authorize the local
+  // carrier shell: its storage check above remains independent.
+  if (function != nullptr &&
+      conditionalReferenceReturn(function->returnType,
+                                 function->parameterTypes) &&
+      valueInfo->category == ValueCategory::Place) {
+    auto dependencies = storedBorrowDependencies(value);
+    if (!dependencies.empty() &&
+        std::all_of(dependencies.begin(), dependencies.end(),
+                    [&](const auto &dependency) {
+                      return dependency.place.valid() &&
+                             dependency.designatedFields.empty() &&
+                             dependency.conditions.empty() &&
+                             (function->returnType.referenceAccess ==
+                                  AccessMode::ReadOnly ||
+                              dependency.access == AccessMode::Mutable);
+                    })) {
+      for (auto &dependency : dependencies)
+        dependency.access = function->returnType.referenceAccess;
+      if (normalizedCompleteReturnBorrow(
+              *function, {.dependencies = std::move(dependencies)}))
+        return;
+    }
+  }
   // A lambda's contract is one read-only reference parameter: beyond the
   // stable physical-origin check above, the returned reference must derive
   // from that parameter. Field paths, dependency lists, receivers and

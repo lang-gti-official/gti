@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -27,6 +28,12 @@ int main() {
     }
   };
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  std::ifstream conditionalFixture(root / "tests" / "fixtures" /
+                                   "reference_payload_tryable.gti");
+  const std::string conditionalBorrowed(
+      (std::istreambuf_iterator<char>(conditionalFixture)),
+      std::istreambuf_iterator<char>());
+  expect(!conditionalBorrowed.empty(), "conditional reference fixture exists");
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze(root / "tests" / "tryable-propagation.gti",
                                     source, {root / "stdlib" / "prelude.gti"},
@@ -72,6 +79,26 @@ int main() {
     expect(located,
            std::string("missing ") + code + " with '" + fragment + "'");
   };
+
+  accepted(conditionalBorrowed,
+           "conditional borrowed success and owned residual use exact output "
+           "dependencies through source-defined propagation");
+  auto localReference = conditionalBorrowed;
+  const auto selectedReturn = localReference.find("return value;");
+  expect(selectedReturn != std::string::npos,
+         "conditional fixture has a selected return");
+  if (selectedReturn != std::string::npos) {
+    localReference.replace(selectedReturn, std::string("return value;").size(),
+                           "int local = 9; return local;");
+    const auto invalid = analyze(localReference);
+    expect(!invalid.canGenerateCode(),
+           "complete reference-return proof cannot substitute a local owner");
+    expect(std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-B0001";
+                        }),
+           "local reference escape fails before backend representation");
+  }
 
   const std::string nativePayloads = R"gti(
 [[c_abi]] struct NativeAddress { mut const int* address; mut int stamp; };

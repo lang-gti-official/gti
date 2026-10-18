@@ -4506,6 +4506,17 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
   if (!expression) {
     return nullptr;
   }
+  if (const auto complete = completeBorrowDependencySet(expression);
+      complete && complete->possibleAlternatives.empty() &&
+      !complete->dependencies.empty() &&
+      std::all_of(complete->dependencies.begin(), complete->dependencies.end(),
+                  [](const auto &dependency) {
+                    return dependency.designatedFields.empty() &&
+                           dependency.conditions.empty();
+                  }))
+    // A complete scalar result already identifies its external referents.
+    // Its argument expression may contain other alternatives/dependencies.
+    return nullptr;
   if (const auto *unary = exprAs<Unary>(expression.get());
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
     const SemanticType *operand = semanticModel.findType(*unary->right());
@@ -4706,6 +4717,21 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     -> std::optional<RetainedLoanSource> {
   if (!expression) {
     return std::nullopt;
+  }
+  if (const auto complete = completeBorrowDependencySet(expression);
+      complete && complete->possibleAlternatives.empty() &&
+      !complete->dependencies.empty() &&
+      std::all_of(complete->dependencies.begin(), complete->dependencies.end(),
+                  [](const auto &dependency) {
+                    return dependency.designatedFields.empty() &&
+                           dependency.conditions.empty();
+                  })) {
+    if (complete->dependencies.size() != 1 ||
+        complete->dependencies.front().parent == 0)
+      return std::nullopt;
+    const auto &dependency = complete->dependencies.front();
+    return RetainedLoanSource{.loan = dependency.parent,
+                              .dependency = dependency};
   }
   const auto mappedDependency = [&](const SemanticLoanInfo &loan,
                                     const ExprPtr &origin,
@@ -5565,6 +5591,20 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
     -> std::optional<TransientBorrowProduction> {
   if (!expression) {
     return std::nullopt;
+  }
+  if (const auto complete = completeBorrowDependencySet(expression);
+      complete && complete->possibleAlternatives.empty() &&
+      !complete->dependencies.empty() &&
+      std::all_of(complete->dependencies.begin(), complete->dependencies.end(),
+                  [](const auto &dependency) {
+                    return dependency.designatedFields.empty() &&
+                           dependency.conditions.empty();
+                  })) {
+    if (complete->dependencies.size() != 1)
+      return std::nullopt;
+    const auto &dependency = complete->dependencies.front();
+    return TransientBorrowProduction{.place = dependency.place,
+                                     .access = dependency.access};
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return transientBorrowProduction(grouping->expression());
