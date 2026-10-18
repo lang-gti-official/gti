@@ -63,7 +63,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Propagate a failed `result<T, E>` enum with `?`, moving owned strings out | [163: payload-enum propagation](163-payload-enum-propagation.gti) |
 | Compose enum, array and owning payloads in source-defined wrappers | [164: payload composition](164-payload-composition.gti) |
 | Consume a fallible view while retaining its external success borrow | [165: borrowed payload results](165-borrowed-payload-results.gti) |
-| Use promoted optional, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
+| Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -235,7 +235,7 @@ is a teaching helper, not a production server.
 | `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
 | `164-payload-composition.gti` | a source-defined optional containing another owning payload enum, consuming nested patterns, and a fixed-array payload |
 | `165-borrowed-payload-results.gti` | source-defined class and enum results with owning string errors and reference successes; checked selection and `borrowed_from` relay the exact external owner when `?` consumes the wrapper |
-| `166-source-optional.gti` | stable `std::optional` over ordinary payload-enum storage, `std::nullopt`, move assignment, consuming `value()` and `?` propagation |
+| `166-source-optional.gti` | stable `std::optional`, one-step declared returns and their ownership boundary, ordinary payload-enum storage, move assignment, consuming `value()` and `?` propagation |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

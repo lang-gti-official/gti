@@ -4934,6 +4934,21 @@ LSP checks. Formatting and whitespace checks pass. The active installation
 and unrelated local planning-document edits remain unchanged; asynchronous
 Gitea packaging is not additional local validation.
 
+## Declared return initialization
+
+`initialization_and_native_identity` covers implicit constructors for function,
+method, typed-lambda and concrete generic returns, explicit-only/access/ambiguity
+and single-conversion rejection, ownership and reference boundaries, eligible
+staged MIR constants, and source-bound HIR selection mutations.
+`conversion_operators` covers the shared one-step operator path, its ambiguity
+with constructors, optional string-chain rejection and named-owner copy checks.
+`implicit_return_construction_runtime` compares implicit and explicit forms at
+O0/O1/O2/O3 under C++20/C++23 and ASan/UBSan: result ownership, temporary receiver
+lifetime, local cleanup and partial construction failure retain identical
+source-defined traces. `implicit_return_construction_lsp` covers unsaved modifier
+changes, exact UTF-16 error spans, reference navigation and parser recovery.
+Example 166 demonstrates concise optional returns and an unrelated result type.
+
 ## Required examples for new language features
 
 Every new language feature **must include an accompanying runnable example

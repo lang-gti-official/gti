@@ -4507,8 +4507,13 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     return;
   }
 
+  // A declared value return initializes its exact destination through the
+  // same single implicit constructor/operator selection as a typed binding.
+  // The selected call checks the source's copy/move and borrow obligations.
   const SemanticType valueType =
-      analyzeInitializer(stmt.value(), currentReturnType);
+      analyzeInitializer(stmt.value(), currentReturnType, false, true);
+  const bool contextualInitialization =
+      recordsDeclarationConversion(*stmt.value());
   recordRawResult(stmt.value());
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
@@ -4517,7 +4522,15 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       currentReturnType.kind == SemanticType::CString) {
     validateOwnerDependentTextReturn(valueType, stmt.value());
   }
-  if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
+  // Contextual initialization produces a fresh destination value; do not
+  // mistake the original argument's place category for a copy of that value.
+  // A type-parameter destination has no constructor set until concrete
+  // reanalysis, which performs this same selection and ownership check.
+  const bool deferredInitialization =
+      !instanceAnalysisActive &&
+      currentReturnType.kind == SemanticType::TypeParameter;
+  if (!contextualInitialization && !deferredInitialization &&
+      !isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
     const ImplicitReturnMoveStatus implicitMove =
         analyzeImplicitReturnMove(stmt.value(), currentReturnType, valueType);
     if (implicitMove == ImplicitReturnMoveStatus::NotEligible) {

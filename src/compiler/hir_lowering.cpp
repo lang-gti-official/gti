@@ -5404,7 +5404,9 @@ private:
     const HirValueId id = value.id;
     body.values.push_back(std::move(value));
     body.contextualConstructions.push_back(
-        {.source = &initializer, .value = id});
+        {.source = &initializer,
+         .value = id,
+         .constructionProof = model.contextualConstructionProof(initializer)});
     return id;
   }
 

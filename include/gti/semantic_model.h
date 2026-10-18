@@ -2027,6 +2027,28 @@ private:
   std::uint64_t snapshot_;
 };
 
+// Immutable, source-bound contextual constructor selection. Concrete models
+// may select a destination whose constructor set was unknown in the primary.
+class SemanticContextualConstructionProof {
+public:
+  [[nodiscard]] const Expr *source() const { return source_; }
+  [[nodiscard]] const ResolvedConstructionInfo &construction() const {
+    return construction_;
+  }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticContextualConstructionProof(const Expr &source,
+                                      ResolvedConstructionInfo construction,
+                                      std::uint64_t snapshot)
+      : source_(&source), construction_(std::move(construction)),
+        snapshot_(snapshot) {}
+  const Expr *source_;
+  ResolvedConstructionInfo construction_;
+  std::uint64_t snapshot_;
+};
+
 struct SemanticFullExpression {
   std::size_t order = 0;
   const Stmt *statement = nullptr;
@@ -2412,6 +2434,9 @@ public:
   // of its own; this selected constructor takes it as the sole argument.
   [[nodiscard]] const ResolvedConstructionInfo *
   findContextualConstruction(const Expr &initializer) const;
+
+  [[nodiscard]] std::optional<SemanticContextualConstructionProof>
+  contextualConstructionProof(const Expr &initializer) const;
 
   // Whether this model, not a base, records the initializer's construction.
   [[nodiscard]] bool
