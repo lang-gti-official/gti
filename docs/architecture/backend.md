@@ -2672,13 +2672,25 @@ visitor-table dispatch from retirement without changing which GTI cleanup
 obligations run. Native copy/move/assignment availability follows the member
 representations; it cannot admit an operation absent from GTI's sealed traits.
 
+For private passive SSA and binding transport, a construction-only member
+such as a class containing a reference still needs native copy transport.
+When every alternative is trivially destructible and nothrow copy-constructible,
+but at least one is not copy-assignable, the carrier's private native copy
+assignment reconstructs the selected alternative instead. Self-copy is inert;
+the source tag, including the private vacant state, is preserved. This does not
+enable GTI assignment: semantic traits and MIR admission still reject assignment
+of a construction-only source type. Throwing-copy or nontrivially destructible
+alternatives do not receive this passive fallback.
+
 The carrier starts with only its private empty alternative active. Construction
 starts the selected union-member lifetime, then publishes its tag; an exception
 before publication leaves no complete alternative to destroy. Recursive empty
 union tails contain no resource. Native moves retain a valid moved-from member
 until MIR's scheduled shell retirement. Cross-alternative assignment retires
 the old member before constructing and publishing the replacement; same-tag
-assignment retains its member lifetime, and self-assignment is inert. A failed
+assignment retains its member lifetime where member assignment is available;
+construction-only transport uses the guarded reconstruction above. Self-assignment
+is inert. A failed
 cross-alternative native construction leaves a private vacant tag, which can
 only be retired or reconstructed, not exposed as a GTI value. GTI defined
 failure remains governed by MIR's explicit success/rollback edges, not native

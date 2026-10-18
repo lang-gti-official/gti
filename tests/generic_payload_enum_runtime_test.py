@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from native_fixture_build import build_fixture
 
 
 def run(command):
@@ -112,6 +113,13 @@ public:
   int read() { return this.owner; }
 };
 enum Holder { none, item(Carrier value) };
+[[borrowed_from(owner)]]
+Holder clone(int& owner) {
+  Carrier value = Carrier(owner);
+  Holder original = Holder::item(value);
+  Holder copied = original;
+  return copied;
+}
 int inspect(Holder& held) {
   switch (held) {
     case Holder::none: return 0;
@@ -124,6 +132,10 @@ int main() {
     Carrier value = Carrier(owner);
     Holder held = Holder::item(value);
     if (inspect(held) != 17) return 1;
+    Holder copied = held;
+    if (inspect(copied) != 17) return 3;
+    Holder escaped_shell = clone(owner);
+    if (inspect(escaped_shell) != 17) return 4;
   }
   owner = 23;
   return owner == 23 ? 0 : 2;
@@ -390,10 +402,14 @@ int main() {
             name, index, standard, optimization, flags, *_ = case
             binary = root / f"{name}-{index}"
             command = [str(compiler), str(root / (name + ".gti")), "--std", standard,
-                       "-" + optimization, "-o", str(binary)]
-            if flags:
-                command += ["--", *flags]
-            compiled = run(command)
+                       "-" + optimization]
+            suffix = ((pathlib.Path(__file__).parent / "fixtures" /
+                       "passive_payload_copy_transport.cpp").read_text()
+                      if name == "borrowed-class-payload" else "")
+            compiled = build_fixture(command, binary, native_suffix=suffix,
+                                     native_arguments=flags, standard=standard,
+                                     optimization=optimization, text=True,
+                                     capture_output=True, check=False)
             if compiled.returncode:
                 raise AssertionError(f"{name} {standard} {optimization}: compile failed\n" +
                                      compiled.stdout + compiled.stderr)

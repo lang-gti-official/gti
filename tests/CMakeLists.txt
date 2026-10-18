@@ -1458,6 +1458,10 @@ add_test(NAME enum_replacement_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/enum_replacement_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(enum_replacement_runtime PROPERTIES TIMEOUT 600)
 
+add_executable(gti_borrowed_payload_copy_tests borrowed_payload_copy_tests.cpp)
+target_link_libraries(gti_borrowed_payload_copy_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrowed_payload_copy COMMAND gti_borrowed_payload_copy_tests)
+
 add_executable(gti_enum_selector_tests enum_selector_tests.cpp)
 target_link_libraries(gti_enum_selector_tests PRIVATE gti_cpp_backend)
 add_test(NAME enum_selector COMMAND gti_enum_selector_tests)
