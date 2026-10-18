@@ -18,27 +18,12 @@ int main() {
         .analyze(root / "tests" / "reference-payload-semantic.gti", source,
                  {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   };
-  const auto onlyAdmissionDiagnostics = [&](const lang::FrontendResult
-                                                &result) {
-    bool expected = !result.diagnostics.empty();
+  const auto acceptedSemantics = [&](const lang::FrontendResult &result) {
     for (const auto &diagnostic : result.diagnostics) {
-      const bool gate =
-          diagnostic.code == "GTI-S2067" &&
-          (diagnostic.message ==
-               "Payload enums do not yet store reference fields." ||
-           diagnostic.message ==
-               "Payload enum fields are values and do not take 'mut'." ||
-           diagnostic.message.find(
-               "is not a supported owning or passive enum payload.") !=
-               std::string::npos);
-      if (!gate) {
-        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-        expected = false;
-      }
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     }
-    expect(
-        expected,
-        "producer positives must have only the closed admission diagnostics");
+    expect(result.syntaxValid && result.semanticValid,
+           "reference payload positive passes semantic analysis");
   };
   for (const bool exclusive : {false, true}) {
     const auto result = analyze(
@@ -57,13 +42,7 @@ int inspect(mut Reading input) {
 }
 int main() { return 0; }
 )gti");
-    // Deliberately observe semantic producer evidence while the independent
-    // public admission gate remains closed. This is not an accepted program
-    // or a test-only bypass of HIR/MIR verification.
-    expect(result.syntaxValid && !result.semanticValid &&
-               !result.canGenerateCode(),
-           "reference payloads remain source-rejected during proof staging");
-    onlyAdmissionDiagnostics(result);
+    acceptedSemantics(result);
     bool found = false;
     for (const auto &loan : result.semantics.loans()) {
       if (!loan.referenceSelection)
@@ -114,7 +93,7 @@ int inspect(mut Reading input) {
 int main() { return 0; }
 )gti");
   bool foundAlias = false;
-  onlyAdmissionDiagnostics(alias);
+  acceptedSemantics(alias);
   for (const auto &loan : alias.semantics.loans())
     if (loan.referenceSelection)
       if (const auto *parent = alias.semantics.findLoan(loan.parent);
@@ -149,7 +128,7 @@ int inspect(mut Pair input) {
 }
 int main() { return 0; }
 )gti");
-  onlyAdmissionDiagnostics(independent);
+  acceptedSemantics(independent);
   std::vector<lang::SemanticLoanPlace> owners;
   for (const auto &loan : independent.semantics.loans())
     if (loan.referenceSelection && loan.access == lang::AccessMode::Mutable &&
@@ -191,7 +170,7 @@ int consume(mut Pair input) {
 }
 int main() { return 0; }
 )gti");
-  onlyAdmissionDiagnostics(transfer);
+  acceptedSemantics(transfer);
   std::vector<lang::SemanticLoanId> transferred;
   for (const auto &loan : transfer.semantics.loans()) {
     if (!loan.referenceSelection ||
@@ -263,5 +242,53 @@ int main() { return 0; }
                return diagnostic.message.find("moved") != std::string::npos;
              }),
          "handoff does not restore availability of the consumed carrier");
+  for (const auto &source : {
+           R"gti(
+enum Reading { empty, value(int& owner) };
+[[borrowed_from(owner)]] Reading read(int& owner) {
+  return Reading::value(owner);
+}
+int main() { mut int owner = 3; auto result = read(owner); return 0; }
+)gti",
+           R"gti(
+enum Reading { empty, value(mut int& owner) };
+[[borrowed_from(owner)]] Reading read(mut int& owner) {
+  return Reading::value(owner);
+}
+int main() { mut int owner = 3; auto result = read(owner); return 0; }
+)gti",
+           R"gti(
+enum Inner { empty, value(int& owner) };
+enum Outer { empty, some(Inner inner) };
+[[borrowed_from(owner)]] Outer read(int& owner) {
+  return Outer::some(Inner::value(owner));
+}
+int main() { mut int owner = 3; auto result = read(owner); return 0; }
+)gti"})
+    acceptedSemantics(analyze(source));
+  for (const auto &source : {
+           R"gti(
+enum Reading { empty, value(int& owner) };
+Reading escape() { int local = 3; return Reading::value(local); }
+int main() { return 0; }
+)gti",
+           R"gti(
+enum Pair { empty, both(mut int& first, mut int& second) };
+int main() { mut int owner = 3; auto result = Pair::both(owner, owner); return 0; }
+)gti",
+           R"gti(
+enum Reading { empty, value(int& owner, int extra) };
+int mutate(mut int& owner) { owner = 7; return 1; }
+int main() {
+  mut int owner = 3;
+  auto result = Reading::value(owner, mutate(owner));
+  return 0;
+}
+)gti"}) {
+    const auto result = analyze(source);
+    expect(result.syntaxValid && !result.semanticValid,
+           "constructor rejects dangling owners, mutable aliases and later "
+           "field mutation");
+  }
   return failures == 0 ? 0 : 1;
 }
