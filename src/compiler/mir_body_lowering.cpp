@@ -3295,24 +3295,112 @@ private:
     }
   }
 
+  [[nodiscard]] std::optional<MirLoanDependency>
+  lowerCompleteBorrowDependency(const SemanticLoanDependency &dependency) {
+    if (!dependency.place.valid())
+      return std::nullopt;
+    MirLoanId parent = 0;
+    MirPlaceId selected = 0;
+    bool ambiguous = false;
+    const auto consider = [&](MirPlaceId candidate, AccessMode authority) {
+      const auto *place = output.findPlace(candidate);
+      if (!place || place->key != dependency.place ||
+          (dependency.access == AccessMode::Mutable &&
+           authority != AccessMode::Mutable))
+        return;
+      if (selected != 0 && !sameBorrowSource(selected, candidate))
+        ambiguous = true;
+      else
+        selected = candidate;
+    };
+    if (dependency.parent != 0) {
+      const auto mapped = semanticLoans.find(dependency.parent);
+      const auto *semantic = source.findLoan(dependency.parent);
+      if (mapped == semanticLoans.end() || !semantic)
+        return std::nullopt;
+      parent = mapped->second;
+      const auto *loan = output.findLoan(parent);
+      if (!loan)
+        return std::nullopt;
+      if (loan->entry && loan->kind == MirLoanKind::Stored) {
+        const auto base = loan->source;
+        const auto project = [&](const auto &fields, const auto &conditions,
+                                 AccessMode access) {
+          auto external = semantic->place;
+          for (const auto field : fields)
+            external.projections.push_back(
+                {.kind = PlaceProjectionKind::Field, .field = field});
+          if (external == dependency.place)
+            consider(projectBorrowFields(base, fields, conditions), access);
+        };
+        project(semantic->designatedFields, semantic->conditions,
+                semantic->access);
+        for (const auto &extra : semantic->additionalDependencies)
+          project(extra.designatedFields, extra.conditions, extra.access);
+      } else {
+        consider(loan->source, loan->access);
+        for (const auto &extra : loan->additionalDependencies)
+          consider(extra.source, extra.access);
+      }
+    } else {
+      // A direct physical owner can be materialized from its existing typed
+      // binding and field path. Dynamic projections must already have their
+      // evaluated MIR place; a semantic overlap key is not an index value.
+      if (const auto binding = localSymbols.find(dependency.place.root);
+          !dependency.place.receiver && binding != localSymbols.end()) {
+        const auto base = placeForBinding(binding->second);
+        std::vector<SymbolId> fields;
+        bool fieldPath = true;
+        for (const auto &projection : dependency.place.projections) {
+          if (projection.kind != PlaceProjectionKind::Field) {
+            fieldPath = false;
+            break;
+          }
+          fields.push_back(projection.field);
+        }
+        if (fieldPath) {
+          const auto projected = projectBorrowFields(base, fields);
+          if (const auto *place = output.findPlace(projected))
+            consider(projected, place->access);
+        }
+      }
+      if (selected == 0)
+        for (const auto &place : output.places)
+          if (place.root != MirPlaceRootKind::Value &&
+              place.root != MirPlaceRootKind::Temporary)
+            consider(place.id, place.access);
+    }
+    if (selected == 0 || ambiguous)
+      return std::nullopt;
+    return MirLoanDependency{.source = selected,
+                             .parent = parent,
+                             .designatedFields = dependency.designatedFields,
+                             .access = dependency.access,
+                             .conditions = dependency.conditions};
+  }
+
   MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info) {
     const MirValueId id = output.values.size() + 1;
     output.values.push_back(
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
     if (const auto *source = findValue(sourceValue);
         source && source->info.type == output.values.back().info.type &&
-        source->borrowDependencies &&
-        !source->borrowDependencies->possibleAlternatives.empty()) {
+        source->borrowDependencies) {
       // Transport source-established complete sets, including known-empty
       // alternatives. MIR independently reconstructs their value/storage flow;
       // absence is never upgraded to an empty proof by lowering.
-      if (!source->borrowDependencies->dependencies.empty()) {
-        valid = false;
-      } else {
-        output.values.back().borrowDependencies = MirBorrowDependencySet{
-            .possibleAlternatives =
-                source->borrowDependencies->possibleAlternatives};
+      MirBorrowDependencySet complete{
+          .possibleAlternatives =
+              source->borrowDependencies->possibleAlternatives};
+      for (const auto &dependency : source->borrowDependencies->dependencies) {
+        const auto lowered = lowerCompleteBorrowDependency(dependency);
+        if (!lowered) {
+          valid = false;
+          return id;
+        }
+        complete.dependencies.push_back(*lowered);
       }
+      output.values[id - 1].borrowDependencies = std::move(complete);
     }
     return id;
   }
@@ -9985,11 +10073,10 @@ private:
         value->info.category != ValueCategory::Place)
       (void)initializeValueLifecycle(instruction, *value);
     if (instruction.operation == MirOperation::Closure &&
-        value->borrowDependencies &&
-        !value->borrowDependencies->dependencies.empty()) {
+        !value->captureBorrowDependencies.empty()) {
       const auto *target = program.findLambda(*instruction.lambdaTarget);
       std::vector<MirLoanDependency> dependencies;
-      for (const auto &dependency : value->borrowDependencies->dependencies) {
+      for (const auto &dependency : value->captureBorrowDependencies) {
         const auto capture = target == nullptr ? 0 : [&] {
           for (std::size_t index = 0; index < target->captures.size(); ++index)
             if (!dependency.designatedFields.empty() &&
