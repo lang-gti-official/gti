@@ -26,6 +26,23 @@ def main():
               "generic_payload_enum.gti").read_text()
     prefix = source.split("void exercise()", 1)[0]
     cases = {
+        "nested-reference-construction": ("""
+enum Shared { empty, value(int& owner) };
+enum SharedOuter { empty, wrapped(Shared inner) };
+enum Exclusive { empty, value(mut int& owner) };
+enum ExclusiveOuter { empty, wrapped(Exclusive inner) };
+int main() {
+  mut int owner = 3;
+  {
+    auto shared = SharedOuter::wrapped(Shared::value(owner));
+  }
+  {
+    auto exclusive = ExclusiveOuter::wrapped(Exclusive::value(owner));
+  }
+  owner = 19;
+  return owner == 19 ? 0 : 1;
+}
+""", 0, ""),
         "success": (source, 0, "1\n4\n3\n2\n"),
         "generic-owner-capture": (prefix + """
 int main() {
