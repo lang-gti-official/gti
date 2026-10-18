@@ -8720,6 +8720,21 @@ gates are queued through the shared suite window in
 retention, independent complete construction, call transport and final source
 admission remain separate pending obligations.
 
+The constructor staging increment lowers the semantic ordered-input plan for
+reference-bearing alternatives through ordinary MIR `CallInput` instructions.
+Earlier prepared owning fields retain their rollback obligations across later
+field evaluation; publication transfers those obligations once and creates the
+exact grouped stored dependency. Independent program flow derives the result
+from the sealed alternative signature and staged field facts, prefixes each
+field path and nested guard, and compares the resulting complete set with both
+the value annotation and grouped loan. Missing field facts remain unknown;
+reference-free fields use their complete typed inventory. Local optimized-
+configuration syntax checks pass for the lowering and verifier translation
+units. This is a published integration prerequisite, not runtime acceptance:
+the parent branch must connect body-level ordered-consumer/liveness checks and
+source admission, then pass direct/nested construction, later-input failure,
+alias/dangling rejection and malformed stage/origin/group tests before release.
+
 An error-only input to a reference-returning operation cannot manufacture an
 origin: if its verified normal-return contract requires an impossible active
 dependency, the implementation must represent that lack of a normal result
