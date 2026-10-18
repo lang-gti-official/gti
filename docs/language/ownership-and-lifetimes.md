@@ -952,6 +952,11 @@ the complete origin, access, field-path and alternative-tag set is unchanged.
 It preserves every external owner, including additional owners, after the
 original carrier's last use; it does not permit assignment or copying an
 exclusive or cleanup-bound capability.
+This does not remove child-loan ancestry: an enum carrying a class constructed
+from a local child reborrow still cannot return that dependency under a
+conditional borrowed-result contract, with or without an intervening copy.
+Direct reference alternatives can retain an eligible caller-owned reference
+through a copied return under their verified result contract.
 HIR carries
 proven straight-line, nested-merge, and conditional branch-entry endpoints,
 along with bounded switch-exit and same-path immediate-break endpoints. MIR

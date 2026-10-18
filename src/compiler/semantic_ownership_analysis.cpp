@@ -4565,10 +4565,11 @@ auto SemanticVisitor::Impl::resolvedBorrowVariable(
   const auto *info = semanticModel.findExpression(variable);
   if (info == nullptr)
     return resolve(variable.name());
-  if (info->symbol == 0)
+  const auto identity = semanticModel.findResolvedSymbol(variable);
+  if (identity == 0)
     return nullptr;
   const auto exact = [&](const Symbol &symbol) {
-    return symbolForDeclaration(symbol.declaration) == info->symbol;
+    return symbolForDeclaration(symbol.declaration) == identity;
   };
   // Initializers are resolved before their new binding is installed. A later
   // retention query must use that resolved identity, even when the new local

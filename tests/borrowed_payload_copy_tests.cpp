@@ -10,6 +10,7 @@ public:
 };
 enum Holder { none, item(Carrier value) };
 enum Pair { empty, both(int& first, int& second) };
+enum Reading { empty, item(int& value) };
 int inspect(Holder& held) {
   switch (held) {
     case Holder::none: return 0;
@@ -23,10 +24,9 @@ int inspect_pair(Pair& held) {
   }
 }
 [[borrowed_from(owner)]]
-Holder clone(int& owner) {
-  Carrier value = Carrier(owner);
-  Holder original = Holder::item(value);
-  Holder copied = original;
+Reading clone(int& owner) {
+  Reading original = Reading::item(owner);
+  Reading copied = original;
   return copied;
 }
 )gti";
@@ -55,8 +55,14 @@ int main() {
     Pair empty = Pair::empty;
     Pair empty_copy = empty;
     if (inspect_pair(empty_copy) != 0) return 3;
-    Holder escaped_shell = clone(first);
-    if (inspect(escaped_shell) != 17) return 4;
+    Reading escaped_shell = clone(first);
+    switch (escaped_shell) {
+      case Reading::empty: return 4;
+      case Reading::item(value): {
+        if (value != 17) return 4;
+        break;
+      }
+    }
   }
   first = 31;
   second = 47;
@@ -158,5 +164,27 @@ int main() {
 }
 )gti",
          "shadowed copies still protect the original external owner");
+  for (const bool copy : {false, true}) {
+    const auto nestedReturn =
+        analyzeWithStandardLibrary("nested-carrier-return.gti", prefix + R"gti(
+[[borrowed_from(owner)]]
+Holder nested(int& owner) {
+  Carrier value = Carrier(owner);
+  Holder held = Holder::item(value);
+)gti" + (copy ? "Holder copied = held; return copied;" : "return held;") +
+                                                                    R"gti(
+}
+int main() { return 0; }
+)gti");
+    expect(nestedReturn.syntaxValid && !nestedReturn.semanticValid &&
+               std::any_of(nestedReturn.diagnostics.begin(),
+                           nestedReturn.diagnostics.end(),
+                           [](const auto &d) {
+                             return d.code == "GTI-S2017" &&
+                                    d.message.find("local child reborrow") !=
+                                        std::string::npos;
+                           }),
+           "copying does not erase a nested constructor's child ancestry");
+  }
   return failures ? 1 : 0;
 }
