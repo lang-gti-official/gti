@@ -4041,14 +4041,20 @@ private:
     std::size_t parameter = 0;
   };
 
-  [[nodiscard]] PredeclaredTextBorrowSource
-  predeclaredTextBorrowSource(const ExprPtr &expression,
-                              const FunctionInfo &function);
+  [[nodiscard]] PredeclaredTextBorrowSource predeclaredTextBorrowSource(
+      const ExprPtr &expression, const FunctionInfo &function,
+      const SemanticType &ownerType = SemanticType::Unknown);
+
+  [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
+                                        const FunctionInfo &function,
+                                        SemanticType ownerType);
 
   std::unordered_set<const FunctionDecl *> activeTextBorrowSummaries;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
-  dynamicTextReturnBorrowSummary(const FunctionInfo &function);
+  dynamicTextReturnBorrowSummary(
+      const FunctionInfo &function,
+      const SemanticType &ownerType = SemanticType::Unknown);
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);
