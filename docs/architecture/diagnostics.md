@@ -681,7 +681,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   do not attach a fix-it because choosing a target function, parameter access,
   or pack is not mechanical. Parser-owned incomplete folds remain
   `GTI-P0001` and must recover the surrounding function.
-- `GTI-S2054` owns an invalid `extern "C"` declaration, including misplaced
+- `GTI-S2054` owns an invalid `extern "C"` declaration and an attempt to
+  derive an implicit checked loan from foreign storage without a GTI owner
+  witness. Foreign load/store permission uses the ordinary `GTI-S2055` unsafe
+  obligation; taking an inert raw address is distinct from a load.
+  Invalid declarations include misplaced
   or invalid `[[link_name]]` metadata and an exact symbol or parameter spelling
   that cannot be represented portably in the generated C17/C++ header. A link
   name points at its string literal; an ordinary symbol points at its source
@@ -820,6 +824,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   top-level nominal type argument. Do not offer a fix-it: changing the target,
   argument type, package ownership, or declaration location requires intent.
 - `GTI-S2123` owns concepts with a body, conformance blocks, and their uses.
+  The block owns written header diagnostics, including generic parameter
+  constraints. Generated operations reuse those parameter identities and do
+  not repeat concept, arity or pack diagnostics from their restated requires
+  clauses. Operation-relative parameter/name collisions remain checked.
+  Invisible concepts use `GTI-S2024` with the declaring source and include
+  suggestion, also for an empty block; compiler-private paths retain
+  `GTI-S2058`. These checks are independent of the number of operations.
   - **Declarations:** a body with other than one type parameter, a duplicate
     member name, or an operation with a body-only feature (generic
     parameters, requires clause, default, pack, modifier or receiver
@@ -951,12 +962,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   - a generic operand without a `requires std::tryable<T>` conjunct;
   - an operand that cannot be moved, or a named one that cannot be copied,
     suggesting `?std::move(name)`;
-  - a borrowing operand, value type or residual type;
+  - a borrowing operand without a complete checked dependency inventory, a
+    reference success without an exact checked return mapping, or a borrowed
+    residual; a checked shared/exclusive reference success is supported;
   - an enclosing callable without a declared return type, or a `void` one;
   - a return type that is neither the residual type nor constructible from it
     through exactly one `implicit` constructor;
   - use in a constexpr function;
-  - an operand that is not a class or struct, such as a payload enum.
+  - an operand that is not a class, struct or payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has
   proved a defining include. Preserve the unresolved source-name span and
   message, add the verified include hints and zero-width edits. The same rule

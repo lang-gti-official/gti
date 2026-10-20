@@ -1,46 +1,46 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "1ce3e32633936c49e19d5010deb081de87b90e08cabf14c702db6701ee116615",
-    "stdlib/std/algorithm.gti": "ca85de188a5b770453de0cbf1942015c64b364b001f8a58e06823b40f1313e7c",
+    "stdlib/prelude.gti": "73952e55d2ffc163d44025b8c31c0fd98bfba667da85fea702d58b6e70fe3906",
+    "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/atomic.gti": "c7edcd7882161c47b5a6de827025181621df547bfaaedbed5cbcafe9a7f89d2b",
+    "stdlib/std/atomic.gti": "c78f9f7632b8ea3a3d757b1027a570a0581071bf270e7041bf2f57f1b67abfa6",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
     "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
     "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
     "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
     "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
-    "stdlib/std/deque.gti": "6f649140cb0b34f238f7377f3c0ff0326aed9d3758368fa7b749c5c8f4562fb6",
+    "stdlib/std/deque.gti": "c0e5fd8a5be59682871b2ded7e2d7e1b066ceec1fb18372288d9f12da2010c80",
     "stdlib/std/detail/iterator.gti": "37ee100c51eb970cdf06df5f79a8a27afab75f977787ec148b752f1a8bb9aab9",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/optional.gti": "623d543812dec501d51b19588e57cc002d22a65865bada09b5eae94951f3efe9",
+    "stdlib/std/experimental/optional.gti": "47f04282ad4da9c60f38dbdd6fba8e8aa9add6052addc0bf0245381bef0a45fa",
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
-    "stdlib/std/forward_list.gti": "a5a15a5fcf0b908e161df030798829c11a95bfd4d9bc8c116394469e6d56af1a",
+    "stdlib/std/forward_list.gti": "56e3d1660bc62d0603a1664d9431cc9a3ae4c25a5ef4b00f4e0af6a2d896d6cd",
     "stdlib/std/functional.gti": "91396f52b1af128cede122c96e18e875d967a1baf62964112f0c3d4a0cee17d8",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "89bca11053f5e8fa115c3625047bb3b6708c34b6c18f350e74cf4a8c9b96f286",
-    "stdlib/std/json.gti": "0baff47898a7646937e3fff4e8425d1a3b51b80b92fd1160653e765bc001b82d",
-    "stdlib/std/list.gti": "b670d0cf766d8bfae1cc32c51517510bcd434dc834ed31d8f8a46ff59da800e0",
-    "stdlib/std/map.gti": "24bf0e1e969a92e4d6df567d6b13e1e5e2519e3bf2f80c225ca5937dcfeba3cf",
+    "stdlib/std/json.gti": "e2b7dffbc823a116a3a2ddd3023f4d736ed20781611ef7e8d410f99e37f3c1a3",
+    "stdlib/std/list.gti": "a72d8a3c66c909802740b49864bb59f4509a563c9d8d81517f030d877f25a0f1",
+    "stdlib/std/map.gti": "e3d8791e6d607ec1bf654d3f6595230de9f21ba1e2f6d03f3ae973b9063a1edc",
     "stdlib/std/memory.gti": "27d3221ed33ca461825a22a19829c0f8704ffd15afc5eecb833406f1ba4922df",
-    "stdlib/std/meta.gti": "a153608856dee42b8a5e72d66b6af77167b0e226c6893147158a130400a26a3e",
+    "stdlib/std/meta.gti": "6db0c9986cabc8765fbf23a886915466c085e04a115c37a5cb66a9017b6d6931",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
-    "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
+    "stdlib/std/optional.gti": "2e82bc676e104581097ac037bec38fc90b6c977a6ac1c52110b8e2cab67c4628",
     "stdlib/std/paired_span.gti": "cc4ebd074bb8149a2accc863df73d845ca16451e6f23fdc0e64249da566b72f1",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/polymorphic.gti": "a2194db76d6e36b30e813e6fa46baf4a31937b8362c49764f20ed7f9589a8a77",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
-    "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
+    "stdlib/std/queue.gti": "aa3ce07548d92e58357e88da1dd56234258a8b65c941a45eb406ca2d61771061",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/resource.gti": "54fc9c2e5dfe54e81d48f58b1c30d007176d4779fab9d78e34e695c28c21cf2d",
     "stdlib/std/resource_vector.gti": "168647ac6a6b78f5559884bd2860dfb2b6f52e5187914ac445fe4d7dbb8910c3",
-    "stdlib/std/set.gti": "21ae1fa7f3e6344a2bfe17c0a6f0fc1a274954bfe7a52d6b46e0a44bb84dc779",
+    "stdlib/std/set.gti": "79607e9740ba8b226c6c58773fbd5dc6dce6df1197cd6b1e867efd52b97ab2fa",
     "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
     "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
@@ -49,118 +49,227 @@
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/testing.gti": "18cf2151c6ef75c12f5adb4a52bd95435d23dce84d5e29fbaabade33bedb2ae0",
     "stdlib/std/thread.gti": "8cbe5f5b4807a6e2480213c04f0ff09f692f72c55527b3b75198d92a8027a732",
-    "stdlib/std/unordered_map.gti": "8f2b0f540d58b9e2a363c33b1708e31bc13cf4985051f9ae9a82c071bc411bb1",
-    "stdlib/std/unordered_set.gti": "d34da5c1a6347dea83c385c536c7eaf217335da2bcab7ba99275a9ea26f52fc4",
+    "stdlib/std/unordered_map.gti": "64818406362ff0b99c30986dc7a0c25f30018eb8c28f4e1f4a3adb2d12571692",
+    "stdlib/std/unordered_set.gti": "53125c982b172a3a0fc8264551d67faa34deaacd46fe1fe187b2a0a220d2b536",
     "stdlib/std/utility.gti": "959b87c2cd332ad51a4d1711fb4e94b83ab752cb8af886e2aa3bbf2658815e7d",
-    "stdlib/std/vector.gti": "281a64b7d752fe2abcd942d513e40f57f5a2e44cc807a2bcf1b6ab95db069956"
+    "stdlib/std/vector.gti": "84d0df8e90673d1f034b5947da58b352f9df1a3aaf98ad2b837f8398dfda061e"
   },
   "cases": [
     {
       "id": "algorithm",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_algorithm.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-boundaries",
       "mode": "run",
       "source": "tests/fixtures/algorithm_boundaries.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-mutation",
       "mode": "run",
       "source": "tests/fixtures/algorithm_mutation.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-ordered-search",
       "mode": "run",
       "source": "tests/fixtures/ordered_search.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-ordered-search-cost",
       "mode": "run",
       "source": "tests/fixtures/ordered_search_cost.gti",
-      "native_sources": ["tests/fixtures/stdlib_adoption_allocation_counts.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/stdlib_adoption_allocation_counts.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-ordered-search-example",
       "mode": "run",
       "source": "examples/139-ordered-search.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "urgent jobs: 2\njobs at priority 5: 2\npriority found\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "urgent jobs: 2\njobs at priority 5: 2\npriority found\n",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-ordered-search-user-types",
       "mode": "run",
       "source": "tests/fixtures/ordered_search_user_types.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-owned-example",
       "mode": "run",
       "source": "examples/101-owned-algorithm-results.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "terrain.compiled\nplayer.compiled\n8\n3\n3\n1\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "terrain.compiled\nplayer.compiled\n8\n3\n3\n1\n",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-owned-transform",
       "mode": "run",
       "source": "tests/fixtures/algorithm_transform_owned.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-search",
       "mode": "run",
       "source": "tests/fixtures/algorithm_search.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "algorithm-user-types",
       "mode": "run",
       "source": "tests/fixtures/algorithm_user_types.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "allocator-storage",
       "mode": "run",
       "source": "tests/fixtures/allocator_storage.gti",
-      "native_sources": ["tests/fixtures/allocator_storage_alignment.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/allocator_storage_alignment.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "arena-pool",
       "mode": "run",
       "source": "tests/fixtures/arena_pool.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "array",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_array.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "associative-hashes",
       "mode": "run",
       "source": "tests/fixtures/associative_hash_contracts.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "associative-map",
@@ -237,60 +346,130 @@
       "mode": "run",
       "source": "tests/fixtures/atomic_scalar.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "atomic-fetch",
       "mode": "run",
       "source": "tests/fixtures/atomic_fetch.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "atomic-orders",
       "mode": "run",
       "source": "tests/fixtures/atomic_orders.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "atomic-wait",
       "mode": "run",
       "source": "tests/fixtures/atomic_wait.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "borrowing-callable-erasure",
       "mode": "run",
       "source": "tests/fixtures/checked_callable_erasure.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "borrowing-callable-example",
       "mode": "run",
       "source": "examples/156-borrowing-callbacks.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "build",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_build.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "c-string-import",
       "mode": "run",
       "source": "examples/151-c-string-import.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "foreign-style text\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "foreign-style text\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "callable-result-types",
+      "mode": "run",
+      "source": "examples/167-callable-result-types.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "mapped 42\n",
+        "stderr": ""
+      }
     },
     {
       "id": "charconv-float",
@@ -324,29 +503,57 @@
       "id": "charconv-owned-arguments",
       "mode": "run",
       "source": "tests/fixtures/charconv_owned_arguments.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "chrono",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_chrono.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cmath",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "complete-containers-collection",
       "mode": "run",
       "source": "tests/fixtures/complete_containers_collection.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "complete-containers-ownership",
@@ -422,193 +629,375 @@
       "id": "composable-io",
       "mode": "run",
       "source": "tests/fixtures/composable_io.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "composable-io-native",
       "mode": "run",
       "source": "tests/fixtures/composable_io_native.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "stdin": "a\u0000z\n",
-      "expected": {"exit_code": 0, "stdout": "a\u0000z\n", "stderr": "ok"}
+      "expected": {
+        "exit_code": 0,
+        "stdout": "a\u0000z\n",
+        "stderr": "ok"
+      }
     },
     {
       "id": "constexpr-chrono",
       "mode": "run",
       "source": "tests/fixtures/constexpr_chrono.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "constexpr-library",
       "mode": "run",
       "source": "tests/fixtures/constexpr_library_positive.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "constexpr-operators",
       "mode": "run",
       "source": "tests/fixtures/constexpr_operators.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "constexpr-readonly-references",
       "mode": "run",
       "source": "tests/fixtures/constexpr_readonly_references.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "container-member-aliases",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_container_aliases.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "container-swap",
       "mode": "run",
       "source": "tests/fixtures/container_swap.gti",
-      "native_sources": ["tests/fixtures/container_swap_oracle.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/container_swap_oracle.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cstdio",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cstdio.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "stdin": "Qsecret\n",
       "files": {
-        "bytes.bin": {"encoding": "hex", "contents": "41005a"}
+        "bytes.bin": {
+          "encoding": "hex",
+          "contents": "41005a"
+        }
       },
-      "expected": {"exit_code": 0, "stdout": "password: io-out\n", "stderr": "io-err\n"}
+      "expected": {
+        "exit_code": 0,
+        "stdout": "password: io-out\n",
+        "stderr": "io-err\n"
+      }
     },
     {
       "id": "cthread",
       "mode": "run",
       "source": "tests/fixtures/cthread_yield.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-concurrent",
       "mode": "run",
       "source": "tests/fixtures/cthread_yield_concurrent.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-condition",
       "mode": "run",
       "source": "tests/fixtures/cthread_condition.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-condition-concurrent",
       "mode": "run",
       "source": "tests/fixtures/cthread_condition_concurrent.gti",
-      "native_sources": ["tests/fixtures/cthread_condition_context.cpp"],
+      "native_sources": [
+        "tests/fixtures/cthread_condition_context.cpp"
+      ],
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-create-join",
       "mode": "run",
       "source": "tests/fixtures/cthread_create_join.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-identity",
       "mode": "run",
       "source": "tests/fixtures/cthread_identity.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-identity-concurrent",
       "mode": "run",
       "source": "tests/fixtures/cthread_identity_concurrent.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-mutex",
       "mode": "run",
       "source": "tests/fixtures/cthread_mutex.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-mutex-concurrent",
       "mode": "run",
       "source": "tests/fixtures/cthread_mutex_concurrent.gti",
-      "native_sources": ["tests/fixtures/cthread_mutex_context.cpp"],
+      "native_sources": [
+        "tests/fixtures/cthread_mutex_context.cpp"
+      ],
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-once",
       "mode": "run",
       "source": "tests/fixtures/cthread_once.gti",
-      "native_sources": ["tests/fixtures/cthread_once_context.cpp"],
+      "native_sources": [
+        "tests/fixtures/cthread_once_context.cpp"
+      ],
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-sleep",
       "mode": "run",
       "source": "tests/fixtures/cthread_sleep.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "cthread-sleep-concurrent",
       "mode": "run",
       "source": "tests/fixtures/cthread_sleep_concurrent.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "encoding",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_encoding.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "environment",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_environment.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "experimental-optional",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_experimental_optional.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "4\n42\nempty\nkept\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "4\n42\nempty\nkept\n",
+        "stderr": ""
+      }
     },
     {
       "id": "filesystem",
       "mode": "run",
       "source": "tests/fixtures/filesystem_path.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "filesystem path: all checks passed\n",
@@ -619,7 +1008,10 @@
       "id": "filesystem-constructor",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_filesystem_constructor.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "",
@@ -644,7 +1036,10 @@
       "id": "format",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_format.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "value=7 host=gitea.example ok=1 enabled=true\ndone\n",
@@ -655,30 +1050,60 @@
       "id": "format-customization",
       "mode": "run",
       "source": "tests/fixtures/extensible_formatting.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "ID=002a Record(7)\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "ID=002a Record(7)\n",
+        "stderr": ""
+      }
     },
     {
       "id": "format-panic-adoption",
       "mode": "run",
       "source": "tests/fixtures/panic_adoption.gti",
-      "native_sources": ["tests/fixtures/panic_adoption_io.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "{raw}{{raw}}\n1 2 three\n", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/panic_adoption_io.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "{raw}{{raw}}\n1 2 three\n",
+        "stderr": ""
+      }
     },
     {
       "id": "forward-list-algorithms",
       "mode": "run",
       "source": "tests/fixtures/forward_list_algorithms.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "forward-list-empty",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_forward_list_empty.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "forward-list-iterator",
@@ -698,50 +1123,99 @@
       "id": "forward-list-operations",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_forward_list.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "functional",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_functional.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "http",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_http.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "http-url-operators",
       "mode": "run",
       "source": "tests/fixtures/http_url_operators.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "integral-enum-example",
       "mode": "run",
       "source": "examples/110-integral-enums.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "ready opcode=2a bits=00101010\ntoken creation failed: -7\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "ready opcode=2a bits=00101010\ntoken creation failed: -7\n",
+        "stderr": ""
+      }
     },
     {
       "id": "integral-enum-formatting",
       "mode": "run",
       "source": "tests/fixtures/integral_enum_formatting.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "token creation failed: 9\nnamed 18446744073709551615\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "token creation failed: 9\nnamed 18446744073709551615\n",
+        "stderr": ""
+      }
     },
     {
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "iterator-checked-position",
@@ -865,256 +1339,520 @@
       "id": "iterator-text-view-module",
       "mode": "run",
       "source": "tests/fixtures/text_view_iterator_module.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "json",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_json.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "json-config",
       "mode": "run",
       "source": "tests/fixtures/json_config.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "json-owning-error-backend",
       "mode": "run",
       "source": "tests/fixtures/json_expected_value_backend_bug.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "json-parity",
       "mode": "run",
       "source": "tests/fixtures/json_parity.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "manual-object-lifetimes",
       "mode": "run",
       "source": "examples/125-manual-object-lifetimes.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "42\nrelocated\n43\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "42\nrelocated\n43\n",
+        "stderr": ""
+      }
     },
     {
       "id": "manual-object-pool",
       "mode": "run",
       "source": "examples/128-inline-object-pool.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "1\n2\n4\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "1\n2\n4\n",
+        "stderr": ""
+      }
     },
     {
       "id": "memory-layout",
       "mode": "run",
       "source": "examples/119-runtime-object-layout.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "meta",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_meta.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "mutable-span",
       "mode": "run",
       "source": "tests/fixtures/mutable_span.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "mutable-span-owned",
       "mode": "run",
       "source": "tests/fixtures/mutable_span_owned.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "mutex",
       "mode": "run",
       "source": "tests/fixtures/mutex_basic.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "mutex-concurrent",
       "mode": "run",
       "source": "tests/fixtures/mutex_concurrent.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "mutex-move-only",
       "mode": "run",
       "source": "tests/fixtures/mutex_move_only.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "native-c-scalars",
       "mode": "run",
       "source": "examples/123-native-c-scalars.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "numeric",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_numeric.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "numeric-boundaries",
       "mode": "run",
       "source": "tests/fixtures/numeric_boundaries.gti",
-      "native_sources": ["tests/fixtures/numeric_boundaries_oracle.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/numeric_boundaries_oracle.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "numeric-source-storage",
       "mode": "run",
       "source": "examples/033-source-concepts.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "optional",
       "mode": "run",
       "source": "tests/fixtures/optional_value.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "optional-clone",
       "mode": "run",
       "source": "tests/fixtures/optional_clone.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "optional-expected-composition",
       "mode": "run",
       "source": "tests/fixtures/optional_expected_composition.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "optional-nested",
       "mode": "run",
       "source": "tests/fixtures/optional_nested.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "optional-promoted",
+      "mode": "run",
+      "source": "examples/166-source-optional.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "5\nmissing\nready\n",
+        "stderr": ""
+      }
     },
     {
       "id": "optional-value-or-contract",
       "mode": "run",
       "source": "tests/fixtures/optional_value_or_contract.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owned-error-pipelines",
       "mode": "run",
       "source": "tests/fixtures/stdlib_owned_error_pipelines.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function",
       "mode": "run",
       "source": "tests/fixtures/owning_function.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-borrows",
       "mode": "run",
       "source": "tests/fixtures/owning_function_borrows.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-items",
       "mode": "run",
       "source": "tests/fixtures/owning_function_items.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-mutable",
       "mode": "run",
       "source": "tests/fixtures/owning_function_mutable.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-mutable-arguments",
       "mode": "run",
       "source": "tests/fixtures/owning_function_mutable_arguments.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-mutable-arguments-cleanup",
       "mode": "run",
       "source": "tests/fixtures/owning_function_mutable_arguments_failure.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "7\n1\n9\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "7\n1\n9\n",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-schema",
       "mode": "run",
       "source": "tests/fixtures/owning_function_schema.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "owning-function-temporary-target",
       "mode": "run",
       "source": "tests/fixtures/owning_function_temporary_target.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "paired-span",
       "mode": "run",
       "source": "tests/fixtures/paired_span.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "panic-expected",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_panic_expected.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "polymorphic",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_polymorphic.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "prelude-output",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_prelude_output.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "prelude o42\n!\n",
@@ -1125,14 +1863,24 @@
       "id": "process",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_process.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "random",
       "mode": "run",
       "source": "tests/fixtures/random_engine.gti",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "random: all checks passed\n",
@@ -1143,227 +1891,469 @@
       "id": "raw-owner-witness",
       "mode": "run",
       "source": "tests/fixtures/raw_owner_witness.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "raw-pointer-conversion",
       "mode": "run",
       "source": "tests/fixtures/raw_pointer_conversion.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "raw-text-owner",
       "mode": "run",
       "source": "tests/fixtures/source_text_address_bridge.gti",
-      "native_sources": ["tests/fixtures/source_text_address_bridge.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/source_text_address_bridge.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "raw-text-owner-example",
       "mode": "run",
       "source": "examples/133-raw-text-owner-views.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "hello\nHello\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "hello\nHello\n",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-allocator-example",
       "mode": "run",
       "source": "examples/121-programmable-allocators.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-constructor-rollback",
       "mode": "run",
       "source": "tests/fixtures/resource_constructor_rollback.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n900\n901\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "2\n102\n1\n101\n900\n900\n901\n",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-container-usage",
       "mode": "run",
       "source": "tests/fixtures/resource_container_usage.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-programmable",
       "mode": "run",
       "source": "tests/fixtures/programmable_allocators.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-raw-movement",
       "mode": "run",
       "source": "tests/fixtures/raw_resource_movement.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-region-contracts",
       "mode": "run",
       "source": "tests/fixtures/resource_region_contracts.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "resource-vector-constructor-rollback",
       "mode": "run",
       "source": "tests/fixtures/resource_vector_constructor_rollback.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "2\n102\n1\n101\n900\n901\n",
+        "stderr": ""
+      }
     },
     {
       "id": "restoring-exchange-example",
       "mode": "run",
       "source": "examples/103-resource-exchange.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "scene-c\nscene-a\nscene-b\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "scene-c\nscene-a\nscene-b\n",
+        "stderr": ""
+      }
     },
     {
       "id": "restoring-indexed",
       "mode": "run",
       "source": "tests/fixtures/restoring_indexed_swap.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "20\n10\n30\n40\n1\n2\n3\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "20\n10\n30\n40\n1\n2\n3\n",
+        "stderr": ""
+      }
     },
     {
       "id": "restoring-order",
       "mode": "run",
       "source": "tests/fixtures/restoring_algorithm_order.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "restoring-order-example",
       "mode": "run",
       "source": "examples/104-move-only-ordering.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "shaders\nmeshes\ntextures\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "shaders\nmeshes\ntextures\n",
+        "stderr": ""
+      }
     },
     {
       "id": "restoring-shapes",
       "mode": "run",
       "source": "tests/fixtures/restoring_exchange_shapes.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "sequence-unchecked",
       "mode": "run",
       "source": "tests/fixtures/sequence_unchecked_access.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "sequence-unchecked-resource",
       "mode": "run",
       "source": "tests/fixtures/sequence_unchecked_resource.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "shared-ptr",
       "mode": "run",
       "source": "tests/fixtures/shared_ownership.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "1\n7\n2\n8\n3\n9\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "1\n7\n2\n8\n3\n9\n",
+        "stderr": ""
+      }
     },
     {
       "id": "shared-ptr-upcast",
       "mode": "run",
       "source": "tests/fixtures/shared_ownership_upcast.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "7\n8\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "7\n8\n",
+        "stderr": ""
+      }
     },
     {
       "id": "simd",
       "mode": "run",
       "source": "tests/fixtures/simd_values.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "simd ok\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "simd ok\n",
+        "stderr": ""
+      }
     },
     {
       "id": "source-location",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_source_location.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "source-prefix-complete-elements",
       "mode": "run",
       "source": "tests/fixtures/source_prefix_complete_elements.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "source-result-combinators",
+      "mode": "run",
+      "source": "tests/fixtures/source_result_combinators.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "42\n7\n",
+        "stderr": ""
+      }
     },
     {
       "id": "span",
       "mode": "run",
       "source": "tests/fixtures/span_owner_dependent.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "storage-discardable-result",
       "mode": "run",
       "source": "examples/115-discardable-results.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "storage-final-address",
       "mode": "run",
       "source": "tests/fixtures/storage_final_address.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "30\n20\n10\n90\n30\n20\n13\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "30\n20\n10\n90\n30\n20\n13\n",
+        "stderr": ""
+      }
     },
     {
       "id": "storage-immovable",
       "mode": "run",
       "source": "examples/120-immovable-storage.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "storage-owning-view",
       "mode": "run",
       "source": "examples/114-owning-storage-view.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "storage-release",
       "mode": "run",
       "source": "tests/fixtures/storage_release.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "30\n10\n77\n90\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "30\n10\n77\n90\n",
+        "stderr": ""
+      }
     },
     {
       "id": "string",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_string.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "string-c-string",
       "mode": "run",
       "source": "tests/fixtures/string_c_string.gti",
-      "native_sources": ["tests/fixtures/string_c_string.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/string_c_string.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "string-index-range",
       "mode": "run",
       "source": "tests/fixtures/string_index_range.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "string-operations",
@@ -1383,37 +2373,74 @@
       "id": "string-ordering",
       "mode": "run",
       "source": "tests/fixtures/string_ordering.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "string-view-assignment",
       "mode": "run",
       "source": "tests/fixtures/string_view_assignment.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "structural-relocation",
       "mode": "run",
       "source": "tests/fixtures/structural_relocation.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "71\n82\n81\nrelocation passed\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "71\n82\n81\nrelocation passed\n",
+        "stderr": ""
+      }
     },
     {
       "id": "tcp",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_tcp.gti",
-      "native_sources": ["tests/fixtures/stdlib_surface_tcp_stub.cpp"],
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "native_sources": [
+        "tests/fixtures/stdlib_surface_tcp_stub.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "testing",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_testing.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "text-owner-relay",
@@ -1434,7 +2461,10 @@
       "mode": "run",
       "source": "examples/066-managed-threads.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
       "expected": {
         "exit_code": 0,
         "stdout": "first task\n42\nautojoin task\n",
@@ -1446,36 +2476,85 @@
       "mode": "run",
       "source": "tests/fixtures/transfer_function_threads.gti",
       "execution_profile": "concurrent",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "tryable-borrowed-results",
+      "mode": "run",
+      "source": "examples/165-borrowed-payload-results.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "42\n3\n9\n3\n9\n12\n42\n3\n",
+        "stderr": ""
+      }
     },
     {
       "id": "tryable-propagation",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_tryable.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "42\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "42\n",
+        "stderr": ""
+      }
     },
     {
       "id": "unique-ptr",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_unique_ptr.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "unique-ptr-constexpr",
       "mode": "run",
       "source": "tests/fixtures/constexpr_allocation.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "unique-ptr-upcast",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_unique_ptr_upcast.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "unordered-map-collisions",
@@ -1565,36 +2644,71 @@
       "id": "utility-clone",
       "mode": "run",
       "source": "tests/fixtures/generic_clone.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "utility-make-pair",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_utility.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "utility-pair-constructor",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_utility_pair.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "vector",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_vector.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "vector-construction-only",
       "mode": "run",
       "source": "tests/fixtures/vector_construction_only.gti",
-      "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "beta\nalpha\n1\n2\n3\nthree\ntwo\n102\n103\n9\n", "stderr": ""}
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "beta\nalpha\n1\n2\n3\nthree\ntwo\n102\n103\n9\n",
+        "stderr": ""
+      }
     }
   ],
   "entries": [
@@ -1646,9 +2760,47 @@
         "std::transform",
         "std::upper_bound"
       ],
-      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-ordered-search", "algorithm-ordered-search-cost", "algorithm-ordered-search-example", "algorithm-ordered-search-user-types", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
-      "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients", "forward cursors with owning unordered records and move-only mutable query callbacks"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "tests/ordered_search_runtime_test.py", "tests/fixtures/ordered_search.gti", "tests/fixtures/ordered_search_user_types.gti", "examples/139-ordered-search.gti", "stdlib/std/algorithm.gti"]
+      "case_ids": [
+        "algorithm",
+        "algorithm-boundaries",
+        "algorithm-mutation",
+        "algorithm-search",
+        "algorithm-user-types",
+        "constexpr-library",
+        "algorithm-ordered-search",
+        "algorithm-ordered-search-cost",
+        "algorithm-ordered-search-example",
+        "algorithm-ordered-search-user-types",
+        "algorithm-owned-transform",
+        "algorithm-owned-example",
+        "restoring-indexed",
+        "restoring-order",
+        "restoring-order-example"
+      ],
+      "required_instantiations": [
+        "audit_iterator/audit_iterator/int32_t predicates and exact value",
+        "move-only iterator/distinct sentinel/int32_t",
+        "std::vector<int32_t>::iterator/sentinel/int32_t",
+        "read- and mut-callable for_each clients",
+        "application-defined and fixed-array predicate/operation/mutable complete-range clients",
+        "forward cursors with owning unordered records and move-only mutable query callbacks"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_algorithm.gti",
+        "tests/fixtures/generic_algorithm_find_count.gti",
+        "tests/fixtures/generic_algorithm_for_each.gti",
+        "tests/fixtures/generic_callable_concepts.gti",
+        "tests/fixtures/complete_range_probe.gti",
+        "tests/generic_algorithm_cluster_test.py",
+        "tests/generic_callable_concepts_runtime_test.py",
+        "tests/generic_algorithm_breadth_test.py",
+        "tests/generic_algorithm_errors_test.py",
+        "tests/ordered_search_runtime_test.py",
+        "tests/fixtures/ordered_search.gti",
+        "tests/fixtures/ordered_search_user_types.gti",
+        "examples/139-ordered-search.gti",
+        "stdlib/std/algorithm.gti"
+      ]
     },
     {
       "id": "array.checked-iteration",
@@ -1706,18 +2858,55 @@
         "std::array::sentinel",
         "std::array::size"
       ],
-      "case_ids": ["array", "algorithm-search", "algorithm-mutation", "algorithm-user-types", "constexpr-operators", "constexpr-readonly-references", "container-member-aliases", "sequence-unchecked"],
-      "required_instantiations": ["std::array<int32_t, 0>", "std::array<int32_t, 3>"],
-      "evidence": ["tests/fixtures/stdlib_surface_array.gti", "tests/fixtures/algorithm_search.gti", "tests/fixtures/algorithm_mutation.gti", "tests/fixtures/algorithm_user_types.gti", "stdlib/std/array.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "case_ids": [
+        "array",
+        "algorithm-search",
+        "algorithm-mutation",
+        "algorithm-user-types",
+        "constexpr-operators",
+        "constexpr-readonly-references",
+        "container-member-aliases",
+        "sequence-unchecked"
+      ],
+      "required_instantiations": [
+        "std::array<int32_t, 0>",
+        "std::array<int32_t, 3>"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_array.gti",
+        "tests/fixtures/algorithm_search.gti",
+        "tests/fixtures/algorithm_mutation.gti",
+        "tests/fixtures/algorithm_user_types.gti",
+        "stdlib/std/array.gti",
+        "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
     },
     {
       "id": "array.swap",
       "source": "stdlib/std/array.gti",
       "status": "executable",
-      "operations": ["std::array::swap", "std::array::swap_elements"],
-      "case_ids": ["restoring-indexed", "restoring-order", "restoring-order-example"],
-      "required_instantiations": ["std::array<int, 0>", "std::array<int, 2>", "std::array<std::string, 2>", "unrelated move-only Resource"],
-      "evidence": ["tests/fixtures/restoring_indexed_swap.gti", "tests/fixtures/restoring_algorithm_order.gti", "tests/restoring_indexed_runtime_test.py", "tests/restoring_exchange_tests.cpp", "examples/104-move-only-ordering.gti"]
+      "operations": [
+        "std::array::swap",
+        "std::array::swap_elements"
+      ],
+      "case_ids": [
+        "restoring-indexed",
+        "restoring-order",
+        "restoring-order-example"
+      ],
+      "required_instantiations": [
+        "std::array<int, 0>",
+        "std::array<int, 2>",
+        "std::array<std::string, 2>",
+        "unrelated move-only Resource"
+      ],
+      "evidence": [
+        "tests/fixtures/restoring_indexed_swap.gti",
+        "tests/fixtures/restoring_algorithm_order.gti",
+        "tests/restoring_indexed_runtime_test.py",
+        "tests/restoring_exchange_tests.cpp",
+        "examples/104-move-only-ordering.gti"
+      ]
     },
     {
       "id": "atomic.executable",
@@ -1745,9 +2934,34 @@
         "std::memory_order_release::memory_order_release",
         "std::memory_order_seq_cst::memory_order_seq_cst"
       ],
-      "case_ids": ["atomic", "atomic-fetch", "atomic-orders", "atomic-wait"],
-      "required_instantiations": ["bool", "every fixed-width signed and unsigned integer", "move construction", "every legal explicit load/store/exchange order", "all nine legal strong-CAS success/failure order pairs", "all five integer fetch families under every read-modify-write order", "narrow fixed-width fetch conversion", "checked fetch_add overflow before publication"],
-      "evidence": ["docs/language/concurrency.md", "examples/076-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
+      "case_ids": [
+        "atomic",
+        "atomic-fetch",
+        "atomic-orders",
+        "atomic-wait"
+      ],
+      "required_instantiations": [
+        "bool",
+        "every fixed-width signed and unsigned integer",
+        "move construction",
+        "every legal explicit load/store/exchange order",
+        "all nine legal strong-CAS success/failure order pairs",
+        "all five integer fetch families under every read-modify-write order",
+        "narrow fixed-width fetch conversion",
+        "checked fetch_add overflow before publication"
+      ],
+      "evidence": [
+        "docs/language/concurrency.md",
+        "examples/076-scalar-atomics.gti",
+        "stdlib/std/atomic.gti",
+        "tests/atomic_tests.cpp",
+        "tests/atomic_runtime_test.py",
+        "tests/atomic_tsan_test.py",
+        "tests/fixtures/atomic_fetch.gti",
+        "tests/fixtures/atomic_fetch_overflow.gti",
+        "tests/fixtures/atomic_orders.gti",
+        "tests/fixtures/atomic_scalar.gti"
+      ]
     },
     {
       "id": "build.executable",
@@ -1779,9 +2993,19 @@
         "std::build::outputs::outputs",
         "std::build::outputs::publish"
       ],
-      "case_ids": ["build"],
-      "required_instantiations": ["exact host argv and nonzero exit status", "all structured native output categories"],
-      "evidence": ["tests/fixtures/stdlib_surface_build.gti", "tests/project_cli_smoke_test.py", "stdlib/std/build.gti", "runtime/src/process.cpp"]
+      "case_ids": [
+        "build"
+      ],
+      "required_instantiations": [
+        "exact host argv and nonzero exit status",
+        "all structured native output categories"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_build.gti",
+        "tests/project_cli_smoke_test.py",
+        "stdlib/std/build.gti",
+        "runtime/src/process.cpp"
+      ]
     },
     {
       "id": "charconv.executable",
@@ -1832,7 +3056,11 @@
         "std::chrono::system_time_point::system_time_point",
         "std::chrono::system_time_point::unix_seconds"
       ],
-      "case_ids": ["chrono", "constexpr-chrono", "owned-error-pipelines"],
+      "case_ids": [
+        "chrono",
+        "constexpr-chrono",
+        "owned-error-pipelines"
+      ],
       "required_instantiations": [
         "int64 minimum/maximum elapsed subtraction",
         "negative Unix nanosecond decomposition",
@@ -1874,9 +3102,19 @@
         "std::tan(float)",
         "std::trunc(float)"
       ],
-      "case_ids": ["cmath", "constexpr-library"],
-      "required_instantiations": ["binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"],
-      "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "tests/cmath_runtime_test.py", "stdlib/std/cmath.gti", "runtime/src/math.cpp"]
+      "case_ids": [
+        "cmath",
+        "constexpr-library"
+      ],
+      "required_instantiations": [
+        "binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_cmath.gti",
+        "tests/cmath_runtime_test.py",
+        "stdlib/std/cmath.gti",
+        "runtime/src/math.cpp"
+      ]
     },
     {
       "id": "cstdio.executable",
@@ -1907,18 +3145,73 @@
         "std::try_write_stderr",
         "std::try_write_stdout"
       ],
-      "case_ids": ["cstdio", "composable-io-native"],
+      "case_ids": [
+        "cstdio",
+        "composable-io-native"
+      ],
       "required_instantiations": [],
-      "evidence": ["tests/fixtures/stdlib_surface_cstdio.gti", "docs/language/io.md"]
+      "evidence": [
+        "tests/fixtures/stdlib_surface_cstdio.gti",
+        "docs/language/io.md"
+      ]
     },
     {
       "id": "cthread.executable",
       "source": "stdlib/std/cthread.gti",
       "status": "executable",
-      "operations": ["std::ONCE_FLAG_INIT", "std::call_once", "std::cnd_broadcast", "std::cnd_destroy", "std::cnd_init", "std::cnd_signal", "std::cnd_timedwait", "std::cnd_wait", "std::mtx_destroy", "std::mtx_init", "std::mtx_lock", "std::mtx_timedlock", "std::mtx_trylock", "std::mtx_unlock", "std::once_flag", "std::thrd_create", "std::thrd_current", "std::thrd_equal", "std::thrd_join", "std::thrd_sleep", "std::thrd_yield", "std::timespec"],
-      "case_ids": ["cthread", "cthread-concurrent", "cthread-create-join", "cthread-identity", "cthread-identity-concurrent", "cthread-mutex", "cthread-mutex-concurrent", "cthread-condition", "cthread-condition-concurrent", "cthread-once", "cthread-sleep", "cthread-sleep-concurrent"],
-      "required_instantiations": ["initial and managed yield; stable initial/managed/manual identity and total equality; relative sleep with value/reference and unsafe pointer overloads; single-threaded and concurrent profiles; manual registered worker and once-only integer-result join; plain/recursive/timed mutexes, typed native-context data publication, and explicit destruction; condition signal/broadcast, wait/timedwait predicate loops, timeout reacquisition, and manual lifetime"],
-      "evidence": ["stdlib/std/cthread.gti", "tests/cthread_runtime_test.py", "tests/cthread_sleep_test.py", "tests/cthread_mutex_test.py", "tests/cthread_condition_test.py", "tests/cthread_once_test.py", "tests/cthread_create_join_test.py", "tests/cthread_tests.cpp", "tests/fixtures/cthread_yield_call_count.cpp", "docs/language/concurrency.md"]
+      "operations": [
+        "std::ONCE_FLAG_INIT",
+        "std::call_once",
+        "std::cnd_broadcast",
+        "std::cnd_destroy",
+        "std::cnd_init",
+        "std::cnd_signal",
+        "std::cnd_timedwait",
+        "std::cnd_wait",
+        "std::mtx_destroy",
+        "std::mtx_init",
+        "std::mtx_lock",
+        "std::mtx_timedlock",
+        "std::mtx_trylock",
+        "std::mtx_unlock",
+        "std::once_flag",
+        "std::thrd_create",
+        "std::thrd_current",
+        "std::thrd_equal",
+        "std::thrd_join",
+        "std::thrd_sleep",
+        "std::thrd_yield",
+        "std::timespec"
+      ],
+      "case_ids": [
+        "cthread",
+        "cthread-concurrent",
+        "cthread-create-join",
+        "cthread-identity",
+        "cthread-identity-concurrent",
+        "cthread-mutex",
+        "cthread-mutex-concurrent",
+        "cthread-condition",
+        "cthread-condition-concurrent",
+        "cthread-once",
+        "cthread-sleep",
+        "cthread-sleep-concurrent"
+      ],
+      "required_instantiations": [
+        "initial and managed yield; stable initial/managed/manual identity and total equality; relative sleep with value/reference and unsafe pointer overloads; single-threaded and concurrent profiles; manual registered worker and once-only integer-result join; plain/recursive/timed mutexes, typed native-context data publication, and explicit destruction; condition signal/broadcast, wait/timedwait predicate loops, timeout reacquisition, and manual lifetime"
+      ],
+      "evidence": [
+        "stdlib/std/cthread.gti",
+        "tests/cthread_runtime_test.py",
+        "tests/cthread_sleep_test.py",
+        "tests/cthread_mutex_test.py",
+        "tests/cthread_condition_test.py",
+        "tests/cthread_once_test.py",
+        "tests/cthread_create_join_test.py",
+        "tests/cthread_tests.cpp",
+        "tests/fixtures/cthread_yield_call_count.cpp",
+        "docs/language/concurrency.md"
+      ]
     },
     {
       "id": "deque.checked-iteration",
@@ -2011,9 +3304,17 @@
       "id": "detail.panic-core",
       "source": "stdlib/std/detail/panic.gti",
       "status": "executable",
-      "operations": ["std::detail::panic"],
-      "case_ids": ["panic-expected", "format-panic-adoption"],
-      "evidence": ["tests/panic_runtime_test.py", "tests/panic_adoption_runtime_test.py"]
+      "operations": [
+        "std::detail::panic"
+      ],
+      "case_ids": [
+        "panic-expected",
+        "format-panic-adoption"
+      ],
+      "evidence": [
+        "tests/panic_runtime_test.py",
+        "tests/panic_adoption_runtime_test.py"
+      ]
     },
     {
       "id": "encoding.executable",
@@ -2026,7 +3327,9 @@
         "std::encoding::hex::decode",
         "std::encoding::hex::encode"
       ],
-      "case_ids": ["encoding"],
+      "case_ids": [
+        "encoding"
+      ],
       "required_instantiations": [
         "RFC 4648 empty and one/two/three-byte tails",
         "all 256 byte values through Base64 and hexadecimal round trips",
@@ -2043,8 +3346,13 @@
       "id": "environment.executable",
       "source": "stdlib/std/environment.gti",
       "status": "executable",
-      "operations": ["std::environment::errc", "std::environment::get"],
-      "case_ids": ["environment"],
+      "operations": [
+        "std::environment::errc",
+        "std::environment::get"
+      ],
+      "case_ids": [
+        "environment"
+      ],
       "required_instantiations": [
         "missing versus present empty owned optional strings",
         "invalid empty, equals and embedded-NUL names",
@@ -2064,10 +3372,28 @@
       "id": "experimental.optional",
       "source": "stdlib/std/experimental/optional.gti",
       "status": "executable",
-      "operations": ["std::experimental::nullopt", "std::experimental::nullopt_t", "std::experimental::optional"],
-      "case_ids": ["experimental-optional"],
-      "required_instantiations": ["move-only unique_ptr and class payloads", "owning string payload", "? moving the value out and returning the empty residual", "consuming value() &&", "move assignment over engaged and empty optionals", "empty-access panic after cleanup"],
-      "evidence": ["tests/fixtures/stdlib_surface_experimental_optional.gti", "tests/fixtures/experimental_optional.gti", "tests/experimental_optional_runtime_test.py", "examples/162-experimental-optional.gti"]
+      "operations": [
+        "std::experimental::nullopt",
+        "std::experimental::nullopt_t",
+        "std::experimental::optional"
+      ],
+      "case_ids": [
+        "experimental-optional"
+      ],
+      "required_instantiations": [
+        "move-only unique_ptr and class payloads",
+        "owning string payload",
+        "? moving the value out and returning the empty residual",
+        "consuming value() &&",
+        "move assignment over engaged and empty optionals",
+        "empty-access panic after cleanup"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_experimental_optional.gti",
+        "tests/fixtures/experimental_optional.gti",
+        "tests/experimental_optional_runtime_test.py",
+        "examples/162-experimental-optional.gti"
+      ]
     },
     {
       "id": "filesystem.executable",
@@ -2115,7 +3441,10 @@
         "std::filesystem::path::string",
         "std::filesystem::path::swap"
       ],
-      "case_ids": ["filesystem", "filesystem-constructor"],
+      "case_ids": [
+        "filesystem",
+        "filesystem-constructor"
+      ],
       "required_instantiations": [],
       "evidence": [
         "tests/fixtures/filesystem_path.gti",
@@ -2178,19 +3507,59 @@
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::format_spec", "std::format_to", "std::formattable<T>", "std::formatter<T>", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println"],
-      "case_ids": ["format", "format-customization", "format-panic-adoption", "integral-enum-formatting", "integral-enum-example"],
-      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "custom formatter delegation and composition", "recoverable value-dependent formatter rejection"],
-      "evidence": ["tests/fixtures/stdlib_surface_format.gti", "tests/fixtures/extensible_formatting.gti", "stdlib/std/format.gti"]
+      "operations": [
+        "std::format",
+        "std::format_spec",
+        "std::format_to",
+        "std::formattable<T>",
+        "std::formatter<T>",
+        "std::print(pattern,Args...)",
+        "std::println(pattern,Args...)",
+        "std::try_format",
+        "std::try_format_to",
+        "std::try_print",
+        "std::try_println"
+      ],
+      "case_ids": [
+        "format",
+        "format-customization",
+        "format-panic-adoption",
+        "integral-enum-formatting",
+        "integral-enum-example"
+      ],
+      "required_instantiations": [
+        "zero arguments",
+        "all fixed-width integer types",
+        "mixed bool,char,int32_t,float,double,string_view,string pack",
+        "counted string view with embedded zero",
+        "indexed and typed format specifications",
+        "custom formatter delegation and composition",
+        "recoverable value-dependent formatter rejection"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_format.gti",
+        "tests/fixtures/extensible_formatting.gti",
+        "stdlib/std/format.gti"
+      ]
     },
     {
       "id": "forward-list.empty",
       "source": "stdlib/std/forward_list.gti",
       "status": "executable",
-      "operations": ["std::forward_list::empty", "std::forward_list::forward_list"],
-      "case_ids": ["forward-list-empty"],
-      "required_instantiations": ["std::forward_list<int32_t>"],
-      "evidence": ["tests/fixtures/stdlib_surface_forward_list_empty.gti", "stdlib/std/forward_list.gti"]
+      "operations": [
+        "std::forward_list::empty",
+        "std::forward_list::forward_list"
+      ],
+      "case_ids": [
+        "forward-list-empty"
+      ],
+      "required_instantiations": [
+        "std::forward_list<int32_t>"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_forward_list_empty.gti",
+        "stdlib/std/forward_list.gti"
+      ]
     },
     {
       "id": "forward-list.front-operations",
@@ -2202,9 +3571,16 @@
         "std::forward_list::pop_front",
         "std::forward_list::push_front"
       ],
-      "case_ids": ["forward-list-operations"],
-      "evidence": ["tests/fixtures/stdlib_surface_forward_list.gti", "stdlib/std/forward_list.gti"],
-      "required_instantiations": ["std::forward_list<int32_t>"]
+      "case_ids": [
+        "forward-list-operations"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_forward_list.gti",
+        "stdlib/std/forward_list.gti"
+      ],
+      "required_instantiations": [
+        "std::forward_list<int32_t>"
+      ]
     },
     {
       "id": "forward-list.node-algorithms",
@@ -2218,9 +3594,18 @@
         "std::forward_list::sort",
         "std::forward_list::unique"
       ],
-      "case_ids": ["forward-list-algorithms"],
-      "evidence": ["tests/fixtures/forward_list_algorithms.gti", "tests/forward_list_runtime_test.py", "stdlib/std/forward_list.gti"],
-      "required_instantiations": ["std::forward_list<int32_t>", "std::forward_list<entry>"]
+      "case_ids": [
+        "forward-list-algorithms"
+      ],
+      "evidence": [
+        "tests/fixtures/forward_list_algorithms.gti",
+        "tests/forward_list_runtime_test.py",
+        "stdlib/std/forward_list.gti"
+      ],
+      "required_instantiations": [
+        "std::forward_list<int32_t>",
+        "std::forward_list<entry>"
+      ]
     },
     {
       "id": "forward-list.positioned-iteration",
@@ -2259,55 +3644,203 @@
       "id": "forward-list.swap",
       "source": "stdlib/std/forward_list.gti",
       "status": "executable",
-      "operations": ["std::forward_list::swap"],
-      "case_ids": ["container-swap"],
-      "required_instantiations": ["int32_t", "move-only destructor-bearing item"],
-      "evidence": ["tests/fixtures/container_swap.gti", "tests/fixtures/container_swap_cleanup.gti", "tests/container_swap_runtime_test.py"]
+      "operations": [
+        "std::forward_list::swap"
+      ],
+      "case_ids": [
+        "container-swap"
+      ],
+      "required_instantiations": [
+        "int32_t",
+        "move-only destructor-bearing item"
+      ],
+      "evidence": [
+        "tests/fixtures/container_swap.gti",
+        "tests/fixtures/container_swap_cleanup.gti",
+        "tests/container_swap_runtime_test.py"
+      ]
     },
     {
       "id": "functional.borrowing",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::function_ptr::function_ptr", "std::function_ptr::operator()", "std::function_ref::function_ref", "std::function_ref::operator()"],
-      "case_ids": ["borrowing-callable-erasure", "borrowing-callable-example"],
-      "required_instantiations": ["shared and exclusive signature-erased callbacks", "stateless function item and captureless lambda", "owning string argument/result", "user-defined generic stored exclusive environment"],
-      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/checked_callable_erasure.gti", "tests/borrowing_capture_tests.cpp", "tests/borrowing_callbacks_runtime_test.py", "examples/156-borrowing-callbacks.gti"]
+      "operations": [
+        "std::function_ptr::function_ptr",
+        "std::function_ptr::operator()",
+        "std::function_ref::function_ref",
+        "std::function_ref::operator()"
+      ],
+      "case_ids": [
+        "borrowing-callable-erasure",
+        "borrowing-callable-example"
+      ],
+      "required_instantiations": [
+        "shared and exclusive signature-erased callbacks",
+        "stateless function item and captureless lambda",
+        "owning string argument/result",
+        "user-defined generic stored exclusive environment"
+      ],
+      "evidence": [
+        "stdlib/std/functional.gti",
+        "tests/fixtures/checked_callable_erasure.gti",
+        "tests/borrowing_capture_tests.cpp",
+        "tests/borrowing_callbacks_runtime_test.py",
+        "examples/156-borrowing-callbacks.gti"
+      ]
     },
     {
       "id": "functional.executable",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::binary_operation", "std::binary_predicate", "std::comparator", "std::equal_to::operator()", "std::greater::operator()", "std::indirect_operation", "std::indirect_predicate", "std::invoke_once", "std::less::operator()", "std::mut_binary_callable", "std::mut_callable", "std::not_equal_to::operator()", "std::once_action", "std::once_binary_callable", "std::once_callable", "std::operation", "std::predicate", "std::range_operation", "std::range_predicate", "std::read_binary_callable", "std::read_callable"],
-      "case_ids": ["functional"],
-      "required_instantiations": ["comparison function objects<int32_t>", "read/mut/once void() actions", "range-derived predicate and operation over application-defined and fixed-array ranges"],
-      "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "stdlib/std/functional.gti"]
+      "operations": [
+        "std::binary_operation",
+        "std::binary_predicate",
+        "std::comparator",
+        "std::equal_to::operator()",
+        "std::greater::operator()",
+        "std::indirect_operation",
+        "std::indirect_predicate",
+        "std::invoke_once",
+        "std::less::operator()",
+        "std::mut_binary_callable",
+        "std::mut_callable",
+        "std::not_equal_to::operator()",
+        "std::once_action",
+        "std::once_binary_callable",
+        "std::once_callable",
+        "std::operation",
+        "std::predicate",
+        "std::range_operation",
+        "std::range_predicate",
+        "std::read_binary_callable",
+        "std::read_callable"
+      ],
+      "case_ids": [
+        "functional"
+      ],
+      "required_instantiations": [
+        "comparison function objects<int32_t>",
+        "read/mut/once void() actions",
+        "range-derived predicate and operation over application-defined and fixed-array ranges"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_functional.gti",
+        "tests/fixtures/generic_callable_concepts.gti",
+        "tests/fixtures/complete_range_probe.gti",
+        "tests/generic_algorithm_cluster_test.py",
+        "stdlib/std/functional.gti"
+      ]
     },
     {
       "id": "functional.hashes",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::hash<bool>","std::hash<char>","std::hash<int16_t>","std::hash<int32_t>","std::hash<int64_t>","std::hash<int8_t>","std::hash<uint16_t>","std::hash<uint32_t>","std::hash<uint64_t>","std::hash<uint8_t>"],
-      "case_ids": ["associative-hashes"],
-      "required_instantiations": ["all fixed-width signed/unsigned integers", "bool", "char", "application-owned exact hash specialization", "move-only stored source hasher"],
-      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/associative_hash_contracts.gti", "tests/associative_hash_contracts_test.py"]
+      "operations": [
+        "std::hash<bool>",
+        "std::hash<char>",
+        "std::hash<int16_t>",
+        "std::hash<int32_t>",
+        "std::hash<int64_t>",
+        "std::hash<int8_t>",
+        "std::hash<uint16_t>",
+        "std::hash<uint32_t>",
+        "std::hash<uint64_t>",
+        "std::hash<uint8_t>"
+      ],
+      "case_ids": [
+        "associative-hashes"
+      ],
+      "required_instantiations": [
+        "all fixed-width signed/unsigned integers",
+        "bool",
+        "char",
+        "application-owned exact hash specialization",
+        "move-only stored source hasher"
+      ],
+      "evidence": [
+        "stdlib/std/functional.gti",
+        "tests/fixtures/associative_hash_contracts.gti",
+        "tests/associative_hash_contracts_test.py"
+      ]
     },
     {
       "id": "functional.owning",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::function::clone", "std::function::empty", "std::function::function", "std::function::operator()", "std::function::replace", "std::function::reset", "std::move_only_function::empty", "std::move_only_function::move_only_function", "std::move_only_function::operator()", "std::move_only_function::replace", "std::move_only_function::reset"],
-      "case_ids": ["owning-function", "owning-function-borrows", "owning-function-items", "owning-function-schema", "owning-function-temporary-target", "owning-function-mutable", "owning-function-mutable-arguments", "owning-function-mutable-arguments-cleanup"],
-      "required_instantiations": ["int(int) copyable captured lambda, explicit clone and setter transfer", "void() read-callable lambda", "int(int) move-only unique-owner capture", "mixed read-only reference/value arguments with noncopyable referents", "stored and returned namespace function items, capture, replacement, clone and callee evaluation order", "nested immutable command schema with vector children and an owned leaf handler", "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"],
-      "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/fixtures/owning_function_policy_failure.gti", "tests/fixtures/inline_polymorphic_lifecycle.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "tests/owning_function_policy_failure_test.py", "tests/inline_polymorphic_runtime_test.py", "stdlib/std/functional.gti"]
+      "operations": [
+        "std::function::clone",
+        "std::function::empty",
+        "std::function::function",
+        "std::function::operator()",
+        "std::function::replace",
+        "std::function::reset",
+        "std::move_only_function::empty",
+        "std::move_only_function::move_only_function",
+        "std::move_only_function::operator()",
+        "std::move_only_function::replace",
+        "std::move_only_function::reset"
+      ],
+      "case_ids": [
+        "owning-function",
+        "owning-function-borrows",
+        "owning-function-items",
+        "owning-function-schema",
+        "owning-function-temporary-target",
+        "owning-function-mutable",
+        "owning-function-mutable-arguments",
+        "owning-function-mutable-arguments-cleanup"
+      ],
+      "required_instantiations": [
+        "int(int) copyable captured lambda, explicit clone and setter transfer",
+        "void() read-callable lambda",
+        "int(int) move-only unique-owner capture",
+        "mixed read-only reference/value arguments with noncopyable referents",
+        "stored and returned namespace function items, capture, replacement, clone and callee evaluation order",
+        "nested immutable command schema with vector children and an owned leaf handler",
+        "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"
+      ],
+      "evidence": [
+        "tests/fixtures/owning_function.gti",
+        "tests/fixtures/owning_function_borrows.gti",
+        "tests/fixtures/owning_function_items.gti",
+        "tests/fixtures/owning_function_schema.gti",
+        "tests/fixtures/owning_function_mutable.gti",
+        "tests/fixtures/owning_function_mutable_arguments.gti",
+        "tests/fixtures/owning_function_policy_failure.gti",
+        "tests/fixtures/inline_polymorphic_lifecycle.gti",
+        "tests/owning_function_tests.cpp",
+        "tests/owning_function_runtime_test.py",
+        "tests/owning_function_policy_failure_test.py",
+        "tests/inline_polymorphic_runtime_test.py",
+        "stdlib/std/functional.gti"
+      ]
     },
     {
       "id": "functional.transfer",
       "source": "stdlib/std/functional.gti",
       "status": "executable",
-      "operations": ["std::transfer_function::empty", "std::transfer_function::operator()", "std::transfer_function::replace", "std::transfer_function::reset", "std::transfer_function::transfer_function"],
-      "case_ids": ["transfer-function-threads"],
-      "required_instantiations": ["read, mutable and consuming int() invocation", "transfer-safe move-only captures", "heterogeneous jobs in a shared mutex-protected vector", "default, replacement, reset and empty state"],
-      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/transfer_function_threads.gti", "tests/managed_thread_tests.cpp", "tests/shared_ownership_threads_test.py"]
+      "operations": [
+        "std::transfer_function::empty",
+        "std::transfer_function::operator()",
+        "std::transfer_function::replace",
+        "std::transfer_function::reset",
+        "std::transfer_function::transfer_function"
+      ],
+      "case_ids": [
+        "transfer-function-threads"
+      ],
+      "required_instantiations": [
+        "read, mutable and consuming int() invocation",
+        "transfer-safe move-only captures",
+        "heterogeneous jobs in a shared mutex-protected vector",
+        "default, replacement, reset and empty state"
+      ],
+      "evidence": [
+        "stdlib/std/functional.gti",
+        "tests/fixtures/transfer_function_threads.gti",
+        "tests/managed_thread_tests.cpp",
+        "tests/shared_ownership_threads_test.py"
+      ]
     },
     {
       "id": "http.executable",
@@ -2365,7 +3898,10 @@
         "std::http::url::string",
         "std::http::url::view"
       ],
-      "case_ids": ["http", "http-url-operators"],
+      "case_ids": [
+        "http",
+        "http-url-operators"
+      ],
       "required_instantiations": [
         "absolute HTTP/HTTPS URL parse, validation, cloning, rendering, path and query construction",
         "string_view and owned-url request/client overloads",
@@ -2400,9 +3936,20 @@
         "std::io::write_all",
         "std::io::writer"
       ],
-      "case_ids": ["composable-io", "composable-io-native"],
-      "required_instantiations": ["memory/file/process stream adapters", "custom short/failing/stalled/oversized transports", "buffered readers and writers"],
-      "evidence": ["tests/composable_io_runtime_test.py", "tests/runtime_io_tests.cpp", "docs/language/io.md"]
+      "case_ids": [
+        "composable-io",
+        "composable-io-native"
+      ],
+      "required_instantiations": [
+        "memory/file/process stream adapters",
+        "custom short/failing/stalled/oversized transports",
+        "buffered readers and writers"
+      ],
+      "evidence": [
+        "tests/composable_io_runtime_test.py",
+        "tests/runtime_io_tests.cpp",
+        "docs/language/io.md"
+      ]
     },
     {
       "id": "iterator.checked-capabilities",
@@ -2447,10 +3994,30 @@
       "id": "iterator.executable",
       "source": "stdlib/std/iterator.gti",
       "status": "executable",
-      "operations": ["std::advance(Iterator&,size_t)", "std::distance", "std::input_range", "std::mutable_range_of", "std::next(Iterator)", "std::next(Iterator,size_t)", "std::range_of", "std::sized_range"],
-      "case_ids": ["iterator"],
-      "required_instantiations": ["audit_iterator/audit_iterator", "std::vector<int32_t>::iterator/sentinel", "application-defined and fixed-array read/mutable/sized complete ranges"],
-      "evidence": ["tests/fixtures/stdlib_surface_iterator.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "stdlib/std/iterator.gti"]
+      "operations": [
+        "std::advance(Iterator&,size_t)",
+        "std::distance",
+        "std::input_range",
+        "std::mutable_range_of",
+        "std::next(Iterator)",
+        "std::next(Iterator,size_t)",
+        "std::range_of",
+        "std::sized_range"
+      ],
+      "case_ids": [
+        "iterator"
+      ],
+      "required_instantiations": [
+        "audit_iterator/audit_iterator",
+        "std::vector<int32_t>::iterator/sentinel",
+        "application-defined and fixed-array read/mutable/sized complete ranges"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_iterator.gti",
+        "tests/fixtures/complete_range_probe.gti",
+        "tests/generic_algorithm_cluster_test.py",
+        "stdlib/std/iterator.gti"
+      ]
     },
     {
       "id": "iterator.position-arithmetic",
@@ -2483,10 +4050,25 @@
       "id": "iterator.signed-movement",
       "source": "stdlib/std/iterator.gti",
       "status": "executable",
-      "operations": ["std::advance(Iterator&,ptrdiff_t)", "std::next(Iterator,ptrdiff_t)", "std::prev"],
-      "case_ids": ["iterator"],
-      "required_instantiations": ["unrelated value-state bidirectional cursor", "checked owner-tied random-access cursor", "positive and negative in-place movement", "explicit cursor transport"],
-      "evidence": ["stdlib/std/iterator.gti", "tests/fixtures/stdlib_surface_iterator.gti", "tests/container_iterator_movement_test.py"]
+      "operations": [
+        "std::advance(Iterator&,ptrdiff_t)",
+        "std::next(Iterator,ptrdiff_t)",
+        "std::prev"
+      ],
+      "case_ids": [
+        "iterator"
+      ],
+      "required_instantiations": [
+        "unrelated value-state bidirectional cursor",
+        "checked owner-tied random-access cursor",
+        "positive and negative in-place movement",
+        "explicit cursor transport"
+      ],
+      "evidence": [
+        "stdlib/std/iterator.gti",
+        "tests/fixtures/stdlib_surface_iterator.gti",
+        "tests/container_iterator_movement_test.py"
+      ]
     },
     {
       "id": "json.executable",
@@ -2513,7 +4095,13 @@
         "std::json::write_file",
         "std::json::write_file_pretty"
       ],
-      "case_ids": ["json", "json-config", "json-owning-error-backend", "json-parity", "owned-error-pipelines"],
+      "case_ids": [
+        "json",
+        "json-config",
+        "json-owning-error-backend",
+        "json-parity",
+        "owned-error-pipelines"
+      ],
       "required_instantiations": [
         "bool, fixed-width integers with range checks, float and double with exact lexemes, std::string, std::string_view (encode), enum, nested struct, std::vector of scalars and of structs, std::optional, std::map and std::unordered_map with std::string keys, a codec specialization",
         "name and ignore attributes",
@@ -2724,19 +4312,47 @@
       "id": "memory.c-string-bytes",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::c_string_bytes"],
-      "case_ids": ["c-string-import"],
-      "required_instantiations": ["null pointer", "non-owning immutable foreign byte address"],
-      "evidence": ["tests/c_string_import_runtime_test.py", "tests/fixtures/c_string_import.gti", "tests/resource_memory_runtime_tests.cpp"]
+      "operations": [
+        "std::c_string_bytes"
+      ],
+      "case_ids": [
+        "c-string-import"
+      ],
+      "required_instantiations": [
+        "null pointer",
+        "non-owning immutable foreign byte address"
+      ],
+      "evidence": [
+        "tests/c_string_import_runtime_test.py",
+        "tests/fixtures/c_string_import.gti",
+        "tests/resource_memory_runtime_tests.cpp"
+      ]
     },
     {
       "id": "memory.checked-erasure",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::erase_mut", "std::erase_ref", "std::erased_object", "std::restore_mut", "std::restore_ref"],
-      "case_ids": ["borrowing-callable-erasure", "borrowing-callable-example"],
-      "required_instantiations": ["unrelated Inspection wrapper", "shared/exclusive callable environments"],
-      "evidence": ["stdlib/std/memory.gti", "tests/fixtures/checked_callable_erasure.gti", "tests/borrowing_capture_tests.cpp", "tests/borrowing_callbacks_runtime_test.py"]
+      "operations": [
+        "std::erase_mut",
+        "std::erase_ref",
+        "std::erased_object",
+        "std::restore_mut",
+        "std::restore_ref"
+      ],
+      "case_ids": [
+        "borrowing-callable-erasure",
+        "borrowing-callable-example"
+      ],
+      "required_instantiations": [
+        "unrelated Inspection wrapper",
+        "shared/exclusive callable environments"
+      ],
+      "evidence": [
+        "stdlib/std/memory.gti",
+        "tests/fixtures/checked_callable_erasure.gti",
+        "tests/borrowing_capture_tests.cpp",
+        "tests/borrowing_callbacks_runtime_test.py"
+      ]
     },
     {
       "id": "memory.executable",
@@ -2790,7 +4406,21 @@
         "std::try_make_pool<T>",
         "std::typed_address<T>"
       ],
-      "case_ids": ["allocator-storage", "storage-discardable-result", "storage-final-address", "storage-immovable", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines", "resource-programmable", "resource-region-contracts"],
+      "case_ids": [
+        "allocator-storage",
+        "storage-discardable-result",
+        "storage-final-address",
+        "storage-immovable",
+        "storage-owning-view",
+        "storage-release",
+        "arena-pool",
+        "raw-owner-witness",
+        "raw-pointer-conversion",
+        "structural-relocation",
+        "owned-error-pipelines",
+        "resource-programmable",
+        "resource-region-contracts"
+      ],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",
@@ -2825,10 +4455,29 @@
       "id": "memory.layout",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::layout", "std::layout::alignment", "std::layout::bytes", "std::layout_of<T>()", "std::layout_queryable<T>"],
-      "case_ids": ["memory-layout"],
-      "required_instantiations": ["std::layout_of<Envelope<Owner>>()", "std::layout_of<Owner>()", "std::layout_of<Pinned>()", "std::layout_of<int32_t>()", "std::layout_of<uint64_t[3]>()"],
-      "evidence": ["examples/119-runtime-object-layout.gti", "tests/runtime_object_layout_tests.cpp", "tests/runtime_object_layout_test.py", "docs/language/standard-library.md"]
+      "operations": [
+        "std::layout",
+        "std::layout::alignment",
+        "std::layout::bytes",
+        "std::layout_of<T>()",
+        "std::layout_queryable<T>"
+      ],
+      "case_ids": [
+        "memory-layout"
+      ],
+      "required_instantiations": [
+        "std::layout_of<Envelope<Owner>>()",
+        "std::layout_of<Owner>()",
+        "std::layout_of<Pinned>()",
+        "std::layout_of<int32_t>()",
+        "std::layout_of<uint64_t[3]>()"
+      ],
+      "evidence": [
+        "examples/119-runtime-object-layout.gti",
+        "tests/runtime_object_layout_tests.cpp",
+        "tests/runtime_object_layout_test.py",
+        "docs/language/standard-library.md"
+      ]
     },
     {
       "id": "memory.live-slot-iteration",
@@ -2859,44 +4508,112 @@
       "id": "memory.manual-lifetimes",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::construct_at", "std::destroy_at", "std::relocate_at", "std::relocate_range_at", "std::uninitialized", "std::uninitialized::data"],
-      "case_ids": ["manual-object-lifetimes", "manual-object-pool"],
-      "required_instantiations": ["unrelated immovable Sensor", "owning std::string", "fixed-address inline owner with checked read-only and exclusive access", "unrelated passive Packet and move-only bitwise Ticket range"],
-      "evidence": ["examples/125-manual-object-lifetimes.gti", "examples/128-inline-object-pool.gti", "tests/uninitialized_carrier_tests.cpp", "tests/uninitialized_carrier_runtime_test.py", "tests/object_lifetime_tests.cpp", "tests/object_construction_runtime_test.py", "tests/object_relocation_runtime_test.py", "docs/language/raw-pointers.md"]
+      "operations": [
+        "std::construct_at",
+        "std::destroy_at",
+        "std::relocate_at",
+        "std::relocate_range_at",
+        "std::uninitialized",
+        "std::uninitialized::data"
+      ],
+      "case_ids": [
+        "manual-object-lifetimes",
+        "manual-object-pool"
+      ],
+      "required_instantiations": [
+        "unrelated immovable Sensor",
+        "owning std::string",
+        "fixed-address inline owner with checked read-only and exclusive access",
+        "unrelated passive Packet and move-only bitwise Ticket range"
+      ],
+      "evidence": [
+        "examples/125-manual-object-lifetimes.gti",
+        "examples/128-inline-object-pool.gti",
+        "tests/uninitialized_carrier_tests.cpp",
+        "tests/uninitialized_carrier_runtime_test.py",
+        "tests/object_lifetime_tests.cpp",
+        "tests/object_construction_runtime_test.py",
+        "tests/object_relocation_runtime_test.py",
+        "docs/language/raw-pointers.md"
+      ]
     },
     {
       "id": "memory.scaffold",
       "source": "stdlib/std/memory.gti",
       "status": "scaffold",
-      "operations": ["std::weak_ptr public surface"],
+      "operations": [
+        "std::weak_ptr public surface"
+      ],
       "reason": "weak_ptr remains declaration-only.",
-      "evidence": ["stdlib/std/memory.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "evidence": [
+        "stdlib/std/memory.gti",
+        "stdlib/README.md#partial-modules-and-declaration-scaffolds"
+      ]
     },
     {
       "id": "memory.shared-ptr",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::make_shared", "std::shared_ptr public surface"],
-      "case_ids": ["shared-ptr"],
-      "evidence": ["tests/fixtures/shared_ownership.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_failure_test.py", "tests/shared_ownership_threads_test.py"]
+      "operations": [
+        "std::make_shared",
+        "std::shared_ptr public surface"
+      ],
+      "case_ids": [
+        "shared-ptr"
+      ],
+      "evidence": [
+        "tests/fixtures/shared_ownership.gti",
+        "tests/shared_ownership_runtime_test.py",
+        "tests/shared_ownership_failure_test.py",
+        "tests/shared_ownership_threads_test.py"
+      ]
     },
     {
       "id": "memory.shared-ptr-upcast",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::shared_ptr::upcast", "std::upcast_shared"],
-      "case_ids": ["shared-ptr-upcast"],
-      "required_instantiations": ["public polymorphic Base/Derived sharing one control block"],
-      "evidence": ["tests/fixtures/shared_ownership_upcast.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_tests.cpp", "stdlib/std/memory.gti"]
+      "operations": [
+        "std::shared_ptr::upcast",
+        "std::upcast_shared"
+      ],
+      "case_ids": [
+        "shared-ptr-upcast"
+      ],
+      "required_instantiations": [
+        "public polymorphic Base/Derived sharing one control block"
+      ],
+      "evidence": [
+        "tests/fixtures/shared_ownership_upcast.gti",
+        "tests/shared_ownership_runtime_test.py",
+        "tests/shared_ownership_tests.cpp",
+        "stdlib/std/memory.gti"
+      ]
     },
     {
       "id": "memory.text-owner-views",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::assume_c_string<Owner>", "std::assume_string_view<Owner>"],
-      "case_ids": ["raw-text-owner", "raw-text-owner-example"],
-      "required_instantiations": ["unrelated inline TextOwner", "counted empty view retaining its owner", "native NUL-terminated view", "relay through ordinary source functions"],
-      "evidence": ["examples/133-raw-text-owner-views.gti", "tests/fixtures/source_text_address_bridge.gti", "tests/source_text_address_runtime_test.py", "tests/text_address_bridge_tests.cpp", "docs/language/raw-pointers.md"]
+      "operations": [
+        "std::assume_c_string<Owner>",
+        "std::assume_string_view<Owner>"
+      ],
+      "case_ids": [
+        "raw-text-owner",
+        "raw-text-owner-example"
+      ],
+      "required_instantiations": [
+        "unrelated inline TextOwner",
+        "counted empty view retaining its owner",
+        "native NUL-terminated view",
+        "relay through ordinary source functions"
+      ],
+      "evidence": [
+        "examples/133-raw-text-owner-views.gti",
+        "tests/fixtures/source_text_address_bridge.gti",
+        "tests/source_text_address_runtime_test.py",
+        "tests/text_address_bridge_tests.cpp",
+        "docs/language/raw-pointers.md"
+      ]
     },
     {
       "id": "memory.unique-ptr",
@@ -2913,18 +4630,39 @@
         "std::unique_ptr::reset",
         "std::unique_ptr::swap"
       ],
-      "case_ids": ["unique-ptr", "unique-ptr-constexpr"],
-      "required_instantiations": ["std::unique_ptr<Value>", "transient constexpr scalar and destructor-bearing owners"],
-      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr.gti", "tests/fixtures/constexpr_allocation.gti", "examples/153-constexpr-allocation.gti", "stdlib/std/memory.gti"]
+      "case_ids": [
+        "unique-ptr",
+        "unique-ptr-constexpr"
+      ],
+      "required_instantiations": [
+        "std::unique_ptr<Value>",
+        "transient constexpr scalar and destructor-bearing owners"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_unique_ptr.gti",
+        "tests/fixtures/constexpr_allocation.gti",
+        "examples/153-constexpr-allocation.gti",
+        "stdlib/std/memory.gti"
+      ]
     },
     {
       "id": "memory.unique-ptr-upcast",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::unique_ptr::upcast", "std::upcast_unique"],
-      "case_ids": ["unique-ptr-upcast"],
-      "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/std/memory.gti"],
-      "required_instantiations": ["Base/Derived"]
+      "operations": [
+        "std::unique_ptr::upcast",
+        "std::upcast_unique"
+      ],
+      "case_ids": [
+        "unique-ptr-upcast"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_unique_ptr_upcast.gti",
+        "stdlib/std/memory.gti"
+      ],
+      "required_instantiations": [
+        "Base/Derived"
+      ]
     },
     {
       "id": "meta.executable",
@@ -2934,6 +4672,7 @@
         "std::meta::alternatives_of",
         "std::meta::arguments_of",
         "std::meta::bases_of",
+        "std::meta::callable_return_type",
         "std::meta::construct",
         "std::meta::constructor::index",
         "std::meta::constructor::line",
@@ -3034,9 +4773,33 @@
         "std::meta::type::primary_name",
         "std::meta::type_of"
       ],
-      "case_ids": ["meta"],
-      "required_instantiations": ["field enumeration in declaration order", "constexpr field binding in if constexpr", "reflected field read", "type predicates", "declared attribute read", "enumerator enumeration", "base and generic-argument lists", "structural construction", "callable metadata"],
-      "evidence": ["tests/fixtures/stdlib_surface_meta.gti", "tests/reflection_runtime_test.py", "tests/reflection_tests.cpp", "stdlib/std/meta.gti", "tests/fixtures/reflection_attributes.gti", "tests/fixtures/reflection_construct.gti", "tests/fixtures/reflection_callables.gti", "tests/fixtures/reflection_deferred_range.gti", "tests/fixtures/reflection_defaults.gti"]
+      "case_ids": [
+        "meta",
+        "callable-result-types",
+        "source-result-combinators"
+      ],
+      "required_instantiations": [
+        "field enumeration in declaration order",
+        "constexpr field binding in if constexpr",
+        "reflected field read",
+        "type predicates",
+        "declared attribute read",
+        "enumerator enumeration",
+        "base and generic-argument lists",
+        "structural construction",
+        "callable metadata"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_meta.gti",
+        "tests/reflection_runtime_test.py",
+        "tests/reflection_tests.cpp",
+        "stdlib/std/meta.gti",
+        "tests/fixtures/reflection_attributes.gti",
+        "tests/fixtures/reflection_construct.gti",
+        "tests/fixtures/reflection_callables.gti",
+        "tests/fixtures/reflection_deferred_range.gti",
+        "tests/fixtures/reflection_defaults.gti"
+      ]
     },
     {
       "id": "mutable-span.checked-iteration",
@@ -3094,9 +4857,28 @@
         "std::string::as_mutable_span",
         "std::vector::as_mutable_span"
       ],
-      "case_ids": ["mutable-span", "mutable-span-owned", "composable-io", "container-member-aliases", "sequence-unchecked"],
-      "required_instantiations": ["int", "char", "uint8_t", "owning application element", "shared child copies", "exclusive subviews", "mutable iterators"],
-      "evidence": ["tests/composable_io_runtime_test.py", "tests/carrier_shell_reference_tests.cpp", "docs/language/ranges.md", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "case_ids": [
+        "mutable-span",
+        "mutable-span-owned",
+        "composable-io",
+        "container-member-aliases",
+        "sequence-unchecked"
+      ],
+      "required_instantiations": [
+        "int",
+        "char",
+        "uint8_t",
+        "owning application element",
+        "shared child copies",
+        "exclusive subviews",
+        "mutable iterators"
+      ],
+      "evidence": [
+        "tests/composable_io_runtime_test.py",
+        "tests/carrier_shell_reference_tests.cpp",
+        "docs/language/ranges.md",
+        "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
     },
     {
       "id": "mutex.executable",
@@ -3107,7 +4889,11 @@
         "std::mutex::mutex",
         "std::mutex_guard::get"
       ],
-      "case_ids": ["mutex", "mutex-concurrent", "mutex-move-only"],
+      "case_ids": [
+        "mutex",
+        "mutex-concurrent",
+        "mutex-move-only"
+      ],
       "required_instantiations": [
         "concurrent shared global owner",
         "move-only protected payload",
@@ -3149,18 +4935,81 @@
         "std::wrapping_mul",
         "std::wrapping_sub"
       ],
-      "case_ids": ["numeric", "numeric-boundaries", "constexpr-library"],
-      "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "float", "double"],
-      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py", "tests/numeric_boundaries_runtime_test.py", "tests/fixtures/numeric_boundaries.gti", "tests/fixtures/numeric_boundaries_oracle.cpp", "tests/fixtures/numeric_boundaries_failure.gti"]
+      "case_ids": [
+        "numeric",
+        "numeric-boundaries",
+        "constexpr-library"
+      ],
+      "required_instantiations": [
+        "audit_iterator/int32_t",
+        "int8_t",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "float",
+        "double"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_numeric.gti",
+        "tests/fixtures/generic_callable_concepts.gti",
+        "tests/generic_callable_concepts_runtime_test.py",
+        "tests/defined_integer_runtime_test.py",
+        "tests/numeric_boundaries_runtime_test.py",
+        "tests/fixtures/numeric_boundaries.gti",
+        "tests/fixtures/numeric_boundaries_oracle.cpp",
+        "tests/fixtures/numeric_boundaries_failure.gti"
+      ]
     },
     {
       "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
       "status": "executable",
-      "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract"],
-      "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
-      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+      "operations": [
+        "std::nullopt",
+        "std::nullopt_t",
+        "std::optional::clone",
+        "std::optional::emplace",
+        "std::optional::has_value",
+        "std::optional::operator bool",
+        "std::optional::operator*",
+        "std::optional::operator->",
+        "std::optional::optional",
+        "std::optional::reset",
+        "std::optional::value",
+        "std::optional::value_or"
+      ],
+      "case_ids": [
+        "optional",
+        "optional-clone",
+        "optional-nested",
+        "optional-expected-composition",
+        "optional-promoted",
+        "vector-construction-only",
+        "optional-value-or-contract"
+      ],
+      "required_instantiations": [
+        "std::optional<int32_t>",
+        "std::optional<move_only>",
+        "std::optional<std::optional<std::string>>"
+      ],
+      "evidence": [
+        "tests/fixtures/optional_lifecycle.gti",
+        "tests/fixtures/optional_value.gti",
+        "tests/fixtures/optional_clone.gti",
+        "tests/fixtures/optional_nested.gti",
+        "tests/fixtures/optional_expected_composition.gti",
+        "tests/fixtures/expected_constructor_payload.gti",
+        "tests/fixtures/optional_constructor_failure.gti",
+        "tests/fixtures/optional_reset_failure.gti",
+        "tests/constructor_field_publication_test.py",
+        "tests/optional_compiler_tests.cpp",
+        "tests/optional_runtime_test.py",
+        "stdlib/std/optional.gti"
+      ]
     },
     {
       "id": "paired-span.checked-proxy-iteration",
@@ -3198,91 +5047,262 @@
       "id": "paired-span.executable",
       "source": "stdlib/std/paired_span.gti",
       "status": "executable",
-      "operations": ["std::paired_span::empty", "std::paired_span::first", "std::paired_span::paired_span", "std::paired_span::second", "std::paired_span::size", "std::paired_span::subspan"],
-      "case_ids": ["paired-span"],
-      "required_instantiations": ["std::paired_span<int32_t, int32_t>", "std::paired_span<int32_t, double>"],
-      "evidence": ["tests/fixtures/paired_span.gti", "stdlib/std/paired_span.gti"]
+      "operations": [
+        "std::paired_span::empty",
+        "std::paired_span::first",
+        "std::paired_span::paired_span",
+        "std::paired_span::second",
+        "std::paired_span::size",
+        "std::paired_span::subspan"
+      ],
+      "case_ids": [
+        "paired-span"
+      ],
+      "required_instantiations": [
+        "std::paired_span<int32_t, int32_t>",
+        "std::paired_span<int32_t, double>"
+      ],
+      "evidence": [
+        "tests/fixtures/paired_span.gti",
+        "stdlib/std/paired_span.gti"
+      ]
     },
     {
       "id": "panic.executable",
       "source": "stdlib/std/panic.gti",
       "status": "executable",
-      "operations": ["std::panic(string_view)", "std::panic(string_view,Args...)"],
-      "case_ids": ["panic-expected"],
-      "required_instantiations": ["raw counted message", "formatted int argument"],
-      "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/panic_runtime_test.py", "tests/panic_contract_tests.cpp", "stdlib/std/panic.gti"]
+      "operations": [
+        "std::panic(string_view)",
+        "std::panic(string_view,Args...)"
+      ],
+      "case_ids": [
+        "panic-expected"
+      ],
+      "required_instantiations": [
+        "raw counted message",
+        "formatted int argument"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_panic_expected.gti",
+        "tests/panic_runtime_test.py",
+        "tests/panic_contract_tests.cpp",
+        "stdlib/std/panic.gti"
+      ]
     },
     {
       "id": "polymorphic.executable",
       "source": "stdlib/std/polymorphic.gti",
       "status": "executable",
-      "operations": ["std::inline_polymorphic::get", "std::inline_polymorphic::has_value", "std::inline_polymorphic::inline_polymorphic", "std::inline_polymorphic::is_inline", "std::inline_polymorphic::replace", "std::inline_polymorphic::reset"],
-      "case_ids": ["polymorphic"],
-      "required_instantiations": ["application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup"],
-      "evidence": ["tests/fixtures/stdlib_surface_polymorphic.gti", "tests/fixtures/inline_polymorphic_lifecycle.gti", "tests/fixtures/inline_polymorphic_allocations.cpp", "tests/inline_polymorphic_runtime_test.py", "tests/polymorphic_storage_compiler_tests.cpp", "tests/inline_closure_owner_runtime_test.py", "stdlib/std/polymorphic.gti"]
+      "operations": [
+        "std::inline_polymorphic::get",
+        "std::inline_polymorphic::has_value",
+        "std::inline_polymorphic::inline_polymorphic",
+        "std::inline_polymorphic::is_inline",
+        "std::inline_polymorphic::replace",
+        "std::inline_polymorphic::reset"
+      ],
+      "case_ids": [
+        "polymorphic"
+      ],
+      "required_instantiations": [
+        "application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_polymorphic.gti",
+        "tests/fixtures/inline_polymorphic_lifecycle.gti",
+        "tests/fixtures/inline_polymorphic_allocations.cpp",
+        "tests/inline_polymorphic_runtime_test.py",
+        "tests/polymorphic_storage_compiler_tests.cpp",
+        "tests/inline_closure_owner_runtime_test.py",
+        "stdlib/std/polymorphic.gti"
+      ]
     },
     {
       "id": "prelude.c-scalars",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["c_bool", "c_char", "c_double", "c_float", "c_int", "c_intptr_t", "c_long", "c_longlong", "c_ptrdiff_t", "c_schar", "c_short", "c_size_t", "c_uchar", "c_uint", "c_uintptr_t", "c_ulong", "c_ulonglong", "c_ushort", "c_void"],
-      "case_ids": ["native-c-scalars"],
-      "required_instantiations": ["LP64 and LLP64 C declaration identities", "plain-char numeric conversion and indexing", "unrelated generic aggregates"],
-      "evidence": ["tests/native_c_scalar_tests.cpp", "tests/native_c_scalar_target_tests.cpp", "tests/native_c_scalar_runtime_test.py", "examples/123-native-c-scalars.gti", "docs/language/native-c-interop.md"]
+      "operations": [
+        "c_bool",
+        "c_char",
+        "c_double",
+        "c_float",
+        "c_int",
+        "c_intptr_t",
+        "c_long",
+        "c_longlong",
+        "c_ptrdiff_t",
+        "c_schar",
+        "c_short",
+        "c_size_t",
+        "c_uchar",
+        "c_uint",
+        "c_uintptr_t",
+        "c_ulong",
+        "c_ulonglong",
+        "c_ushort",
+        "c_void"
+      ],
+      "case_ids": [
+        "native-c-scalars"
+      ],
+      "required_instantiations": [
+        "LP64 and LLP64 C declaration identities",
+        "plain-char numeric conversion and indexing",
+        "unrelated generic aggregates"
+      ],
+      "evidence": [
+        "tests/native_c_scalar_tests.cpp",
+        "tests/native_c_scalar_target_tests.cpp",
+        "tests/native_c_scalar_runtime_test.py",
+        "examples/123-native-c-scalars.gti",
+        "docs/language/native-c-interop.md"
+      ]
     },
     {
       "id": "prelude.enum-underlying",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::enum_underlying", "std::integral_enum", "std::to_underlying"],
-      "case_ids": ["integral-enum-formatting", "integral-enum-example"],
-      "required_instantiations": ["all eight underlying widths", "unrelated wire encoder", "exact signedness and width rejection"],
-      "evidence": ["tests/integral_enum_tests.cpp", "tests/fixtures/integral_enum_formatting.gti", "examples/110-integral-enums.gti"]
+      "operations": [
+        "std::enum_underlying",
+        "std::integral_enum",
+        "std::to_underlying"
+      ],
+      "case_ids": [
+        "integral-enum-formatting",
+        "integral-enum-example"
+      ],
+      "required_instantiations": [
+        "all eight underlying widths",
+        "unrelated wire encoder",
+        "exact signedness and width rejection"
+      ],
+      "evidence": [
+        "tests/integral_enum_tests.cpp",
+        "tests/fixtures/integral_enum_formatting.gti",
+        "examples/110-integral-enums.gti"
+      ]
     },
     {
       "id": "prelude.expected-ergonomics",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["expected::and_then", "expected::expect", "expected::transform"],
-      "case_ids": ["panic-expected"],
-      "required_instantiations": ["expected<int,int>", "owned and void alternatives in the runtime matrix"],
-      "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/expected_ergonomics_tests.cpp", "tests/expected_ergonomics_runtime_test.py"]
+      "operations": [
+        "expected::and_then",
+        "expected::expect",
+        "expected::transform"
+      ],
+      "case_ids": [
+        "panic-expected"
+      ],
+      "required_instantiations": [
+        "expected<int,int>",
+        "owned and void alternatives in the runtime matrix"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_panic_expected.gti",
+        "tests/expected_ergonomics_tests.cpp",
+        "tests/expected_ergonomics_runtime_test.py"
+      ]
     },
     {
       "id": "prelude.move-construction",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::move_constructible"],
-      "case_ids": ["optional-nested"],
-      "required_instantiations": ["construction-only user type", "nested optional", "deleted-move rejection"],
-      "evidence": ["tests/compiler_declarations_tests.cpp", "tests/fixtures/optional_nested.gti", "stdlib/prelude.gti"]
+      "operations": [
+        "std::move_constructible"
+      ],
+      "case_ids": [
+        "optional-nested"
+      ],
+      "required_instantiations": [
+        "construction-only user type",
+        "nested optional",
+        "deleted-move rejection"
+      ],
+      "evidence": [
+        "tests/compiler_declarations_tests.cpp",
+        "tests/fixtures/optional_nested.gti",
+        "stdlib/prelude.gti"
+      ]
     },
     {
       "id": "prelude.output",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::print", "std::println", "std::string_view::empty", "std::string_view::operator[]", "std::string_view::size"],
-      "case_ids": ["prelude-output"],
-      "required_instantiations": ["std::print<int32_t>", "std::println<uint64_t>"],
-      "evidence": ["tests/fixtures/stdlib_surface_prelude_output.gti", "stdlib/prelude.gti"]
+      "operations": [
+        "std::print",
+        "std::println",
+        "std::string_view::empty",
+        "std::string_view::operator[]",
+        "std::string_view::size"
+      ],
+      "case_ids": [
+        "prelude-output"
+      ],
+      "required_instantiations": [
+        "std::print<int32_t>",
+        "std::println<uint64_t>"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_prelude_output.gti",
+        "stdlib/prelude.gti"
+      ]
     },
     {
       "id": "prelude.relocation",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::bitwise_relocatable", "std::numeric", "std::relocatable"],
-      "case_ids": ["structural-relocation", "numeric-source-storage"],
-      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class", "numeric scalar in source vector"],
-      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "examples/033-source-concepts.gti", "stdlib/prelude.gti"]
+      "operations": [
+        "std::bitwise_relocatable",
+        "std::numeric",
+        "std::relocatable"
+      ],
+      "case_ids": [
+        "structural-relocation",
+        "numeric-source-storage"
+      ],
+      "required_instantiations": [
+        "deleted-copy passive class",
+        "passive user class",
+        "resource-owning user class",
+        "numeric scalar in source vector"
+      ],
+      "evidence": [
+        "tests/fixtures/structural_relocation.gti",
+        "tests/structural_relocation_tests.cpp",
+        "tests/structural_relocation_lsp_test.py",
+        "examples/033-source-concepts.gti",
+        "stdlib/prelude.gti"
+      ]
     },
     {
       "id": "prelude.tryable",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::tryable"],
-      "case_ids": ["tryable-propagation"],
-      "required_instantiations": ["unrelated user result and residual types", "generic block over a constrained parameter", "void value type", "residual as the return type", "temporary, moved and named copyable operands"],
-      "evidence": ["tests/fixtures/stdlib_surface_tryable.gti", "tests/fixtures/tryable_propagation.gti", "tests/tryable_propagation_tests.cpp", "tests/tryable_propagation_runtime_test.py"]
+      "operations": [
+        "std::tryable"
+      ],
+      "case_ids": [
+        "tryable-borrowed-results",
+        "tryable-propagation"
+      ],
+      "required_instantiations": [
+        "unrelated user result and residual types",
+        "generic block over a constrained parameter",
+        "void value type",
+        "residual as the return type",
+        "temporary, moved and named copyable operands",
+        "shared and exclusive borrowed success results",
+        "borrowed-result contract inactive for owned concrete payloads"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_tryable.gti",
+        "tests/fixtures/tryable_propagation.gti",
+        "tests/tryable_propagation_tests.cpp",
+        "tests/tryable_propagation_runtime_test.py",
+        "tests/protocol_concept_tests.cpp",
+        "examples/165-borrowed-payload-results.gti"
+      ]
     },
     {
       "id": "process.executable",
@@ -3302,7 +5322,9 @@
         "std::process::exit_status::success",
         "std::process::exit_status::terminating_signal"
       ],
-      "case_ids": ["process"],
+      "case_ids": [
+        "process"
+      ],
       "required_instantiations": [
         "empty, embedded-zero, empty-argument, and spaced-argument argv",
         "execute failure distinct from exit 127",
@@ -3353,10 +5375,19 @@
       "id": "random.executable",
       "source": "stdlib/std/random.gti",
       "status": "executable",
-      "operations": ["std::random_device::operator()", "std::random_engine::operator()", "std::random_engine::random_engine"],
-      "case_ids": ["random"],
+      "operations": [
+        "std::random_device::operator()",
+        "std::random_engine::operator()",
+        "std::random_engine::random_engine"
+      ],
+      "case_ids": [
+        "random"
+      ],
       "required_instantiations": [],
-      "evidence": ["tests/fixtures/random_engine.gti", "stdlib/std/random.gti"]
+      "evidence": [
+        "tests/fixtures/random_engine.gti",
+        "stdlib/std/random.gti"
+      ]
     },
     {
       "id": "resource-vector.checked-iteration",
@@ -3422,9 +5453,30 @@
         "std::resource_vector::try_reserve",
         "std::resource_vector_element"
       ],
-      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-container-usage", "resource-vector-constructor-rollback", "container-member-aliases", "sequence-unchecked-resource"],
-      "required_instantiations": ["int and std::string", "owning Item with an observable destructor", "application-defined arena and allocation-budget provider", "growth, iteration, mutable element access, owner movement and recoverable growth failure"],
-      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "case_ids": [
+        "resource-allocator-example",
+        "resource-programmable",
+        "resource-container-usage",
+        "resource-vector-constructor-rollback",
+        "container-member-aliases",
+        "sequence-unchecked-resource"
+      ],
+      "required_instantiations": [
+        "int and std::string",
+        "owning Item with an observable destructor",
+        "application-defined arena and allocation-budget provider",
+        "growth, iteration, mutable element access, owner movement and recoverable growth failure"
+      ],
+      "evidence": [
+        "examples/121-programmable-allocators.gti",
+        "tests/fixtures/programmable_allocators.gti",
+        "tests/programmable_allocators_runtime_test.py",
+        "tests/resource_protocol_tests.cpp",
+        "docs/language/raw-pointers.md",
+        "tests/fixtures/resource_container_usage.gti",
+        "tests/fixtures/resource_vector_constructor_rollback.gti",
+        "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
     },
     {
       "id": "resource.live-slot-iteration",
@@ -3461,9 +5513,34 @@
         "std::resource_ref",
         "std::resource_ref::get"
       ],
-      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-raw-movement", "resource-region-contracts", "resource-container-usage"],
-      "required_instantiations": ["process_resource", "application-defined Arena, CountingResource and ProbeResource", "one-time unsafe binding followed by checked safe ownership", "exact allocation descriptor release, provider lifetime retention and region-shape rejection"],
-      "evidence": ["stdlib/std/resource.gti", "examples/allocator-support/arena.gti", "tests/resource_protocol_tests.cpp", "tests/resource_memory_runtime_tests.cpp", "tests/fixtures/resource_region_contracts.gti", "tests/fixtures/raw_resource_movement.gti", "tests/programmable_allocators_runtime_test.py", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/process_resource_policy_test.py", "tests/process_provider_target_tests.cpp", "tests/fixtures/process_resource_policy.gti", "examples/libc-region-provider/src/main.gti"]
+      "case_ids": [
+        "resource-allocator-example",
+        "resource-programmable",
+        "resource-raw-movement",
+        "resource-region-contracts",
+        "resource-container-usage"
+      ],
+      "required_instantiations": [
+        "process_resource",
+        "application-defined Arena, CountingResource and ProbeResource",
+        "one-time unsafe binding followed by checked safe ownership",
+        "exact allocation descriptor release, provider lifetime retention and region-shape rejection"
+      ],
+      "evidence": [
+        "stdlib/std/resource.gti",
+        "examples/allocator-support/arena.gti",
+        "tests/resource_protocol_tests.cpp",
+        "tests/resource_memory_runtime_tests.cpp",
+        "tests/fixtures/resource_region_contracts.gti",
+        "tests/fixtures/raw_resource_movement.gti",
+        "tests/programmable_allocators_runtime_test.py",
+        "docs/language/raw-pointers.md",
+        "tests/fixtures/resource_container_usage.gti",
+        "tests/process_resource_policy_test.py",
+        "tests/process_provider_target_tests.cpp",
+        "tests/fixtures/process_resource_policy.gti",
+        "examples/libc-region-provider/src/main.gti"
+      ]
     },
     {
       "id": "resource.storage",
@@ -3483,9 +5560,32 @@
         "std::resource_storage::try_allocate",
         "std::resource_storage::try_reserve_prefix"
       ],
-      "case_ids": ["resource-allocator-example", "resource-constructor-rollback", "resource-programmable", "resource-region-contracts", "resource-container-usage", "resource-vector-constructor-rollback"],
-      "required_instantiations": ["int and owning Item", "immovable FixedObject and Fixed", "explicit over-alignment and sparse slots", "structural relocation with strong allocation-failure preservation", "element cleanup before provider release and constructor rollback"],
-      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/fixtures/resource_constructor_rollback.gti", "tests/fixtures/resource_region_contracts.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti"]
+      "case_ids": [
+        "resource-allocator-example",
+        "resource-constructor-rollback",
+        "resource-programmable",
+        "resource-region-contracts",
+        "resource-container-usage",
+        "resource-vector-constructor-rollback"
+      ],
+      "required_instantiations": [
+        "int and owning Item",
+        "immovable FixedObject and Fixed",
+        "explicit over-alignment and sparse slots",
+        "structural relocation with strong allocation-failure preservation",
+        "element cleanup before provider release and constructor rollback"
+      ],
+      "evidence": [
+        "examples/121-programmable-allocators.gti",
+        "tests/fixtures/programmable_allocators.gti",
+        "tests/fixtures/resource_constructor_rollback.gti",
+        "tests/fixtures/resource_region_contracts.gti",
+        "tests/programmable_allocators_runtime_test.py",
+        "tests/resource_protocol_tests.cpp",
+        "docs/language/raw-pointers.md",
+        "tests/fixtures/resource_container_usage.gti",
+        "tests/fixtures/resource_vector_constructor_rollback.gti"
+      ]
     },
     {
       "id": "set.checked-iteration",
@@ -3587,23 +5687,54 @@
       "source": "stdlib/std/simd.gti",
       "status": "executable",
       "operations": [
-        "std::simd::copy_from", "std::simd::copy_to", "std::simd::equal",
-        "std::simd::greater", "std::simd::greater_equal", "std::simd::less",
-        "std::simd::less_equal", "std::simd::not_equal", "std::simd::operator*",
-        "std::simd::operator*=", "std::simd::operator+", "std::simd::operator+=",
-        "std::simd::operator-", "std::simd::operator-=", "std::simd::operator/",
+        "std::simd::copy_from",
+        "std::simd::copy_to",
+        "std::simd::equal",
+        "std::simd::greater",
+        "std::simd::greater_equal",
+        "std::simd::less",
+        "std::simd::less_equal",
+        "std::simd::not_equal",
+        "std::simd::operator*",
+        "std::simd::operator*=",
+        "std::simd::operator+",
+        "std::simd::operator+=",
+        "std::simd::operator-",
+        "std::simd::operator-=",
+        "std::simd::operator/",
         "std::simd::operator/=",
-        "std::simd::operator[]", "std::simd::reduce", "std::simd::select",
-        "std::simd::set", "std::simd::simd", "std::simd::size",
-        "std::simd_mask::all_of", "std::simd_mask::any_of", "std::simd_mask::count",
-        "std::simd_mask::inverted", "std::simd_mask::none_of",
-        "std::simd_mask::operator&", "std::simd_mask::operator[]",
-        "std::simd_mask::operator^", "std::simd_mask::operator|",
-        "std::simd_mask::set", "std::simd_mask::simd_mask", "std::simd_mask::size"
+        "std::simd::operator[]",
+        "std::simd::reduce",
+        "std::simd::select",
+        "std::simd::set",
+        "std::simd::simd",
+        "std::simd::size",
+        "std::simd_mask::all_of",
+        "std::simd_mask::any_of",
+        "std::simd_mask::count",
+        "std::simd_mask::inverted",
+        "std::simd_mask::none_of",
+        "std::simd_mask::operator&",
+        "std::simd_mask::operator[]",
+        "std::simd_mask::operator^",
+        "std::simd_mask::operator|",
+        "std::simd_mask::set",
+        "std::simd_mask::simd_mask",
+        "std::simd_mask::size"
       ],
-      "case_ids": ["simd"],
-      "required_instantiations": ["float: 1/4/7/64 lanes", "double: 2/5/7 lanes", "corresponding masks"],
-      "evidence": ["tests/fixtures/simd_values.gti", "tests/simd_tests.cpp", "tests/simd_runtime_test.py"]
+      "case_ids": [
+        "simd"
+      ],
+      "required_instantiations": [
+        "float: 1/4/7/64 lanes",
+        "double: 2/5/7 lanes",
+        "corresponding masks"
+      ],
+      "evidence": [
+        "tests/fixtures/simd_values.gti",
+        "tests/simd_tests.cpp",
+        "tests/simd_runtime_test.py"
+      ]
     },
     {
       "id": "source-location.executable",
@@ -3617,9 +5748,19 @@
         "std::source_location::line",
         "std::source_location::source_location"
       ],
-      "case_ids": ["source-location"],
-      "required_instantiations": ["direct current call", "caller-side default argument", "empty location"],
-      "evidence": ["tests/fixtures/stdlib_surface_source_location.gti", "tests/source_location_runtime_test.py", "stdlib/std/source_location.gti"]
+      "case_ids": [
+        "source-location"
+      ],
+      "required_instantiations": [
+        "direct current call",
+        "caller-side default argument",
+        "empty location"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_source_location.gti",
+        "tests/source_location_runtime_test.py",
+        "stdlib/std/source_location.gti"
+      ]
     },
     {
       "id": "span.checked-iteration",
@@ -3671,9 +5812,20 @@
         "std::span::size",
         "std::span::subspan"
       ],
-      "case_ids": ["span", "container-member-aliases", "sequence-unchecked"],
-      "required_instantiations": ["std::span<int32_t>", "std::span<char>"],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "stdlib/std/span.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "case_ids": [
+        "span",
+        "container-member-aliases",
+        "sequence-unchecked"
+      ],
+      "required_instantiations": [
+        "std::span<int32_t>",
+        "std::span<char>"
+      ],
+      "evidence": [
+        "tests/fixtures/span_owner_dependent.gti",
+        "stdlib/std/span.gti",
+        "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
     },
     {
       "id": "string-view.checked-value-iteration",
@@ -3726,10 +5878,31 @@
       "id": "string.c-string-import",
       "source": "stdlib/std/string.gti",
       "status": "executable",
-      "operations": ["std::c_string_errc", "std::string::string(c_string)", "std::string::try_from_c_string"],
-      "case_ids": ["c-string-import"],
-      "required_instantiations": ["foreign callback", "null and empty", "all non-NUL bytes", "embedded NUL", "size overflow", "recoverable allocation exhaustion", "one exact allocation", "owned copy independent of foreign storage"],
-      "evidence": ["examples/151-c-string-import.gti", "tests/c_string_import_runtime_test.py", "tests/fixtures/c_string_import.gti", "tests/fixtures/c_string_import_null.gti", "tests/fixtures/c_string_import_exhausted.gti"]
+      "operations": [
+        "std::c_string_errc",
+        "std::string::string(c_string)",
+        "std::string::try_from_c_string"
+      ],
+      "case_ids": [
+        "c-string-import"
+      ],
+      "required_instantiations": [
+        "foreign callback",
+        "null and empty",
+        "all non-NUL bytes",
+        "embedded NUL",
+        "size overflow",
+        "recoverable allocation exhaustion",
+        "one exact allocation",
+        "owned copy independent of foreign storage"
+      ],
+      "evidence": [
+        "examples/151-c-string-import.gti",
+        "tests/c_string_import_runtime_test.py",
+        "tests/fixtures/c_string_import.gti",
+        "tests/fixtures/c_string_import_null.gti",
+        "tests/fixtures/c_string_import_exhausted.gti"
+      ]
     },
     {
       "id": "string.checked-iteration",
@@ -3768,13 +5941,66 @@
       "id": "string.executable",
       "source": "stdlib/std/string.gti",
       "status": "executable",
-      "operations": ["std::hash<std::string>", "std::string::append", "std::string::as_span", "std::string::at", "std::string::back", "std::string::begin", "std::string::c_string", "std::string::capacity", "std::string::clear", "std::string::clone", "std::string::const_iterator", "std::string::empty", "std::string::end", "std::string::front", "std::string::get_unchecked", "std::string::get_unchecked_mut", "std::string::operator comparisons", "std::string::operator[]", "std::string::pop_back", "std::string::push_back", "std::string::reserve", "std::string::resize", "std::string::sentinel", "std::string::shrink_to_fit", "std::string::size", "std::string::string(size_t,size_t,string&)", "std::string::try_c_string", "std::string::view", "std::to_string", "std::to_string(float)"],
-      "case_ids": ["span", "string", "string-c-string", "string-index-range", "string-ordering", "associative-hashes", "container-member-aliases", "sequence-unchecked"],
+      "operations": [
+        "std::hash<std::string>",
+        "std::string::append",
+        "std::string::as_span",
+        "std::string::at",
+        "std::string::back",
+        "std::string::begin",
+        "std::string::c_string",
+        "std::string::capacity",
+        "std::string::clear",
+        "std::string::clone",
+        "std::string::const_iterator",
+        "std::string::empty",
+        "std::string::end",
+        "std::string::front",
+        "std::string::get_unchecked",
+        "std::string::get_unchecked_mut",
+        "std::string::operator comparisons",
+        "std::string::operator[]",
+        "std::string::pop_back",
+        "std::string::push_back",
+        "std::string::reserve",
+        "std::string::resize",
+        "std::string::sentinel",
+        "std::string::shrink_to_fit",
+        "std::string::size",
+        "std::string::string(size_t,size_t,string&)",
+        "std::string::try_c_string",
+        "std::string::view",
+        "std::to_string",
+        "std::to_string(float)"
+      ],
+      "case_ids": [
+        "span",
+        "string",
+        "string-c-string",
+        "string-index-range",
+        "string-ordering",
+        "associative-hashes",
+        "container-member-aliases",
+        "sequence-unchecked"
+      ],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)"
       ],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "tests/fixtures/string_c_string.gti", "tests/fixtures/string_c_string.cpp", "tests/string_c_string_runtime_test.py", "tests/fixtures/string_ordering.gti", "tests/string_ordering_runtime_test.py", "tests/fixtures/associative_hash_contracts.gti", "stdlib/std/string.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "evidence": [
+        "tests/fixtures/span_owner_dependent.gti",
+        "tests/fixtures/stdlib_surface_string.gti",
+        "tests/fixtures/string_index_range.gti",
+        "tests/string_index_range_runtime_test.py",
+        "tests/fixtures/string_c_string.gti",
+        "tests/fixtures/string_c_string.cpp",
+        "tests/string_c_string_runtime_test.py",
+        "tests/fixtures/string_ordering.gti",
+        "tests/string_ordering_runtime_test.py",
+        "tests/fixtures/associative_hash_contracts.gti",
+        "stdlib/std/string.gti",
+        "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
     },
     {
       "id": "string.manipulation",
@@ -3843,37 +6069,92 @@
       "id": "string.swap",
       "source": "stdlib/std/string.gti",
       "status": "executable",
-      "operations": ["std::string::swap"],
-      "case_ids": ["container-swap"],
-      "required_instantiations": ["empty and embedded-zero strings", "distinct reserved capacities"],
-      "evidence": ["tests/fixtures/container_swap.gti", "tests/container_swap_runtime_test.py"]
+      "operations": [
+        "std::string::swap"
+      ],
+      "case_ids": [
+        "container-swap"
+      ],
+      "required_instantiations": [
+        "empty and embedded-zero strings",
+        "distinct reserved capacities"
+      ],
+      "evidence": [
+        "tests/fixtures/container_swap.gti",
+        "tests/container_swap_runtime_test.py"
+      ]
     },
     {
       "id": "tcp.executable",
       "source": "stdlib/std/tcp.gti",
       "status": "executable",
-      "operations": ["std::tcp::open", "std::tcp::socket::close", "std::tcp::socket::is_open", "std::tcp::socket::open"],
-      "case_ids": ["tcp"],
+      "operations": [
+        "std::tcp::open",
+        "std::tcp::socket::close",
+        "std::tcp::socket::is_open",
+        "std::tcp::socket::open"
+      ],
+      "case_ids": [
+        "tcp"
+      ],
       "required_instantiations": [],
-      "evidence": ["tests/fixtures/stdlib_surface_tcp.gti", "tests/fixtures/stdlib_surface_tcp_stub.cpp", "docs/language/tcp.md"]
+      "evidence": [
+        "tests/fixtures/stdlib_surface_tcp.gti",
+        "tests/fixtures/stdlib_surface_tcp_stub.cpp",
+        "docs/language/tcp.md"
+      ]
     },
     {
       "id": "testing.executable",
       "source": "stdlib/std/testing.gti",
       "status": "executable",
-      "operations": ["std::testing::check"],
-      "case_ids": ["testing"],
-      "required_instantiations": ["explicit and default messages; source attribution and failure cleanup in isolated tests"],
-      "evidence": ["tests/fixtures/stdlib_surface_testing.gti", "tests/annotated_test_suite_test.py", "examples/annotated-tests/tests/main.gti"]
+      "operations": [
+        "std::testing::check"
+      ],
+      "case_ids": [
+        "testing"
+      ],
+      "required_instantiations": [
+        "explicit and default messages; source attribution and failure cleanup in isolated tests"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_testing.gti",
+        "tests/annotated_test_suite_test.py",
+        "examples/annotated-tests/tests/main.gti"
+      ]
     },
     {
       "id": "thread.executable",
       "source": "stdlib/std/thread.gti",
       "status": "executable",
-      "operations": ["std::parallel_invoke", "std::thread::join", "std::thread::joinable", "std::thread::start", "std::thread_result::join", "std::thread_result::joinable", "std::thread_result::start"],
-      "case_ids": ["thread"],
-      "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class", "typed named task", "typed closure", "owned result cleanup", "scoped disjoint field borrows"],
-      "evidence": ["examples/066-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
+      "operations": [
+        "std::parallel_invoke",
+        "std::thread::join",
+        "std::thread::joinable",
+        "std::thread::start",
+        "std::thread_result::join",
+        "std::thread_result::joinable",
+        "std::thread_result::start"
+      ],
+      "case_ids": [
+        "thread"
+      ],
+      "required_instantiations": [
+        "noncapturing lambda",
+        "owned move-capture lambda",
+        "once-callable class",
+        "typed named task",
+        "typed closure",
+        "owned result cleanup",
+        "scoped disjoint field borrows"
+      ],
+      "evidence": [
+        "examples/066-managed-threads.gti",
+        "stdlib/std/thread.gti",
+        "tests/managed_thread_runtime_test.py",
+        "tests/managed_thread_tests.cpp",
+        "tests/runtime_thread_tests.cpp"
+      ]
     },
     {
       "id": "unordered-map.checked-mapped-projection",
@@ -4046,28 +6327,77 @@
       "id": "utility.clone",
       "source": "stdlib/std/utility.gti",
       "status": "executable",
-      "operations": ["std::clone", "std::cloneable", "std::member_cloneable"],
-      "case_ids": ["utility-clone"],
-      "required_instantiations": ["int", "std::string", "nested vector<string>", "user-defined Record", "shared_ptr<int>"],
-      "evidence": ["tests/fixtures/generic_clone.gti", "tests/generic_clone_runtime_test.py"]
+      "operations": [
+        "std::clone",
+        "std::cloneable",
+        "std::member_cloneable"
+      ],
+      "case_ids": [
+        "utility-clone"
+      ],
+      "required_instantiations": [
+        "int",
+        "std::string",
+        "nested vector<string>",
+        "user-defined Record",
+        "shared_ptr<int>"
+      ],
+      "evidence": [
+        "tests/fixtures/generic_clone.gti",
+        "tests/generic_clone_runtime_test.py"
+      ]
     },
     {
       "id": "utility.pair",
       "source": "stdlib/std/utility.gti",
       "status": "executable",
-      "operations": ["std::make_pair", "std::pair::first", "std::pair::pair", "std::pair::second"],
-      "case_ids": ["utility-make-pair", "utility-pair-constructor", "constexpr-library"],
-      "evidence": ["tests/fixtures/stdlib_surface_utility.gti", "tests/fixtures/stdlib_surface_utility_pair.gti", "stdlib/std/utility.gti"],
-      "required_instantiations": ["std::pair<int32_t,int64_t>"]
+      "operations": [
+        "std::make_pair",
+        "std::pair::first",
+        "std::pair::pair",
+        "std::pair::second"
+      ],
+      "case_ids": [
+        "utility-make-pair",
+        "utility-pair-constructor",
+        "constexpr-library"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_utility.gti",
+        "tests/fixtures/stdlib_surface_utility_pair.gti",
+        "stdlib/std/utility.gti"
+      ],
+      "required_instantiations": [
+        "std::pair<int32_t,int64_t>"
+      ]
     },
     {
       "id": "utility.restoring",
       "source": "stdlib/std/utility.gti",
       "status": "executable",
-      "operations": ["std::exchange", "std::swap"],
-      "case_ids": ["restoring-exchange-example", "restoring-shapes"],
-      "required_instantiations": ["unrelated move-only Asset and Resource", "owning and cleanup-free fixed arrays", "unique and shared owners", "optional", "expected owning success and error", "owning payload enum"],
-      "evidence": ["examples/103-resource-exchange.gti", "tests/fixtures/restoring_exchange_shapes.gti", "tests/restoring_exchange_tests.cpp", "tests/restoring_exchange_runtime_test.py", "tests/restoring_exchange_shapes_runtime_test.py"]
+      "operations": [
+        "std::exchange",
+        "std::swap"
+      ],
+      "case_ids": [
+        "restoring-exchange-example",
+        "restoring-shapes"
+      ],
+      "required_instantiations": [
+        "unrelated move-only Asset and Resource",
+        "owning and cleanup-free fixed arrays",
+        "unique and shared owners",
+        "optional",
+        "expected owning success and error",
+        "owning payload enum"
+      ],
+      "evidence": [
+        "examples/103-resource-exchange.gti",
+        "tests/fixtures/restoring_exchange_shapes.gti",
+        "tests/restoring_exchange_tests.cpp",
+        "tests/restoring_exchange_runtime_test.py",
+        "tests/restoring_exchange_shapes_runtime_test.py"
+      ]
     },
     {
       "id": "vector.checked-iteration",
@@ -4139,27 +6469,83 @@
         "std::vector::vector",
         "std::vector_element<T>"
       ],
-      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition", "container-member-aliases", "source-prefix-complete-elements", "sequence-unchecked"],
-      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>", "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking"],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti", "tests/fixtures/stdlib_surface_container_aliases.gti", "tests/fixtures/source_prefix_complete_elements.gti", "tests/source_prefix_owner_runtime_test.py"]
+      "case_ids": [
+        "span",
+        "vector",
+        "utility-clone",
+        "vector-construction-only",
+        "optional-expected-composition",
+        "container-member-aliases",
+        "source-prefix-complete-elements",
+        "sequence-unchecked"
+      ],
+      "required_instantiations": [
+        "std::vector<int32_t>",
+        "std::vector<int32_t>(int32_t[3])",
+        "std::vector<std::string>",
+        "nested vector<string>",
+        "user-defined Record",
+        "construction-only Message",
+        "std::vector<std::optional<std::string>>",
+        "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking"
+      ],
+      "evidence": [
+        "tests/fixtures/span_owner_dependent.gti",
+        "tests/fixtures/stdlib_surface_vector.gti",
+        "tests/fixtures/generic_clone.gti",
+        "tests/fixtures/vector_construction_only.gti",
+        "tests/fixtures/vector_construction_only_failure.gti",
+        "tests/vector_construction_only_runtime_test.py",
+        "stdlib/std/vector.gti",
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/source_prefix_complete_elements.gti",
+        "tests/source_prefix_owner_runtime_test.py"
+      ]
     },
     {
       "id": "vector.indexed-swap",
       "source": "stdlib/std/vector.gti",
       "status": "executable",
-      "operations": ["std::vector::swap_elements"],
-      "case_ids": ["restoring-indexed", "restoring-order", "restoring-order-example"],
-      "required_instantiations": ["int", "std::string", "unrelated move-only Resource and Job"],
-      "evidence": ["tests/fixtures/restoring_indexed_swap.gti", "tests/fixtures/restoring_algorithm_order.gti", "tests/restoring_indexed_runtime_test.py", "tests/restoring_exchange_tests.cpp"]
+      "operations": [
+        "std::vector::swap_elements"
+      ],
+      "case_ids": [
+        "restoring-indexed",
+        "restoring-order",
+        "restoring-order-example"
+      ],
+      "required_instantiations": [
+        "int",
+        "std::string",
+        "unrelated move-only Resource and Job"
+      ],
+      "evidence": [
+        "tests/fixtures/restoring_indexed_swap.gti",
+        "tests/fixtures/restoring_algorithm_order.gti",
+        "tests/restoring_indexed_runtime_test.py",
+        "tests/restoring_exchange_tests.cpp"
+      ]
     },
     {
       "id": "vector.swap",
       "source": "stdlib/std/vector.gti",
       "status": "executable",
-      "operations": ["std::vector::swap"],
-      "case_ids": ["container-swap"],
-      "required_instantiations": ["int32_t", "std::unique_ptr<int32_t>", "move-only destructor-bearing item"],
-      "evidence": ["tests/fixtures/container_swap.gti", "tests/fixtures/container_swap_cleanup.gti", "tests/container_swap_runtime_test.py"]
+      "operations": [
+        "std::vector::swap"
+      ],
+      "case_ids": [
+        "container-swap"
+      ],
+      "required_instantiations": [
+        "int32_t",
+        "std::unique_ptr<int32_t>",
+        "move-only destructor-bearing item"
+      ],
+      "evidence": [
+        "tests/fixtures/container_swap.gti",
+        "tests/fixtures/container_swap_cleanup.gti",
+        "tests/container_swap_runtime_test.py"
+      ]
     }
   ]
 }

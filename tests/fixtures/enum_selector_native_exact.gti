@@ -1,0 +1,14 @@
+enum Native<T> { item(T value) };
+class NativeOwner<T> {
+  Native<T> state;
+public:
+  NativeOwner(T value) : state(Native<T>::item(value)) {}
+};
+int main() {
+  NativeOwner<c_int> first{c_int(1)};
+  NativeOwner<int32_t> alias{2};
+  NativeOwner<c_long> long_value{c_long(3)};
+  NativeOwner<c_longlong> longlong_value{c_longlong(4)};
+  NativeOwner<int64_t> fixed{int64_t(5)};
+  return 0;
+}

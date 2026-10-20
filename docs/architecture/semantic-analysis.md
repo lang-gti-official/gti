@@ -105,7 +105,7 @@ ordinary producer validity, unsafe obligations and escape checking remain
 mandatory. Tooling retains a selected construction occurrence whose hover
 explicitly explains that no additional copy/move is selected.
 
-## Declaration construction
+## Declaration and return construction
 
 An explicitly typed class or struct declaration may have an initializer of
 another type that no assignment rule admits. `analyzeDeclarationConstruction`
@@ -128,11 +128,19 @@ and conservative raw-pointer field origins, at the declaration, as the direct
 initializer's expression would.
 
 The rule runs where the exact `nullptr_t` construction does, for declarations
-and field constructor initializers. It does not run for `constexpr` or
+and field constructor initializers, and explicitly declared value returns
+through `visitReturnStmt`. A selected contextual construction/conversion
+already produces a fresh destination, so return checking does not reinterpret
+the original argument place as a copy of that destination. A return destination
+containing open type parameters, including a computed type projection, defers
+selection to concrete semantic reanalysis. Concrete instances still enforce the
+one-step selection and ordinary access and ownership checks. Ordinary
+exact-type implicit return movement is unchanged.
+It does not run for `constexpr` or
 range-element bindings, reference fields, unions, abstract classes,
 borrow-carrying declared types, or initializers typed by their destination
-(brace lists, contextually typed calls and function names). Calls, returns and
-assignment never consult it.
+(brace lists, contextually typed calls and function names). Reference returns,
+calls and assignment never consult it.
 
 ## Conversion operators
 
@@ -159,8 +167,8 @@ and raw-pointer effects are therefore those of any operator call. An explicit
 conversion, `Target(source)`, `int(source)` or `bool(source)`, records the
 operator on its `Call` or `Conversion` node; `explicitConversionReceiver`
 names the receiver for the ownership, constexpr and HIR consumers that
-otherwise locate an operator receiver by node shape. A declaration records a
-contextual conversion on its initializer, in the map that holds a condition's
+otherwise locate an operator receiver by node shape. A declaration or declared value return records a
+contextual conversion on its initializer or operand, in the map that holds a condition's
 `operator bool`, and the declaration's sites accept the initializer through
 `recordsDeclarationConversion`. Every contextual conversion now records its
 target's program effect edge, so a condition's `operator bool` contributes to
@@ -732,6 +740,19 @@ ordinary body lookup and return-borrow validation must confirm the actual
 origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
 and the LSP consume the same validated receiver/argument summary.
 
+`FunctionInfo::completeReturnBorrow` is a separate complete result contract,
+not an inferred owner for an empty alternative. The current dependency-free
+enum slice collects every structurally reachable explicit return and demands
+callee bodies before transporting their facts. Concrete generic result queries
+reuse ordinary instance analysis in isolated workers keyed by declaration and
+exact owner/type/value arguments. Recursive or unavailable evidence stays
+unknown, including an unproved synthetic residual return from `?`; a callable
+with no normal return does not obtain a vacuous empty contract. Explicit
+unknown entries shadow base-model facts during concrete reanalysis. These
+contracts carry typed alternative inventories and declaration-relative mappings,
+never callee-local loan/place IDs. Guarded nonempty mappings remain a separate
+completion step with ordinary lifetime/escape obligations unchanged.
+
 Dependent generic type defaults retain their resolved symbolic semantic type.
 Only while resolving that default, constraints on open type arguments defer;
 name lookup, arity, and closed constraints remain checked immediately. Selecting
@@ -823,6 +844,27 @@ to name, and `meta_field_list` and `meta_field_type` are computed types that
 `rewriteCompilerType` rewrites in `selectExactClassSpecialization`, the
 canonicalization point both `typeOf` and `substituteType` pass through, as
 soon as their arguments are concrete.
+
+`meta_callable_return_type` projects the exact logical result already recorded
+on a function item, native function pointer, function signature or lambda.
+Open generic projections retain declaration-bound `ComputedTypeProjectionKind`
+metadata in the semantic and lowered class inventories. Native callable
+templates replay that projection when checking their signature against the
+concrete MIR instance; a mismatch still rejects representation. Their native
+carriers expose the MIR logical result as type metadata, never infer it from a
+C++ invocation whose ABI may instead return a failure status or use an output
+parameter. Native function pointers have no GTI metadata carrier; their
+projections are
+resolved from exact instance substitutions, not deduced from the C signature
+(whose pointer return representation can differ from GTI's logical result).
+No new runtime intrinsic or storage is involved. Confined-callable
+escape analysis distinguishes a projection operand from stored callable state;
+ordinary concrete reference origins and escape checks remain authoritative.
+A contracted reference projection is checked as its resolved reference type;
+references in the query's callable metadata are not nested stored references.
+Deferred generic call records defer return-origin proof only while no resolved
+function or lambda call exists. Concrete lambda instantiation must prove the
+declared origin, including rejecting a different reference argument.
 
 `field.get(owner)` and `get_mut` on a `meta_field` value are intercepted in
 `visitCallExpr` (`analyzeMetaFieldAccess`): semantics synthesizes the
@@ -1285,7 +1327,7 @@ extents, and checked size overflow. Unknown types keep the ordinary
 type-resolution diagnostic without a second layout error. No host or LLVM
 layout query participates.
 
-Native-record validation accepts only non-generic passive structs with public
+Native-record validation accepts only non-generic passive structs or unions with public
 instance fields drawn from fixed-width and target-C scalars, `bool`, nested
 valid native records, named native callbacks, recursive admitted raw pointers,
 and positive concrete fixed arrays of admitted field elements. It rejects

@@ -64,6 +64,7 @@ void LoweredProgram::indexDeclarations() {
     } else if (const auto *item =
                    std::get_if<LoweredEnumDeclaration>(&payload)) {
       enumRows_.try_emplace(item->type.enumId, row);
+      parameters(item->genericParameters, row);
     }
   }
   for (std::size_t row = 0; row < symbols_.size(); ++row) {
@@ -192,6 +193,10 @@ LoweredProgram::findGenericParameter(GenericParameterId id) const {
             std::get_if<LoweredConstructorDeclaration>(&declaration.payload)) {
       return find(payload->genericParameters);
     }
+    if (const auto *payload =
+            std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
+      return find(payload->genericParameters);
+    }
     return nullptr;
   };
   if (const auto row = genericParameterRows_.find(id);
@@ -221,6 +226,10 @@ LoweredProgram::findGenericParameter(GenericParameterId id) const {
               find(payload->genericParameters)) {
         return parameter;
       }
+    } else if (const auto *payload =
+                   std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
+      if (const auto *parameter = find(payload->genericParameters))
+        return parameter;
     }
   }
   return nullptr;

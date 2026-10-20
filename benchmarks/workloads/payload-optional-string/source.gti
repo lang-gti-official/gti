@@ -1,0 +1,20 @@
+#include <std/experimental/optional>
+#include <std/string>
+
+std::experimental::optional<std::string> lookup(uint64_t index) {
+  if (index % uint64_t(4) == uint64_t(0))
+    return std::experimental::optional<std::string>();
+  return std::experimental::optional<std::string>(std::string("some sufficiently long text to force allocated string storage"));
+}
+
+int main() {
+  mut uint64_t total = uint64_t(0);
+  for (mut uint64_t i = uint64_t(0); i < uint64_t(10000000); i += uint64_t(1)) {
+    auto result = lookup(i);
+    if (result.has_value())
+      total += uint64_t(result.value().size());
+  }
+  if (total != uint64_t(457500000)) return 1;
+  std::println("GTI-BENCH-1 digest:000000001b44e560 work-units:10000000");
+  return 0;
+}

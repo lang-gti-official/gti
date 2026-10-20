@@ -2,6 +2,12 @@
 #include <std/memory>
 #include <std/mutex>
 #include <std/functional>
+#include <std/optional>
+#include <std/string>
+
+// An owning sum replaces alternatives by construction, so its payload needs
+// no assignment operation. A mutex remains non-relocatable and nonassignable.
+enum pending_message { empty, ready(std::mutex<std::string> message) };
 
 class message {
   int32_t value;
@@ -85,6 +91,16 @@ int main() {
   // Join-all has completed, so the parent can access both fields again.
   if (frame.left != 1 || frame.right != 1) return 10;
   frame.left += frame.right;
+
+  mut auto pending = pending_message::ready(
+      std::mutex<std::string>(std::string("frame")));
+  pending = pending_message::empty;
+  pending = pending_message::ready(std::mutex<std::string>(std::string("next")));
+  mut auto reusable = std::optional<std::mutex<std::string>>(
+      std::mutex<std::string>(std::string("ready")));
+  reusable.reset();
+  [[discard]] reusable.emplace(std::string("again"));
+  if (!reusable) return 11;
 
   // `third` autojoins at scope exit. GTI intentionally provides no detached
   // public thread handle in this managed-thread slice.

@@ -75,6 +75,9 @@ namespace gti_internal {
   void restoring_indexed_swap<S>(mut S& storage, uint64_t left, uint64_t right);
   [[noreturn, track_caller]]
   void panic(gti_internal::text_view message);
+  // Terminal checked access failure, independent of any owner representation.
+  [[noreturn]]
+  void fail_empty_owner();
 
 
   namespace runtime {
@@ -180,7 +183,7 @@ namespace std {
     typename value_type;
     typename residual_type;
     bool has_value(T& value);
-    value_type take_value(T value);
+    [[borrowed_from(value)]] value_type take_value(T value);
     residual_type take_residual(T value);
   };
 

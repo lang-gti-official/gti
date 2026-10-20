@@ -38,7 +38,9 @@ You do not need to read the entire sequence to find an API pattern:
 | Encode and decode any struct as JSON with no codec | [141: reflected JSON](141-reflected-json.gti) |
 | Organize a reflected JSON configuration with nested types | [147: nested configuration](147-nested-configuration.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
+| Import named C unions and nested event payloads | [native union bindings project](native-union-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
+| Access actual C-owned globals, callback slots and passive records | [native variable bindings project](native-variable-bindings/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
@@ -59,6 +61,10 @@ You do not need to read the entire sequence to find an API pattern:
 | Return a reference through a callback, a generic relay, an invocation pointer or a callable view | [160: borrowed callback results](160-borrowed-callback-results.gti) |
 | Propagate an empty optional with `?`, moving a move-only value out | [162: experimental optional](162-experimental-optional.gti) |
 | Propagate a failed `result<T, E>` enum with `?`, moving owned strings out | [163: payload-enum propagation](163-payload-enum-propagation.gti) |
+| Compose enum, array and owning payloads in source-defined wrappers | [164: payload composition](164-payload-composition.gti) |
+| Consume a fallible view while retaining its external success borrow | [165: borrowed payload results](165-borrowed-payload-results.gti) |
+| Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
+| Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -104,7 +110,7 @@ is a teaching helper, not a production server.
 | `023-direct-initialization.gti` | exact construction, field replacement, generated and nominal-field defaults, designated defaults and finite value-generic layouts |
 | `024-static.gti` | source-local storage and type-owned class members |
 | `025-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
-| `026-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
+| `026-stored-references.gti` | owner-tied iterators and text adapters retaining both a view binding and its character owner |
 | `027-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
 | `028-callable-parameters.gti` | confined generic operations, borrowed stateful/lambda callables, reference forwarding and inferred conditional results |
 | `029-callable-predicates.gti` | exact bool predicate results from confined generic callables |
@@ -192,7 +198,7 @@ is a teaching helper, not a production server.
 | `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
 | `113-erased-addresses.gti` | explicit const-preserving typed/erased address conversion and separate owner-witness borrowing |
 | `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
-| `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use and storage insertion |
+| `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use, storage/vector insertion and optional replacement |
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
 | `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
@@ -228,6 +234,10 @@ is a teaching helper, not a production server.
 | `161-consuming-matches.gti` | a switch over temporary messages that moves their owned strings into its bindings, an arm without bindings that drops its message on entry, a source-defined optional whose `&&` accessor moves the value out of its field, and a borrowed match over a named enum |
 | `162-experimental-optional.gti` | the source-defined `std::experimental::optional` holding a move-only record, `?` moving it out or returning an empty optional, and `std::experimental::nullopt` |
 | `163-payload-enum-propagation.gti` | a `std::tryable` block for a `result<T, E>` enum template, `?` moving owned strings out of two lookups or returning the first failure unchanged, and a match that consumes the result |
+| `164-payload-composition.gti` | a source-defined optional containing another owning payload enum, consuming nested patterns, and a fixed-array payload |
+| `165-borrowed-payload-results.gti` | source-defined class and enum results with owning string errors and reference successes; checked selection and `borrowed_from` relay the exact external owner when `?` consumes the wrapper |
+| `166-source-optional.gti` | stable `std::optional`, one-step declared returns and their ownership boundary, ordinary payload-enum storage, move assignment, consuming `value()` and `?` propagation |
+| `167-callable-result-types.gti` | computed callable result types used by an unrelated source-defined mapping wrapper; no builtin combinator |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

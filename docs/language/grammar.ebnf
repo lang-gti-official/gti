@@ -126,12 +126,14 @@ function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | 
    direct calls. Neither changes the declared result type.
    discardable permits ignoring a non-void function or method result; it
    does not change evaluation, failure, cleanup, borrowing or the result type.
-   borrowed_from selects one checked reference parameter or a non-static
+   borrowed_from selects one checked reference parameter, the single external
+   dependency of a by-value carrier parameter, or a non-static
    receiver as the returned reference's owner. Safe returns must preserve it.
    On a declaration whose result type is a generic parameter it binds only the
    instances whose substituted result is a checked reference, and it may name
    a final parameter pack: the one reference element of the expanded pack in
-   that instance owns the result.
+   that instance owns the result. Protocol operations may state this contract;
+   their implementations preserve the selected parameter position.
    A direct raw dereference returned inside lexical unsafe may assert that
    relationship, retaining known lifetime/access contradictions. *)
 
@@ -193,7 +195,9 @@ namespace-body         = "{" { declaration } "}" ;
 
 namespace-alias        = "=" qualified-name ";" ;
 
-type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
+type-alias-declaration = "using" IDENTIFIER "=" [ "mut" ] type ";" ;
+(* A mutable associated type definition must name a checked reference.
+   Ordinary reference aliases remain outside the implemented alias surface. *)
 
 native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
 
@@ -343,7 +347,11 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    GTI-function conversion rules are specified in `native-c-interop.md`. *)
 
 extern-c-declaration   = "extern" STRING_LITERAL "{"
-                         { extern-c-function-declaration } "}" ;
+                         { extern-c-function-declaration | extern-c-variable-declaration } "}" ;
+
+extern-c-variable-declaration
+                       = [ native-link-name-attribute ] [ "mut" ] type
+                         IDENTIFIER ";" ;
 
 extern-c-function-declaration
                        = [ native-function-attributes ]
@@ -367,7 +375,12 @@ native-link-name-attribute
                        = "[[" "link_name" "(" STRING_LITERAL ")" "]]" ;
 
 (* The linkage string must decode to exactly `"C"`. The block is valid only at
-   namespace scope and may contain only bodyless free-function declarations.
+   namespace scope and may contain bodyless free-function declarations or
+   foreign variable declarations. Foreign variables cannot have initializers;
+   `mut` denotes writable native storage and its absence read-only storage.
+   A foreign declaration creates no GTI initialization or cleanup obligation.
+   The supported storage types and unsafe access contract are specified in
+   `native-c-interop.md`.
    Semantic analysis rejects generics, `static`, writable returns, duplicate
    native attributes, overloading or redeclaration of a program-global C
    symbol, and every parameter or return type outside the bounded native ABI.
@@ -554,10 +567,10 @@ access-specifier       = ( "public" | "protected" | "private" ) ":" ;
    ending with `;`. The enclosing `interface` makes it implicitly virtual and pure, so
    the C++ pure specifier `= 0;` is redundant and ill-formed in an interface.
 
-   An attribute list may precede only a class, struct, or interface. Semantics
+   An attribute list may precede only a class, struct, union, or interface. Semantics
    accepts `no_transfer`, `no_share`, `unsafe_transfer`, and `unsafe_share` on
    ordinary classes/structs; interfaces instead accept `transfer` and `share`
-   requirements. A non-generic passive struct may use `c_abi` instead to opt
+   requirements. A non-generic passive struct or union may use `c_abi` instead to opt
    into the closed native C record contract. It then contains only public
    instance fields from the admitted scalar, recursive pointer, fixed-array,
    callback and nested native-record family, with no field initializers,

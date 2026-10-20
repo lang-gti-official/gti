@@ -1,10 +1,20 @@
 #include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+} // namespace lang
 
 // Prefix `?` through `std::tryable`: an operand other than built-in
 // `expected` propagates through the selected conformance block. Every rule is
@@ -18,6 +28,12 @@ int main() {
     }
   };
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  std::ifstream conditionalFixture(root / "tests" / "fixtures" /
+                                   "reference_payload_tryable.gti");
+  const std::string conditionalBorrowed(
+      (std::istreambuf_iterator<char>(conditionalFixture)),
+      std::istreambuf_iterator<char>());
+  expect(!conditionalBorrowed.empty(), "conditional reference fixture exists");
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze(root / "tests" / "tryable-propagation.gti",
                                     source, {root / "stdlib" / "prelude.gti"},
@@ -64,6 +80,331 @@ int main() {
            std::string("missing ") + code + " with '" + fragment + "'");
   };
 
+  accepted(conditionalBorrowed,
+           "conditional borrowed success and owned residual use exact output "
+           "dependencies through source-defined propagation");
+  auto exclusiveConditional = conditionalBorrowed;
+  for (std::size_t offset = 0;
+       (offset = exclusiveConditional.find("int&", offset)) !=
+       std::string::npos;
+       offset += 8)
+    exclusiveConditional.replace(offset, 4, "mut int&");
+  const auto ownerDeclaration = exclusiveConditional.find("int owner = 42;");
+  expect(ownerDeclaration != std::string::npos,
+         "conditional fixture has an owner declaration");
+  if (ownerDeclaration != std::string::npos)
+    exclusiveConditional.insert(ownerDeclaration, "mut ");
+  accepted(exclusiveConditional,
+           "conditional exclusive success preserves mutable owner authority");
+  for (const auto &source : {conditionalBorrowed, exclusiveConditional}) {
+    const auto proof = analyze(source);
+    expect(proof.canGenerateCode(),
+           "consuming reference publication fixture must verify");
+    if (!proof.canGenerateCode())
+      continue;
+    bool checkedOwningBorrowedCall = false;
+    for (const auto &function : proof.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.functionTarget || !instruction.loan ||
+              instruction.info.type.kind != lang::SemanticType::Enum ||
+              instruction.info.traits.drop != lang::DropKind::Lexical ||
+              !instruction.definedFailure.mayUnwind())
+            continue;
+          checkedOwningBorrowedCall = true;
+          expect(instruction.successResultDrop &&
+                     block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                     block.terminator.invokeInstruction == instruction.id,
+                 "borrowed owning enum calls publish only on Invoke success");
+          auto malformed = proof.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto &bad = changed->body.blocks[block.id - 1];
+          bad.terminator.kind = lang::MirTerminatorKind::Goto;
+          bad.terminator.invokeInstruction = 0;
+          expect(
+              !lang::verifyMirProgram(malformed).valid(),
+              "borrowed owning enum results cannot erase their failure edge");
+        }
+    expect(
+        checkedOwningBorrowedCall,
+        "conditional result fixture exercises success-only enum publication");
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        auto &body = function.body;
+        for (auto &result : body.loans) {
+          if (changed || result.kind != lang::MirLoanKind::CallResult ||
+              result.carriers.empty())
+            continue;
+          const auto input = std::find_if(
+              body.loans.begin(), body.loans.end(), [&](const auto &candidate) {
+                return candidate.kind == lang::MirLoanKind::Stored &&
+                       !candidate.entry && !candidate.conditions.empty() &&
+                       candidate.source == result.source &&
+                       candidate.parent == result.parent;
+              });
+          if (input == body.loans.end())
+            continue;
+          if (mutation == 0) {
+            // Mutually consistent annotations cannot reattach the returned
+            // reference to a carrier that the invocation has consumed.
+            result.parent = input->id;
+            for (auto &value : body.values)
+              if (value.sourceValue == result.producedBy &&
+                  value.borrowDependencies)
+                for (auto &dependency : value.borrowDependencies->dependencies)
+                  dependency.parent = input->id;
+            changed = true;
+          } else if (mutation == 3) {
+            // Losing the producer's active-variant condition is not repaired
+            // by copying the same incomplete claim into the SSA value.
+            input->conditions.clear();
+            for (auto &value : body.values)
+              if (value.sourceValue == input->producedBy &&
+                  value.borrowDependencies)
+                for (auto &dependency : value.borrowDependencies->dependencies)
+                  dependency.conditions.clear();
+            changed = true;
+          } else {
+            for (auto &block : body.blocks) {
+              if (changed)
+                break;
+              for (auto instruction = block.instructions.begin();
+                   instruction != block.instructions.end(); ++instruction) {
+                if (mutation == 1 &&
+                    instruction->kind == lang::MirInstructionKind::EndBorrow &&
+                    instruction->loan == input->id &&
+                    block.activeFailure == 0) {
+                  block.instructions.erase(instruction);
+                  changed = true;
+                  break;
+                }
+                if (mutation == 2 &&
+                    instruction->kind == lang::MirInstructionKind::CallInput &&
+                    instruction->callSite == result.producedBy &&
+                    instruction->callInputKind ==
+                        lang::HirCallInputKind::MoveValue) {
+                  instruction->callInputKind =
+                      lang::HirCallInputKind::CopyValue;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      expect(changed,
+             "mutation must select the consumed reference publication");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "consumed reference publication requires exact external ancestry, "
+             "normal-edge retirement, staged move and guarded input facts");
+    }
+  }
+  const std::string multipleOwners = R"gti(
+enum Pair { both(int& first, int& second) };
+[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+  switch (std::move(input)) {
+    case Pair::both(first, second):
+      if (choose) return first;
+      return second;
+  }
+}
+int main() {
+  int first = 41;
+  int second = 42;
+  mut auto carrier = Pair::both(first, second);
+  int& selected = select(std::move(carrier), true);
+  return selected == 41 ? 0 : 1;
+}
+)gti";
+  accepted(multipleOwners,
+           "passive consuming payloads retain each field's independent owner "
+           "through scalar result publication");
+  for (const auto *owner : {"first", "second"}) {
+    auto conflicting = multipleOwners;
+    const auto declaration = conflicting.find(std::string("  int ") + owner);
+    expect(declaration != std::string::npos,
+           "multiple-owner fixture has the selected physical local");
+    if (declaration != std::string::npos)
+      conflicting.insert(declaration + 2, "mut ");
+    conflicting.insert(conflicting.find("  return selected =="),
+                       std::string("  ") + owner + " = 19;\n");
+    rejected(conflicting, "GTI-S2017", "borrow");
+    auto aliased = conflicting;
+    const auto write = aliased.find(std::string("  ") + owner + " = 19;");
+    aliased.insert(write, "  int& alias = selected;\n");
+    aliased.replace(aliased.find("return selected =="),
+                    std::string("return selected ==").size(),
+                    "return alias ==");
+    rejected(aliased, "GTI-S2017", "borrow");
+  }
+  const auto multipleOwnerProof = analyze(multipleOwners);
+  if (multipleOwnerProof.canGenerateCode()) {
+    for (int mutation = 0; mutation < 5; ++mutation) {
+      auto malformed = multipleOwnerProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (!changed && mutation >= 3) {
+          for (auto &loan : function.body.loans) {
+            if (loan.kind != lang::MirLoanKind::CallResult ||
+                loan.additionalDependencies.empty() || loan.carriers.empty())
+              continue;
+            loan.additionalDependencies.clear();
+            if (mutation == 4)
+              for (auto &value : function.body.values)
+                if (value.sourceValue == loan.producedBy &&
+                    value.borrowDependencies &&
+                    value.borrowDependencies->dependencies.size() > 1)
+                  value.borrowDependencies->dependencies.resize(1);
+            changed = true;
+            break;
+          }
+        }
+        if (changed || !function.completeReturnBorrow ||
+            function.completeReturnBorrow->dependencies.size() != 2)
+          continue;
+        if (mutation == 0) {
+          function.completeReturnBorrow->dependencies.pop_back();
+          changed = true;
+        } else {
+          for (auto &block : function.body.blocks) {
+            for (auto it = block.instructions.begin();
+                 it != block.instructions.end(); ++it) {
+              if (changed)
+                break;
+              if (mutation == 1 && it->payloadIndex == 0 &&
+                  it->operation == lang::MirOperation::PayloadExtract) {
+                it->payloadIndex = 1;
+                changed = true;
+              } else if (mutation == 2 &&
+                         it->kind == lang::MirInstructionKind::EndBorrow &&
+                         it->loan &&
+                         function.body.loans[*it->loan - 1].kind ==
+                             lang::MirLoanKind::Stored) {
+                block.instructions.erase(it);
+                changed = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+      expect(changed, "multiple-owner mutation selects exact field handoff");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "passive field handoff cannot omit an owner, duplicate a field "
+             "or omit the consumed group's retirement");
+    }
+  }
+  auto endedOwners = multipleOwners;
+  for (const auto *owner : {"first", "second"})
+    endedOwners.insert(endedOwners.find(std::string("  int ") + owner) + 2,
+                       "mut ");
+  endedOwners.replace(endedOwners.find("  return selected == 41 ? 0 : 1;"),
+                      std::string("  return selected == 41 ? 0 : 1;").size(),
+                      "  int saved = selected;\n"
+                      "  first = 19;\n  second = 20;\n"
+                      "  return saved == 41 ? 0 : 1;");
+  accepted(endedOwners,
+           "all scalar selection origins become writable after its last use");
+  auto exclusiveConflict = exclusiveConditional;
+  const auto successReturn = exclusiveConflict.find("return Status(value);");
+  expect(successReturn != std::string::npos,
+         "conditional fixture has a success reference use");
+  if (successReturn != std::string::npos) {
+    exclusiveConflict.insert(successReturn, "owner = 19; ");
+    rejected(exclusiveConflict, "GTI-S2017", "borrow");
+  }
+  auto exclusiveCopy = exclusiveConditional;
+  const auto consumingOperand = exclusiveCopy.find("?std::move(result)");
+  expect(consumingOperand != std::string::npos,
+         "conditional fixture explicitly consumes its operand");
+  if (consumingOperand != std::string::npos) {
+    exclusiveCopy.replace(consumingOperand,
+                          std::string("?std::move(result)").size(), "?result");
+    rejected(exclusiveCopy, "GTI-S2086", "cannot copy");
+  }
+  auto localReference = conditionalBorrowed;
+  const auto selectedReturn = localReference.find("return value;");
+  expect(selectedReturn != std::string::npos,
+         "conditional fixture has a selected return");
+  if (selectedReturn != std::string::npos) {
+    localReference.replace(selectedReturn, std::string("return value;").size(),
+                           "int local = 9; return local;");
+    const auto invalid = analyze(localReference);
+    expect(!invalid.canGenerateCode(),
+           "complete reference-return proof cannot substitute a local owner");
+    expect(std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-B0001";
+                        }),
+           "local reference escape fails before backend representation");
+  }
+
+  const std::string nativePayloads = R"gti(
+[[c_abi]] struct NativeAddress { mut const int* address; mut int stamp; };
+[[c_abi]] struct NativeBatch { NativeAddress records[2]; };
+[[c_abi]] union NativeChoice { int integer; const int* address; };
+extern "C" {
+  NativeAddress native_address();
+  NativeBatch native_batch();
+  NativeChoice native_choice();
+}
+enum NativeEvent {
+  address(NativeAddress value), batch(NativeBatch value),
+  choice(NativeChoice value), empty
+};
+int main() {
+  unsafe {
+    NativeAddress address = native_address();
+    NativeBatch batch = native_batch();
+    NativeChoice choice = native_choice();
+    NativeEvent first = NativeEvent::address(address);
+    NativeEvent second = NativeEvent::batch(batch);
+    NativeEvent third = NativeEvent::choice(choice);
+    switch (first) {
+      case NativeEvent::address(value): return value.stamp;
+      case NativeEvent::batch: return 1;
+      case NativeEvent::choice: return 2;
+      case NativeEvent::empty: return 3;
+    }
+  }
+}
+)gti";
+  accepted(nativePayloads,
+           "validated native layouts must establish complete empty payload "
+           "dependencies, including nested records, arrays and native unions");
+  const auto nativePayloadResult = analyze(nativePayloads);
+  if (nativePayloadResult.canGenerateCode()) {
+    auto missingNativeEvidence = nativePayloadResult.mir;
+    bool changed = false;
+    for (auto &function :
+         lang::MirProgramTestAccess::functions(missingNativeEvidence)) {
+      for (auto &value : function.body.values) {
+        if (value.borrowDependencies &&
+            value.info.type.kind == lang::SemanticType::Enum) {
+          value.borrowDependencies.reset();
+          changed = true;
+          break;
+        }
+      }
+      if (changed)
+        break;
+    }
+    expect(changed, "native payload fixture must publish complete evidence");
+    expect(!lang::verifyMirProgram(missingNativeEvidence).valid(),
+           "native-layout payloads must not bypass required complete evidence");
+  }
+  rejected(R"gti(
+[[c_abi]] struct InvalidNative { int& owner; };
+enum InvalidEvent { value(InvalidNative native), empty };
+int main() { return 0; }
+)gti",
+           "GTI-S2064", "outside the bounded C ABI record field set");
+
   const std::string types = R"gti(
 struct Rejected {
   int code;
@@ -81,7 +422,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  T take_value(Checked<T> result) { return result.value; }
+  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 class Status {
@@ -179,9 +520,7 @@ constexpr Status constant() {
 int main() { return 0; }
 )gti",
            "GTI-S2086", "constexpr function");
-  // A payload enum propagates like a class: a temporary is borrowed for the
-  // test, a named place is copied and an explicit move consumes it.
-  accepted(types + R"gti(
+  const std::string enumProtocol = types + R"gti(
 enum class Parse {
   ok(int value),
   failed(int code),
@@ -191,26 +530,20 @@ for concept std::tryable<Parse> {
   using residual_type = Rejected;
   bool has_value(Parse& parse) {
     switch (parse) {
-    case Parse::ok:
-      return true;
-    case Parse::failed:
-      return false;
+      case Parse::ok: return true;
+      case Parse::failed: return false;
     }
   }
   int take_value(Parse parse) {
     switch (parse) {
-    case Parse::ok(value):
-      return value;
-    case Parse::failed(code):
-      return 0;
+      case Parse::ok(value): return value;
+      case Parse::failed: return 0;
     }
   }
   Rejected take_residual(Parse parse) {
     switch (parse) {
-    case Parse::ok(value):
-      return Rejected(0);
-    case Parse::failed(code):
-      return Rejected(code);
+      case Parse::ok: return Rejected(0);
+      case Parse::failed(code): return Rejected(code);
     }
   }
 };
@@ -221,9 +554,460 @@ Status enumerated(int text) {
   return Status(value);
 }
 int main() { return enumerated(2).code - 7; }
+)gti";
+  accepted(enumProtocol, "a payload enum can implement propagation directly");
+  const std::string passiveEnum = R"gti(
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+)gti";
+  accepted(passiveEnum + "int main() { return inspect(Token::item(7)) - 7; }",
+           "ordinary readonly calls can observe passive enum temporaries");
+  rejected(passiveEnum + R"gti(
+void change(mut Token& token) {}
+int main() { change(Token::item(7)); return 0; }
 )gti",
-           "temporary, named and moved payload-enum operands should "
-           "propagate through their block");
+           "GTI-S2017", "mutable reference to a temporary");
+  rejected(passiveEnum + R"gti(
+[[borrowed_from(token)]] Token& escape(Token& token) { return token; }
+int main() { Token& value = escape(Token::item(7)); return inspect(value); }
+)gti",
+           "GTI-S2017", "may return a reference");
+  const auto localSets = analyze(passiveEnum + R"gti(
+Token select(bool flag) {
+  mut auto value = Token::empty;
+  if (flag) { value = Token::item(7); }
+  else { value = Token::empty; }
+  auto copied = value;
+  return std::move(copied);
+}
+Token snapshot() {
+  mut auto value = Token::empty;
+  auto copied = value;
+  value = Token::item(9);
+  return copied;
+}
+int main() {
+  auto first = select(true);
+  auto second = snapshot();
+  return inspect(first) + inspect(second) - 7;
+}
+)gti");
+  expect(localSets.canGenerateCode(),
+         "complete sets survive binding, branch union, copy and move");
+  if (!localSets.canGenerateCode())
+    dump(localSets);
+  else {
+    bool sawUnion = false;
+    bool sawMove = false;
+    for (const auto &function : localSets.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto *value = instruction.result
+                                  ? function.body.findValue(*instruction.result)
+                                  : nullptr;
+          if (!value || !value->borrowDependencies)
+            continue;
+          sawUnion |=
+              value->borrowDependencies->possibleAlternatives.size() == 2;
+          sawMove |= instruction.kind == lang::MirInstructionKind::Move;
+        }
+    expect(sawUnion && sawMove, "transport evidence includes both branch "
+                                "alternatives and a moved result");
+    for (int corruption = 0; corruption != 3; ++corruption) {
+      auto malformed = localSets.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            auto *value = instruction.result
+                              ? &function.body.values[*instruction.result - 1]
+                              : nullptr;
+            if (changed || instruction.kind != lang::MirInstructionKind::Load ||
+                !value || !value->borrowDependencies ||
+                value->borrowDependencies->possibleAlternatives.size() != 2)
+              continue;
+            auto &alternatives =
+                value->borrowDependencies->possibleAlternatives;
+            if (corruption == 0)
+              alternatives.pop_back();
+            if (corruption == 1)
+              alternatives.front().conditions.front().subobject = {1};
+            if (corruption == 2)
+              alternatives.back() = alternatives.front();
+            changed = true;
+          }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "MIR rejects omitted, substituted and duplicated joined "
+             "alternatives");
+    }
+  }
+  for (const std::string source :
+       {"Token unknown(Token& input) { return input; }",
+        "void replace(mut Token& input) { input = Token::item(9); } "
+        "Token unknown() { mut auto value = Token::empty; replace(value); "
+        "return value; }"}) {
+    const auto unknownSet =
+        analyze(passiveEnum + source + " int main() { return 0; }");
+    expect(
+        unknownSet.canGenerateCode(),
+        "unknown or mutably invalidated alternatives retain no complete proof");
+    if (!unknownSet.canGenerateCode()) {
+      dump(unknownSet);
+      continue;
+    }
+    auto malformed = unknownSet.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+      for (auto &block : function.body.blocks)
+        for (auto &instruction : block.instructions) {
+          auto *value = instruction.result
+                            ? &function.body.values[*instruction.result - 1]
+                            : nullptr;
+          if (changed || instruction.kind != lang::MirInstructionKind::Load ||
+              !value || value->info.type.kind != lang::SemanticType::Enum ||
+              value->borrowDependencies)
+            continue;
+          value->borrowDependencies = lang::MirBorrowDependencySet{
+              .possibleAlternatives = {
+                  {.conditions = {
+                       {.enumeration = value->info.type, .variant = 1}}}}};
+          changed = true;
+        }
+    expect(changed,
+           "unknown-storage mutation must select a transport in: " + source);
+    expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+           "MIR cannot invent an empty-set proof for unknown or mutated "
+           "storage in: " +
+               source);
+  }
+  accepted(passiveEnum + R"gti(
+Token repeated(int count) {
+  mut auto value = Token::empty;
+  for (mut int index = 0; index < count; ++index) {
+    auto previous = value;
+    [[discard]] inspect(previous);
+    value = Token::item(index);
+  }
+  return value;
+}
+int main() { auto value = repeated(3); return inspect(value) - 2; }
+)gti",
+           "loop-carried alternatives do not reuse a first-iteration proof");
+  const auto ownedSets = analyze(R"gti(
+#include <std/string>
+enum Owned { item(std::string text), empty };
+Owned move_result() {
+  auto original = Owned::item(std::string("error"));
+  auto relocated = std::move(original);
+  return relocated;
+}
+int main() { auto value = move_result(); return 0; }
+)gti");
+  expect(ownedSets.canGenerateCode(), "dependency-free owning alternatives "
+                                      "preserve explicit and implicit moves");
+  if (!ownedSets.canGenerateCode())
+    dump(ownedSets);
+  else {
+    std::size_t ownedMoves = 0;
+    for (const auto &function : ownedSets.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto *value = instruction.result
+                                  ? function.body.findValue(*instruction.result)
+                                  : nullptr;
+          if (instruction.kind == lang::MirInstructionKind::Move && value &&
+              value->info.type.kind == lang::SemanticType::Enum &&
+              value->borrowDependencies)
+            ++ownedMoves;
+        }
+    expect(
+        ownedMoves >= 2,
+        "actual owning moves, including synthesized return, retain exact sets");
+  }
+  const auto enumProof = analyze(enumProtocol);
+  if (enumProof.canGenerateCode()) {
+    for (int corruption = 0; corruption != 6; ++corruption) {
+      auto malformed = enumProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &value : function.body.values) {
+          if (changed || !value.borrowDependencies ||
+              value.borrowDependencies->possibleAlternatives.empty())
+            continue;
+          auto &set = *value.borrowDependencies;
+          if (corruption == 0)
+            value.borrowDependencies.reset();
+          if (corruption == 1)
+            ++set.possibleAlternatives.front().conditions.front().variant;
+          if (corruption == 2)
+            set.possibleAlternatives.front().conditions.front().enumeration =
+                lang::SemanticType::Unknown;
+          if (corruption == 3)
+            set.possibleAlternatives.push_back(
+                set.possibleAlternatives.front());
+          if (corruption == 4)
+            set.dependencies.push_back({});
+          if (corruption == 5)
+            set.possibleAlternatives.front().conditions.front().subobject = {1};
+          changed = true;
+        }
+      expect(changed, "empty-set mutation must select a proven enum producer");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR rejects missing empty evidence, wrong typed alternatives, "
+             "invented dependencies and substituted nested paths");
+    }
+    for (int corruption = 0; corruption != 9; ++corruption) {
+      auto malformed = enumProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputKind !=
+                    lang::HirCallInputKind::ReadTemporaryBorrow ||
+                !instruction.loan || instruction.operands.size() != 1)
+              continue;
+            auto &loan = function.body.loans[*instruction.loan - 1];
+            auto &place = function.body.places[loan.source - 1];
+            if (place.type.kind != lang::SemanticType::Enum)
+              continue;
+            if (corruption == 0)
+              place.sourceValue = 0;
+            if (corruption == 1)
+              loan.producedBy = 0;
+            if (corruption == 2)
+              loan.escapes = true;
+            if (corruption == 3)
+              loan.access = lang::AccessMode::Mutable;
+            if (corruption == 4)
+              instruction.operands.front().place = 0;
+            if (corruption == 5)
+              instruction.loan.reset();
+            if (corruption >= 6) {
+              auto obligation =
+                  std::find_if(function.body.dropObligations.begin(),
+                               function.body.dropObligations.end(),
+                               [&](const lang::MirDropObligation &candidate) {
+                                 return candidate.place == place.id;
+                               });
+              if (obligation == function.body.dropObligations.end())
+                continue;
+              if (corruption == 6)
+                obligation->fullExpression = 0;
+              if (corruption == 7)
+                obligation->value = 0;
+              if (corruption == 8)
+                obligation->dropType.requiresActiveCleanup = true;
+            }
+            changed = true;
+          }
+      expect(changed,
+             "enum temporary mutation must select its materialization");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR must reject a missing, mismatched, escaping or upgraded "
+             "enum temporary argument loan or lifetime obligation");
+    }
+  }
+  const std::string borrowed = R"gti(
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+};
+class Reading {
+public:
+  int& external;
+  int code;
+  Reading(int& owner, int failure) : external(owner), code(failure) {}
+};
+for concept std::tryable<Reading> {
+  using value_type = int&;
+  using residual_type = Rejected;
+  bool has_value(Reading& value) { return value.code == 0; }
+  [[borrowed_from(value)]] int& take_value(Reading value) {
+    return value.external;
+  }
+  Rejected take_residual(Reading value) { return Rejected(value.code); }
+};
+class Status {
+public:
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected error) : code(error.code) {}
+};
+)gti";
+  accepted(borrowed + R"gti(
+Status read(int& owner, int failure) {
+  Reading source{owner, failure};
+  int& value = ?std::move(source);
+  return Status(value);
+}
+int main() {
+  int owner = 7;
+  return read(owner, 0).code - 7;
+}
+)gti",
+           "propagation keeps a by-value carrier's external reference");
+
+  const std::string mutableBorrowed = R"gti(
+struct Rejected { int code; Rejected(int value) : code(value) {} };
+class Editing {
+public:
+  mut int& external;
+  int code;
+  Editing(mut int& owner, int failure) : external(owner), code(failure) {}
+};
+for concept std::tryable<Editing> {
+  using value_type = mut int&;
+  using residual_type = Rejected;
+  bool has_value(Editing& value) { return value.code == 0; }
+  [[borrowed_from(value)]] mut int& take_value(mut Editing value) {
+    return value.external;
+  }
+  Rejected take_residual(Editing value) { return Rejected(value.code); }
+};
+struct Status {
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected error) : code(error.code) {}
+};
+)gti";
+  accepted(mutableBorrowed + R"gti(
+Status edit(mut int& owner) {
+  Editing source{owner, 0};
+  mut int& value = ?std::move(source);
+  value = 8;
+  return Status(value);
+}
+int main() { mut int owner = 7; return edit(owner).code - 8; }
+)gti",
+           "propagation transfers exclusive external reference authority");
+  rejected(mutableBorrowed + R"gti(
+Status edit(mut int& owner) {
+  Editing source{owner, 0};
+  mut int& value = ?std::move(source);
+  owner = 9;
+  return Status(value);
+}
+int main() { mut int owner = 7; return edit(owner).code; }
+)gti",
+           "GTI-S2017", "borrow");
+
+  const auto proof = analyze(borrowed + R"gti(
+Status read(int& owner) {
+  Reading source{owner, 0};
+  int& value = ?std::move(source);
+  return Status(value);
+}
+int main() { int owner = 7; return read(owner).code - 7; }
+)gti");
+  const std::string guarded = R"gti(
+class Guard {
+public:
+  int& owner;
+  Guard(int& value) : owner(value) {}
+  ~Guard() {}
+};
+class Envelope {
+public:
+  Guard guard;
+  Envelope(Guard value) : guard(std::move(value)) {}
+};
+)gti";
+  rejected(guarded + R"gti(
+[[borrowed_from(value)]] int& escape(Guard value) { return value.owner; }
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "cleanup-bound carrier cannot escape");
+  rejected(guarded + R"gti(
+[[borrowed_from(value)]] int& escape(Envelope value) {
+  return value.guard.owner;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "cleanup-bound carrier cannot escape");
+  const auto guardProof = analyze(guarded + R"gti(
+int main() {
+  int owner = 7;
+  Guard guard{owner};
+  return guard.owner - 7;
+}
+)gti");
+  expect(guardProof.canGenerateCode(),
+         "a source destructor retains its reference until ordinary cleanup");
+  if (guardProof.canGenerateCode()) {
+    auto malformed = guardProof.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+      for (auto &loan : function.body.loans) {
+        if (loan.lifecycleBound) {
+          loan.lifecycleBound = false;
+          changed = true;
+        }
+      }
+    expect(changed, "guard mutation must select a lifecycle-bound dependency");
+    expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+           "MIR must reject omitted destructor-bound dependency retention");
+  }
+  if (proof.canGenerateCode()) {
+    for (bool primary : {true, false}) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed))
+        for (auto &loan : function.body.loans) {
+          if (changed || loan.kind != lang::MirLoanKind::Stored)
+            continue;
+          const lang::BorrowDependencyCondition forged{
+              .enumeration = lang::SemanticType::enumType(1), .variant = 0};
+          if (primary)
+            loan.conditions.push_back(forged);
+          else
+            loan.additionalDependencies.push_back({.source = loan.source,
+                                                   .access = loan.access,
+                                                   .conditions = {forged}});
+          changed = true;
+        }
+      expect(changed, "conditional mutation must select a stored dependency");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "primary and additional dependencies both require exact "
+             "active-alternative proofs");
+    }
+    for (int corruption = 0; corruption < 4; ++corruption) {
+      auto malformed = proof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        for (auto &block : function.body.blocks) {
+          for (auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Call ||
+                instruction.borrowOrigin != lang::BorrowOriginKind::Argument ||
+                instruction.info.category != lang::ValueCategory::Place)
+              continue;
+            if (corruption == 0)
+              instruction.borrowOrigin = lang::BorrowOriginKind::None;
+            else if (corruption == 1)
+              instruction.borrowArgument = 1;
+            else if (corruption == 2)
+              instruction.borrowAccess = lang::AccessMode::Mutable;
+            else if (instruction.loan)
+              function.body.loans[*instruction.loan - 1].source = 0;
+            else
+              continue;
+            changed = true;
+          }
+        }
+      }
+      expect(changed, "borrowed propagation mutation must find its call proof");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR must reject missing, substituted, upgraded or sourceless "
+             "borrowed protocol result authority");
+    }
+  }
+
   // An enum template conforms through one block, and its residual may be
   // the enum itself.
   accepted(R"gti(

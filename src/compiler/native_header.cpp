@@ -30,6 +30,11 @@ struct NativeFunction {
   const LoweredFunctionDeclaration *info = nullptr;
 };
 
+struct NativeVariable {
+  const LoweredDeclaration *declaration = nullptr;
+  const LoweredStorageDeclaration *info = nullptr;
+};
+
 struct NativeCallbackAlias {
   const LoweredDeclaration *declaration = nullptr;
   const LoweredTypeAliasDeclaration *info = nullptr;
@@ -131,7 +136,8 @@ public:
             " * C++ implementations may wrap arbitrary C++ internals, but "
             "must not let exceptions cross these functions.\n"
             " * Define GTI_NATIVE_HEADER_NO_SOURCE_NAMES before inclusion to "
-            "suppress optional C++ record aliases and declare C functions "
+            "suppress optional C++ record aliases and declare C functions and "
+            "objects "
             "only in GTI's isolated namespace. Opaque handles retain their "
             "exact incomplete source identity.\n"
             " */\n\n"
@@ -184,6 +190,12 @@ private:
               {.declaration = &declaration, .info = classDeclaration});
           opaqueByClass.emplace(classDeclaration->id, index);
         }
+        continue;
+      }
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&declaration.payload);
+          storage != nullptr && !storage->externalSymbol.empty()) {
+        variables.push_back({.declaration = &declaration, .info = storage});
         continue;
       }
       if (const auto *function =
@@ -510,7 +522,8 @@ private:
     } else {
       openCppNamespaces(output, record.declaration->namespaceScope);
     }
-    output << "struct " << record.declaration->name << ";\n";
+    output << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+           << record.declaration->name << ";\n";
     if (record.info->cOpaqueHandle) {
       closePublicCppNamespaces(output, record.declaration->namespaceScope);
     } else {
@@ -520,7 +533,8 @@ private:
 
   void emitCppRecord(std::ostream &output, const NativeRecord &record) const {
     openCppNamespaces(output, record.declaration->namespaceScope);
-    output << "struct " << record.declaration->name << " {\n";
+    output << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+           << record.declaration->name << " {\n";
     for (const MirCAbiRecordFieldLayout &field :
          record.info->cAbiLayout->fields) {
       output << "  "
@@ -643,6 +657,38 @@ private:
     }
   }
 
+  template <typename TypeEmitter>
+  void emitVariableDeclaration(std::ostream &output,
+                               const NativeVariable &variable,
+                               TypeEmitter emitType) const {
+    output << "extern " << emitType(variable.info->type);
+    // The qualifier applies to the object, including pointer and callback
+    // slots; a prefix qualifier would incorrectly qualify their pointees.
+    if (variable.info->access == AccessMode::ReadOnly) {
+      output << " const";
+    }
+    output << ' ' << variable.info->externalSymbol << ";\n";
+  }
+
+  void emitCppVariable(std::ostream &output, const NativeVariable &variable,
+                       bool publicSourceNamespace) const {
+    if (publicSourceNamespace) {
+      openPublicCppNamespaces(output, variable.declaration->namespaceScope);
+    } else {
+      openCppNamespaces(output, variable.declaration->namespaceScope);
+    }
+    output << "extern \"C\" {\n";
+    emitVariableDeclaration(output, variable, [this](const SemanticType &type) {
+      return cppType(type);
+    });
+    output << "}\n";
+    if (publicSourceNamespace) {
+      closePublicCppNamespaces(output, variable.declaration->namespaceScope);
+    } else {
+      closeCppNamespaces(output, variable.declaration->namespaceScope);
+    }
+  }
+
   void emitCppTypeAlias(std::ostream &output,
                         const NativeRecord &record) const {
     openPublicCppNamespaces(output, record.declaration->namespaceScope);
@@ -674,7 +720,7 @@ private:
   }
 
   void emitCppFunctions(std::ostream &output) const {
-    if (functions.empty()) {
+    if (functions.empty() && variables.empty()) {
       return;
     }
     // A using-declaration that imports a C-linkage function from the isolated
@@ -687,9 +733,15 @@ private:
     for (const NativeFunction &function : functions) {
       emitCppFunction(output, function, true);
     }
+    for (const NativeVariable &variable : variables) {
+      emitCppVariable(output, variable, true);
+    }
     output << "#else\n";
     for (const NativeFunction &function : functions) {
       emitCppFunction(output, function, false);
+    }
+    for (const NativeVariable &variable : variables) {
+      emitCppVariable(output, variable, false);
     }
     output << "#endif /* GTI_NATIVE_HEADER_NO_SOURCE_NAMES */\n\n";
   }
@@ -729,8 +781,9 @@ private:
   void emitCBranch(std::ostream &output) const {
     for (const NativeRecord &record : records) {
       output << "/* " << record.info->qualifiedName << " */\n"
-             << "typedef struct " << record.cName << ' ' << record.cName
-             << ";\n";
+             << "typedef "
+             << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+             << record.cName << ' ' << record.cName << ";\n";
     }
     for (const NativeOpaqueHandle &handle : opaqueHandles) {
       output << "/* " << handle.info->qualifiedName << " (opaque handle) */\n"
@@ -748,7 +801,8 @@ private:
     }
     for (const std::size_t index : orderedRecords) {
       const NativeRecord &record = records[index];
-      output << "struct " << record.cName << " {\n";
+      output << (record.info->kind == ClassKind::Union ? "union " : "struct ")
+             << record.cName << " {\n";
       for (const MirCAbiRecordFieldLayout &field :
            record.info->cAbiLayout->fields) {
         output << "  "
@@ -786,6 +840,11 @@ private:
           output, function,
           [this](const SemanticType &type) { return cType(type); }, true);
     }
+    for (const NativeVariable &variable : variables) {
+      emitVariableDeclaration(
+          output, variable,
+          [this](const SemanticType &type) { return cType(type); });
+    }
   }
 
   static std::string headerGuard(std::string_view contents) {
@@ -810,6 +869,7 @@ private:
   std::vector<NativeCallbackAlias> callbackAliases;
   std::vector<std::size_t> orderedCallbackAliases;
   std::vector<NativeFunction> functions;
+  std::vector<NativeVariable> variables;
 };
 
 } // namespace

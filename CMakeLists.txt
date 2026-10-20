@@ -493,6 +493,8 @@ target_include_directories(
 target_include_directories("gti_runtime" SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
 target_link_libraries("gti_runtime" PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RuntimeCharconv.cmake")
+gti_configure_runtime_charconv()
 if(WIN32)
   # gti_rt_random_bytes calls BCryptGenRandom.
   target_link_libraries("gti_runtime" PRIVATE "bcrypt")

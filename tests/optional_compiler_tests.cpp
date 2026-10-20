@@ -12,24 +12,6 @@ namespace {
          intrinsic == lang::IntrinsicKind::OptionalStorageReset;
 }
 
-[[nodiscard]] std::size_t
-optionalIntrinsicIndex(lang::IntrinsicKind intrinsic) {
-  switch (intrinsic) {
-  case lang::IntrinsicKind::OptionalStorageHasValue:
-    return 0;
-  case lang::IntrinsicKind::OptionalStorageConstruct:
-    return 1;
-  case lang::IntrinsicKind::OptionalStorageRead:
-    return 2;
-  case lang::IntrinsicKind::OptionalStorageReadMut:
-    return 3;
-  case lang::IntrinsicKind::OptionalStorageReset:
-    return 4;
-  default:
-    return 5;
-  }
-}
-
 void testOptionalCompilerContract() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "optional-compiler-contract.gti", R"(
@@ -71,213 +53,96 @@ int main() {
     return;
   }
 
-  std::array<bool, 5> hirIntrinsics{};
-  for (const lang::HirFunctionInstance &function :
-       frontend.hir.functionInstances()) {
-    for (const lang::HirValue &value : function.body.values) {
-      if (isOptionalIntrinsic(value.intrinsic)) {
-        hirIntrinsics[optionalIntrinsicIndex(value.intrinsic)] = true;
+  bool ordinaryStorage = true;
+  bool constructedPayload = false;
+  bool extractedPayload = false;
+  bool terminalFailure = false;
+  for (const auto &instance : frontend.mir.classInstances())
+    ordinaryStorage &= instance.compilerCapability !=
+                       lang::CompilerCapabilityTypeKind::OptionalStorage;
+  for (const auto &function : frontend.hir.functionInstances())
+    for (const auto &value : function.body.values)
+      ordinaryStorage &= !isOptionalIntrinsic(value.intrinsic);
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir)) {
+    const auto *body = lang::findMirBody(frontend.mir, address);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        ordinaryStorage &= !isOptionalIntrinsic(instruction.intrinsic);
+        constructedPayload |=
+            instruction.operation == lang::MirOperation::PayloadConstruct;
+        extractedPayload |=
+            instruction.operation == lang::MirOperation::PayloadExtract;
+        terminalFailure |=
+            instruction.intrinsic == lang::IntrinsicKind::FailEmptyOwner;
       }
-    }
   }
+  expect(ordinaryStorage && constructedPayload && extractedPayload &&
+             terminalFailure && lang::verifyMirProgram(frontend.mir).valid(),
+         "optional uses ordinary enum construction/extraction and checked "
+         "terminal failure, not private storage");
+  const auto artifact = gti_test::emitCpp(frontend);
+  expect(!artifact.contents.empty(),
+         "source optional reaches production native emission");
 
-  std::array<bool, 5> mirIntrinsics{};
-  const lang::MirClassInstance *optionalStorage = nullptr;
-  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
-    if (instance.compilerCapability ==
-        lang::CompilerCapabilityTypeKind::OptionalStorage) {
-      optionalStorage = &instance;
-      break;
-    }
-  }
-  for (const lang::MirFunctionInstance &function :
-       frontend.mir.functionInstances()) {
-    for (const lang::MirBlock &block : function.body.blocks) {
-      for (const lang::MirInstruction &instruction : block.instructions) {
-        if (isOptionalIntrinsic(instruction.intrinsic)) {
-          mirIntrinsics[optionalIntrinsicIndex(instruction.intrinsic)] = true;
-        }
-      }
-    }
-  }
-  expect(std::all_of(hirIntrinsics.begin(), hirIntrinsics.end(),
-                     [](bool present) { return present; }) &&
-             std::all_of(mirIntrinsics.begin(), mirIntrinsics.end(),
-                         [](bool present) { return present; }) &&
-             optionalStorage != nullptr &&
-             optionalStorage->copyConstructor ==
-                 lang::SpecialMemberStatus::Deleted &&
-             optionalStorage->moveConstructor ==
-                 lang::SpecialMemberStatus::Generated &&
-             optionalStorage->copyAssignment ==
-                 lang::SpecialMemberStatus::Deleted &&
-             optionalStorage->moveAssignment ==
-                 lang::SpecialMemberStatus::Deleted &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "all five declaration-bound operations and the move-only inline-slot "
-         "shape should survive HIR, MIR, and whole-program verification");
-
-  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
-  const std::size_t optionalBegin =
-      artifact.contents.find("template <typename T>\nclass optional_storage {");
-  const std::size_t optionalEnd = artifact.contents.find("\n};", optionalBegin);
-  const std::string optionalRepresentation =
-      optionalBegin == std::string::npos || optionalEnd == std::string::npos
-          ? std::string{}
-          : artifact.contents.substr(optionalBegin,
-                                     optionalEnd - optionalBegin);
-  expect(!artifact.contents.empty() && !optionalRepresentation.empty() &&
-             optionalRepresentation.find(
-                 "alignas(T) std::byte storage_[sizeof(T)]") !=
-                 std::string::npos &&
-             optionalRepresentation.find("bool engaged_ = false") !=
-                 std::string::npos &&
-             optionalRepresentation.find("construct_representation_at") !=
-                 std::string::npos &&
-             optionalRepresentation.find("std::destroy_at") !=
-                 std::string::npos &&
-             optionalRepresentation.find("operator new") == std::string::npos &&
-             optionalRepresentation.find("unique_ptr") == std::string::npos &&
-             artifact.contents.find("mir_optional_construct_v1(") !=
-                 std::string::npos &&
-             artifact.contents.find("mir_optional_read_v1(") !=
-                 std::string::npos &&
-             artifact.contents.find("mir_optional_read_mut_v1(") !=
-                 std::string::npos,
-         "the C++ backend should select inline checked storage without "
-         "smuggling optional state through allocation or std::optional");
-
-  lang::MirProgram forged = frontend.mir;
-  bool forgedRead = false;
-  auto &forgedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-      forged.functionInstances());
-  for (lang::MirFunctionInstance &function : forgedFunctions) {
-    for (lang::MirBlock &block : function.body.blocks) {
-      for (lang::MirInstruction &instruction : block.instructions) {
-        if (!forgedRead &&
-            instruction.intrinsic == lang::IntrinsicKind::OptionalStorageRead) {
-          instruction.intrinsic = lang::IntrinsicKind::OptionalStorageHasValue;
-          forgedRead = true;
-        }
-      }
-    }
-  }
-  const lang::MirVerificationResult forgedVerification =
-      lang::verifyMirProgram(forged);
-  expect(forgedRead && !forgedVerification.valid(),
-         "whole-program verification should reject an optional intrinsic "
-         "whose result, loan, and failure contract were relabelled");
-
-  const auto verifyForgedConstructLifecycle = [&](bool substituteTransfer) {
-    lang::MirProgram changed = frontend.mir;
-    bool changedLifecycle = false;
-    for (const lang::MirBodyAddress address :
-         lang::enumerateMirBodyAddresses(changed)) {
-      lang::MirBody *body = lang::findMirBody(changed, address);
-      if (body == nullptr) {
-        continue;
-      }
-      for (lang::MirBlock &block : body->blocks) {
-        for (lang::MirInstruction &instruction : block.instructions) {
-          if (instruction.intrinsic !=
-                  lang::IntrinsicKind::OptionalStorageConstruct ||
-              instruction.lifecycle.empty()) {
-            continue;
-          }
-          if (!substituteTransfer) {
-            instruction.lifecycle.clear();
-            changedLifecycle = true;
-            break;
-          }
-          const auto transfer = std::find_if(
-              instruction.lifecycle.begin(), instruction.lifecycle.end(),
-              [](const lang::MirLifecycleEvent &event) {
-                return event.kind == lang::MirLifecycleEventKind::TransferOut;
-              });
-          if (transfer == instruction.lifecycle.end()) {
-            continue;
-          }
-          const auto replacement = std::find_if(
-              body->dropObligations.begin(), body->dropObligations.end(),
-              [&](const lang::MirDropObligation &candidate) {
-                return candidate.id != transfer->source;
-              });
-          if (replacement == body->dropObligations.end()) {
-            continue;
-          }
-          transfer->source = replacement->id;
-          changedLifecycle = true;
-          break;
-        }
-        if (changedLifecycle) {
-          break;
-        }
-      }
-      if (changedLifecycle) {
-        break;
-      }
-    }
-    return std::pair{changedLifecycle, lang::verifyMirProgram(changed)};
-  };
-
-  const auto missingConstructTransfer = verifyForgedConstructLifecycle(false);
-  expect(
-      missingConstructTransfer.first &&
-          !missingConstructTransfer.second.valid() &&
-          hasMirVerificationError(missingConstructTransfer.second,
-                                  "optional storage intrinsic does not retain"),
-      "whole-program verification should reject optional construction "
-      "whose owning input transfer was removed");
-
-  const auto substitutedConstructTransfer =
-      verifyForgedConstructLifecycle(true);
-  expect(
-      substitutedConstructTransfer.first &&
-          !substitutedConstructTransfer.second.valid() &&
-          hasMirVerificationError(substitutedConstructTransfer.second,
-                                  "optional storage intrinsic does not retain"),
-      "whole-program verification should reject optional construction "
-      "whose owning input transfer names another live obligation");
-
-  for (int mutation = 0; mutation != 4; ++mutation) {
-    auto malformed = frontend.mir;
+  // The terminal primitive only chooses the failure category. It grants no
+  // owner, value, storage or caller-location authority.
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto forged = frontend.mir;
     bool changed = false;
-    for (const auto address : lang::enumerateMirBodyAddresses(malformed)) {
-      auto *body = lang::findMirBody(malformed, address);
-      if (body == nullptr || changed)
-        continue;
-      for (auto &block : body->blocks) {
+    for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+      auto *body = lang::findMirBody(forged, address);
+      for (auto &block : body->blocks)
         for (auto &instruction : block.instructions) {
-          if (changed || instruction.intrinsic !=
-                             lang::IntrinsicKind::OptionalStorageConstruct)
+          if (changed ||
+              instruction.intrinsic != lang::IntrinsicKind::FailEmptyOwner)
             continue;
-          expect(instruction.operands.size() == 2 &&
-                     !instruction.constructorTarget,
-                 "optional publication accepts one completed value, not a "
-                 "hidden constructor");
-          if (mutation == 0) {
-            instruction.operands.pop_back();
-            instruction.parameterTypes.pop_back();
-          } else if (mutation == 1) {
-            instruction.operands[1].type = lang::SemanticType::Bool;
-            instruction.parameterTypes[1] = lang::SemanticType::Bool;
-          } else if (mutation == 2) {
-            instruction.constructorTarget =
-                frontend.mir.constructorInstances().front().id;
-          } else {
-            const auto payloadValue = instruction.operands[1].value;
-            for (auto &producerBlock : body->blocks)
-              for (auto &producer : producerBlock.instructions)
-                if (producer.result == payloadValue)
-                  producer.info.traits.containsBorrowedState = true;
-          }
+          if (mutation == 0)
+            instruction.neverReturns = false;
+          if (mutation == 1)
+            instruction.tracksCaller = true;
+          if (mutation == 2)
+            instruction.parameterTypes.push_back(lang::SemanticType::Bool);
+          if (mutation == 3)
+            instruction.definedFailure.localOrigins.clear();
+          if (mutation == 4)
+            instruction.definedFailure.localOrigins.front()
+                .outcomes.front()
+                .code = lang::DefinedFailureCode::Panic;
           changed = true;
         }
-      }
     }
-    expect(changed && !lang::verifyMirProgram(malformed).valid(),
-           "optional publication rejects missing/wrong payloads and hidden "
-           "constructor targets, and owner-dependent payload expression state");
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "terminal owner failure rejects altered arity, termination, caller "
+           "or failure identity");
+  }
+
+  // General enum proof replaces private optional publication proof. A
+  // completed payload still cannot lose its exact type, alternative or drop.
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto forged = frontend.mir;
+    bool changed = false;
+    for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+      auto *body = lang::findMirBody(forged, address);
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions) {
+          if (changed ||
+              instruction.operation != lang::MirOperation::PayloadConstruct ||
+              instruction.operands.empty() || instruction.lifecycle.empty())
+            continue;
+          if (mutation == 0)
+            instruction.operands.clear();
+          if (mutation == 1)
+            instruction.enumOwner = 0;
+          if (mutation == 2)
+            instruction.enumVariant = 999;
+          if (mutation == 3)
+            instruction.lifecycle.clear();
+          changed = true;
+        }
+    }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "optional enum publication rejects missing values, wrong "
+           "alternatives and missing lifecycle proof");
   }
 
   const auto invalidEmplacement = lang::Frontend().analyze(
@@ -401,10 +266,12 @@ void destroy(int divisor) {
     const auto *body = lang::findMirBody(frontend.mir, address);
     for (const auto &block : body->blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != lang::IntrinsicKind::OptionalStorageReset)
+        if (instruction.kind != lang::MirInstructionKind::CleanupBeforeAssign ||
+            instruction.definedFailure.propagation !=
+                lang::FailurePropagationKind::Destructor)
           continue;
         found = true;
-        expect(instruction.elementCleanup &&
+        expect(instruction.destination &&
                    instruction.definedFailure.propagation ==
                        lang::FailurePropagationKind::Destructor &&
                    instruction.localFailureSites.empty() &&
@@ -421,7 +288,7 @@ void destroy(int divisor) {
             if (changed.id != instruction.id)
               continue;
             if (mutation == 0)
-              changed.elementCleanup.reset();
+              changed.destination.reset();
             else if (mutation == 1)
               changed.definedFailure.propagation =
                   lang::FailurePropagationKind::None;
@@ -439,10 +306,20 @@ void destroy(int divisor) {
       }
     }
   }
-  expect(found, "the source reset must reach the trusted storage capability");
+  expect(found, "source reset must use ordinary fallible assignment cleanup");
   const auto artifact = gti_test::emitCpp(frontend);
-  expect(artifact.contents.find(".reset_with_failure(") != std::string::npos,
-         "the backend must consume the verified element cleanup recipe");
+  // The generated support preamble still declares unused legacy templates.
+  // Inspect instantiated MIR, rather than mistaking their text for use.
+  bool ordinaryReset = !artifact.contents.empty();
+  for (const auto &instance : frontend.mir.classInstances())
+    ordinaryReset &= instance.compilerCapability !=
+                     lang::CompilerCapabilityTypeKind::OptionalStorage;
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir))
+    for (const auto &block : lang::findMirBody(frontend.mir, address)->blocks)
+      for (const auto &instruction : block.instructions)
+        ordinaryReset &= !isOptionalIntrinsic(instruction.intrinsic);
+  expect(ordinaryReset, "source reset emits without any instantiated private "
+                        "optional storage or operation");
 }
 
 void testNestedOptionalConstruction() {
@@ -503,37 +380,15 @@ public:
              "its declared element constraint, without a private handle rule");
       continue;
     }
+    // View is a user class containing int&, not std::string_view. Both empty
+    // and engaged optional<View> were rejected before promotion. Keep that
+    // boundary until this wrapper can express its retained field contract.
+    // Empty optional<string_view> remains positively tested below.
     expect(!frontend.canGenerateCode() &&
-               hasDiagnosticCode(frontend.diagnostics, "GTI-S2019") &&
-               hasDiagnostic(frontend.diagnostics, "borrowed state") &&
+               hasDiagnosticCode(frontend.diagnostics, "GTI-S2045") &&
                !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
-           "trusted owning storage rejects a reference-carrying element even "
-           "when no payload accessor or mutation is used");
-    expect(countDiagnosticCode(frontend.diagnostics, "GTI-S2019") == 1,
-           "class-owned optional payload validation is published once, not "
-           "again for the constructor's field-model reanalysis");
-    bool preciseDiagnostic = false;
-    for (const auto &diagnostic : frontend.diagnostics) {
-      if (diagnostic.code != "GTI-S2019" ||
-          diagnostic.message.find("payload 'View'") == std::string::npos)
-        continue;
-      const auto userRequest = [&](const lang::SourceSpan &span) {
-        return std::filesystem::path(span.source).filename() ==
-                   "borrowed-storage-admission.gti" &&
-               span.start == source.find("item") && span.end == span.start + 4;
-      };
-      preciseDiagnostic =
-          diagnostic.phase == lang::DiagnosticPhase::Semantics &&
-          diagnostic.severity == lang::DiagnosticSeverity::Error &&
-          diagnostic.fixes.empty() && !diagnostic.hints.empty() &&
-          (userRequest(diagnostic.primary) ||
-           std::any_of(
-               diagnostic.related.begin(), diagnostic.related.end(),
-               [&](const auto &related) { return userRequest(related.span); }));
-    }
-    expect(preciseDiagnostic,
-           "optional rejection names the concrete payload and exact user "
-           "instantiation without suggesting an ownership-changing fix-it");
+           "a source wrapper cannot invent its field's retained reference "
+           "contract");
   }
 
   const std::string constructorSource = R"(
@@ -637,9 +492,16 @@ int main() {
         "#include <std/optional>\nint main() { std::optional<" + type +
             "> item{}; return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    if (type == "int*") {
+      expect(frontend.canGenerateCode() &&
+                 lang::verifyMirProgram(frontend.mir).valid(),
+             "source optional admits ordinary raw pointer values without "
+             "dereferencing them");
+      continue;
+    }
     expect(!frontend.canGenerateCode() &&
                hasDiagnosticCode(frontend.diagnostics,
-                                 type == "void" ? "GTI-S2029" : "GTI-S2019") &&
+                                 type == "void" ? "GTI-S2029" : "GTI-S2045") &&
                !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
            "unsupported optional payload shapes must fail at source instead "
            "of reaching the MIR/backend contract");
@@ -654,8 +516,7 @@ int main() {
                                                 {standardLibraryPrelude()}, {},
                                                 {standardLibraryRoot()});
   expect(input.good() && !escaped.canGenerateCode() &&
-             hasDiagnosticCode(escaped.diagnostics, "GTI-S2019") &&
-             hasDiagnostic(escaped.diagnostics, "payload 'View'") &&
+             hasDiagnosticCode(escaped.diagnostics, "GTI-S2045") &&
              !hasDiagnosticCode(escaped.diagnostics, "GTI-B0001"),
          "an unrelated generic wrapper and destructor cannot hide a borrowed "
          "optional payload escaping its local owner");
@@ -686,13 +547,39 @@ int main() {
         "return std::optional<std::string_view>(" +
             argument + "); }\nint main() { auto result = escape(); return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(!text.canGenerateCode() &&
-               hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
-               hasDiagnostic(text.diagnostics, "nested in optional storage") &&
-               !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
-           "optional publication cannot store a potentially owner-dependent "
-           "text parameter; literal arguments do not bypass that generic "
-           "parameter boundary");
+    expect(
+        !text.canGenerateCode() &&
+            hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
+            hasDiagnostic(text.diagnostics, "stored in a payload-enum field") &&
+            !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
+        "optional publication cannot store a potentially owner-dependent "
+        "text parameter; literal arguments do not bypass that generic "
+        "parameter boundary");
+  }
+
+  const auto literalPayload = lang::Frontend().analyze(
+      "literal-text-payload.gti", R"(
+enum Text { empty, value(std::string_view text) };
+int main() { auto text = Text::value("static"); return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(literalPayload.canGenerateCode() &&
+             lang::verifyMirProgram(literalPayload.mir).valid(),
+         "a directly literal-backed text payload needs no external owner loan");
+  for (const std::string expression : {"owner.view()", "std::move(view)"}) {
+    const auto dynamicPayload = lang::Frontend().analyze(
+        "dynamic-text-payload.gti",
+        "#include <std/string>\nenum Text { empty, value(std::string_view "
+        "text) };\n"
+        "int main() { std::string owner{\"owned\"}; "
+        "std::string_view view = owner.view(); auto text = Text::value(" +
+            expression + "); return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!dynamicPayload.canGenerateCode() &&
+               hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-S2045") &&
+               !hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-B0001"),
+           "ordinary enum storage rejects dynamic text, including moved views, "
+           "before MIR");
   }
 
   for (const std::string storage :
@@ -760,7 +647,7 @@ int main() { auto result = escape(); return 0; }
   expect(!cText.canGenerateCode() &&
              hasDiagnosticCode(cText.diagnostics, "GTI-S2045") &&
              hasDiagnostic(cText.diagnostics,
-                           "owner-dependent c_string cannot be nested") &&
+                           "owner-dependent c_string cannot be stored") &&
              !hasDiagnosticCode(cText.diagnostics, "GTI-B0001"),
          "optional storage applies the same dependency rule to C-string "
          "views without relying on a public library spelling");
@@ -784,55 +671,34 @@ int main() {
          "the trusted-storage mutation fixture starts as valid MIR");
   if (!frontend.canGenerateCode())
     return;
-  const auto storage = std::find_if(
+  const auto payload = std::find_if(
       frontend.mir.classInstances().begin(),
-      frontend.mir.classInstances().end(), [](const auto &instance) {
-        return instance.compilerCapability ==
-               lang::CompilerCapabilityTypeKind::OptionalStorage;
+      frontend.mir.classInstances().end(), [&](const auto &instance) {
+        return std::any_of(frontend.hir.classInstances().begin(),
+                           frontend.hir.classInstances().end(),
+                           [&](const auto &hir) {
+                             return hir.id == instance.id && hir.source &&
+                                    hir.source->name().lexeme == "Payload";
+                           });
       });
-  expect(storage != frontend.mir.classInstances().end() &&
-             storage->type.arguments.size() == 1,
-         "the fixture has an exact optional payload identity");
-  if (storage == frontend.mir.classInstances().end() ||
-      storage->type.arguments.size() != 1)
+  expect(payload != frontend.mir.classInstances().end(),
+         "ordinary payload identity is retained independently of optional");
+  if (payload == frontend.mir.classInstances().end())
     return;
-  const auto payload = storage->type.arguments.front();
-  for (int mutation = 0; mutation != 4; ++mutation) {
+  for (int mutation = 0; mutation != 3; ++mutation) {
     auto forged = frontend.mir;
-    bool changed = false;
-    for (auto &instance : const_cast<std::vector<lang::MirClassInstance> &>(
-             forged.classInstances())) {
-      if (mutation == 0 && instance.id == storage->id) {
-        instance.traits.containsBorrowedState = true;
-        changed = true;
-      } else if (mutation != 0 && instance.type == payload) {
-        if (mutation == 1)
-          instance.traits.movable = false;
-        else if (mutation == 2)
-          instance.traits.containsBorrowedState = true;
-        else if (!instance.declaredFields.empty()) {
-          instance.traits.containsBorrowedState = false;
-          instance.declaredFields.front().type =
-              lang::SemanticType::referenceTo(lang::SemanticType::Int32);
-        } else {
-          continue;
-        }
-        changed = true;
-      }
-    }
-    const auto verification = lang::verifyMirProgram(forged);
-    expect(changed && !verification.valid() &&
-               hasMirVerificationError(
-                   verification,
-                   "optional storage capability does not retain its exact"),
-           "independent verification rejects a borrowed slot, nonmoving "
-           "payload, and borrowed payload even when its class flag is erased");
-    if (mutation >= 2)
-      expect(hasMirVerificationError(
-                 verification,
-                 "class relocation traits do not match its structural"),
-             "source storage's payload independently retains structural "
-             "relocation coherence, without a retired prefix-handle rule");
+    auto *changed = const_cast<lang::MirClassInstance *>(
+        forged.findClassInstance(payload->id));
+    if (mutation == 0)
+      changed->traits.movable = false;
+    else if (mutation == 1)
+      changed->traits.containsBorrowedState = true;
+    else
+      changed->declaredFields.front().type =
+          lang::SemanticType::referenceTo(lang::SemanticType::Int32);
+    expect(!lang::verifyMirProgram(forged).valid(),
+           "ordinary class and enum verification rejects forged relocation or "
+           "borrow facts");
   }
 }
 

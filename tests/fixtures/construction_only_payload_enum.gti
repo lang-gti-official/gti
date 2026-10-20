@@ -23,8 +23,8 @@ public:
 
 enum class Event { message(Payload payload), idle };
 
-// The enum's move construction exists, but its optional-bearing payload
-// deliberately prevents assignment. Field publication must not assign.
+// Field publication is construction, regardless of whether a payload also
+// supports assignment. Owning enum replacement now reconstructs alternatives.
 class Envelope<T> {
   T item;
   int32_t checked;

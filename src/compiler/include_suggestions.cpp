@@ -215,7 +215,10 @@ void addIncludeSuggestions(
       requested.insert(diagnostic.missingIncludeName);
     }
   }
-  if (requested.empty() || !result.sourceValid)
+  // Adding an include cannot repair syntax in the frozen source graph. Every
+  // speculative edit below already requires valid syntax, so recovered parser
+  // errors cannot produce a fix and must not trigger a workspace-wide search.
+  if (requested.empty() || !result.sourceValid || !result.syntaxValid)
     return;
   result.includeSuggestionsRequested = true;
 
@@ -230,6 +233,9 @@ void addIncludeSuggestions(
     overrides[name] = *result.sources.find(name);
   }
   FrontendOptions trialOptions = options;
+  // Header probes and proposed-fix checks are internal diagnostic work, not
+  // additional user compilations. Keep their phases out of the caller's sink.
+  trialOptions.progress = nullptr;
   trialOptions.suggestIncludes = false;
   trialOptions.requireEntryPoint = false;
   trialOptions.toolingOccurrences = true;
@@ -372,7 +378,11 @@ void addIncludeSuggestions(
       diagnostic.code = "GTI-S2089";
     for (auto &fix : diagnostic.fixes) {
       fix.preferred = diagnostic.fixes.size() == 1;
-      diagnostic.hints.push_back(fix.message + " to this source file.");
+      const std::string hint = fix.message + " to this source file.";
+      if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(), hint) ==
+          diagnostic.hints.end()) {
+        diagnostic.hints.push_back(hint);
+      }
     }
   }
   std::sort(result.includeSuggestionInputs.begin(),

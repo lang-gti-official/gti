@@ -363,10 +363,32 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
   case LoweredDeclarationKind::Enum: {
     const auto *payload =
         std::get_if<LoweredEnumDeclaration>(&declaration.payload);
+    const auto genericShape = [&] {
+      if (!payload)
+        return false;
+      std::size_t types = 0, values = 0;
+      bool pack = false;
+      for (std::size_t index = 0; index < payload->genericParameters.size();
+           ++index) {
+        const auto &parameter = payload->genericParameters[index];
+        if (parameter.pack) {
+          if (parameter.value || index + 1 != payload->genericParameters.size())
+            return false;
+          pack = true;
+        } else if (parameter.value)
+          ++values;
+        else
+          ++types;
+      }
+      return payload->type.valueArguments.size() == values &&
+             (pack ? payload->type.arguments.size() >= types
+                   : payload->type.arguments.size() == types);
+    };
     if (payload == nullptr || payload->id == 0 ||
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
-        payload->type.kind != SemanticType::Enum ||
+        !validGenericParameters(payload->genericParameters) ||
+        !genericShape() || payload->type.kind != SemanticType::Enum ||
         payload->type.enumId != payload->id || !resolvedType(payload->type) ||
         !resolvedType(payload->underlyingType) ||
         payload->underlyingType == SemanticType::Void ||
@@ -728,6 +750,19 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                *payloadError, std::nullopt, declaration.id);
     }
+    std::visit(
+        [&](const auto &payload) {
+          if constexpr (requires { payload.sourceUnit; }) {
+            if (program.mir_.failureMetadata().findSource(payload.sourceUnit) ==
+                nullptr) {
+              addIssue(issues,
+                       LoweredProgramIssueKind::InvalidDeclarationInventory,
+                       "lowered declaration has no logical source identity",
+                       std::nullopt, declaration.id);
+            }
+          }
+        },
+        declaration.payload);
 
     const auto recordIdentity = [&](auto &identities, std::size_t identity,
                                     std::string_view kind) {
@@ -742,6 +777,28 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     if (const auto *payload =
             std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
       recordIdentity(classDeclarations, payload->id, "class");
+      switch (payload->computedTypeProjection) {
+      case ComputedTypeProjectionKind::None:
+        break;
+      case ComputedTypeProjectionKind::CallableReturn:
+        if (payload->genericParameters.size() != 1 ||
+            payload->genericParameters.front().value ||
+            payload->genericParameters.front().pack ||
+            payload->exactSpecializationPrimary != 0 ||
+            !payload->bases.empty() || payload->cAbiRecord ||
+            payload->cOpaqueHandle || payload->polymorphic ||
+            payload->compilerCapability != CompilerCapabilityTypeKind::None)
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "callable result projection must have one ordinary type "
+                   "parameter and no runtime representation capability",
+                   std::nullopt, declaration.id);
+        break;
+      default:
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "unknown computed type projection", std::nullopt,
+                 declaration.id);
+        break;
+      }
     } else if (std::holds_alternative<LoweredTypeAliasDeclaration>(
                    declaration.payload)) {
       recordIdentity(aliasDeclarations, declaration.semanticIdentity,
@@ -753,6 +810,18 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                  "duplicate exact enum instance", std::nullopt, declaration.id);
       enumDeclarations.push_back(payload->type);
+      for (const auto &prior : program.declarations_) {
+        if (prior.id >= declaration.id)
+          break;
+        const auto *family =
+            std::get_if<LoweredEnumDeclaration>(&prior.payload);
+        if (family && family->id == payload->id &&
+            family->genericParameters != payload->genericParameters)
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "enum instances disagree on their declaration parameter "
+                   "identities",
+                   std::nullopt, declaration.id);
+      }
       const MirPayloadEnum *mirEnumeration =
           program.mir_.findPayloadEnum(payload->type);
       if (payload->payload) {
@@ -983,6 +1052,37 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     if (const auto *storage =
             std::get_if<LoweredStorageDeclaration>(&declaration.payload)) {
       requireSymbol(storage->symbol, declaration.id);
+      const ForeignStorageInfo *foreign =
+          program.mir_.findForeignStorage(storage->symbol);
+      const LoweredDeclaration *parent =
+          program.findDeclaration(declaration.parent);
+      const auto *linkage =
+          parent == nullptr ? nullptr
+                            : std::get_if<LoweredLanguageLinkageDeclaration>(
+                                  &parent->payload);
+      if (foreign != nullptr || !storage->externalSymbol.empty() ||
+          linkage != nullptr) {
+        if (foreign == nullptr ||
+            foreign->externalSymbol != storage->externalSymbol ||
+            foreign->type != storage->type ||
+            foreign->access != storage->access || storage->ownerClass != 0 ||
+            storage->staticStorage || storage->internalLinkage ||
+            storage->constexprStorage || storage->hasInitializer ||
+            storage->constant || storage->traits.drop != DropKind::Trivial ||
+            storage->traits.ownership != OwnershipKind::Value ||
+            storage->traits.containsBorrowedState ||
+            storage->access != (storage->mutability == Mutability::Mutable
+                                    ? AccessMode::Mutable
+                                    : AccessMode::ReadOnly) ||
+            linkage == nullptr || linkage->linkage != LanguageLinkage::C ||
+            program.mir_.programInitializationPlan().findStepForSymbol(
+                storage->symbol) != nullptr) {
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "foreign storage declaration differs from its MIR identity "
+                   "or carries GTI lifetime obligations",
+                   std::nullopt, declaration.id);
+        }
+      }
     } else if (const auto *function = std::get_if<LoweredFunctionDeclaration>(
                    &declaration.payload)) {
       for (const LoweredParameter &parameter : function->parameters) {
@@ -994,6 +1094,17 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       for (const LoweredParameter &parameter : constructor->parameters) {
         requireSymbol(parameter.symbol, declaration.id);
       }
+    }
+  }
+  for (const ForeignStorageInfo &foreign :
+       program.mir_.foreignStorageDeclarations()) {
+    const LoweredStorageDeclaration *storage =
+        program.findStorageDeclaration(foreign.symbol);
+    if (storage == nullptr ||
+        storage->externalSymbol != foreign.externalSymbol) {
+      addIssue(
+          issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+          "MIR foreign storage has no matching lowered external declaration");
     }
   }
   for (const MirBodyAddress address : addresses) {

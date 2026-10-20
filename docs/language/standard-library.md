@@ -53,6 +53,36 @@ explicit non-retained `gti_c_string_view` counted record. The runtime ABI is not
 the ABI of public GTI classes. The legacy compiler-owned `@runtime` allowlist is
 a compatibility mechanism rather than a requirement for new host entries.
 
+### Optional mutation results
+
+The library uses the ordinary declaration-level `[[discardable]]` contract
+when an operation is useful independently of its returned reference, position,
+flag or count. Both ignoring the result and using it remain supported:
+
+```gti
+mut std::optional<std::string> slot{};
+slot.emplace("old");
+slot.emplace("new");
+```
+
+The policy applies to emplacement in optional, vector, deque, list,
+forward-list and queue; associative insertion, `get_or_insert` and erasure;
+list/forward-list removal counts; both `for_each` overloads; and every scalar
+atomic `exchange` and `fetch_add/sub/and/or/xor` overload. Storage and
+resource-storage emplacement and `construct_at` also have optional results.
+For `for_each`, callers may retain the returned callable to inspect its state.
+Atomic read-modify-write operations retain their checked arithmetic and memory
+ordering even when the old value is ignored.
+
+Queries and accessors, conditional atomic compare/exchange, resource acquisition
+and recoverable errors retain required results. Ownership-transfer operations
+such as `take`, `replace` and `std::exchange` also require the caller to use or
+explicitly discard the returned owner. Resource-vector emplacement already
+returns `void`; its `try_` variants still require handling the allocation result.
+Ignored emplacement references do not extend a borrow or destroy the stored
+object. See [execution semantics](execution.md#optional-api-results) and
+[`115-discardable-results.gti`](../../examples/115-discardable-results.gti).
+
 ## 7.2 Prelude
 
 The prelude is implicitly visible to every ordinary source unit. Its current
@@ -456,7 +486,8 @@ The current implemented foundation includes:
 - `<std/optional>` source-defined move-only `std::optional<T>` for
   `std::move_constructible T`, including nested optionals whose payloads
   cannot be assigned. Payloads cannot contain borrowed state and cannot be
-  void, references, or raw pointers. An empty `optional<string_view>` is valid,
+  void or references. Raw pointers are ordinary stored values, not implicitly
+  dereferenced or made safe by optional ownership. An empty `optional<string_view>` is valid,
   but storing a by-value text-view parameter is rejected because this storage
   does not carry its external-owner dependency. This includes literal callers
   of that parameterized constructor until a static-lifetime contract can
@@ -469,6 +500,9 @@ The current implemented foundation includes:
   not as a failed copy inside the implementation. Other members remain
   available for move-only payloads. A move
   construction transfers an engaged payload and its cleanup obligation.
+  Move assignment uses ordinary owning-enum replacement: it cleans up the
+  destination's active value before transferring the source alternative.
+  Copy assignment remains unavailable; use `clone()` for explicit copying.
   Emplacement first resets the old value, constructs `T` through ordinary GTI,
   then moves the completed value into the inline slot. Constructor failure
   retains its original failure identity and partial-construction cleanup;
@@ -482,13 +516,21 @@ The current implemented foundation includes:
   duplicate according to their element contracts, while shared values retain
   their sharing policy. This does not enable implicit optional copying.
   An empty checked access raises `GTI-R0008` after ordinary cleanup. Copy
-  construction and copy/move assignment are unavailable in this slice;
-  replacement uses `reset()` or `emplace()`, and a moved source cannot be used
-  under GTI's ordinary ownership rules; and
+  construction and copy assignment remain unavailable. Move assignment retires
+  the old payload before taking the new one. A consuming `value() &&` moves
+  the payload out. Both `optional(T)` and `optional(nullopt_t)` are `implicit`,
+  so a declaration or declared value return accepts one exact payload or
+  `std::nullopt`. A named move-only payload needs `std::move`; a string literal
+  cannot chain through `string` into `optional<string>`. The ordinary
+  `std::tryable` implementation enables `?` propagation. A moved source cannot
+  be used under GTI's ordinary ownership rules. Storage is now an ordinary
+  private payload enum, not a compiler-private optional capability. The narrow
+  declaration-bound terminal failure operation selects `empty_owner_access`;
+  it neither implements optional policy nor grants storage/lifetime authority;
 - `<std/experimental/optional>` `std::experimental::optional<T>`, the
-  candidate successor of `std::optional`, defined entirely in GTI source over
+  compatibility implementation of the former candidate, defined in GTI source over
   a private payload enum with no compiler-private storage. It has the same
-  surface as `std::optional`, plus:
+  promoted surface now also available from `std::optional`:
   - a consuming `T value() &&` that moves the value out;
   - move assignment, which destroys the current value, if any, first;
   - `implicit optional(std::experimental::nullopt_t)` and the
@@ -497,8 +539,9 @@ The current implemented foundation includes:
     returns an empty optional from a function returning one.
 
   An empty access panics (`GTI-R0017`) rather than raising
-  `empty_owner_access`. It is excluded from `import std;` and is promoted
-  once its surface, failure behaviour and performance match;
+  `empty_owner_access`. It remains excluded from `import std;` so existing
+  experimental imports retain their failure behavior. New code should use
+  `<std/optional>` and `std::optional`; the two classes are distinct types;
 - `<std/cstdio>` counted stdout/stderr, bounded stdin reads, and unbuffered file
   open/read/write/seek/tell/close through recoverable source-defined wrappers
   and a move-only `std::FILE` owner; and

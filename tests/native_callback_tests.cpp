@@ -328,24 +328,21 @@ int main() { unsafe { return invoke(obtain_transform(), 7); } }
   }
 
   for (const std::string declaration : {
-           "int32_t foreign_counter;",
-           "const int32_t foreign_limit;",
+           "mut int32_t foreign_counter;",
+           "int32_t foreign_limit;",
            "Transform foreign_transform;",
        }) {
-    const lang::FrontendResult rejected =
+    const lang::FrontendResult imported =
         analyze("foreign-variable.gti",
                 "using Transform = (int32_t) -> int32_t;\nextern \"C\" { " +
                     declaration + " }\nint main() { return 0; }\n");
-    expect(!rejected.canGenerateCode() &&
-               std::any_of(rejected.diagnostics.begin(),
-                           rejected.diagnostics.end(),
-                           [](const lang::Diagnostic &diagnostic) {
-                             return diagnostic.message.find(
-                                        "only function declarations") !=
-                                    std::string::npos;
-                           }),
-           declaration + " must not become owned GTI global storage through "
-                         "foreign-declaration parser recovery");
+    if (!imported.canGenerateCode())
+      printDiagnostics(imported);
+    expect(imported.canGenerateCode() &&
+               imported.mir.foreignStorageDeclarations().size() == 1 &&
+               imported.mir.programInitializationPlan().steps.empty(),
+           declaration +
+               " must describe external storage without GTI initialization");
   }
 }
 void testNativeIndirectVerificationAndQueries() {
