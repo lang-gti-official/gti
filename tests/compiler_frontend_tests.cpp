@@ -3214,6 +3214,30 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
+void testConcreteCallableSemanticFailure() {
+  const auto result = lang::Frontend().analyze("concrete-callback.gti", R"gti(
+int apply<F>(F& callback) { return callback(1); }
+int main() {
+  auto callback = [](bool value) -> int { return 1; };
+  return apply(callback);
+}
+)gti");
+  expect(!result.semanticValid && !result.canGenerateCode() &&
+             std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.phase ==
+                                      lang::DiagnosticPhase::Semantics &&
+                                  diagnostic.severity ==
+                                      lang::DiagnosticSeverity::Error;
+                         }) &&
+             std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "concrete generic callback errors remain semantic failures even when "
+         "instance discovery demands them during HIR lowering");
+}
+
 void testAnnotatedFunctionContracts() {
   const std::string validSource = "namespace app { [[test]] void first() {} }\n"
                                   "[[test, track_caller]] void second() {}\n";
@@ -3251,6 +3275,8 @@ void testAnnotatedFunctionContracts() {
 }
 
 constexpr NamedTest kTests[] = {
+    {"testConcreteCallableSemanticFailure",
+     testConcreteCallableSemanticFailure},
     {"testAnnotatedFunctionContracts", testAnnotatedFunctionContracts},
     {"testDefiniteReturnAnalysis", testDefiniteReturnAnalysis},
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},

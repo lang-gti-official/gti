@@ -7177,6 +7177,18 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (!expression) {
     return {};
   }
+  const auto ownerlessField = [&](const Token &name) {
+    if (function.ownerClass == 0 || function.staticMember)
+      return false;
+    const auto ownerType = openClassType(function.ownerClass);
+    const auto *member = findMember(ownerType, name);
+    if (!member || member->symbol.staticMember ||
+        member->symbol.bindingKind != SemanticBindingKind::Field)
+      return false;
+    const auto type = substituteSymbol(member->symbol, ownerType).type;
+    return type.kind == SemanticType::StringView ||
+           type.kind == SemanticType::CString;
+  };
   if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
     return {.known = literal->token().kind == TokenKind::STRING_LITERAL ||
                      literal->token().kind == TokenKind::NULLPTR};
@@ -7205,6 +7217,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
           SemanticType::classType(function.ownerClass), variable->name());
       if (member != nullptr && member->symbol.variableDeclaration != nullptr &&
           !member->symbol.staticMember) {
+        if (ownerlessField(variable->name()))
+          return {.known = true};
         // Like explicit this.field, an implicit instance field can nominate
         // the receiver for the predeclared relay contract. Parameters take
         // precedence above. This is not a resolved body-local origin: body
@@ -7225,6 +7239,11 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     return predeclaredTextBorrowSource(binary->right(), function);
   }
   if (const auto *member = exprAs<Get>(expression.get())) {
+    const Expr *object = member->object().get();
+    while (const auto *group = exprAs<Grouping>(object))
+      object = group->expression().get();
+    if (exprAs<This>(object) && ownerlessField(member->name()))
+      return {.known = true};
     return predeclaredTextBorrowSource(member->object(), function);
   }
   if (const auto *index = exprAs<Index>(expression.get())) {
@@ -7358,7 +7377,11 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
-  return valid ? result : std::nullopt;
+  // Unknown provenance and a proven absence of dependencies are distinct.
+  // Every safe write to a by-value text field already requires ownerless
+  // storage; reading that field need not invent a dependency on its shell.
+  return valid ? std::optional(result.value_or(FunctionReturnBorrowSummary{}))
+               : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(

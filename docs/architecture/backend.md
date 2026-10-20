@@ -871,6 +871,25 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
+The native destructor's engaged semantic-slot check remains mandatory. Its
+missing-`Drop` diagnostic and cleanup-emergency handoff query live in a cold
+out-of-line helper, keeping that exceptional path out of ordinary wrapper
+inlining cost. Empty-slot destruction, explicit retirement/access checks and
+representation-only destructor behavior are unchanged; this is not permission
+to omit a MIR cleanup operation or infer that a checked failure cannot occur.
+
+Small source functions and constructors receive an early native inline hint
+in optimized GNU/Clang builds. The structural policy admits at most 64 reachable
+instructions and 64 blocks per body, 256 instructions across the exact expanded
+invocation graph, and 16 invocation levels. It rejects CFG/call cycles,
+allocation, synchronization, native/dynamic invocation boundaries, virtual
+methods and program entries. A shared generic native definition is hinted only
+when every represented concrete instance qualifies. This is a bounded native
+optimization preference, not a source guarantee or permission to elide checks;
+larger bodies retain the native optimizer's normal discretion. It applies to
+ordinary user-defined wrappers without recognizing a library name or return
+type, and makes no change to GTI failure, lifetime or cleanup authority.
+
 Grouping a class value does not construct another object. HIR records the
 grouping source as a non-executing alias of the exact producer value, preserving
 its type, source identity and lifetime rather than introducing another value or

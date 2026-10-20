@@ -869,6 +869,10 @@ struct FunctionInfo {
   // Derived from resolved calls, after all source bodies have been analyzed.
   bool requiresCThreadRuntime = false;
   std::vector<RawBorrowContract> rawBorrowContracts;
+  // Conditional source preconditions: an index requires ownerless input only
+  // when its concrete by-value formal is StringView or CString. These are
+  // inferred from storage and exact forwarding, never from a literal caller.
+  std::vector<std::size_t> ownerlessTextParameters;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -2059,6 +2063,34 @@ private:
   std::uint64_t snapshot_;
 };
 
+// Inferred text-input requirements are callable preconditions. HIR carries
+// the exact concrete semantic signature and set; it cannot erase a premise.
+class SemanticOwnerlessTextContractProof {
+public:
+  [[nodiscard]] const FunctionDecl *source() const { return source_; }
+  [[nodiscard]] FunctionId function() const { return function_; }
+  [[nodiscard]] const std::vector<SemanticType> &parameters() const {
+    return parameters_;
+  }
+  [[nodiscard]] const std::vector<std::size_t> &required() const {
+    return required_;
+  }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticOwnerlessTextContractProof(const FunctionInfo &function,
+                                    std::uint64_t snapshot)
+      : source_(function.bodyDeclaration()), function_(function.id),
+        parameters_(function.parameterTypes),
+        required_(function.ownerlessTextParameters), snapshot_(snapshot) {}
+  const FunctionDecl *source_;
+  FunctionId function_;
+  std::vector<SemanticType> parameters_;
+  std::vector<std::size_t> required_;
+  std::uint64_t snapshot_;
+};
+
 // Immutable selected-construction provenance. HIR may carry or copy a proof,
 // but cannot manufacture one for a different source expression. Concrete
 // instance models issue the same proof even when the primary skipped an arm.
@@ -2193,6 +2225,8 @@ public:
   findCallerLocation(const Expr &expression) const;
   [[nodiscard]] std::optional<SemanticCallerLocationProof>
   callerLocationProof(const Expr &expression) const;
+  [[nodiscard]] std::optional<SemanticOwnerlessTextContractProof>
+  ownerlessTextContractProof(const FunctionDecl &function) const;
   [[nodiscard]] std::optional<SemanticNoNormalBorrowResultProof>
   noNormalBorrowResultProof(const Call &call) const;
 

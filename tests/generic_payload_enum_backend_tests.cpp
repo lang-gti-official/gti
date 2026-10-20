@@ -175,7 +175,7 @@ int main() {
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v23") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v111"),
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v112"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
@@ -1799,6 +1799,57 @@ int main() {
               !lang::CppMirBodyEmitter(malformed, map).analyzeProgram().ready(),
           "passive enum field rejects duplicate use and altered variant/type");
     }
+  }
+  const auto inlinePolicy =
+      lang::Frontend().analyze("native-inline-policy.gti", R"(
+class Gauge {
+  mut int reading;
+public:
+  Gauge(int value) : reading(value) {}
+  int observe() { return reading; }
+};
+int tiny_leaf(int value) { return value + 1; }
+int tiny_forward(int value) { return tiny_leaf(value); }
+int inspect(Gauge value) { return value.observe(); }
+int recursive(int value) { return value == 0 ? 0 : recursive(value - 1); }
+int looping(int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index += 1) total += index;
+  return total;
+}
+int main() {
+  Gauge value{7};
+  return tiny_forward(inspect(value)) + recursive(3) + looping(3) - 11;
+}
+)");
+  expect(inlinePolicy.canGenerateCode(),
+         "general source inline fixture verifies");
+  if (inlinePolicy.canGenerateCode()) {
+    const auto text = gti_test::emitCpp(inlinePolicy).contents;
+    const auto hinted = [&](std::string_view name) {
+      for (auto at = text.find(name); at != std::string::npos;
+           at = text.find(name, at + name.size())) {
+        const auto begin = text.rfind('\n', at);
+        if (text.substr(begin == std::string::npos ? 0 : begin + 1,
+                        at - (begin == std::string::npos ? 0 : begin + 1))
+                .find("__gti_small_source_inline ") != std::string::npos)
+          return true;
+      }
+      return false;
+    };
+    expect(hinted("_tiny_leaf("),
+           "small unrelated scalar source body gets an early inline hint");
+    expect(hinted("_tiny_forward("),
+           "bounded exact source-call graph gets an early inline hint");
+    expect(hinted("_inspect("),
+           "proven passive class retirement is not an unknown invocation");
+    expect(
+        text.find("_recursive(") != std::string::npos &&
+            text.find("_looping(") != std::string::npos &&
+            !hinted("_recursive(") && !hinted("_looping("),
+        "recursive and cyclic source bodies retain native inliner discretion");
+    expect(hinted("::Gauge("),
+           "ordinary small source constructors share the structural policy");
   }
   return failures == 0 ? 0 : 1;
 }

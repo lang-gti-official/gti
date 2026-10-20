@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v111 ") &&
+      snapshot.starts_with("mir-v112 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -339,8 +339,8 @@ int main() {
 }
 
 void testCheckedCallPlacePreparation() {
-  const auto frontend =
-      lang::Frontend().analyze("/tmp/gti-checked-call-place/main.gti", R"(
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-checked-call-place/main.gti", R"(
 class Item {
   int value = 1;
 public:
@@ -368,7 +368,8 @@ int borrowed(bool valid) {
   return observe(parsed.value());
 }
 int main() { auto result = wrap(true); return borrowed(true); }
-)");
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "checked call places must reach verified MIR before argument staging");
   if (!frontend.canGenerateCode()) {
@@ -420,8 +421,8 @@ int main() { auto result = wrap(true); return borrowed(true); }
 }
 
 void testInvokeEdgesAndFailureCleanup() {
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("/tmp/gti-failure-control/main.gti", R"(
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "/tmp/gti-failure-control/main.gti", R"(
 class Token {
 public:
   int value;
@@ -499,7 +500,8 @@ int direct_result(mut int value) {
 }
 
 int main() { return caller(1); }
-)");
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
          "the failure cleanup fixture should reach verified MIR");
   if (!frontend.canGenerateCode()) {
@@ -1950,13 +1952,20 @@ void testCallerLocationAssignments() {
                                           .line = local.line};
   call->callerLocation = shared;
   const auto combined = rebuildFailureMetadata(frontend, hir);
+  auto combinedOutcomes = local.outcomes;
+  for (const auto &outcome : trackedOutcomes)
+    if (std::find(combinedOutcomes.begin(), combinedOutcomes.end(), outcome) ==
+        combinedOutcomes.end())
+      combinedOutcomes.push_back(outcome);
   expect(combined.valid() &&
              combined.metadata.sites().size() ==
                  frontend.failureMetadata.sites().size() &&
              combined.metadata.assignments().front().outcomes ==
                  local.outcomes &&
-             combined.metadata.sites().front().outcomes.size() ==
-                 local.outcomes.size() + 1,
+             std::is_permutation(
+                 combined.metadata.sites().front().outcomes.begin(),
+                 combined.metadata.sites().front().outcomes.end(),
+                 combinedOutcomes.begin(), combinedOutcomes.end()),
          "a shared reporting span unions admissions without changing detector "
          "authority");
   if (combined.valid()) {
@@ -3325,7 +3334,8 @@ void testRecursiveCleanupContracts() {
   }
   expect(checkedReplacement,
          "recursive fixture must retain fallible replacement preparation");
-  // Compare recipe effects against a separate graph walk over class metadata.
+  // Compare recipe effects against a separate graph walk over class and
+  // payload-enum metadata. Source wrappers can retain owners in either shape.
   // In particular, a mutually recursive pair must retain both bodies no
   // matter which class is selected as the root.
   bool sawMutualTargets = false;
@@ -3334,12 +3344,25 @@ void testRecursiveCleanupContracts() {
     if (!recipe)
       continue;
     std::vector<lang::HirClassInstanceId> visited;
+    std::vector<lang::SemanticType> visitedEnums;
     std::vector<lang::HirDestructorInstanceId> expected;
     const auto walk = [&](const auto &self,
                           const lang::SemanticType &type) -> void {
       if (type.kind == lang::SemanticType::UniqueOwner &&
           type.arguments.size() == 1) {
         self(self, type.arguments.front());
+        return;
+      }
+      if (const auto *payload = frontend.mir.findPayloadEnum(type)) {
+        if (std::find(visitedEnums.begin(), visitedEnums.end(), type) !=
+            visitedEnums.end())
+          return;
+        visitedEnums.push_back(type);
+        for (const auto &variant : payload->variants)
+          for (std::size_t index = 0; index < variant.payloadTypes.size();
+               ++index)
+            if (variant.payloadRequiresActiveCleanup[index])
+              self(self, variant.payloadTypes[index]);
         return;
       }
       for (const auto &selected : frontend.mir.classInstances()) {
@@ -3670,6 +3693,21 @@ int main() { auto fields = Fields(); auto caller = Caller(); return 0; }
   for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir)) {
     if (address.kind != lang::MirBodyKind::Constructor &&
         address.kind != lang::MirBodyKind::FieldInitializers)
+      continue;
+    const auto ownerId =
+        address.kind == lang::MirBodyKind::Constructor
+            ? frontend.mir.findConstructorInstance(address.owner)->owner
+            : address.owner;
+    const auto owner = std::find_if(
+        frontend.hir.classInstances().begin(),
+        frontend.hir.classInstances().end(),
+        [&](const auto &candidate) { return candidate.id == ownerId; });
+    // The prelude now contains ordinary source constructors too. This fixture
+    // proves transfers in these two deliberately multi-call construction
+    // bodies.
+    if (owner == frontend.hir.classInstances().end() || !owner->source ||
+        (owner->source->name().lexeme != "Fields" &&
+         owner->source->name().lexeme != "Caller"))
       continue;
     const auto &body = *lang::findMirBody(frontend.mir, address);
     for (const auto &block : body.blocks) {

@@ -10246,7 +10246,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (!validOwnedValueInputType(input.info) || !input.info.traits.movable ||
           (input.info.traits.containsBorrowedState &&
            input.info.type.kind != SemanticType::Class &&
-           input.info.type.kind != SemanticType::Enum) ||
+           input.info.type.kind != SemanticType::Enum &&
+           input.info.type.kind != SemanticType::Lambda) ||
           operand.kind != MirOperandKind::Value) {
         return false;
       }
@@ -10264,6 +10265,29 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           !sameCallInputTraits(source->info.traits, input.info.traits) ||
           !sameCallInputTraits(definition->info.traits, input.info.traits)) {
         return false;
+      }
+      if (input.info.type.kind == SemanticType::Lambda &&
+          input.info.traits.containsBorrowedState) {
+        const auto *dependency = body.findLoan(definition->loan.value_or(0));
+        // Only the exact fresh closure producer can transfer a captured
+        // dependency group through this stage. The program verifier checks
+        // each capture identity/origin/access and the confined callee contract;
+        // ordinary loan dataflow must keep that group live through invocation.
+        if (input.callInputRole != MirCallInputRole::Argument ||
+            definition->kind != MirInstructionKind::Compute ||
+            definition->operation != MirOperation::Closure ||
+            !definition->lambdaTarget || definition->functionTarget ||
+            definition->constructorTarget || dependency == nullptr ||
+            dependency->kind != MirLoanKind::Stored || dependency->entry ||
+            dependency->escapes || !dependency->carriers.empty() ||
+            dependency->storedField != 0 ||
+            dependency->producedBy != definition->hirValue ||
+            definition->closureCaptureTypes.empty() ||
+            definition->closureCaptureTypes.size() !=
+                definition->operands.size() ||
+            definition->closureCaptureModes.size() !=
+                definition->operands.size())
+          return false;
       }
       std::vector<MirDropObligationId> obligations;
       for (const MirDropObligation &obligation : body.dropObligations) {

@@ -175,6 +175,8 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
               concurrent ? (confined ? CThreadCallbackKind::ThreadConfined
                                      : expectedType.cThreadCallbackKind())
                          : CThreadCallbackKind::None});
+  requestSession.ownerlessTextCallableUses.push_back(
+      {.target = selected.id, .location = location});
   return expectedType;
 }
 
@@ -244,6 +246,8 @@ auto SemanticVisitor::Impl::analyzeFunctionItem(
                       .declaration = selected->declaration,
                       .type = itemType,
                       .capability = CallableInvocationCapability::Read});
+  requestSession.ownerlessTextCallableUses.push_back(
+      {.target = selected->id, .location = location});
   return itemType;
 }
 
@@ -473,6 +477,126 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
     return true;
   };
 
+  // A forwarding wrapper has the same invocation constraints as its checked
+  // callee, expressed in the wrapper's substitution. Preserve the selected
+  // call identities: looking up a helper by spelling would make overload
+  // selection depend on a different declaration from the one body analysis
+  // actually selected. This is contextual selection only; concrete callable
+  // instances still undergo their ordinary boundary and body checks.
+  const auto contextualRequirements = [&](FunctionId root,
+                                          std::size_t parameter,
+                                          const GenericSubstitution
+                                              &rootSubstitution) {
+    std::vector<CallableSignatureRequirement> signatures;
+    std::vector<std::pair<FunctionId, std::size_t>> visiting;
+    const auto collect = [&](const auto &self, FunctionId function,
+                             std::size_t parameterIndex,
+                             const GenericSubstitution &substitution) -> bool {
+      const std::pair key{function, parameterIndex};
+      if (std::find(visiting.begin(), visiting.end(), key) != visiting.end())
+        return false;
+      const FunctionInfo *info = semanticModel.findFunction(function);
+      if (info == nullptr && instanceBaseModel != nullptr)
+        info = instanceBaseModel->findFunction(function);
+      if (info == nullptr)
+        return false;
+      const CallableParameterContract *current =
+          callableParameterContract(function, parameterIndex);
+      if (current != nullptr && current->boundary != CallableBoundary::Confined)
+        return false;
+      visiting.push_back(key);
+      std::vector<CallableForwardingRequirement> edges;
+      if (current != nullptr) {
+        for (auto signature : current->signatures) {
+          signature.returnType =
+              substituteType(signature.returnType, substitution);
+          for (SemanticType &type : signature.parameterTypes)
+            type = substituteType(type, substitution);
+          signatures.push_back(std::move(signature));
+        }
+        edges = current->forwardings;
+      }
+      // Primary body analysis can select a caller before the final
+      // forwarding fixed point. Use those same exact pending edges, not
+      // an inferred body shape or a library-name exception.
+      const auto appendPending = [&](const SemanticModel &model) {
+        for (const auto &pending : model.pendingCallableForwardings) {
+          if ((pending.source != info->declaration &&
+               pending.source != info->bodyDeclaration()) ||
+              pending.sourceParameterIndex != parameterIndex)
+            continue;
+          if (std::none_of(edges.begin(), edges.end(), [&](const auto &edge) {
+                return edge.source == pending.call &&
+                       edge.function == pending.target &&
+                       edge.parameterIndex == pending.targetParameterIndex;
+              }))
+            edges.push_back(
+                {pending.call, pending.target, pending.targetParameterIndex});
+        }
+      };
+      appendPending(semanticModel);
+      if (instanceBaseModel != nullptr)
+        appendPending(*instanceBaseModel);
+      for (const auto &edge : edges) {
+        const ResolvedCallInfo *call =
+            edge.source == nullptr ? nullptr
+                                   : semanticModel.findCall(*edge.source);
+        if (call == nullptr && edge.source != nullptr &&
+            instanceBaseModel != nullptr)
+          call = instanceBaseModel->findCall(*edge.source);
+        const FunctionInfo *callee = semanticModel.findFunction(edge.function);
+        if (callee == nullptr && instanceBaseModel != nullptr)
+          callee = instanceBaseModel->findFunction(edge.function);
+        if (call == nullptr || call->function != edge.function ||
+            callee == nullptr)
+          return false;
+        GenericSubstitution next = classSubstitution(
+            substituteType(call->dispatchOwner, substitution));
+        std::size_t typeIndex = 0;
+        std::size_t valueIndex = 0;
+        for (const auto &generic : callee->genericParameters) {
+          if (generic.value) {
+            if (valueIndex >= call->valueArguments.size())
+              return false;
+            next.values.emplace(
+                generic.id,
+                substituteCompileTimeValue(call->valueArguments[valueIndex++],
+                                           substitution.values));
+          } else if (generic.pack) {
+            std::vector<SemanticType> elements;
+            while (typeIndex < call->typeArguments.size())
+              elements.push_back(substituteType(
+                  call->typeArguments[typeIndex++], substitution));
+            next.types.emplace(
+                generic.id,
+                elements.size() == 1 &&
+                        elements.front().kind == SemanticType::TypePack &&
+                        !elements.front().concretePack
+                    ? elements.front()
+                    : SemanticType::concreteTypePack(generic.id,
+                                                     std::move(elements)));
+          } else {
+            if (typeIndex >= call->typeArguments.size())
+              return false;
+            next.types.emplace(
+                generic.id,
+                substituteType(call->typeArguments[typeIndex++], substitution));
+          }
+        }
+        if (!self(self, edge.function, edge.parameterIndex, next))
+          return false;
+      }
+      visiting.pop_back();
+      return true;
+    };
+    // Incomplete or cyclic graphs cannot use a partial signature subset
+    // to disambiguate. The ordinary unique-item fallback is still valid;
+    // its concrete body and invocation are checked before HIR admission.
+    if (!collect(collect, root, parameter, rootSubstitution))
+      signatures.clear();
+    return signatures;
+  };
+
   bool valid = true;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     if (!isContextualNativeFunctionArgument(arguments[index])) {
@@ -489,10 +613,6 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
                             contract->ownedTransport &&
                             contract->ownedTransport->kind ==
                                 CallableOwnedTransportKind::ThreadTask;
-    const bool contextualSignature =
-        contract != nullptr &&
-        contract->boundary == CallableBoundary::Confined &&
-        !contract->signatures.empty();
 
     const std::optional<Symbol> source =
         resolveExpressionSymbol(arguments[index]);
@@ -522,9 +642,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
           matchesContract = candidate.parameterTypes.empty() &&
                             exactMatch(exactMatch, result, candidate.returnType,
                                        substitution);
-        } else if (contextualSignature) {
+        } else {
           for (const CallableSignatureRequirement &signature :
-               contract->signatures) {
+               contextualRequirements(target.id, index, substitution)) {
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
                 (!signature.inferResultFromInstantiation &&
@@ -2207,8 +2327,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
         if (parameter.defaultArgument)
           argument = &parameter.defaultArgument->expression;
       }
-      if (argument == nullptr || !*argument ||
-          (!potentialPackView && !isOwnerDependentTextExpression(*argument)))
+      if (argument == nullptr || !*argument)
+        continue;
+      const bool conditionalText =
+          index < selected.parameterTypes.size() &&
+          selected.parameterTypes[index].kind == SemanticType::TypeParameter;
+      if (!conditionalText && !potentialPackView &&
+          !isOwnerDependentTextExpression(*argument))
+        continue;
+      if (!potentialPackView && requireOwnerlessTextParameter(*argument))
+        continue;
+      // An open non-forwarding expression is checked when its exact text
+      // instantiation is analyzed; no reusable caller obligation was proved.
+      if (conditionalText)
         continue;
       reportOwnerDependentTextStorage(
           *argument, "passed to a constructor that stores it in a field");

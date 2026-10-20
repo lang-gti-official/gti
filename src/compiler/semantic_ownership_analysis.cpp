@@ -1279,6 +1279,151 @@ auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
          info->traits.containsBorrowedState;
 }
 
+auto SemanticVisitor::Impl::ownerlessTextForwardingParameter(
+    const ExprPtr &expression) const -> std::optional<std::size_t> {
+  const auto *function = currentFunctionInfo();
+  const auto *variable = directCallableParameterVariable(expression);
+  const auto *symbol = variable ? resolve(variable->name()) : nullptr;
+  if (!function || !function->bodyDeclaration() || !symbol ||
+      !symbol->parameterDeclaration)
+    return std::nullopt;
+  const auto &parameters = function->bodyDeclaration()->parameters();
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    if (&parameters[index] != symbol->parameterDeclaration)
+      continue;
+    // A mutable binding may have been replaced before the forwarding use.
+    // This first contract slice proves exact immutable formal transport only.
+    if (parameters[index].pack ||
+        parameters[index].mutability == Mutability::Mutable ||
+        index >= function->parameterTypes.size())
+      return std::nullopt;
+    const auto kind = function->parameterTypes[index].kind;
+    if (kind != SemanticType::StringView && kind != SemanticType::CString &&
+        kind != SemanticType::TypeParameter)
+      return std::nullopt;
+    return index;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::requireOwnerlessTextParameter(
+    const ExprPtr &expression) -> bool {
+  const auto index = ownerlessTextForwardingParameter(expression);
+  const auto *function = currentFunctionInfo();
+  if (!index || !function || !function->declaration ||
+      function->virtualMethod || function->overrideMethod ||
+      function->linkage != LanguageLinkage::Gti)
+    return false;
+  FunctionInfo updated = *function;
+  if (std::find(updated.ownerlessTextParameters.begin(),
+                updated.ownerlessTextParameters.end(), *index) ==
+      updated.ownerlessTextParameters.end()) {
+    updated.ownerlessTextParameters.push_back(*index);
+    std::sort(updated.ownerlessTextParameters.begin(),
+              updated.ownerlessTextParameters.end());
+    semanticModel.record(*updated.declaration, std::move(updated));
+  }
+  return true;
+}
+
+auto SemanticVisitor::Impl::recordOwnerlessTextCall(
+    const Call &call, const CallableCandidate &target) -> void {
+  if (!target.id || !target.declaration)
+    return;
+  for (std::size_t index = 0;
+       index < call.arguments().size() && index < target.parameterTypes.size();
+       ++index) {
+    const auto &formal = target.parameterTypes[index];
+    if (formal.kind != SemanticType::StringView &&
+        formal.kind != SemanticType::CString &&
+        formal.kind != SemanticType::TypeParameter)
+      continue;
+    const auto &argument = call.arguments()[index];
+    const auto *info = semanticModel.findExpression(*argument);
+    requestSession.ownerlessTextCallUses.push_back(
+        {.caller = currentFunctionDeclaration,
+         .callee = target.id,
+         .parameter = index,
+         .type = formal,
+         .forwardedParameter = ownerlessTextForwardingParameter(argument),
+         .argument = &argument,
+         .ownerless = info &&
+                      (info->type.kind == SemanticType::StringView ||
+                       info->type.kind == SemanticType::CString) &&
+                      !info->traits.containsBorrowedState});
+  }
+}
+
+auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
+  const auto required = [&](const auto &use) {
+    const auto *target = semanticModel.findFunction(use.callee);
+    if (!target && instanceBaseModel)
+      target = instanceBaseModel->findFunction(use.callee);
+    return target &&
+           std::find(target->ownerlessTextParameters.begin(),
+                     target->ownerlessTextParameters.end(), use.parameter) !=
+               target->ownerlessTextParameters.end();
+  };
+  // Finite monotone closure over exact source formal indices. There is no
+  // recursive path expansion or declaration visitation order in this lattice.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (const auto &use : requestSession.ownerlessTextCallUses) {
+      if (!use.caller || !use.forwardedParameter || !required(use))
+        continue;
+      const auto *caller = semanticModel.findFunction(*use.caller);
+      if (!caller || caller->virtualMethod || caller->overrideMethod ||
+          caller->linkage != LanguageLinkage::Gti ||
+          std::find(caller->ownerlessTextParameters.begin(),
+                    caller->ownerlessTextParameters.end(),
+                    *use.forwardedParameter) !=
+              caller->ownerlessTextParameters.end())
+        continue;
+      FunctionInfo updated = *caller;
+      updated.ownerlessTextParameters.push_back(*use.forwardedParameter);
+      std::sort(updated.ownerlessTextParameters.begin(),
+                updated.ownerlessTextParameters.end());
+      semanticModel.record(*updated.declaration, std::move(updated));
+      changed = true;
+    }
+  }
+  for (auto &use : requestSession.ownerlessTextCallUses) {
+    if (use.diagnosed || use.ownerless || !required(use))
+      continue;
+    // The requirement is conditional on the selected concrete formal being
+    // text. Open bodies retain the obligation; their concrete instances are
+    // reanalyzed and independently verified rather than treating an unknown
+    // payload as a dynamic text view.
+    if (containsOpenTypeParameter(use.type))
+      continue;
+    const auto *caller = use.caller ? semanticModel.findFunction(*use.caller)
+                                    : nullptr;
+    if (caller && use.forwardedParameter &&
+        std::find(caller->ownerlessTextParameters.begin(),
+                  caller->ownerlessTextParameters.end(),
+                  *use.forwardedParameter) !=
+            caller->ownerlessTextParameters.end())
+      continue;
+    if (use.argument)
+      reportOwnerDependentTextStorage(
+          *use.argument, "passed to a function requiring ownerless text input");
+    use.diagnosed = true;
+  }
+  for (auto &use : requestSession.ownerlessTextCallableUses) {
+    const auto *target = semanticModel.findFunction(use.target);
+    if (!target && instanceBaseModel)
+      target = instanceBaseModel->findFunction(use.target);
+    if (use.diagnosed || !target || target->ownerlessTextParameters.empty())
+      continue;
+    report(use.location,
+           "This callable conversion cannot preserve its ownerless text "
+           "input requirement; call the function directly.",
+           "GTI-S2045");
+    use.diagnosed = true;
+  }
+}
+
 auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
     const ExprPtr &expression, std::string_view destination) -> void {
   const ExpressionInfo *info =
@@ -1399,7 +1544,8 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
       continue;
     const auto fieldType = substituteSymbol(member->second.symbol, type).type;
     if (fieldType.kind != SemanticType::StringView &&
-        fieldType.kind != SemanticType::CString)
+        fieldType.kind != SemanticType::CString &&
+        fieldType.kind != SemanticType::TypeParameter)
       continue;
     const ExprPtr *source = &initializer.arguments.front();
     while (const auto *group = exprAs<Grouping>(source->get()))

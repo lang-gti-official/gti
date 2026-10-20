@@ -8999,6 +8999,34 @@ every prerequisite in the release matrix below is complete.
 The release phase owns the following explicit acceptance matrix. These are
 requirements to implement and verify, not permission to drop old behavior:
 
+Ownerless text forwarding is a remaining general-language prerequisite. The
+current constructor rule permits a literal-backed by-value text field but
+rejects an ordinary helper forwarding its text parameter into that constructor.
+The production migration exposes this in generic result factories; it is not
+evidence that a dynamic view can safely be retained without its owner.
+
+The proposed extension infers a conditional ownerless-text input obligation:
+it applies when the exact formal type is a text view, and does not constrain an
+unrelated owning or scalar instantiation. Ground storage obligations propagate
+through exact selected calls to a declaration-order-independent fixed point.
+An uncalled helper may then be valid with that obligation, whereas every
+dynamic or unknown caller must fail. Imported declarations, generic instances,
+function values, erased callables, and export boundaries must preserve the
+obligation or reject unsupported contract erasure. A literal caller cannot
+specialize the meaning of a reusable generic body.
+
+Ownerless output is a separate proof: a getter may return a by-value text field
+without borrowing its wrapper only when the field's storage invariant and the
+actual returned producer establish that fact. Unknown provenance is not an
+empty dependency set. HIR must preserve the source-selected contracts and MIR
+must independently verify storage, forwarding, and return witnesses; clearing
+a borrowed-state bit is never sufficient. Acceptance requires unrelated source
+wrappers, reverse-order/imported/generic forwarding, dynamic and dangling
+rejections, and omitted/substituted-proof mutations. In particular, the old
+compiler's acceptance of a local string view returned inside an error result
+(issue 234) must not be preserved. Full retained dynamic-view fields remain a
+different goal requiring explicit owner dependency representation.
+
 The borrowed-wrapper prerequisite remains in progress. Its general rule is a
 source class retaining a complete, alternative-guarded external dependency set
 through one nominal field, not an exception for `expected`. All retained paths

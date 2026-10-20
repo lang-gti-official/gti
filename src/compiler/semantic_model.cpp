@@ -736,6 +736,15 @@ SemanticModel::callerLocationProof(const Expr &expression) const {
                                      analysisSeal().programSnapshot);
 }
 
+std::optional<SemanticOwnerlessTextContractProof>
+SemanticModel::ownerlessTextContractProof(const FunctionDecl &declaration) const {
+  const auto *function = findFunction(declaration);
+  if (!function || !function->bodyDeclaration())
+    return std::nullopt;
+  return SemanticOwnerlessTextContractProof(*function,
+                                            analysisSeal().programSnapshot);
+}
+
 std::optional<SemanticNoNormalBorrowResultProof>
 SemanticModel::noNormalBorrowResultProof(const Call &call) const {
   const auto *selected = findCall(call);
