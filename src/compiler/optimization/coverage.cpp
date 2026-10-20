@@ -284,6 +284,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::ThreadSpawn:
   case IntrinsicKind::ThreadScope:
   case IntrinsicKind::ThreadJoin:
+  case IntrinsicKind::ThreadResultTake:
   case IntrinsicKind::ThreadAutoJoin:
   case IntrinsicKind::AtomicLoad:
   case IntrinsicKind::AtomicWait:

@@ -254,6 +254,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsUnknownMemory = true},
     // ThreadJoin: synchronization metadata supplies the join barrier.
     MirEffectTraits{},
+    // ThreadResultTake: moves the joined result out of the handle.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .movesValue = true,
+                    .initializesValue = true},
     // ThreadAutoJoin: synchronization metadata supplies the join barrier.
     MirEffectTraits{},
     // AtomicLoad: synchronization metadata supplies the read barrier.
@@ -631,6 +636,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-spawn",
     "thread-joinable",
     "thread-join",
+    "thread-result-take",
     "thread-auto-join",
     "atomic-load",
     "atomic-store",
