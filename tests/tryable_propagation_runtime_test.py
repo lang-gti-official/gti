@@ -6,8 +6,10 @@ explicitly moved operand are consumed exactly once, by take_value on success
 or take_residual on failure; a named copyable operand is copied and stays
 usable; a `void` value type makes `?` a statement; a generic body propagates
 through its requirement; and a residual that is the return type itself is
-returned directly. On failure the enclosing function returns after cleaning
-the full expression's earlier temporaries and then its scope. Example 159 runs
+returned directly. An operand in a conditional arm or on the right of `||`
+runs only when reached, and a receiver borrowed for a call stays staged across
+`?` in its argument. On failure the enclosing function returns after
+cleaning the full expression's earlier temporaries and then its scope. Example 159 runs
 as documented.
 """
 
@@ -19,10 +21,13 @@ from unique_class_allocation_runtime_test import run
 
 # (phase, exit code, stdout integers)
 CASES = [
-    (0, 0, [1, -1, 2, -2, 30, 10, 6, -6, 60, 11, -11]),
+    (0, 0, [1, -1, 2, -2, 30, 10, 107, 3, 6, -6, 60, 11, -11]),
     (1, 7, [5, 3, -3, 4, -4, -5]),
     (2, 2, [5, 3, -3, 8, 9, -9, -8, -5]),
     (3, 4, [5, 3, -3, -5]),
+    (4, 6, [5, 3, -3, -5]),
+    (5, 9, [5, 3, -3, -5]),
+    (6, 11, [5, 3, -3, -5]),
 ]
 
 

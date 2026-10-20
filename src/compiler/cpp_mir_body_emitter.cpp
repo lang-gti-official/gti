@@ -6354,13 +6354,17 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
        *producer->successResultDestination != slot->id)) {
     return {};
   }
+  // A directly activated slot takes a cleanup-free object. The moved
+  // temporary may keep only a passive obligation of its own, which ends the
+  // moved-from shell where MIR drops it; an owning one reparents instead.
   if (temporaryMoveProducer &&
       (slot == movedTemporary || slot->initiallyAvailable ||
        (directActivation &&
         (drop->dropType.requiresActiveCleanup ||
          std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                      [&](const MirDropObligation &candidate) {
-                       return candidate.place == movedTemporary->id;
+                       return candidate.place == movedTemporary->id &&
+                              candidate.dropType.requiresActiveCleanup;
                      })))))
     return {};
   const MirValue *stagedValue = body.findValue(*stage->result);
@@ -10305,6 +10309,15 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
         construct->definedFailure.propagation ==
             FailurePropagationKind::DirectCall)) &&
       hasCompleteCallInputSchedule(body, *construct);
+  // A callable value invocation (a closure literal, a stored closure or a
+  // callable parameter) produces the same fresh cleanup-free result as a
+  // source call: it publishes into the join's storage on its Invoke success
+  // edge and may only transfer out its prepared inputs.
+  const bool callableCall =
+      construct != nullptr &&
+      callableClassResultInvocation(body, *construct, valueId) &&
+      !construct->successResultDrop &&
+      onlyPreparedInputTransfers(body, *construct);
   // A cleanup-free arm may also copy a named place, or move out of a nested
   // cleanup-free join; both construct the shared storage from that source.
   const MirPlace *armSource =
@@ -10357,7 +10370,7 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
       (value->info.category != ValueCategory::Value && !copiedPlace) ||
       construct == nullptr ||
       (construct->kind != MirInstructionKind::Construct && !sourceCall &&
-       !copiedPlace && !nestedJoin && !movedLocal)) {
+       !callableCall && !copiedPlace && !nestedJoin && !movedLocal)) {
     return {};
   }
   const MirDropObligation *valueDrop =
@@ -10376,11 +10389,12 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
         construct->definedFailure.localOrigins.empty() &&
         construct->definedFailure.propagation ==
             FailurePropagationKind::Constructor) ||
-       (sourceCall && !construct->definedFailure.empty()));
-  if ((sourceCall || copiedPlace || nestedJoin || movedLocal) &&
-      !representationOnly)
+       ((sourceCall || callableCall) && !construct->definedFailure.empty()));
+  const bool provedArm =
+      sourceCall || callableCall || copiedPlace || nestedJoin || movedLocal;
+  if (provedArm && !representationOnly)
     return {};
-  if (sourceCall || copiedPlace || nestedJoin || movedLocal) {
+  if (provedArm) {
     // The call- and place-specific shapes are proved above; the
     // construction-specific checks below do not apply.
   } else if ((!representationOnly &&
@@ -10400,9 +10414,9 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     return {};
   }
   if (representationOnly) {
-    // A source call's prepared input transfers were proved above.
+    // A call's prepared input transfers were proved above.
     if (value->info.traits != passive->traits || valueDrop != nullptr ||
-        (!sourceCall && !construct->lifecycle.empty())) {
+        (!sourceCall && !callableCall && !construct->lifecycle.empty())) {
       return {};
     }
   } else {
@@ -43806,9 +43820,23 @@ private:
           if (source == nullptr || !slotPlace(facts.body, *source))
             throw std::logic_error(
                 "verified temporary argument move lost its source slot");
-          writeIndent();
-          output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *source)
-                 << ".destroy(); // end prepared argument source shell\n";
+          // A temporary whose passive obligation the argument did not take
+          // over keeps its moved-from shell until MIR drops it.
+          const bool reparented =
+              argument.stage->lifecycle.size() == 1 &&
+              argument.stage->lifecycle.front().kind ==
+                  MirLifecycleEventKind::Reparent;
+          if (reparented ||
+              std::none_of(facts.body.dropObligations.begin(),
+                           facts.body.dropObligations.end(),
+                           [&](const MirDropObligation &drop) {
+                             return drop.place == source->id;
+                           })) {
+            writeIndent();
+            output << "__gti_mir_p_"
+                   << canonicalSlotPlaceId(facts.body, *source)
+                   << ".destroy(); // end prepared argument source shell\n";
+          }
         }
         // An arm moving out of a nested cleanup-free join empties it.
         if (const MirPlace *join =
@@ -59500,13 +59528,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // receiver, and the success block extracts the same expected value
           // under the verifier's exact state-edge proof. The receiver's MIR
           // loan/drop schedule also covers the non-invoking error successor.
-          // The state test ends its block. Whatever precedes it there, after
-          // the stage itself, is failure-free evaluation of the tested value
-          // (a failure-free producer has no Invoke edge of its own) that
-          // writes no part of the staged place.
+          // The state test ends its block, but for the ends of its own
+          // input loans. Whatever precedes it there, after the stage itself,
+          // is failure-free evaluation of the tested value (a failure-free
+          // producer has no Invoke edge of its own) that writes no part of
+          // the staged place.
           const auto inertBeforeObservation = [&]() {
-            if (source->instructions.empty() || place == nullptr ||
-                observation != &source->instructions.back())
+            auto last = source->instructions.end();
+            while (last != source->instructions.begin() &&
+                   std::prev(last)->kind == MirInstructionKind::EndBorrow &&
+                   &*std::prev(last) != observation)
+              --last;
+            if (last == source->instructions.begin() || place == nullptr ||
+                observation != &*std::prev(last))
               return false;
             bool afterStage = current != record->definitionBlock;
             for (const MirInstruction &member : source->instructions) {
@@ -59527,16 +59561,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
             return afterStage;
           };
-          if (source->terminator.kind != MirTerminatorKind::Branch ||
-              place == nullptr ||
-              (place->root != MirPlaceRootKind::Binding &&
-               !materializedReceiver) ||
-              !place->projections.empty() || success == nullptr ||
-              observation == nullptr || !inertBeforeObservation() ||
-              observation->kind != MirInstructionKind::Compute ||
-              observation->operation != MirOperation::ExpectedHasValue ||
-              observation->operands.size() != 1 ||
-              !std::any_of(
+          const bool expectedObservation =
+              observation != nullptr && success != nullptr &&
+              observation->kind == MirInstructionKind::Compute &&
+              observation->operation == MirOperation::ExpectedHasValue &&
+              observation->operands.size() == 1 &&
+              std::any_of(
                   success->instructions.begin(), success->instructions.end(),
                   [&](const MirInstruction &extraction) {
                     return extraction.intrinsic ==
@@ -59546,7 +59576,34 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            sameExpectedCarrier(body,
                                                observation->operands.front(),
                                                *extraction.receiver);
-                  })) {
+                  });
+          // A `?` through std::tryable branches over its failure-free
+          // has_value call. Its success edge continues with the take_value
+          // call, which MIR names with the propagation's own HIR value, as it
+          // does the branch; the other edge returns the residual.
+          const bool tryableObservation =
+              observation != nullptr && success != nullptr &&
+              observation->kind == MirInstructionKind::Call &&
+              observation->functionTarget && !observation->receiver &&
+              observation->intrinsic == IntrinsicKind::None &&
+              observation->info.type == SemanticType::Bool &&
+              observation->definedFailure.empty() &&
+              observation->localFailureSites.empty() &&
+              source->terminator.hirValue != 0 &&
+              std::any_of(success->instructions.begin(),
+                          success->instructions.end(),
+                          [&](const MirInstruction &output) {
+                            return output.kind == MirInstructionKind::Call &&
+                                   output.hirValue ==
+                                       source->terminator.hirValue;
+                          });
+          if (source->terminator.kind != MirTerminatorKind::Branch ||
+              place == nullptr ||
+              (place->root != MirPlaceRootKind::Binding &&
+               !materializedReceiver) ||
+              !place->projections.empty() || success == nullptr ||
+              observation == nullptr || !inertBeforeObservation() ||
+              (!expectedObservation && !tryableObservation)) {
             return false;
           }
         }
