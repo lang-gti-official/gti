@@ -2372,8 +2372,19 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       }
       sourceType = std::move(fieldType);
     }
+    // Caller storage reached without crossing a stored reference may hold
+    // the referent anywhere inside it, as an accessor's receiver or an owned
+    // element buffer does. The result then depends on that whole storage,
+    // exactly as an ordinary receiver or argument borrow origin does. Storage
+    // that itself stores references needs an exact path instead, so that an
+    // external referent is never confused with the carrier's own storage.
+    const auto containedInventory = storedReferenceInventory(sourceType);
+    const bool containedReferent = physicalCallerStorage && !externalReferent &&
+                                   containedInventory &&
+                                   containedInventory->empty();
     if ((!physicalCallerStorage && !externalReferent) ||
-        sourceType != resultPath->reference.arguments.front() ||
+        (sourceType != resultPath->reference.arguments.front() &&
+         !containedReferent) ||
         (dependency.access == AccessMode::Mutable &&
          sourceAccess != AccessMode::Mutable))
       return std::nullopt;
@@ -2593,10 +2604,29 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         continue;
       sources = input->dependencies;
     } else {
-      const auto actualPlace = semanticPlace(*argument);
+      // A reference returned by an ordinary call reborrows its one declared
+      // origin, so the construction depends on that origin's referent, with
+      // no more access than the returned reference grants.
+      const ExprPtr *origin = argument;
+      while (const auto *call = exprAs<Call>(origin->get())) {
+        const auto *selected = semanticModel.findCall(*call);
+        const ExprPtr *source = storedBorrowSource(*origin);
+        if (!selected || !source || !*source ||
+            selected->intrinsic != IntrinsicKind::None ||
+            selected->returnType.kind != SemanticType::Reference ||
+            (selected->borrowOrigin != BorrowOriginKind::Argument &&
+             selected->borrowOrigin != BorrowOriginKind::Receiver) ||
+            !selected->borrowFields.empty() ||
+            !selected->borrowArguments.empty() ||
+            completeBorrowDependencySet(*origin))
+          break;
+        origin = source;
+      }
+      const auto *argumentInfo = semanticModel.findExpression(**argument);
+      const auto actualPlace = semanticPlace(*origin);
       if (const auto selected = selectedReferenceDependencies(actualPlace)) {
         sources = *selected;
-      } else if (const auto source = retainedLoanSource(*argument);
+      } else if (const auto source = retainedLoanSource(*origin);
                  source && actualPlace.root &&
                  actualPlace.root->type.kind == SemanticType::Reference) {
         const auto *loan = semanticModel.findLoan(source->loan);
@@ -2642,13 +2672,16 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         sources = input->dependencies;
       } else {
         auto place = loanPlace(actualPlace);
-        const auto *info = semanticModel.findExpression(**argument);
-        if (!place.valid() || !info)
+        if (!place.valid() || !argumentInfo)
           continue;
         sources.push_back({.place = std::move(place),
-                           .access = info->access,
+                           .access = argumentInfo->access,
                            .protectsStorage = true});
       }
+      if (origin != argument && argumentInfo &&
+          argumentInfo->access == AccessMode::ReadOnly)
+        for (auto &source : sources)
+          source.access = AccessMode::ReadOnly;
     }
     if (sources.empty())
       continue;
@@ -2832,9 +2865,21 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
   // across nested lambdas, demanded bodies or concrete instance analyses.
   std::vector<const ReturnStmt *> returns;
   (void)summarizeFlow(syntax->body()->statements(), &returns, true);
-  if (returns.empty())
+  if (returns.empty() && loanFlow.implicitResultReturns.empty())
     return;
   FunctionBorrowDependencySummary summary;
+  const auto merge = [&](const FunctionBorrowDependencySummary &normalized) {
+    for (const auto &dependency : normalized.dependencies)
+      if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
+                    dependency) == summary.dependencies.end())
+        summary.dependencies.push_back(dependency);
+    for (const auto &alternative : normalized.possibleAlternatives) {
+      if (std::find(summary.possibleAlternatives.begin(),
+                    summary.possibleAlternatives.end(),
+                    alternative) == summary.possibleAlternatives.end())
+        summary.possibleAlternatives.push_back(alternative);
+    }
+  };
   for (const auto *returned : returns) {
     const auto *info = returned->value()
                            ? semanticModel.findExpression(*returned->value())
@@ -2867,16 +2912,15 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     // ordinary escape checking, or the conditional loan proofs.
     if (!normalized)
       return;
-    for (const auto &dependency : normalized->dependencies)
-      if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
-                    dependency) == summary.dependencies.end())
-        summary.dependencies.push_back(dependency);
-    for (const auto &alternative : normalized->possibleAlternatives) {
-      if (std::find(summary.possibleAlternatives.begin(),
-                    summary.possibleAlternatives.end(),
-                    alternative) == summary.possibleAlternatives.end())
-        summary.possibleAlternatives.push_back(alternative);
-    }
+    merge(*normalized);
+  }
+  // A synthetic early return (prefix `?`) contributes its residual
+  // construction's set, recorded at its own evaluation point.
+  for (const auto &implicit : loanFlow.implicitResultReturns) {
+    const auto normalized = normalizedCompleteReturnBorrow(cleared, implicit);
+    if (!normalized)
+      return;
+    merge(*normalized);
   }
   // Reload after nested body demands and restoration-summary publication.
   const auto *current = semanticModel.findFunction(id);

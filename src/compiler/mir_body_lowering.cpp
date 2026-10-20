@@ -3353,6 +3353,13 @@ private:
         consider(loan->source, loan->access);
         for (const auto &extra : loan->additionalDependencies)
           consider(extra.source, extra.access);
+        // A reference formal's entry loan protects its whole referent; a
+        // sub-place of that referent is named by its own evaluated place.
+        if (selected == 0 && loan->entry &&
+            loan->kind == MirLoanKind::Parameter)
+          for (const auto &place : output.places)
+            if (place.root == MirPlaceRootKind::Binding)
+              consider(place.id, place.access);
       }
     } else {
       // A direct physical owner can be materialized from its existing typed
@@ -7535,6 +7542,123 @@ private:
         if (complete.empty()) {
           valid = false; // No origin may be invented for a borrowed result.
           return;
+        }
+        // A reference input read through a call result's loan is a child of
+        // that accessor result, not of the accessor's own parent named by
+        // the semantic contract. Keep the accessor in the published ancestry.
+        std::vector<const MirLoan *> accessors;
+        for (std::size_t index = 0; index < call.operands.size(); ++index) {
+          const MirOperand &input = index < sourceArguments.size()
+                                        ? sourceArguments[index]
+                                        : call.operands[index];
+          const auto *accessor = output.findLoan(operandLoan(input));
+          if (accessor && accessor->kind == MirLoanKind::CallResult &&
+              index < call.parameterTypes.size() &&
+              call.parameterTypes[index].kind == SemanticType::Reference)
+            accessors.push_back(accessor);
+        }
+        for (auto &dependency : complete) {
+          const MirLoan *selected = nullptr;
+          bool ambiguous = false;
+          for (const auto *accessor : accessors)
+            if (accessor->id != dependency.parent &&
+                accessor->parent == dependency.parent &&
+                sameBorrowSource(accessor->source, dependency.source)) {
+              ambiguous |= selected && selected != accessor;
+              selected = accessor;
+            }
+          if (selected && !ambiguous) {
+            dependency.parent = selected->id;
+            dependency.source = selected->source;
+          }
+        }
+        // A parentless referent is named by the exact place through which
+        // the call's mapped input supplies it, not by an earlier evaluation
+        // of the same reference formal: the verifier reconstructs this call's
+        // own inputs. A reference input reads its referent's place; a carrier
+        // passed by value supplies the sources of its own Stored group.
+        const auto stagedOperand =
+            [&](const MirOperand &input) -> const MirOperand * {
+          const MirOperand *cursor = &input;
+          while (cursor->kind == MirOperandKind::Value) {
+            const MirValue *staged = output.findValue(cursor->value);
+            if (!staged || staged->definitionBlock == 0 ||
+                staged->definitionBlock > output.blocks.size())
+              return nullptr;
+            const MirInstruction *stage = nullptr;
+            for (const auto &instruction :
+                 output.blocks[staged->definitionBlock - 1].instructions)
+              if (instruction.id == staged->definition)
+                stage = &instruction;
+            if (!stage || stage->operands.size() != 1 ||
+                (stage->kind != MirInstructionKind::CallInput &&
+                 stage->kind != MirInstructionKind::Move))
+              return nullptr;
+            cursor = &stage->operands.front();
+          }
+          return cursor;
+        };
+        std::vector<MirPlaceId> argumentPlaces;
+        const auto addPlace = [&](MirPlaceId place) {
+          if (place != 0 && std::find(argumentPlaces.begin(),
+                                      argumentPlaces.end(),
+                                      place) == argumentPlaces.end())
+            argumentPlaces.push_back(place);
+        };
+        std::vector<std::size_t> mappedParameters = value.borrowArguments;
+        if (value.borrowOrigin == BorrowOriginKind::Argument)
+          mappedParameters.push_back(value.borrowArgument);
+        for (const auto &mapping : value.borrowFields)
+          if (mapping.origin == BorrowOriginKind::Argument)
+            mappedParameters.push_back(mapping.parameter);
+        for (const std::size_t parameter : mappedParameters) {
+          if (parameter >= call.operands.size() ||
+              parameter >= call.parameterTypes.size())
+            continue;
+          const MirOperand *input =
+              stagedOperand(parameter < sourceArguments.size()
+                                ? sourceArguments[parameter]
+                                : call.operands[parameter]);
+          const MirPlace *place = input ? output.findPlace(input->place)
+                                        : nullptr;
+          if (!place)
+            continue;
+          if (call.parameterTypes[parameter].kind ==
+              SemanticType::Reference) {
+            addPlace(place->id);
+            continue;
+          }
+          const MirLoan *group =
+              place->root == MirPlaceRootKind::Binding &&
+                      place->projections.empty()
+                  ? (bindingLoans.contains(place->binding)
+                         ? output.findLoan(bindingLoans.at(place->binding))
+                         : nullptr)
+              : place->root == MirPlaceRootKind::Value ||
+                      place->root == MirPlaceRootKind::Temporary
+                  ? output.findLoan(loanForValue(place->sourceValue))
+                  : nullptr;
+          if (!group || group->kind != MirLoanKind::Stored)
+            continue;
+          addPlace(group->source);
+          for (const auto &extra : group->additionalDependencies)
+            addPlace(extra.source);
+        }
+        for (auto &dependency : complete) {
+          if (dependency.parent != 0)
+            continue;
+          MirPlaceId selected = 0;
+          bool ambiguous = false;
+          for (const auto place : argumentPlaces)
+            if (place != dependency.source &&
+                sameBorrowSource(place, dependency.source)) {
+              ambiguous |= selected != 0;
+              selected = place;
+            }
+          if (selected != 0 && !ambiguous &&
+              std::find(argumentPlaces.begin(), argumentPlaces.end(),
+                        dependency.source) == argumentPlaces.end())
+            dependency.source = selected;
         }
         const auto &primary = complete.front();
         auto &published = output.loans[loan - 1];

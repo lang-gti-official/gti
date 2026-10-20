@@ -1,7 +1,7 @@
 // Prefix `?` through the standard `std::tryable` protocol concept.
 //
-// Built-in `expected` keeps its own propagation rule. Any other operand must
-// satisfy `std::tryable`, which the prelude declares; the compiler binds `?`
+// Every operand, including the prelude's `expected`, must satisfy
+// `std::tryable`, which the prelude declares; the compiler binds `?`
 // to that concept by trusted declaration identity and knows nothing about the
 // types that conform to it. The selected conformance block's functions run as
 // ordinary calls, and the residual initializes the enclosing return type as
@@ -9,6 +9,7 @@
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
+#include <array>
 
 namespace lang {
 
@@ -342,9 +343,25 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     return SemanticType::Unknown;
   }
   // This path returns from the enclosing callable even though its source is
-  // an expression, not a ReturnStmt. Until the selected residual operation's
-  // complete result contract is instantiated here, it contributes unknown.
-  loanFlow.unknownImplicitResultReturn = true;
+  // an expression, not a ReturnStmt. The residual is owned and holds no
+  // stored borrow (checked above), so a selected residual construction
+  // publishes exactly the alternatives of its complete contract for a
+  // dependency-free input. Without that contract the return is unknown.
+  std::optional<SemanticBorrowDependencySet> residualReturn;
+  if (construction)
+    if (const auto summary =
+            completeConstructorBorrow(*construction, tokenSpan(site))) {
+      ResolvedCallInfo publication;
+      publication.returnType = construction->constructedType;
+      publication.parameterTypes = construction->parameterTypes;
+      const std::array<const ExprPtr *, 1> residualInput{nullptr};
+      residualReturn = instantiateCompleteBorrowArguments(
+          publication, *summary, residualInput);
+    }
+  if (residualReturn && residualReturn->dependencies.empty())
+    loanFlow.implicitResultReturns.push_back(std::move(*residualReturn));
+  else
+    loanFlow.unknownImplicitResultReturn = true;
   if (outputDependencies)
     semanticModel.recordBorrowDependencySet(expr, *outputDependencies);
   semanticModel.recordTryablePropagation(

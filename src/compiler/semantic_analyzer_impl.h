@@ -1032,6 +1032,9 @@ private:
     // A synthetic early return needs its own complete result evidence;
     // explicit ReturnStmt facts alone cannot describe the callable's result.
     bool unknownImplicitResultReturn = false;
+    // The complete result sets of synthetic early returns that have that
+    // evidence, in addition to the body's explicit ReturnStmt facts.
+    std::vector<SemanticBorrowDependencySet> implicitResultReturns;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
