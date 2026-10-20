@@ -62037,7 +62037,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    classValuePublicationSlot(program_, body,
                                              *instruction.result) == nullptr &&
                    expectedPayloadInitialize(
-                       program_, body, *instruction.result) == nullptr))) ||
+                       program_, body, *instruction.result) == nullptr &&
+                   // A result moved into an existing binding is staged in
+                   // its own slot first: value-rooted with a full-expression
+                   // Drop, or representation-only when it is cleanup-free.
+                   !valueRootedClassCallResultSlot(program_, representations_,
+                                                   body,
+                                                   *instruction.result) &&
+                   classSsaLifetimeSlot(program_, representations_, body,
+                                        *instruction.result)
+                           .producer != &instruction))) ||
                 instruction.info.type.kind == SemanticType::Lambda)) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), invocationOperand) ||
