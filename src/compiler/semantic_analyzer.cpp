@@ -68,6 +68,11 @@ bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
   return impl->requiresActiveCleanupFor(type);
 }
 
+bool SemanticVisitor::lifecycleBoundBorrowCarrierFor(
+    const SemanticType &type) const {
+  return impl->lifecycleBoundBorrowCarrierFor(type);
+}
+
 std::optional<EnumTypeInfo>
 SemanticVisitor::enumTypeFor(const SemanticType &type) const {
   return impl->enumTypeFor(type);

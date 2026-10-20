@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "name": "payload-optional-string",
+  "description": "Compare source-defined payload-enum optional with the compiler-private optional under the same ownership and result contract",
+  "work_units": 10000000,
+  "minimum_sample_seconds": 0.1,
+  "variants": [
+    {
+      "name": "source",
+      "kind": "gti",
+      "source": "source.gti",
+      "execution_profile": "single-threaded"
+    },
+    {
+      "name": "builtin",
+      "kind": "gti",
+      "source": "builtin.gti",
+      "execution_profile": "single-threaded"
+    }
+  ]
+}

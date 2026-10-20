@@ -29,20 +29,30 @@ def cleanup_free_receiver_cases(name="conditional_cleanup_free_receiver"):
     # its full expression, a moved argument inside its callee, and the rest
     # at scope exit.
     shapes = trace(1, 3, 5, 7, 9, 11, 14, 15, 49, 51, 18, 38, 2291, 2399,
-                   1050, 123, 27, 2030, 16, -35, -53, -55, -56, -54, 6136,
+                   1050, 123, 27, 2030, 16, 57, 60, 63, 823, 24, 12, -35, -53,
+                   -55, -56, -54, 6136,
                    102, 104, 106, 108, 110, 112, 113, 116, 150, 152, 119, 240,
-                   13289, 12499, 1252, 678, 1128, 131, 67, -135, -156, -155,
-                   -154, -153, 15437)
+                   13289, 12499, 1252, 678, 1128, 131, 67, 158, 162, 164, 679,
+                   1308, 11012, -135, -156, -155, -154, -153, 15437)
     # A failing arm callee leaves no joined value, and a failing member call
     # fails while borrowing it. Cleanup destroys only what was constructed
     # before the failure.
     expected = [
-        (0, shapes + trace("left", "right", "ratio", -207, -204, -201), ""),
+        (0, shapes + trace("left", "right", "ratio", "nested", -211,
+                           "constructed", -210, -207, -204, -201), ""),
         (70, shapes + trace(-201), primary(line("Pod risky(int id"))),
         (70, shapes + trace("left", -204, -201),
          primary(line("Pod chancy(int id"))),
         (70, shapes + trace("left", "right", -207, -204, -201),
          primary(line("int ratio(int divisor)"))),
+        (70, shapes + trace("left", "right", "ratio", -210, -207, -204, -201),
+         primary(line("Pod chancy(int id"))),
+        (70, shapes + trace("left", "right", "ratio", "nested", -210, -210,
+                           -207, -204, -201),
+         primary(line("FromTracked(Tracked input"))),
+        (70, shapes + trace("left", "right", "ratio", "nested", -211, -210,
+                           -207, -204, -201),
+         primary(line("FromTracked(Tracked input"))),
     ]
     return {fixture.stem: [(tuple(["case"] * index), result)
                            for index, result in enumerate(expected)]}

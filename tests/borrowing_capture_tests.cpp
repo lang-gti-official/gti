@@ -47,13 +47,35 @@ int main() {
                !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
            name + " is rejected by semantics, not the backend");
   };
-  positive("shared-capture", R"(
+  const auto sharedCapture = positive("shared-capture", R"(
 int main() {
   int value = 7;
   auto read = [&value]() -> int { return value; };
   return read() - 7;
 }
 )");
+  bool exactCaptureInputs = false;
+  for (const auto &function : sharedCapture.hir.functionInstances())
+    for (const auto &value : function.body.values)
+      if (value.kind == lang::HirValueKind::Lambda &&
+          !value.captureBorrowDependencies.empty()) {
+        exactCaptureInputs = true;
+        expect(!value.borrowDependencies && value.source &&
+                   !sharedCapture.semantics.findBorrowDependencySet(
+                       *value.source) &&
+                   !sharedCapture.semantics
+                        .findCaptureBorrowDependencies(*value.source)
+                        .empty(),
+               "capture producer inputs are not a complete result fact");
+        if (const auto *mir =
+                sharedCapture.mir.findFunctionInstance(function.id))
+          for (const auto &lowered : mir->body.values)
+            if (lowered.sourceValue == value.id)
+              expect(!lowered.borrowDependencies,
+                     "closure retains its existing loan proof, not a fake "
+                     "complete value claim");
+      }
+  expect(exactCaptureInputs, "shared callback keeps exact capture inputs");
   positive("exclusive-capture", R"(
 int main() {
   mut int value = 7;

@@ -92,6 +92,17 @@ auto SemanticVisitor::Impl::registerGlobalBorrowStorage(
                                    AccessModifier::Public, false,
                                    variable->isStatic());
     }
+    if (variable->linkage() == LanguageLinkage::C) {
+      semanticModel.recordForeignStorage(
+          {.symbol = symbol,
+           .type = type,
+           .access = variable->isMutable() ? AccessMode::Mutable
+                                           : AccessMode::ReadOnly,
+           .externalSymbol =
+               variable->nativeLinkName()
+                   ? std::string(variable->nativeLinkName()->name())
+                   : variable->name().lexeme});
+    }
     globalBorrowStorage[name].push_back(
         {.declaration = variable,
          .sourceUnit = sourceUnit,
@@ -1812,19 +1823,33 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   case SemanticType::Bool:
   case SemanticType::Char:
   case SemanticType::StringView:
+  case SemanticType::CString:
   case SemanticType::NullPtr:
   case SemanticType::RawPointer:
+  case SemanticType::NativeFunction:
     return true;
+  case SemanticType::Reference:
+    return type.arguments.size() == 1 &&
+           type.arguments.front() != SemanticType::Unknown &&
+           type.arguments.front() != SemanticType::Void &&
+           type.arguments.front().kind != SemanticType::Reference;
   case SemanticType::Enum:
-    return type.enumId != owner && type.enumId != 0 &&
-           type.enumId <= enums.size() && !enums[type.enumId - 1].payload;
+    // Exact concrete layout validation, not the primary declaration ID,
+    // distinguishes a finite nested instance from a recursive inline value.
+    return type.enumId != 0 && type.enumId <= enums.size();
+  case SemanticType::Array:
+    return type.arguments.size() == 1 &&
+           payloadTypeAllowed(type.arguments.front(), owner);
+  case SemanticType::Expected:
+    return type.arguments.size() == 2 &&
+           (type.arguments.front() == SemanticType::Void ||
+            payloadTypeAllowed(type.arguments.front(), owner)) &&
+           payloadTypeAllowed(type.arguments.back(), owner);
+  case SemanticType::UniqueOwner:
+    return true;
   case SemanticType::Class:
-    // The cleanup-free class-payload family: an ordinary concrete class
-    // value may live inside an alternative. Active-cleanup and
-    // borrowed-state payloads are rejected at construction, where class
-    // traits are complete; the enum's own traits fold the payload's
-    // copy/move/ownership facts, so a move-only payload makes the enum
-    // value move-only.
+    // Cleanup and ownership fold structurally from the actual payload, not
+    // from its public spelling. Stored borrows are validated separately.
     return type.classId != 0;
   default:
     return false;
@@ -1919,6 +1944,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
       const auto found = info.enumerators.find(enumerator.name.lexeme);
       std::vector<SemanticType> payloadTypes;
       payloadTypes.reserve(enumerator.payload.size());
+      std::vector<SymbolId> payloadSymbols;
+      payloadSymbols.reserve(enumerator.payload.size());
       std::unordered_set<std::string> payloadNames;
       for (const Parameter &parameter : enumerator.payload) {
         validateType(parameter.type);
@@ -1937,7 +1964,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                      "' in variant '" + enumerator.name.lexeme + "'.",
                  "GTI-S2067");
         }
-        if (parameter.mutability == Mutability::Mutable) {
+        if (parameter.mutability == Mutability::Mutable &&
+            type.kind != SemanticType::Reference) {
           report(location,
                  "Payload enum fields are values and do not take 'mut'.",
                  "GTI-S2067");
@@ -1946,33 +1974,33 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
           report(*parameter.pack, "Payload enum fields cannot be variadic.",
                  "GTI-S2067");
         }
-        if (parameter.type.reference || !parameter.type.arrayExtents.empty()) {
-          report(location,
-                 "The first payload-enum family does not store references "
-                 "or fixed arrays.",
-                 "GTI-S2067");
-        } else if (type != SemanticType::Unknown &&
-                   !containsOpenTypeParameter(type) &&
-                   !payloadTypeAllowed(type, info.id)) {
+        if (type != SemanticType::Unknown && !containsOpenTypeParameter(type) &&
+            !payloadTypeAllowed(type, info.id)) {
           report(location,
                  "Payload field type '" + typeSpelling(type) +
-                     "' is outside the passive payload family.",
+                     "' is outside the supported payload field family.",
                  "GTI-S2067");
         }
-        // Class payloads with active cleanup or borrowed state are rejected
-        // at construction, where class traits are complete; enum payload
-        // resolution runs before member metadata exists.
+        // Borrowed-state payloads are checked again at construction, where
+        // class traits are complete. Owning cleanup is structural.
         payloadTypes.push_back(type);
+        payloadSymbols.push_back(recordToolingSymbol(
+            parameter.name, SymbolKind::Field,
+            qualifiedName(info.namespaceScope, info.name.lexeme) +
+                "::" + enumerator.name.lexeme + "::" + parameter.name.lexeme,
+            type, parameter.mutability == Mutability::Mutable));
       }
       if (found != info.enumerators.end()) {
         found->second.payloadTypes = payloadTypes;
+        found->second.payloadSymbols = payloadSymbols;
       }
       modelEnumerators.push_back(
           {.declaration = &enumerator,
            .value = {.magnitude = variantIndex},
            .explicitValue = enumerator.initializer != nullptr,
            .variantIndex = variantIndex,
-           .payloadTypes = std::move(payloadTypes)});
+           .payloadTypes = std::move(payloadTypes),
+           .payloadSymbols = std::move(payloadSymbols)});
     }
     semanticModel.recordEnumType(
         *info.declaration,
@@ -2004,6 +2032,35 @@ auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
       self(self, argument);
     if (current.kind == SemanticType::Enum) {
       if (const auto info = enumTypeFor(current)) {
+        std::vector<SemanticType> layoutClasses;
+        std::vector<SemanticType> layoutEnums{current};
+        bool exhausted = false;
+        for (const auto &variant : info->enumerators) {
+          for (const auto &payload : variant.payloadTypes) {
+            if (byValueTypeReachesClass(payload, current, layoutClasses,
+                                        layoutEnums, exhausted)) {
+              auto diagnostic =
+                  makeDiagnostic("GTI-S2067", DiagnosticPhase::Semantics, site,
+                                 "Payload enum '" + typeSpelling(current) +
+                                     "' has a recursive by-value layout.");
+              diagnostic.related.push_back(
+                  {tokenSpan(enums[current.enumId - 1].name),
+                   "The recursively contained enum is declared here."});
+              diagnostic.hints.emplace_back(
+                  "Break the inline cycle with an owning indirection.");
+              diagnostics.push_back(std::move(diagnostic));
+              visiting.pop_back();
+              return;
+            }
+            if (exhausted) {
+              diagnostics.push_back(makeDiagnostic(
+                  DiagnosticId::GenericInstantiationLimit, tokenSpan(site),
+                  {"concrete-layout-depth", "64"}));
+              visiting.pop_back();
+              return;
+            }
+          }
+        }
         for (const auto &variant : info->enumerators) {
           for (std::size_t index = 0; index < variant.payloadTypes.size();
                ++index) {
@@ -2011,8 +2068,7 @@ auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
             if (containsOpenTypeParameter(payload) ||
                 payload == SemanticType::Unknown)
               continue;
-            if (!payloadTypeAllowed(payload, current.enumId) ||
-                typeTraits(payload).containsBorrowedState) {
+            if (!payloadTypeAllowed(payload, current.enumId)) {
               auto diagnostic = makeDiagnostic(
                   "GTI-S2067", DiagnosticPhase::Semantics, site,
                   "Payload field type '" + typeSpelling(payload) +
@@ -2135,13 +2191,14 @@ auto SemanticVisitor::Impl::registerClassAttributes(
       }
       result.cAbiRecord = true;
       result.cAbiSource = attribute;
-      if (declaration.kind() != ClassKind::Struct) {
+      if (declaration.kind() != ClassKind::Struct &&
+          declaration.kind() != ClassKind::Union) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2064", DiagnosticPhase::Semantics, attribute,
-            "[[c_abi]] applies only to passive struct declarations.");
-        diagnostic.hints.emplace_back(
-            "Use 'struct' and keep ordinary classes and interfaces out of "
-            "the C ABI.");
+            "[[c_abi]] applies only to passive struct or union declarations.");
+        diagnostic.hints.emplace_back("Use 'struct' or 'union' and keep "
+                                      "ordinary classes and interfaces out of "
+                                      "the C ABI.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
     } else if (attribute.lexeme == "c_opaque") {
@@ -2679,17 +2736,17 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  classDecl->name().lexeme == "mutex_lock_token") {
         compilerCapability = CompilerCapabilityTypeKind::MutexLockToken;
       }
-      CapabilityPolicyRegistration capabilityPolicies;
+      CapabilityPolicyRegistration capabilityPolicies =
+          registerClassAttributes(*classDecl, genericParameters);
       if (classDecl->kind() == ClassKind::Union) {
         for (const ClassAttribute &attribute : classDecl->attributes()) {
-          report(attribute.name,
-                 "Unions do not accept class capability or native-record "
-                 "attributes.",
-                 "GTI-S2066");
+          if (attribute.name.lexeme != "c_abi") {
+            report(attribute.name,
+                   "Unions accept only the passive [[c_abi]] representation "
+                   "attribute.",
+                   "GTI-S2066");
+          }
         }
-      } else {
-        capabilityPolicies =
-            registerClassAttributes(*classDecl, genericParameters);
       }
       classes.push_back(ClassInfo{
           .id = id,
@@ -2912,6 +2969,7 @@ auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
       {"meta_parameter_list", CompilerTypeKind::MetaParameterList},
       {"meta_parameter_type", CompilerTypeKind::MetaParameterType},
       {"meta_return_type", CompilerTypeKind::MetaReturnType},
+      {"meta_callable_return_type", CompilerTypeKind::MetaCallableReturnType},
       {"meta_constructor_list", CompilerTypeKind::MetaConstructorList},
       {"meta_constructor_parameter_list",
        CompilerTypeKind::MetaConstructorParameterList},
@@ -3296,6 +3354,18 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     return SemanticType::classType(
         list,
         std::vector<SemanticType>(elements->begin() + 1, elements->end()));
+  }
+  case CompilerTypeKind::MetaCallableReturnType: {
+    if (type.arguments.size() != 1 || !type.valueArguments.empty()) {
+      return type;
+    }
+    // This is signature metadata, not invocation selection or permission.
+    // Preserve references and void exactly; the use site still owns every
+    // reference-placement, call, unsafe and borrow-origin obligation.
+    const SemanticType &callable = type.arguments.front();
+    if (const auto *result = callable.callableReturnType())
+      return *result;
+    return type;
   }
   case CompilerTypeKind::MetaReturnType: {
     if (type.arguments.size() != 1 || type.valueArguments.size() != 1 ||
@@ -4429,10 +4499,23 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
       currentSourceUnit = sourceUnitFor(function->name());
       if (function->definitionOwner())
         continue;
-      std::vector<GenericParameterInfo> genericParameters =
-          makeGenericParameters(function->genericParameters(), function->name(),
-                                scope);
-      functionGenericParameters.emplace(function, genericParameters);
+      std::vector<GenericParameterInfo> genericParameters;
+      if (const auto header = functionGenericParameters.find(function);
+          header != functionGenericParameters.end()) {
+        genericParameters = header->second;
+        // This check is operation-relative, unlike the shared header checks.
+        std::erase_if(genericParameters, [&](const auto &parameter) {
+          if (parameter.name.lexeme != function->name().lexeme)
+            return false;
+          report(parameter.name, "Generic parameter cannot have the same name "
+                                 "as its declaration.");
+          return true;
+        });
+      } else {
+        genericParameters = makeGenericParameters(function->genericParameters(),
+                                                  function->name(), scope);
+      }
+      functionGenericParameters.insert_or_assign(function, genericParameters);
       const IntrinsicKind intrinsic = trustedIntrinsicKind(
           currentSourceUnit, scope, function->name().lexeme);
       (void)catalog.registerCallable(CallableDeclaration{
@@ -4774,8 +4857,10 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
-    if (std::find(visitingEnums.begin(), visitingEnums.end(), type) !=
-        visitingEnums.end()) {
+    if (type == target || nonDecreasingNominalRecurrence(type, visitingEnums))
+      return true;
+    if (visiting.size() + visitingEnums.size() >= 64) {
+      exhausted = true;
       return false;
     }
     visitingEnums.push_back(type);
@@ -4820,6 +4905,10 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     return false;
   }
   visiting.push_back(type);
+  // Keep the enum recurrence walk aware of intervening class declarations:
+  // a closed class can break an incoming generic substitution, making e.g.
+  // Event<B> -> B -> Event<Leaf> a finite layout.
+  visitingEnums.push_back(type);
 
   const ClassInfo &nested = classInfo(type.classId);
   const GenericSubstitution substitution = classSubstitution(type);
@@ -4836,11 +4925,13 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums,
                                 exhausted)) {
       visiting.pop_back();
+      visitingEnums.pop_back();
       return true;
     }
   }
 
   visiting.pop_back();
+  visitingEnums.pop_back();
   return false;
 }
 
@@ -4848,6 +4939,13 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
   for (const ClassInfo &owner :
        registering(classes, registrationFloor.classes)) {
     validateOrdinaryClassLayout(openClassType(owner.id));
+  }
+  // Enum signatures are registered before class fields. Revisit closed sums
+  // once all inline containment edges exist, including unused declarations.
+  for (const EnumInfo &owner : registering(enums, registrationFloor.enums)) {
+    if (owner.payload && owner.genericParameters.empty())
+      validateConcreteEnumPayloads(SemanticType::enumType(owner.id),
+                                   owner.name);
   }
 }
 
@@ -5593,7 +5691,8 @@ auto SemanticVisitor::Impl::reportCAbiRecord(const Token &location,
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2064", DiagnosticPhase::Semantics, location, std::move(message));
   diagnostic.hints.emplace_back(
-      "A [[c_abi]] struct is a non-generic, inheritance-free passive record "
+      "A [[c_abi]] struct or union is a non-generic, inheritance-free passive "
+      "record "
       "containing only public instance fields of admitted C scalar types, "
       "recursive raw pointers, native callbacks, fixed arrays, or other "
       "[[c_abi]] "
@@ -5992,7 +6091,8 @@ auto SemanticVisitor::Impl::validateCAbiRecordShape(ClassInfo &owner) -> bool {
   if (!owner.cAbiRecord || owner.declaration == nullptr) {
     return false;
   }
-  bool valid = owner.kind == ClassKind::Struct;
+  bool valid =
+      owner.kind == ClassKind::Struct || owner.kind == ClassKind::Union;
   valid = validateNativeCIdentifier(
               owner.name, "GTI-S2064", "C ABI record name",
               owner.namespaceScope.empty(), owner.namespaceScope.empty()) &&
@@ -6321,7 +6421,8 @@ auto SemanticVisitor::Impl::computeCAbiRecordLayout(
     }
 
     std::uint64_t fieldOffset = 0;
-    if (!alignCAbiOffset(layout.sizeBytes, fieldAlignment, fieldOffset) ||
+    if ((owner.kind != ClassKind::Union &&
+         !alignCAbiOffset(layout.sizeBytes, fieldAlignment, fieldOffset)) ||
         fieldOffset > std::numeric_limits<std::uint64_t>::max() - fieldSize) {
       reportCAbiRecord(field.declaration->name(),
                        "Layout of C ABI record '" + owner.name.lexeme +
@@ -6335,7 +6436,7 @@ auto SemanticVisitor::Impl::computeCAbiRecordLayout(
                              .offsetBytes = fieldOffset,
                              .sizeBytes = fieldSize,
                              .abiAlignmentBytes = fieldAlignment});
-    layout.sizeBytes = fieldOffset + fieldSize;
+    layout.sizeBytes = std::max(layout.sizeBytes, fieldOffset + fieldSize);
     layout.abiAlignmentBytes =
         std::max(layout.abiAlignmentBytes, fieldAlignment);
   }
@@ -6349,6 +6450,20 @@ auto SemanticVisitor::Impl::computeCAbiRecordLayout(
   }
   layout.sizeBytes = finalSize;
   owner.cAbiLayout = layout;
+  if (owner.kind == ClassKind::Union) {
+    // Both views carry the same semantic layout. Ordinary union operations
+    // consume the union view; ABI declarations consume the record view.
+    UnionLayout unionLayout{.sizeBytes = layout.sizeBytes,
+                            .abiAlignmentBytes = layout.abiAlignmentBytes};
+    for (const CAbiRecordFieldLayout &field : layout.fields) {
+      unionLayout.fields.push_back(
+          {.declaration = field.declaration,
+           .type = field.type,
+           .sizeBytes = field.sizeBytes,
+           .abiAlignmentBytes = field.abiAlignmentBytes});
+    }
+    owner.unionLayout = std::move(unionLayout);
+  }
   state[id - 1] = 2;
   return layout;
 }
@@ -6440,10 +6555,14 @@ auto SemanticVisitor::Impl::validateUnionShape(ClassInfo &owner) -> bool {
 auto SemanticVisitor::Impl::computeUnionLayout(
     ClassId id, std::vector<std::uint8_t> &state,
     const std::vector<bool> &shapeValid) -> std::optional<UnionLayout> {
-  if (id == 0 || id > classes.size() || !shapeValid[id - 1]) {
+  if (id == 0 || id > classes.size() ||
+      (!classInfo(id).cAbiRecord && !shapeValid[id - 1])) {
     return std::nullopt;
   }
   ClassInfo &owner = classInfo(id);
+  if (owner.cAbiRecord) {
+    return owner.unionLayout;
+  }
   if (state[id - 1] == 2) {
     return owner.unionLayout;
   }
@@ -6552,7 +6671,7 @@ auto SemanticVisitor::Impl::validateUnions() -> void {
   std::vector<bool> &shapeValid = requestSession.unionShapes;
   shapeValid.resize(classes.size(), false);
   for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
-    if (owner.kind == ClassKind::Union) {
+    if (owner.kind == ClassKind::Union && !owner.cAbiRecord) {
       shapeValid[owner.id - 1] = validateUnionShape(owner);
     }
   }
@@ -7920,6 +8039,17 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     if (updated.explicitReturnBorrowOrigin) {
       // A declaration contract is authoritative even when invalid (None).
       // Body-based inference must neither overwrite it nor rescue a typo.
+      // Resolve it again after concrete field metadata exists: a by-value
+      // carrier's external dependency cannot be known at initial inventory.
+      // Both a prototype and its separate definition may occur in this index.
+      // Attributes and their parameter names belong to the API declaration,
+      // never the definition's independently named executable bindings.
+      const auto contract = genericReturnBorrowContract(
+          *updated.declaration, updated.returnType, updated.parameterTypes,
+          updated.ownerClass, updated.staticMember);
+      updated.returnBorrowOrigin = contract.origin;
+      updated.returnBorrowParameter = contract.parameter;
+      updated.returnBorrowAccess = contract.access;
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);
@@ -9093,6 +9223,10 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
             .reflectPrivate = owner.reflectPrivate,
+            .computedTypeProjection =
+                owner.compilerType == CompilerTypeKind::MetaCallableReturnType
+                    ? ComputedTypeProjectionKind::CallableReturn
+                    : ComputedTypeProjectionKind::None,
             .compilerCapability = owner.compilerCapability});
   }
 }
@@ -9206,6 +9340,10 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .shareCondition = owner.shareCondition,
             .compilerPrivate = owner.compilerPrivate,
             .reflectPrivate = owner.reflectPrivate,
+            .computedTypeProjection =
+                owner.compilerType == CompilerTypeKind::MetaCallableReturnType
+                    ? ComputedTypeProjectionKind::CallableReturn
+                    : ComputedTypeProjectionKind::None,
             .compilerCapability = owner.compilerCapability});
   }
   for (const ExactClassSpecialization &specialization :

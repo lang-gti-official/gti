@@ -52,10 +52,17 @@ struct TextReader {
   std::string_view& text;
   TextReader(std::string_view& input) : text(input) {}
   std::size_t size() { return this.text.size(); }
+  std::string_view read() { return this.text; }
 };
 std::size_t text_size(std::string_view& input, std::string_view& other) {
   TextReader reader{input};
   return reader.size() + other.size();
+}
+std::string_view& relay_text(std::string_view& input) { return input; }
+std::size_t relayed_size(std::string_view& input) {
+  TextReader reader{relay_text(input)};
+  std::string_view copied = reader.read();
+  return copied.size();
 }
 )gti";
   const auto run = [&](std::string body) {
@@ -69,7 +76,12 @@ int main() {
   std::string second = std::string("second");
   std::string_view a = first.view();
   std::string_view b = second.view();
-  return int(text_size(a, b)) - 11;
+  std::string_view& alias = relay_text(a);
+  TextReader direct{alias};
+  TextReader nested{relay_text(alias)};
+  if (direct.size() != std::size_t(5) || nested.size() != std::size_t(5))
+    return 1;
+  return int(text_size(a, b) + relayed_size(a)) - 16;
 }
 )gti");
   expect(frontend.canGenerateCode(),
@@ -88,8 +100,55 @@ int main() {
   bool checkedEntry = false;
   bool checkedWrongOwner = false;
   bool checkedEndpoint = false;
+  bool checkedReturnedReference = false;
+  bool checkedCopiedReturn = false;
+  bool checkedRetainedAccessor = false;
   for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.returnType.kind == lang::SemanticType::StringView &&
+        function.returnBorrowOrigin == lang::BorrowOriginKind::Receiver) {
+      for (const auto &block : function.body.blocks) {
+        if (!block.terminator.returnLoan)
+          continue;
+        auto missing = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            missing.findFunctionInstance(function.id));
+        changed->body.blocks[block.id - 1].terminator.returnLoan.reset();
+        expect(!lang::verifyMirProgram(missing).valid(),
+               "a copied text-reference field cannot erase its return owner");
+        checkedCopiedReturn = true;
+      }
+    }
     for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      if (loan.kind == lang::MirLoanKind::Stored && parent &&
+          parent->kind == lang::MirLoanKind::CallResult &&
+          !parent->carriers.empty() && loan.storedDependency != 0) {
+        auto detached = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            detached.findFunctionInstance(function.id));
+        changed->body.loans[loan.id - 1].parent = 0;
+        expect(!lang::verifyMirProgram(detached).valid(),
+               "a stored reference cannot detach its named accessor parent");
+        checkedRetainedAccessor = true;
+      }
+      if (loan.kind == lang::MirLoanKind::CallResult &&
+          loan.storedDependency != 0) {
+        const auto *dependency = function.body.findLoan(loan.storedDependency);
+        const auto *origin =
+            dependency ? function.body.findPlace(dependency->source) : nullptr;
+        if (origin && origin->type.kind == lang::SemanticType::Reference &&
+            origin->type.arguments.size() == 1 &&
+            origin->type.arguments.front().kind ==
+                lang::SemanticType::StringView) {
+          auto missing = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              missing.findFunctionInstance(function.id));
+          changed->body.loans[loan.id - 1].storedDependency = 0;
+          expect(!lang::verifyMirProgram(missing).valid(),
+                 "a returned text reference cannot lose its external owner");
+          checkedReturnedReference = true;
+        }
+      }
       const auto *source = function.body.findPlace(loan.source);
       if (!loan.entry || loan.kind != lang::MirLoanKind::Parameter || !source ||
           source->type.kind != lang::SemanticType::Reference ||
@@ -170,16 +229,35 @@ int main() {
       }
     }
   }
-  expect(checkedEntry && checkedWrongOwner && checkedEndpoint,
+  expect(checkedEntry && checkedWrongOwner && checkedEndpoint &&
+             checkedReturnedReference && checkedCopiedReturn &&
+             checkedRetainedAccessor,
          "text reference fixtures exercise missing, forged and early owner "
          "retirement");
   for (const std::string invalid :
        {"int main() { mut std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); "
+        "std::string_view& alias = relay_text(view); "
+        "TextReader reader{relay_text(alias)}; owner.clear(); "
+        "return int(reader.size()); }",
+        "int main() { std::string owner = std::string(\"text\"); "
+        "mut std::string_view view = owner.view(); "
+        "std::string_view& alias = relay_text(view); TextReader reader{alias}; "
+        "view = \"changed\"; return int(reader.size()); }",
+        "int main() { mut std::string owner = std::string(\"text\"); "
         "std::string_view view = owner.view(); TextReader reader{view}; "
         "owner.clear(); return int(reader.size()); }",
         "int main() { std::string owner = std::string(\"text\"); "
         "mut std::string_view view = owner.view(); TextReader reader{view}; "
         "view = \"changed\"; return int(reader.size()); }",
+        "int main() { mut std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); TextReader reader{view}; "
+        "std::string_view copy = reader.read(); owner.clear(); "
+        "return int(copy.size()); }",
+        "std::string_view escape_copy() { "
+        "std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); TextReader reader{view}; "
+        "return reader.read(); }",
         "TextReader escape() { std::string owner = std::string(\"text\"); "
         "std::string_view view = owner.view(); return TextReader(view); }"}) {
     const auto rejected = run(invalid);
@@ -310,26 +388,43 @@ int main() {
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
            "a text reference read cannot launder, outlive or escape its owner");
   }
-  // Local copies through a reference field or relaying call have no MIR
-  // publication proof yet; they fail in semantics rather than in MIR.
-  for (const std::string unsupported :
-       {"struct Holder { std::string_view& text; "
-        "Holder(std::string_view& input) : text(input) {} "
-        "std::size_t f() { std::string_view copy = this.text; "
-        "return copy.size(); } }; int main() { return 0; }",
-        "struct Holder { std::string_view& text; "
-        "Holder(std::string_view& input) : text(input) {} "
-        "std::size_t f() { std::string_view copy = relay(this.text); "
-        "return copy.size(); } }; int main() { return 0; }",
-        "std::size_t g(std::string_view& input) { "
-        "std::string_view copy = relay(input); return copy.size(); } "
-        "int main() { return 0; }"}) {
-    const auto rejected = run(unsupported);
-    expect(!rejected.semanticValid &&
-               hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
-               !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
-           "an unproven local text reference copy fails in semantics");
-  }
+  // A fresh adapter over a dynamic view borrows the exact view shell and keeps
+  // that shell's own owner loan, as a bound adapter's contract does.
+  const auto temporaries = run(R"gti(
+std::size_t count(TextReader reader) { return reader.size(); }
+TextReader make(std::string_view& input) { return TextReader(input); }
+int main() {
+  std::string owner = std::string("owner");
+  std::string_view view = owner.view();
+  return int(count(TextReader(view)) + count(make(view)) + make(view).size()) -
+         15;
+}
+)gti");
+  expect(temporaries.canGenerateCode() &&
+             lang::verifyMirProgram(temporaries.mir).valid(),
+         "fresh text-reference adapters verify as temporary arguments and "
+         "receivers");
+  std::size_t shellLoans = 0;
+  for (const auto &function : temporaries.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      const auto *source = function.body.findPlace(loan.source);
+      const auto *owner = function.body.findLoan(loan.storedDependency);
+      if (loan.entry || loan.kind != lang::MirLoanKind::Stored || !source ||
+          source->root != lang::MirPlaceRootKind::Binding ||
+          !source->projections.empty() ||
+          source->type.kind != lang::SemanticType::StringView || !owner ||
+          owner->kind != lang::MirLoanKind::Stored)
+        continue;
+      ++shellLoans;
+      auto detached = temporaries.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          detached.findFunctionInstance(function.id));
+      changed->body.loans[loan.id - 1].storedDependency = 0;
+      expect(!lang::verifyMirProgram(detached).valid(),
+             "a text-reference adapter cannot drop its view's owner loan");
+    }
+  expect(shellLoans >= 3,
+         "constructor, factory and receiver temporaries borrow the view shell");
 }
 
 void checkLocalReferences() {

@@ -1,0 +1,18 @@
+enum Pair { both(int& first, int& second) };
+[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+  switch (std::move(input)) {
+    case Pair::both(first, second):
+      if (choose) return first;
+      return second;
+  }
+}
+int main() {
+  mut int first = 41;
+  mut int second = 42;
+  mut auto carrier = Pair::both(first, second);
+  int& selected = select(std::move(carrier), true);
+  int saved = selected;
+  first = 19;
+  second = 20;
+  return saved == 41 ? 0 : 1;
+}

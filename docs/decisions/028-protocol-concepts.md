@@ -131,3 +131,10 @@ generalize as follows:
   clause only because it admits blanket implementations.
 - Generic code requires the exact application, arguments in order, as a
   conjunct.
+
+## Revision: enum templates (2026-10-15)
+
+A pattern may apply an enum template to block parameters, as it applies a
+class template: `for <T, E> concept C<result<T, E>>`. Selection, overlap and
+coherence are unchanged, and the enum template's package owns the pattern as
+a class template's package does.

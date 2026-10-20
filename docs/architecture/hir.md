@@ -473,6 +473,24 @@ The execution profile is immutable program metadata, not a body operation.
 HIR preserves it for later concurrency boundaries but does not repeat the
 global/static validity check owned by semantics or infer runtime capabilities.
 
+## Foreign Storage
+
+`ForeignStorageInfo` is the semantic declaration inventory for externally
+owned C objects: exact source symbol identity, resolved ABI type, access and
+external link name. HIR copies this inventory without synthesizing a module
+binding, initializer or drop obligation. Source locations remain attached to
+the resolved declaration symbol; target facts are retained by its type and the
+analyzed-program target. HIR verification compares the inventory to semantics.
+
+MIR preserves the inventory and explicitly marks symbol-rooted foreign places.
+Program verification checks place identity, access and type against that table,
+rejects GTI startup/drop/checked-loan obligations, and requires unknown-memory
+effects on access. Optimization must retain the inventory unchanged. Lowered
+storage rows carry the external symbol, and canonical serialization includes
+these facts so declaration-only changes invalidate fingerprints. The C++
+backend emits private C-linkage declarations bound to the exact native symbol;
+the native bridge header declares the same object with object-level constness.
+
 ## Program Initialization And Hosted Entry
 
 HIR copies the semantic `ProgramInitializationPlan` into one
@@ -838,14 +856,20 @@ constructor's real argument type. A selected member `operator=` is represented
 as an ordinary call with an explicit named-place receiver and exact right-hand
 argument. Neither form is inferred from a public standard-library type name.
 
-A declaration initializer with a contextual construction lowers as itself, and
+A declaration initializer or return operand with a contextual construction
+lowers as itself, and
 a source-less `DirectInitializer` then constructs the declared value from it.
 Its first operand is the initializer's own value, any selected defaults
 follow, and its call plan stages them exactly as a direct initializer's.
 `HirBody::contextualConstructions` pairs each such value with its initializer.
 The declaration's full expression ends with the construction, and
 `initializerValueForSource` returns it for the binding or field it
-initializes. The HIR model checks every entry against the semantic record: the
+initializes; a return directly consumes the constructed HIR value. Each entry
+retains an immutable `SemanticContextualConstructionProof` issued by its
+concrete semantic model, bound to the source expression and program snapshot.
+This preserves the selected constructor when a generic destination was unknown
+in the primary model, without retaining a second semantic model in HIR. The HIR
+model checks every entry against that semantic evidence: the
 selected constructor, parameter types and defaults, the constructor failure
 channel, and the absence of a result borrow. MIR lowers it as any constructor
 call; no MIR operation is added.

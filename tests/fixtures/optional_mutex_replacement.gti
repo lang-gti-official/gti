@@ -1,0 +1,15 @@
+#include <std/optional>
+#include <std/mutex>
+#include <std/string>
+
+int main() {
+  mut auto owner = std::optional<std::mutex<std::string>>(
+      std::mutex<std::string>(std::string("ready")));
+  owner.reset();
+  if (owner.has_value()) return 1;
+  [[discard]] owner.emplace(std::string("again"));
+  if (!owner.has_value()) return 2;
+  owner.reset();
+  owner.reset();
+  return owner.has_value() ? 3 : 0;
+}

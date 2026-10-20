@@ -204,7 +204,7 @@ public:
     this.head = position;
     this.length++;
   }
-  mut T& emplace_back<Args...>(Args... args) mut {
+  [[discardable]] mut T& emplace_back<Args...>(Args... args) mut {
     this.ensure_room();
     size_t position = this.physical(this.length);
     this.slots[position].put(std::make_unique<detail::deque_node<T>>(
@@ -212,7 +212,7 @@ public:
     this.length++;
     return this.slots[position].get();
   }
-  mut T& emplace_front<Args...>(Args... args) mut {
+  [[discardable]] mut T& emplace_front<Args...>(Args... args) mut {
     this.ensure_room();
     size_t position = (this.head + this.slots.size() - 1) % this.slots.size();
     this.slots[position].put(std::make_unique<detail::deque_node<T>>(
@@ -225,7 +225,7 @@ public:
     gti_internal::index_bounds_check(index, this.length + 1);
     this.insert_node(index, std::make_unique<detail::deque_node<T>>(std::move(value)));
   }
-  mut T& emplace<Args...>(size_t index, Args... args) mut {
+  [[discardable]] mut T& emplace<Args...>(size_t index, Args... args) mut {
     gti_internal::index_bounds_check(index, this.length + 1);
     this.insert_node(index, std::make_unique<detail::deque_node<T>>(
         detail::deque_in_place::value, args...));
@@ -261,7 +261,7 @@ public:
   }
   void resize(size_t requested) mut requires std::default_initializable<T> {
     while (this.length > requested) { this.pop_back(); }
-    while (this.length < requested) { [[discard]] this.emplace_back(); }
+    while (this.length < requested) { this.emplace_back(); }
   }
   void resize(size_t requested, T value) mut requires std::copyable<T> {
     while (this.length > requested) { this.pop_back(); }

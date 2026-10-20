@@ -969,7 +969,8 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
     return;
   }
   const auto *variable = stmtAs<VariableDecl>(&statement);
-  if (variable == nullptr || (enclosingClass && !variable->isStatic())) {
+  if (variable == nullptr || variable->linkage() == LanguageLinkage::C ||
+      (enclosingClass && !variable->isStatic())) {
     return;
   }
   const BindingInfo *binding = semanticModel.findBinding(*variable);
@@ -1546,15 +1547,6 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
   };
-  // A checked text-view reference field names a view whose characters belong
-  // to an external owner. Reading through it yields that dynamic view, never
-  // an ownerless value that could then be stored by value or returned free.
-  const auto textReferenceField = [&](const Symbol &field) {
-    return field.bindingKind == SemanticBindingKind::Field &&
-           !field.staticMember && field.type.kind == SemanticType::Reference &&
-           field.type.arguments.size() == 1 &&
-           borrowedTextType(field.type.arguments.front());
-  };
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
     if (borrowedTextType(type) && sourceInfo != nullptr &&
@@ -1577,6 +1569,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (operand != nullptr && isFallibleBorrowType(*operand))
       return expressionInfo(std::move(type), ValueCategory::Place,
                             AccessMode::ReadOnly);
+    if (const auto *plan = semanticModel.findTryablePropagation(*unary);
+        plan != nullptr &&
+        plan->output.returnType.kind == SemanticType::Reference)
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            plan->output.borrowAccess);
   }
   if (kind == ExprKind::Binary) {
     const Binary &binary = static_cast<const Binary &>(expr);
@@ -1604,7 +1601,9 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
     if (borrowedTextType(type) && symbol != nullptr &&
-        (symbol->retainedLoan != 0 || textReferenceField(*symbol))) {
+        (symbol->retainedLoan != 0 ||
+         (symbol->ownerClass != 0 && !symbol->staticMember &&
+          symbol->type.kind == SemanticType::Reference))) {
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
@@ -1744,8 +1743,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                         : objectInfo != nullptr &&
                               objectInfo->category == ValueCategory::Place &&
                               objectInfo->access == AccessMode::Mutable));
+    // Reading a checked text-reference field copies its dependent view, not
+    // an ownerless value. The receiver's stored-reference contract supplies
+    // the external lifetime for explicit and implicit field spelling alike.
     if (borrowedTextType(type) && member != nullptr &&
-        textReferenceField(member->symbol)) {
+        member->symbol.type.kind == SemanticType::Reference) {
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
@@ -2105,9 +2107,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         const Token token = callableToken(call->callee());
         switch (intrinsic) {
         case IntrinsicKind::Panic:
+        case IntrinsicKind::FailEmptyOwner:
           anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::Panic,
-                            DefinedFailureDetail::ExplicitPanic);
+          addFailureOutcome(operation,
+                            intrinsicTerminalFailureOutcome(intrinsic)->code,
+                            intrinsicTerminalFailureOutcome(intrinsic)->detail);
           break;
         case IntrinsicKind::FunctionPointerInvoke:
           // The erased signature preserves GTI failure propagation but not
@@ -2766,7 +2770,49 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     symbolId = symbolForDeclaration(functionItemDeclaration->name());
   }
   semanticModel.recordResolvedSymbol(expr, symbolId);
-  recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  const bool crossesIndirection = std::any_of(
+      expressionPlace.projections.begin(), expressionPlace.projections.end(),
+      [](const PlaceProjection &projection) {
+        return projection.kind == PlaceProjectionKind::Dereference;
+      });
+  const ForeignStorageInfo *foreign =
+      crossesIndirection ? nullptr : semanticModel.findForeignStorage(symbolId);
+  if (foreign == nullptr && !crossesIndirection &&
+      expressionPlace.root != nullptr)
+    foreign = semanticModel.findForeignStorage(
+        toolingSymbolFor(*expressionPlace.root));
+  if (foreign != nullptr) {
+    const auto address =
+        std::find(requestSession.foreignAddressPlaces.begin(),
+                  requestSession.foreignAddressPlaces.end(), &expr);
+    bool addressOnly = address != requestSession.foreignAddressPlaces.end();
+    if (addressOnly && info.type.kind == SemanticType::RawPointer) {
+      // Taking a pointer slot's address is inert. Computing the address of
+      // one of its pointees first loads that slot, including through grouping
+      // and inline record/array projections.
+      auto addressBegin = address;
+      while (addressBegin != requestSession.foreignAddressPlaces.begin() &&
+             *(addressBegin - 1) != nullptr) {
+        --addressBegin;
+      }
+      addressOnly = std::none_of(addressBegin, address, [](const Expr *parent) {
+        return exprAs<Index>(parent) != nullptr;
+      });
+    }
+    const bool transparent =
+        kind == ExprKind::Grouping ||
+        (kind == ExprKind::Binary &&
+         static_cast<const Binary &>(expr).oper().kind == TokenKind::COMMA);
+    if (!addressOnly && !transparent &&
+        (semanticModel.unsafeOperation(expr) == UnsafeOperationKind::None ||
+         semanticModel.unsafeOperation(expr) ==
+             UnsafeOperationKind::ForeignStorage)) {
+      requireUnsafe(expr, UnsafeOperationKind::ForeignStorage,
+                    expressionToken(expr), "Access to foreign storage");
+    }
+  } else {
+    recordProgramStorageEffect(expr, bindingKind, symbolId, roles);
+  }
   if (hasRole(roles, OccurrenceRole::Write)) {
     if (expressionPlace.root != nullptr) {
       recordMutableBindingUse(toolingSymbolFor(*expressionPlace.root));
@@ -2958,7 +3004,6 @@ auto SemanticVisitor::Impl::declarationConstructionApplies(
   if (!expr || declaredType.kind != SemanticType::Class ||
       declaredType.classId == 0 || declaredType.classId > classes.size() ||
       initializerType == SemanticType::Unknown ||
-      initializerType == SemanticType::NullPtr ||
       initializerType == declaredType) {
     return false;
   }
@@ -5275,6 +5320,21 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
   }
   if (requester != nullptr && target != nullptr) {
     diagnostic.missingIncludeName = use.lexeme;
+    // The defining unit is known even when adding it would expose other
+    // errors (for example, missing operations in a conformance block). Give
+    // that information as a hint; automatic edits still require a successful
+    // include-suggestion trial.
+    const std::string relative =
+        target->path.lexically_relative(requester->path.parent_path())
+            .generic_string();
+    if (!relative.empty() &&
+        relative.find_first_of("\r\n\"") == std::string::npos) {
+      const std::string spelling =
+          target->standardLibraryName ? "<" + *target->standardLibraryName + ">"
+                                      : "\"" + relative + "\"";
+      diagnostic.hints.push_back("Add #include " + spelling +
+                                 " to this source file.");
+    }
   }
   diagnostics.push_back(std::move(diagnostic));
   return true;
@@ -5818,6 +5878,11 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   for (std::size_t index = 0; index < common; ++index) {
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
+    const auto &field = enumerator.payloadTypes[index];
+    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
+        isOwnerDependentTextExpression(call.arguments()[index]))
+      reportOwnerDependentTextStorage(call.arguments()[index],
+                                      "stored in a payload-enum field");
     if (actual != SemanticType::Unknown &&
         !callArgumentMatches(enumerator.payloadTypes[index], actual,
                              call.arguments()[index])) {
@@ -5829,46 +5894,38 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                  typeSpelling(enumerator.payloadTypes[index]) + "'.",
              "GTI-S2067");
     }
-    // Closed payload alternatives may own active-cleanup class values. Stored
-    // borrowed state remains outside this family because the variant would
-    // otherwise outlive or relocate an untracked referent.
-    if (typeTraits(actual).containsBorrowedState) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2067", DiagnosticPhase::Semantics,
-          expressionToken(call.arguments()[index]),
-          "Payload type '" + typeSpelling(actual) +
-              "' carries borrowed state and cannot live inside a variant "
-              "alternative.");
-      diagnostic.hints.emplace_back(
-          "Payload alternatives may own values, but they cannot store GTI "
-          "references or other borrowed-state carriers.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
-    if (requiresActiveCleanupFor(actual) &&
-        actual.kind != SemanticType::Class) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2067", DiagnosticPhase::Semantics,
-          expressionToken(call.arguments()[index]),
-          "Payload type '" + typeSpelling(actual) +
-              "' requires active cleanup but is not a concrete class value; "
-              "this payload-enum slice supports owning class alternatives "
-              "only.");
-      diagnostic.hints.emplace_back(
-          "Nested owning payload enums, owning arrays, and other recursive "
-          "cleanup carriers remain unsupported until their partial-state "
-          "lifecycle is represented explicitly.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
   }
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
   }
+  // A payload constructor evaluates its fields in the same ordered input
+  // region as an ordinary call. In particular, retaining an earlier reference
+  // cannot permit a later argument to mutate or move that referent.
+  validateCallPlaceExclusivity(enumerator.payloadTypes, call.arguments(),
+                               call.paren(), std::nullopt, AccessMode::ReadOnly,
+                               false, {});
   semanticModel.recordPayloadConstruction(
       call, {.owner = owner,
              .type = enumerator.symbol.type,
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
              .parameterTypes = enumerator.payloadTypes});
+  // This producer attaches exact selected-alternative evidence, including
+  // every dependency path. Admission remains independently gated until the
+  // loan/tag verifier supports conditional borrowing; metadata alone does
+  // not enable reference-bearing payloads.
+  if (auto complete = payloadBorrowDependencySet(call, enumerator))
+    semanticModel.recordBorrowDependencySet(call, std::move(*complete));
+  else if (std::any_of(enumerator.payloadTypes.begin(),
+                       enumerator.payloadTypes.end(),
+                       [&](const SemanticType &field) {
+                         return field.kind == SemanticType::Reference ||
+                                typeTraits(field).containsBorrowedState;
+                       }))
+    report(call.paren(),
+           "Borrowed payload construction requires complete, stable dependency "
+           "origins for every retained field.",
+           "GTI-S2067");
   currentType = enumerator.symbol.type;
 }
 
@@ -5946,6 +6003,10 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       return std::nullopt;
     }
     const SemanticType &payloadType = enumerator->payloadTypes[index];
+    const bool storedReference = payloadType.kind == SemanticType::Reference;
+    if (storedReference && payloadType.arguments.size() != 1) {
+      return std::nullopt;
+    }
     const std::string tagOnlyPattern =
         "'case " + typeSpelling(subjectType) +
         "::" + enumerator->declaration->name.lexeme + ":'";
@@ -5953,8 +6014,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
     // (a prvalue or an explicit std::move) the field moves out of the active
     // alternative; when it observes a named place the binding is a copy.
     const SemanticTypeTraits payloadTraits = typeTraits(payloadType);
-    if (!binding->isReferencePattern() && consumingSubject &&
-        !payloadTraits.movable && !payloadTraits.copyable) {
+    if (!storedReference && !binding->isReferencePattern() &&
+        consumingSubject && !payloadTraits.movable && !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -5968,8 +6029,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
-    if (!binding->isReferencePattern() && !consumingSubject &&
-        !payloadTraits.copyable) {
+    if (!storedReference && !binding->isReferencePattern() &&
+        !consumingSubject && !payloadTraits.copyable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, binding->name(),
           "Payload field " + std::to_string(index + 1) + " of variant '" +
@@ -5987,11 +6048,49 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
       diagnostics.emplace_back(std::move(diagnostic));
       return std::nullopt;
     }
+    if (storedReference && !consumingSubject &&
+        !binding->isReferencePattern() &&
+        payloadType.referenceAccess == AccessMode::Mutable) {
+      report(binding->name(),
+             "An exclusive reference payload cannot be copied from an "
+             "unconsumed enum; reborrow it with 'auto&' or 'mut auto&', or "
+             "consume the enum to transfer the reference.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (storedReference && binding->isReferencePattern() && consumingSubject) {
+      report(binding->name(),
+             "A consumed reference payload uses a plain binding to transfer "
+             "its reference; explicit reference patterns reborrow an "
+             "unconsumed enum.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    if (storedReference && binding->isReferencePattern() &&
+        binding->isMutablePattern() &&
+        payloadType.referenceAccess != AccessMode::Mutable) {
+      report(binding->name(),
+             "A read-only reference payload cannot produce an exclusive "
+             "mutable reborrow.",
+             "GTI-S2067");
+      return std::nullopt;
+    }
+    const PayloadExtractionKind extractionKind =
+        storedReference
+            ? (binding->isReferencePattern()
+                   ? PayloadExtractionKind::ReborrowReference
+               : consumingSubject ? PayloadExtractionKind::TransferReference
+                                  : PayloadExtractionKind::CopyReference)
+            : (binding->isReferencePattern()
+                   ? PayloadExtractionKind::BorrowValue
+               : consumingSubject ? PayloadExtractionKind::MoveValue
+                                  : PayloadExtractionKind::CopyValue);
     const SemanticType bindingType =
         binding->isReferencePattern()
-            ? SemanticType::referenceTo(payloadType, binding->isMutablePattern()
-                                                         ? AccessMode::Mutable
-                                                         : AccessMode::ReadOnly)
+            ? SemanticType::referenceTo(
+                  storedReference ? payloadType.arguments.front() : payloadType,
+                  binding->isMutablePattern() ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly)
             : payloadType;
     result.bindings.push_back(
         {.name = &binding->name(),
@@ -5999,7 +6098,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
          .binding = bindingInfo(bindingType, binding->isMutablePattern()
                                                  ? AccessMode::Mutable
                                                  : AccessMode::ReadOnly),
-         .payloadIndex = index});
+         .payloadIndex = index,
+         .extractionKind = extractionKind});
   }
   return result;
 }
@@ -6407,6 +6507,12 @@ auto SemanticVisitor::Impl::transparentTemporaryProducer(
   return producer;
 }
 
+auto SemanticVisitor::Impl::payloadEnumType(const SemanticType &type) const
+    -> bool {
+  return type.kind == SemanticType::Enum && type.enumId != 0 &&
+         type.enumId <= enums.size() && enums[type.enumId - 1].payload;
+}
+
 auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result;
@@ -6414,8 +6520,9 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     return result;
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
+  const bool payloadEnum = info != nullptr && payloadEnumType(info->type);
   if (info == nullptr || info->category != ValueCategory::Value ||
-      info->type.kind != SemanticType::Class) {
+      (info->type.kind != SemanticType::Class && !payloadEnum)) {
     return result;
   }
   result.type = info->type;
@@ -6423,11 +6530,13 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  const ClassInfo *record = classInfo(info->type);
-  if (record == nullptr ||
-      (record->kind != ClassKind::Class && record->kind != ClassKind::Struct)) {
-    result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
-    return result;
+  if (!payloadEnum) {
+    const ClassInfo *record = classInfo(info->type);
+    if (record == nullptr || (record->kind != ClassKind::Class &&
+                              record->kind != ClassKind::Struct)) {
+      result.failure = FreshTemporaryValueFailure::NonConcreteRecord;
+      return result;
+    }
   }
   if (info->traits.containsBorrowedState) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
@@ -6438,6 +6547,40 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
+  }
+  if (payloadEnum) {
+    // Both owning and passive alternatives have the same exact construction
+    // identity. Materialization and cleanup remain independently checked by
+    // HIR/MIR; a factory continues through the ordinary selected-call proof.
+    const auto enumeration = enumTypeFor(info->type);
+    const auto *call = exprAs<Call>(producer);
+    const auto *name = exprAs<QualifiedName>(producer);
+    const auto *construction =
+        call == nullptr ? nullptr
+                        : semanticModel.findPayloadConstruction(*call);
+    const auto *enumerator =
+        name == nullptr ? nullptr : semanticModel.findEnumerator(*name);
+    const auto exactAlternative = [&](const auto *resolved) {
+      return enumeration && enumeration->payload &&
+             !containsOpenTypeParameter(info->type) && resolved &&
+             resolved->type == info->type &&
+             resolved->owner == info->type.enumId &&
+             resolved->variantIndex < enumeration->enumerators.size() &&
+             resolved->declaration ==
+                 enumeration->enumerators[resolved->variantIndex].declaration;
+    };
+    if (construction || enumerator) {
+      result.eligible =
+          exactAlternative(construction) || exactAlternative(enumerator);
+      result.failure = result.eligible
+                           ? FreshTemporaryValueFailure::None
+                           : FreshTemporaryValueFailure::UnsupportedProducer;
+      return result;
+    }
+    if (!enumeration || containsOpenTypeParameter(info->type)) {
+      result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+      return result;
+    }
   }
   if (const ResolvedConstructionInfo *construction =
           semanticModel.findConstruction(*producer)) {
@@ -7243,6 +7386,7 @@ auto SemanticVisitor::Impl::setProjectedValueState(const SemanticPlace &place,
   if (place.root == nullptr || (place.projections.empty() && !place.receiver)) {
     return;
   }
+  invalidateBorrowDependencySet(place);
   if (state != ValueState::Available)
     invalidateRawPointerOrigins(place);
   auto found = std::find_if(place.root->projectedValueStates.begin(),
@@ -7272,6 +7416,7 @@ auto SemanticVisitor::Impl::reinitializePlace(const SemanticPlace &place)
   if (place.root == nullptr) {
     return;
   }
+  invalidateBorrowDependencySet(place);
   if (place.projections.empty()) {
     place.root->projectedValueStates.clear();
     return;
@@ -7524,6 +7669,13 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
             leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan
                 ? leftSymbol->second.retainedLoan
                 : baseSymbol.retainedLoan;
+        target->second.completeBorrowSet = joinedBorrowDependencySets(
+            leftSymbol->second.valueState == ValueState::Available
+                ? leftSymbol->second.completeBorrowSet
+                : std::nullopt,
+            rightSymbol->second.valueState == ValueState::Available
+                ? rightSymbol->second.completeBorrowSet
+                : std::nullopt);
       }
     }
   }
@@ -8382,8 +8534,11 @@ auto SemanticVisitor::Impl::recordRawResult(const ExprPtr &expression) -> void {
   if (!query || !function || function->id != query->function ||
       lambdaDepth != 0)
     return;
-  collectRawResultFields(rawPointerFields(expression.get()),
-                         function->bodyDeclaration()->parameters(),
+  const auto fields =
+      expression && recordsDeclarationConversion(*expression)
+          ? contextualConstructionRawFields(*expression, currentReturnType)
+          : rawPointerFields(expression.get());
+  collectRawResultFields(fields, function->bodyDeclaration()->parameters(),
                          function->parameterTypes, false);
 }
 
@@ -11592,7 +11747,46 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
 
 auto SemanticVisitor::Impl::isOwnershipAssignment(
     const SemanticType &target, const SemanticType &value,
-    const ExprPtr &expression) const -> bool {
+    const ExprPtr &expression, const SemanticPlace &destination) -> bool {
+  const bool indirect = std::any_of(
+      destination.projections.begin(), destination.projections.end(),
+      [](const PlaceProjection &projection) {
+        return projection.kind == PlaceProjectionKind::Dereference;
+      });
+  const SymbolId root = destination.root == nullptr
+                            ? destination.rootIdentity
+                            : toolingSymbolFor(*destination.root);
+  if (!indirect && semanticModel.findForeignStorage(root) != nullptr) {
+    // External storage has no GTI replacement authority. A whole-record store
+    // must respect every embedded field's access policy, while a local value
+    // copied from it keeps the ordinary GTI replacement rules (ADR 013).
+    const auto writable = [&](const auto &self,
+                              const SemanticType &type) -> bool {
+      if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+        return self(self, type.arguments.front());
+      if (type.kind != SemanticType::Class)
+        return true;
+      if (type.classId == 0 || type.classId > classes.size())
+        return false;
+      const ClassInfo &record = classInfo(type.classId);
+      if (!record.cAbiRecord)
+        return false;
+      const GenericSubstitution substitution = classSubstitution(type);
+      for (const FieldInfo &field : record.fields) {
+        if (field.declaration == nullptr || !field.declaration->isMutable())
+          return false;
+        const auto member =
+            record.members.find(field.declaration->name().lexeme);
+        if (member == record.members.end() ||
+            !self(self,
+                  substituteType(member->second.symbol.type, substitution)))
+          return false;
+      }
+      return true;
+    };
+    if (!writable(writable, target))
+      return false;
+  }
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
   const bool moving = info != nullptr && info->category == ValueCategory::Value;
@@ -11980,7 +12174,7 @@ auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, Mutability mutability,
     const std::vector<std::string> &fromScope) const -> SemanticType {
   SemanticType result = typeOf(type, fromScope);
-  if (result.kind == SemanticType::Reference) {
+  if (result.kind == SemanticType::Reference && type.reference) {
     result.referenceAccess = mutability == Mutability::Mutable
                                  ? AccessMode::Mutable
                                  : AccessMode::ReadOnly;

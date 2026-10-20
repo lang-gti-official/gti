@@ -126,6 +126,19 @@ public:
         .definedFailure = true,
         .runtimeBinding = loweredProgramContainsRuntimeBinding(),
         .cAbiTextView = loweredProgramContainsCAbiTextView(),
+        .payloadReferences = std::any_of(
+            mir.payloadEnums().begin(), mir.payloadEnums().end(),
+            [](const auto &enumeration) {
+              return std::any_of(
+                  enumeration.variants.begin(), enumeration.variants.end(),
+                  [](const auto &variant) {
+                    return std::any_of(
+                        variant.payloadTypes.begin(),
+                        variant.payloadTypes.end(), [](const auto &field) {
+                          return field.kind == SemanticType::Reference;
+                        });
+                  });
+            }),
     };
     CppProgramEmissionPlan plan;
     capture(plan, CppProgramTextRole::SupportPreamble, [&] {
@@ -965,12 +978,14 @@ public:
         });
   }
 
-  void emitLoweredFailureResultParameter(const SemanticType &returnType,
-                                         bool callableTemplate = false,
-                                         bool retainVoidChannel = false) {
-    const auto emitType = [&](const SemanticType &type) {
+  void emitLoweredFailureResultParameter(
+      const SemanticType &returnType, bool callableTemplate = false,
+      bool retainVoidChannel = false,
+      const SemanticType *concreteType = nullptr) {
+    const auto emitType = [&](const SemanticType &type,
+                              AccessMode access = AccessMode::Mutable) {
       if (!callableTemplate) {
-        emitSemanticType(type);
+        emitAccessQualifiedType(type, access);
         return;
       }
       const std::string spelling =
@@ -979,14 +994,22 @@ public:
         throw std::logic_error(
             "lowered callable template has an unspellable projected result");
       }
-      output << spelling;
+      output << cppAccessQualifiedTypeSpelling(type, access, spelling);
     };
-    if (returnType.kind == SemanticType::Reference &&
-        returnType.arguments.size() == 1) {
-      if (returnType.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      emitType(returnType.arguments.front());
+    // The verified concrete result selects transport; a dependent logical
+    // spelling may still be a projection whose native alias is a reference.
+    const SemanticType &transport = concreteType ? *concreteType : returnType;
+    if (transport == SemanticType::Void) {
+      if (retainVoidChannel)
+        output << "void *__gti_mir_out_result, ";
+    } else if (transport.kind == SemanticType::Reference &&
+               returnType.kind != SemanticType::Reference) {
+      output << "std::remove_reference_t<";
+      emitType(returnType);
+      output << "> **__gti_mir_out_result, ";
+    } else if (returnType.kind == SemanticType::Reference &&
+               returnType.arguments.size() == 1) {
+      emitType(returnType.arguments.front(), returnType.referenceAccess);
       output << " **__gti_mir_out_result, ";
     } else if (returnType != SemanticType::Void) {
       emitType(returnType);
@@ -1157,7 +1180,8 @@ public:
           : instance == nullptr ? function.returnType
                                 : instance->returnType,
           callableSignature.has_value(),
-          cppFunctionHasFailureResultChannel(loweredProgram, function));
+          cppFunctionHasFailureResultChannel(loweredProgram, function),
+          instance == nullptr ? nullptr : &instance->returnType);
       output << "::gti_failure_record_v2 *__gti_mir_failure_record";
     }
     if (!failure && (indirectResult || conditionalVirtualResult)) {
@@ -1906,6 +1930,29 @@ public:
     output << "extern \"C\" {\n";
     ++indentation;
     for (const LoweredDeclaration *declaration : loweredChildren(linkage.id)) {
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&declaration->payload)) {
+        if (storage->externalSymbol.empty()) {
+          throw std::logic_error("C linkage storage lacks native identity");
+        }
+        writeIndent();
+        output << "extern ";
+        emitLoweredCAbiType(storage->type);
+        if (storage->access == AccessMode::ReadOnly) {
+          output << " const";
+        }
+        const std::string name = cppForeignStorageSpelling(storage->symbol);
+        output << ' ' << name;
+        const std::string &os = loweredProgram.target().os;
+        if (os == "windows") {
+          output << ";\n#pragma comment(linker, \"/alternatename:" << name
+                 << '=' << storage->externalSymbol << "\")\n";
+        } else {
+          output << " __asm__(\"" << (os == "macos" ? "_" : "")
+                 << storage->externalSymbol << "\");\n";
+        }
+        continue;
+      }
       const auto *function =
           std::get_if<LoweredFunctionDeclaration>(&declaration->payload);
       if (function == nullptr) {
@@ -2145,6 +2192,114 @@ public:
     }
   }
 
+  void emitLoweredEnumSelectorCatalog() {
+    std::set<EnumId> needed;
+    const auto dependent = [&](const auto &self,
+                               const SemanticType &type) -> bool {
+      return type.kind == SemanticType::TypeParameter ||
+             (type.kind == SemanticType::TypePack && !type.concretePack) ||
+             type.arrayLengthParameterId != 0 ||
+             std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                         [](const auto &value) {
+                           return value.kind != CompileTimeValue::UInt64;
+                         }) ||
+             std::any_of(
+                 type.arguments.begin(), type.arguments.end(),
+                 [&](const auto &argument) { return self(self, argument); });
+    };
+    const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+      if (type.kind == SemanticType::Enum && dependent(dependent, type))
+        needed.insert(type.enumId);
+      for (const auto &argument : type.arguments)
+        self(self, argument);
+    };
+    for (const auto &row : loweredProgram.declarations()) {
+      // Reuse the planner's existing representation decision. Concrete class
+      // instances and concrete free functions never spell their dependent
+      // source declaration types, so they must not demand a native catalog.
+      if (row.ownerClass != 0) {
+        const auto *owner = loweredProgram.findClassDeclaration(row.ownerClass);
+        if (owner && !owner->genericParameters.empty() &&
+            !loweredClassNeedsNativePrimary(*owner))
+          continue;
+      }
+      if (const auto *owner =
+              std::get_if<LoweredClassDeclaration>(&row.payload);
+          owner && !owner->genericParameters.empty() &&
+          !loweredClassNeedsNativePrimary(*owner))
+        continue;
+      if (const auto *function =
+              std::get_if<LoweredFunctionDeclaration>(&row.payload);
+          function && function->ownerClass == 0 &&
+          !function->genericParameters.empty() &&
+          function->definitionKind == MirDefinitionKind::Source) {
+        const auto instances = loweredFunctionInstances(function->id);
+        const bool overlay = std::any_of(
+            instances.begin(), instances.end(), [&](const auto *instance) {
+              const auto *concrete = loweredFunctionInstance(instance->id);
+              return concrete &&
+                     cppCallableFreeFunctionSpelling(
+                         loweredProgram, row, *function, *concrete, *instance)
+                         .has_value();
+            });
+        if (!overlay)
+          continue;
+      }
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&row.payload))
+        visit(visit, storage->type);
+      else if (const auto *alias =
+                   std::get_if<LoweredTypeAliasDeclaration>(&row.payload))
+        visit(visit, alias->type);
+      else if (const auto *function =
+                   std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
+        visit(visit, function->returnType);
+        for (const auto &parameter : function->parameters)
+          visit(visit, parameter.type);
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(&row.payload)) {
+        for (const auto &parameter : constructor->parameters)
+          visit(visit, parameter.type);
+      } else if (const auto *owner =
+                     std::get_if<LoweredClassDeclaration>(&row.payload)) {
+        for (const auto &base : owner->bases)
+          visit(visit, base.type);
+      }
+    }
+    if (needed.empty())
+      return;
+    writeIndent();
+    output << "template <typename...> struct __gti_enum_types;\n";
+    for (const auto family : needed) {
+      writeIndent();
+      output << "template <typename, typename> struct __gti_enum_selector_"
+             << family << ";\n";
+    }
+    std::unordered_set<std::string> selections;
+    for (const auto &row : loweredProgram.declarations()) {
+      const auto *enumeration =
+          std::get_if<LoweredEnumDeclaration>(&row.payload);
+      if (!enumeration || !needed.contains(enumeration->id))
+        continue;
+      const auto family =
+          "__gti_enum_selector_" + std::to_string(enumeration->id);
+      const auto key =
+          family +
+          cppEnumSelectorArguments(loweredProgram, standard, enumeration->type);
+      if (!selections.insert(key).second)
+        throw std::logic_error(
+            "distinct enum instances share a native selector key");
+      // Full specializations also reject native-equivalent typedef keys as
+      // redefinitions. Do not add quadratic pairwise native type comparisons:
+      // no ambiguous key can silently select another GTI instance.
+      writeIndent();
+      output << "template <> struct " << key << " { using type = "
+             << cppSemanticTypeSpelling(loweredProgram, standard,
+                                        enumeration->type)
+             << "; };\n";
+    }
+  }
+
   void emitLoweredEnumDefinition(const LoweredDeclaration &row,
                                  const LoweredEnumDeclaration &enumeration) {
     const std::string name =
@@ -2163,11 +2318,28 @@ public:
           writeIndent();
           const bool byteTransport = cppRequiresBytePreservingTransport(
               mir, variant.payloadTypes[index]);
-          if (byteTransport)
-            output << "::gti_internal::backend::representation_cell<";
-          emitSemanticType(variant.payloadTypes[index]);
-          if (byteTransport)
-            output << '>';
+          const auto &field = variant.payloadTypes[index];
+          const bool reference = field.kind == SemanticType::Reference;
+          // A source reference retains an address, not an assignable C++
+          // reference data member. This private carrier lets MIR's passive
+          // SSA staging copy that address without changing the referent or
+          // granting source-level assignment/copy permissions.
+          if (reference) {
+            if (field.arguments.size() != 1)
+              throw std::logic_error(
+                  "verified payload reference lost its referent");
+            output << "std::reference_wrapper<";
+            if (field.referenceAccess == AccessMode::ReadOnly)
+              output << "const ";
+            emitSemanticType(field.arguments.front());
+            output << ">";
+          } else {
+            if (byteTransport)
+              output << "::gti_internal::backend::representation_cell<";
+            emitSemanticType(field);
+            if (byteTransport)
+              output << '>';
+          }
           output << " __gti_field_" << index << ";\n";
         }
         writeIndent();
@@ -2184,13 +2356,25 @@ public:
       // this state exists only so a transformed failure-capable constructor
       // can default-create its observation-free native shell, publish fields
       // in verified MIR order, and destroy an unpublished shell safely.
-      output << "std::variant<std::monostate";
+      output << "::gti_internal::backend::payload_variant<std::monostate";
       for (std::size_t index = 0; index < enumeration.enumerators.size();
            ++index) {
         output << ", __gti_variant_"
                << enumeration.enumerators[index].variantIndex;
       }
       output << "> __gti_value;\n";
+      writeIndent();
+      // A user-provided empty-shell constructor initializes the tag without
+      // value-initializing inactive payload bytes. No source value can observe
+      // those bytes, and zeroing them needlessly couples scalar payload bits
+      // to the discriminant when native optimizers combine return paths.
+      output << name << "() noexcept {}\n";
+      writeIndent();
+      output << "template <std::size_t Index, typename... Args>\n";
+      writeIndent();
+      output << "explicit " << name
+             << "(std::in_place_index_t<Index> selected, Args &&...args)"
+                " : __gti_value(selected, std::forward<Args>(args)...) {}\n";
       writeIndent();
       output << "friend bool operator==(const " << name << " &, const " << name
              << " &) = default;\n";
@@ -2271,6 +2455,9 @@ public:
       const LoweredDeclaration &row, const LoweredStorageDeclaration &storage,
       bool insideClass, const LoweredClassDeclaration *owner = nullptr,
       const LoweredClassInitializerSelection *classInitializers = nullptr) {
+    if (!storage.externalSymbol.empty()) {
+      throw std::logic_error("foreign storage cannot emit a GTI definition");
+    }
     const bool runtime = loweredRuntimeProgramStorage(storage);
     const bool rawPointer = storage.type.kind == SemanticType::RawPointer;
     const bool moveOnly =
@@ -3851,10 +4038,18 @@ public:
              << *descriptor.classInstance << ") {\n";
       first = false;
       ++indentation;
-      writeIndent();
-      output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
-                "record, unwinding, &::gti_internal::backend::"
-                "__gti_failure_artifact_descriptor_v1);\n";
+      // With no source destructor and one child there is no second action to
+      // sequence after a failure. Forward the exact record/unwinding and
+      // result; the caller still owns native retirement. Multi-action and
+      // source-destructor recipes retain their ordered failure context.
+      const bool singleAction =
+          !descriptor.destructor && descriptor.aggregate.size() == 1;
+      if (!singleAction) {
+        writeIndent();
+        output << "::gti_internal::backend::mir_cleanup_sequence_v1 sequence("
+                  "record, unwinding, &::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1);\n";
+      }
       if (descriptor.destructor) {
         const auto *body = mir.findDestructorInstance(*descriptor.destructor);
         if (body == nullptr)
@@ -3889,22 +4084,28 @@ public:
           throw std::logic_error(
               "unique cleanup lost its MIR-selected subobject");
         writeIndent();
-        output << "if (!sequence.step(";
+        output << (singleAction ? "return " : "if (!sequence.step(");
+        const std::string record =
+            singleAction ? "record" : "sequence.record()";
+        const std::string unwinding =
+            singleAction ? "unwinding" : "sequence.unwinding()";
         if (step.uniqueOwnerBase) {
           if (!step.classInstance)
             throw std::logic_error(
                 "unique cleanup lost its next aggregate step");
           output << receiver << "template __gti_mir_unique_cleanup_failure<"
-                 << *step.classInstance
-                 << ">(sequence.record(), sequence.unwinding())";
+                 << *step.classInstance << ">(" << record << ", " << unwinding
+                 << ")";
         } else {
-          output << cppMirCleanupValueExpression(
-              mir, step, receiver, "sequence.record()", "sequence.unwinding()");
+          output << cppMirCleanupValueExpression(mir, step, receiver, record,
+                                                 unwinding);
         }
-        output << ")) return false;\n";
+        output << (singleAction ? ";\n" : ")) return false;\n");
       }
-      writeIndent();
-      output << "return sequence.success();\n";
+      if (!singleAction) {
+        writeIndent();
+        output << "return sequence.success();\n";
+      }
       --indentation;
       writeIndent();
       output << "}\n";
@@ -5943,10 +6144,8 @@ public:
       // Forward it rather than returning a native record through C++ copying.
     } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
-      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      emitSemanticType(instance.returnType.arguments.front());
+      emitAccessQualifiedType(instance.returnType.arguments.front(),
+                              instance.returnType.referenceAccess);
       output << " *__gti_result = nullptr;\n";
     } else if (placementResult) {
       writeIndent();
@@ -6143,10 +6342,8 @@ public:
       // Preserve the internal byte-transport result convention at the adapter.
     } else if (instance.returnType.kind == SemanticType::Reference) {
       writeIndent();
-      if (instance.returnType.referenceAccess == AccessMode::ReadOnly) {
-        output << "const ";
-      }
-      emitSemanticType(instance.returnType.arguments.front());
+      emitAccessQualifiedType(instance.returnType.arguments.front(),
+                              instance.returnType.referenceAccess);
       output << " *__gti_result = nullptr;\n";
     } else if (placementResult) {
       writeIndent();
@@ -7178,8 +7375,14 @@ public:
         throw std::logic_error(
             "declared lowered destructor has no lifecycle cleanup adapter");
       }
-      output << "{ " << loweredLifecycleCleanupName(classDeclaration->id)
-             << "(); }\n";
+      // The generated state is initialized on every native construction and
+      // disarmed by the verified move/drop protocol. Expose the same guard
+      // already used by the cleanup adapter so retiring a moved shell need
+      // not call its out-of-line failure machinery. The live adapter and all
+      // automatic member destruction remain unchanged.
+      output << "{ if (" << loweredLifecycleActiveName(classDeclaration->id)
+             << ") { " << loweredLifecycleCleanupName(classDeclaration->id)
+             << "(); } }\n";
       emitted = true;
       retainedPrimaryEmitted = retainedPrimaryEmitted || retainedPrimary;
       if (!generic) {
@@ -7510,6 +7713,7 @@ public:
       emitLoweredTypeForwardDeclarations(0);
       emitLoweredConcreteClassForwardDeclarations();
       emitLoweredExactClassSpecializationForwardDeclarations();
+      emitLoweredEnumSelectorCatalog();
       emitLoweredAliasForwardDeclarations(0);
       emitLoweredFunctionForwardDeclarations(0);
     });
@@ -9281,6 +9485,11 @@ public:
 
   void emitSemanticType(const SemanticType &type) {
     output << cppSemanticTypeSpelling(loweredProgram, standard, type);
+  }
+
+  void emitAccessQualifiedType(const SemanticType &type, AccessMode access) {
+    output << cppAccessQualifiedTypeSpelling(
+        type, access, cppSemanticTypeSpelling(loweredProgram, standard, type));
   }
 
   [[nodiscard]] static bool isMoveOnlyOwner(const SemanticTypeTraits &traits) {

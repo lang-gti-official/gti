@@ -253,10 +253,12 @@ void testSemanticAndIrModel() {
       gti_test::emitCpp(result, result.mir, result.mir, optimizations);
   expect(
       artifact.contents.find("union Bits {") != std::string::npos &&
-          artifact.contents.find("std::variant<std::monostate") !=
+          artifact.contents.find(
+              "::gti_internal::backend::payload_variant<std::monostate") !=
               std::string::npos &&
           artifact.contents.find(".__gti_value.index()") != std::string::npos &&
-          artifact.contents.find("std::get<2>(") != std::string::npos &&
+          artifact.contents.find("::gti_internal::backend::payload_get<2>(") !=
+              std::string::npos &&
           artifact.contents.find("std::is_union_v<Bits>") != std::string::npos,
       "the C++ backend should use native unions and tagged variant storage");
 }
@@ -561,9 +563,33 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(borrowedPayload, "GTI-S2067") &&
-             hasMessage(borrowedPayload, "borrowed state"),
-         "a borrowed-state class payload should be rejected at construction");
+  expect(borrowedPayload.canGenerateCode() &&
+             lang::verifyMirProgram(borrowedPayload.mir).valid(),
+         "a passive borrowed class payload retains its exact owner through "
+         "verified MIR");
+
+  const auto danglingPayload = analyze("payload-borrowed-class-escape.gti", R"(
+class carrier {
+  int32_t& source;
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+enum holder { one(carrier value), none };
+[[borrowed_from(owner)]] holder escape(int32_t& owner) {
+  int32_t local = 3;
+  carrier value = carrier(local);
+  return holder::one(value);
+}
+int main() {
+  int32_t owner = 7;
+  holder result = escape(owner);
+  return 0;
+}
+)");
+  expect(danglingPayload.syntaxValid && !danglingPayload.semanticValid &&
+             !hasCode(danglingPayload, "GTI-B0001"),
+         "a borrowed class payload cannot substitute a dead local for its "
+         "declared caller origin");
 
   const lang::FrontendResult moveOnlyBinding =
       analyze("payload-move-only-binding.gti", R"(
@@ -828,7 +854,8 @@ int main() {
   expect(enumDefinition != std::string::npos &&
              wrapperDefinition != std::string::npos &&
              enumDefinition < wrapperDefinition &&
-             containmentArtifact.contents.find("std::variant<std::monostate") !=
+             containmentArtifact.contents.find(
+                 "::gti_internal::backend::payload_variant<std::monostate") !=
                  std::string::npos,
          "the C++ type schedule should define an embedded payload enum before "
          "its owning class and retain the private disengaged shell");
@@ -1014,11 +1041,12 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(nestedOwning, "GTI-S2067") &&
-             hasMessage(nestedOwning, "not a concrete class value") &&
-             hasMessage(nestedOwning, "owning class alternatives only"),
-         "nested owning payload enums should remain a diagnosed omission of "
-         "the bounded class-payload slice");
+  expect(nestedOwning.canGenerateCode() &&
+             lang::verifyMirProgram(nestedOwning.mir).valid(),
+         "finite nested owning payload enums use structural cleanup recipes");
+  if (nestedOwning.canGenerateCode())
+    expect(!gti_test::emitCppText(nestedOwning).empty(),
+           "non-generic nested owning payloads reach native representation");
 
   const lang::FrontendResult genericPayload =
       analyze("generic-class-payload-enum.gti", R"(
@@ -1059,7 +1087,9 @@ int main() { return 0; }
           lang::SemanticType::UInt64;
       const auto checked = lang::verifyMirProgram(forged);
       expect(!checked.valid() &&
-                 hasMirMessage(checked, "payload-enum lifecycle table"),
+                 hasMirMessage(checked,
+                               "payload-enum inline layout is recursive or "
+                               "unresolved"),
              "a forged alternative cannot borrow another generic "
              "instantiation's cleanup proof");
     }
@@ -1453,6 +1483,37 @@ int main() {
                }),
            "no field may move out of a subject whose obligation already "
            "transferred");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 std::swap(*moves.front(), *moves.back());
+                 return true;
+               }),
+           "reordered consuming extractions cannot reuse a retired carrier "
+           "dependency set");
+    expect(consumingMutationRejected(
+               temporary, 2,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 moves.front()->lifecycle = moves.back()->lifecycle;
+                 return true;
+               }),
+           "duplicate subject transfers cannot preserve a carrier fact "
+           "through later field extraction");
+    expect(consumingMutationRejected(
+               temporary, 1,
+               [](lang::MirBody &, lang::MirBlock &,
+                  std::vector<lang::MirInstruction *> &moves) {
+                 for (auto &event : moves.back()->lifecycle)
+                   if (event.kind == lang::MirLifecycleEventKind::TransferOut) {
+                     event.source = 0;
+                     return true;
+                   }
+                 return false;
+               }),
+           "a final transfer with no exact shell obligation cannot justify "
+           "retained extraction facts");
     expect(consumingMutationRejected(
                temporary, 1,
                [](lang::MirBody &, lang::MirBlock &,

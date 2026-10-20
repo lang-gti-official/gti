@@ -135,6 +135,15 @@ struct HirBinding {
   std::optional<HirDropObligationId> dropObligation;
 };
 
+struct HirReferenceSelection {
+  HirValueId value = 0;
+  HirValueId carrier = 0;
+  SemanticLoanId transferredFrom = 0;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+};
+
 struct HirLoan {
   SemanticLoanId semanticLoan = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -143,7 +152,9 @@ struct HirLoan {
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<SymbolId> designatedFields;
+  std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
+  std::optional<HirReferenceSelection> referenceSelection;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
@@ -259,7 +270,13 @@ struct HirValue {
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
-  std::vector<SemanticLoanDependency> borrowDependencies;
+  // Presence is part of the proof: an empty complete set differs from missing
+  // semantic evidence. Origin places are body-qualified; structural paths are
+  // declaration identities and must not be retagged.
+  std::optional<SemanticBorrowDependencySet> borrowDependencies;
+  // Exact closure-construction inputs, consumed by its existing checked loan
+  // producer; not a complete result dependency set.
+  std::vector<SemanticLoanDependency> captureBorrowDependencies;
   bool storedReferenceAccess = false;
   bool retainedReceiverProjection = false;
   std::optional<HirValueId> retainedReceiverOwner;
@@ -303,6 +320,7 @@ struct HirValue {
   std::optional<EnumConstant> enumValue;
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
+  std::optional<PayloadExtractionKind> payloadExtractionKind;
   std::optional<PlaceKey> place;
   std::optional<OwnershipEvent> ownership;
   HirFullExpressionId fullExpression = 0;
@@ -420,6 +438,7 @@ struct HirDirectInitialization {
 struct HirContextualConstruction {
   const Expr *source = nullptr;
   HirValueId value = 0;
+  std::optional<SemanticContextualConstructionProof> constructionProof;
 };
 
 struct HirBody {
@@ -485,6 +504,7 @@ struct HirEnumerator {
   EnumConstant value;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  std::vector<SymbolId> payloadSymbols;
   std::vector<bool> payloadRequiresActiveCleanup;
 };
 
@@ -611,10 +631,13 @@ struct HirFunctionInstance {
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  // Preserve the source constraint separately from inferred return facts.
+  bool explicitReturnBorrowOrigin = false;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
@@ -789,6 +812,18 @@ struct HirEmbeddingPlan {
 
 class HirProgram {
 public:
+  [[nodiscard]] const std::vector<ForeignStorageInfo> &
+  foreignStorageDeclarations() const {
+    return foreignStorage_;
+  }
+  [[nodiscard]] const ForeignStorageInfo *
+  findForeignStorage(SymbolId symbol) const {
+    const auto found = std::find_if(
+        foreignStorage_.begin(), foreignStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
+    return found == foreignStorage_.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] bool valid() const { return valid_; }
 
   [[nodiscard]] ExecutionProfile executionProfile() const {
@@ -899,6 +934,7 @@ public:
   valueIdsForSource(const Expr &source) const;
 
 private:
+  std::vector<ForeignStorageInfo> foreignStorage_;
   friend class HirLowerer;
 
   bool valid_ = true;

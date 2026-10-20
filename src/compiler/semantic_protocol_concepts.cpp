@@ -153,11 +153,10 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     if (operation->isStatic() || operation->isVirtual() ||
         operation->isConstexpr() || operation->unsafeKeyword() ||
         operation->receiverMutability() != ReceiverMutability::ReadOnly ||
-        !operation->functionAttributes().empty() ||
         operation->runtimeBinding() || operation->hasCLinkage()) {
       reject(operation->name(),
              "is a free function signature and takes no modifiers, "
-             "attributes or receiver qualifier");
+             "runtime binding or receiver qualifier");
     }
     validateType(operation->returnType());
     RegisteredConcept::ProtocolOperation resolved{
@@ -173,6 +172,35 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
       validateType(formal.type);
       resolved.parameterTypes.push_back(
           typeOf(formal, conceptInfo.namespaceScope));
+    }
+    for (const FunctionAttribute &attribute : operation->functionAttributes()) {
+      if (attribute.name.lexeme != "borrowed_from") {
+        reject(attribute.name, "only accepts a borrowed_from origin attribute");
+        continue;
+      }
+      if (resolved.returnBorrowParameter) {
+        reject(attribute.name, "cannot repeat its borrowed_from contract");
+        continue;
+      }
+      const auto &formals = operation->parameters();
+      const auto selected = std::find_if(
+          formals.begin(), formals.end(), [&](const Parameter &parameter) {
+            return attribute.argument &&
+                   attribute.argument->kind != TokenKind::THIS &&
+                   parameter.name.lexeme == attribute.argument->lexeme;
+          });
+      if (selected == formals.end()) {
+        reject(attribute.name,
+               "must name one of its parameters in borrowed_from");
+        continue;
+      }
+      resolved.returnBorrowParameter = std::size_t(selected - formals.begin());
+      if (!containsOpenTypeParameter(resolved.returnType) &&
+          resolved.returnType.kind != SemanticType::Reference) {
+        reject(attribute.name,
+               "requires a checked reference or dependent result for "
+               "borrowed_from");
+      }
     }
     conceptInfo.operations.push_back(std::move(resolved));
   }
@@ -208,15 +236,43 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     }
     currentSourceUnit = sourceUnitFor(declaration->forKeyword());
     currentNamespace = enclosing;
+    // The header owns these parameters and their diagnostics. Operations share
+    // their resolved identities, rather than registering each written copy.
+    std::vector<GenericParameterInfo> parameters = makeGenericParameters(
+        declaration->genericParameters(), declaration->forKeyword(), enclosing);
+    for (const StmtPtr &member : declaration->members()) {
+      if (const auto *function = stmtAs<FunctionDecl>(member.get())) {
+        functionGenericParameters.emplace(function, parameters);
+      }
+    }
     const ConceptApplication &target = declaration->target();
     const Token &site = target.name.last();
+    if (reportCompilerPrivatePath(target.name)) {
+      continue;
+    }
     const std::optional<ConceptId> conceptId =
         resolveConceptPath(target.name, enclosing);
     if (!conceptId || *conceptId == 0 || *conceptId > concepts.size()) {
-      reportConformanceError(site, "Unknown or invisible concept '" +
-                                       pathSpelling(target.name) + "'.");
+      const auto global = resolveConceptPathGlobally(target.name, enclosing);
+      if (!(global && *global != 0 && *global <= concepts.size() &&
+            reportInvisibleDeclaration(
+                site, pathSpelling(target.name),
+                concepts[*global - 1].declaration->name(),
+                concepts[*global - 1].sourceUnit))) {
+        reportConformanceError(site, "Unknown or invisible concept '" +
+                                         pathSpelling(target.name) + "'.");
+        diagnostics.back().missingIncludeName = site.lexeme;
+      }
       continue;
     }
+    recordQualifiedPathUses(target.name);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(site),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = concepts[*conceptId - 1].symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+         .name = site.lexeme});
     (void)resolveConcept(*conceptId, &site);
     const RegisteredConcept &conceptInfo = concepts[*conceptId - 1];
     if (!conceptInfo.protocol) {
@@ -237,21 +293,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       continue;
     }
 
-    const bool hasFunctions =
-        std::any_of(declaration->members().begin(),
-                    declaration->members().end(), [](const StmtPtr &member) {
-                      return stmtAs<FunctionDecl>(member.get()) != nullptr;
-                    });
-    // Every block function carries these parameters and reports their
-    // problems itself; the block reports them only when it has no function.
-    const std::size_t parameterDiagnostics = diagnostics.size();
-    std::vector<GenericParameterInfo> parameters = makeGenericParameters(
-        declaration->genericParameters(), declaration->forKeyword(), enclosing);
-    if (hasFunctions) {
-      diagnostics.erase(diagnostics.begin() +
-                            static_cast<std::ptrdiff_t>(parameterDiagnostics),
-                        diagnostics.end());
-    }
     bool valid = parameters.size() == declaration->genericParameters().size();
     for (const GenericParameterInfo &parameter : parameters) {
       if (parameter.pack || parameter.value) {
@@ -263,9 +304,9 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
 
-    // Each argument is a closed type, or one class template applied to block
-    // parameters; every block parameter appears in some argument. A repeated
-    // parameter must bind the same type at each of its occurrences.
+    // Each argument is a closed type, or one class or enum template applied
+    // to block parameters; every block parameter appears in some argument. A
+    // repeated parameter must bind the same type at each of its occurrences.
     beginTypeParameterScope(parameters);
     registeringConformanceParameters = &parameters;
     // Registration needs only the types' identities; validateConformanceTypes
@@ -274,7 +315,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                                    .namespaceScope = enclosing,
                                    .genericParameters = parameters};
     std::vector<SemanticType> patterns;
-    std::vector<ClassId> patternTemplates;
     std::unordered_set<GenericParameterId> used;
     const auto ownParameter = [&](const SemanticType &type) {
       return type.kind == SemanticType::TypeParameter &&
@@ -287,35 +327,35 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     for (const TypeRef &argument : target.arguments) {
       typeCheck.types.push_back(&argument);
       SemanticType pattern = typeOf(argument, enclosing);
-      ClassId patternTemplate = 0;
       if (pattern == SemanticType::Unknown) {
         valid = false;
       } else if (!containsOpenTypeParameter(pattern)) {
         pattern = canonicalExactSpecializationType(std::move(pattern));
       } else {
-        bool shape =
-            pattern.kind == SemanticType::Class && pattern.classId != 0 &&
-            pattern.classId <= classes.size() &&
-            classInfo(pattern.classId).exactSpecializationPrimary == 0 &&
-            pattern.valueArguments.empty() && !pattern.arguments.empty() &&
-            std::all_of(pattern.arguments.begin(), pattern.arguments.end(),
-                        ownParameter);
+        const bool nominalTemplate =
+            (pattern.kind == SemanticType::Class && pattern.classId != 0 &&
+             pattern.classId <= classes.size() &&
+             classInfo(pattern.classId).exactSpecializationPrimary == 0) ||
+            (pattern.kind == SemanticType::Enum && pattern.enumId != 0 &&
+             pattern.enumId <= enums.size());
+        const bool shape = nominalTemplate && pattern.valueArguments.empty() &&
+                           !pattern.arguments.empty() &&
+                           std::all_of(pattern.arguments.begin(),
+                                       pattern.arguments.end(), ownParameter);
         if (!shape) {
           reportConformanceError(
               argument.name.last(),
               "Each argument of a conformance block is a concrete type or "
-              "one class template applied to the block's parameters, such "
-              "as 'Box<T>'.");
+              "one class or enum template applied to the block's "
+              "parameters, such as 'Box<T>'.");
           valid = false;
         } else {
-          patternTemplate = pattern.classId;
           for (const SemanticType &parameter : pattern.arguments) {
             used.insert(parameter.genericParameterId);
           }
         }
       }
       patterns.push_back(std::move(pattern));
-      patternTemplates.push_back(patternTemplate);
     }
     if (valid) {
       for (const GenericParameterInfo &parameter : parameters) {
@@ -336,16 +376,14 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     application += ">";
 
     if (valid) {
+      // An open pattern is owned by its template's package, a closed one by
+      // its top-level nominal type's.
       bool owns =
           samePackageOwnershipDomain(currentSourceUnit, conceptInfo.sourceUnit);
       for (std::size_t position = 0; !owns && position < patterns.size();
            ++position) {
-        owns = patternTemplates[position] != 0
-                   ? samePackageOwnershipDomain(
-                         currentSourceUnit,
-                         classInfo(patternTemplates[position]).sourceUnit)
-                   : ownsNominalSpecializationArgument(currentSourceUnit,
-                                                       patterns[position]);
+        owns = ownsNominalSpecializationArgument(currentSourceUnit,
+                                                 patterns[position]);
       }
       if (!owns) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -368,7 +406,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     if (valid) {
       for (const RegisteredConformance &other : conformances) {
         if (other.conceptId == *conceptId &&
-            conformancePatternsOverlap(other, patterns, patternTemplates)) {
+            conformancePatternsOverlap(other, patterns)) {
           reportConformanceError(
               site,
               "This conformance block for concept '" +
@@ -434,7 +472,6 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                             .functionScope = scope,
                             .genericParameters = std::move(parameters),
                             .patterns = std::move(patterns),
-                            .patternTemplates = std::move(patternTemplates),
                             .associatedTypes = std::move(associatedTypes)});
   }
   currentSourceUnit = enclosingSourceUnit;
@@ -504,7 +541,7 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       }
       defined[*index] = true;
       if (function->operatorName() || function->isStatic() ||
-          function->isVirtual() ||
+          function->isVirtual() || function->unsafeKeyword() ||
           function->receiverMutability() != ReceiverMutability::ReadOnly ||
           function->runtimeBinding() || function->hasCLinkage()) {
         reportConformanceError(function->name(),
@@ -564,6 +601,29 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
             actual(candidate.parameterTypes[parameter]) == expectedParameter;
       }
       expectedSignature += ")";
+      // A protocol's result-origin contract is part of its signature. A
+      // concrete owned result makes it inert; a borrowed result must publish
+      // the same parameter index, independently of parameter spelling. Defer
+      // dependent returns until concrete conformance selection: an open type
+      // can instantiate to an owned result with no origin contract. Bodies are
+      // checked against the declaration in the ordinary return-origin checker.
+      if (operation.returnBorrowParameter &&
+          expectedReturn.kind == SemanticType::Reference) {
+        const auto *origin = function->findFunctionAttribute("borrowed_from");
+        const auto parameter = *operation.returnBorrowParameter;
+        if (origin == nullptr || !origin->argument ||
+            parameter >= function->parameters().size() ||
+            origin->argument->lexeme !=
+                function->parameters()[parameter].name.lexeme) {
+          reportConformanceError(
+              function->name(),
+              "Operation '" + function->name().lexeme +
+                  "' must preserve the concept's borrowed_from parameter "
+                  "contract.",
+              &operation.declaration->name(), "Operation declared here.");
+          continue;
+        }
+      }
       if (!exact) {
         reportConformanceError(
             function->name(),
@@ -635,6 +695,28 @@ auto SemanticVisitor::Impl::classTemplateArguments(const SemanticType &type,
   return std::nullopt;
 }
 
+// A block's pattern is open when it applies a template to block parameters;
+// a closed pattern is one concrete type.
+auto SemanticVisitor::Impl::openConformancePattern(const SemanticType &pattern)
+    -> bool {
+  return containsOpenTypeParameter(pattern);
+}
+
+// The arguments that make `type` an instance of an open pattern's class or
+// enum template, or nothing when it is not one.
+auto SemanticVisitor::Impl::patternInstanceArguments(
+    const SemanticType &pattern, const SemanticType &type) const
+    -> std::optional<std::vector<SemanticType>> {
+  if (pattern.kind == SemanticType::Class) {
+    return classTemplateArguments(type, pattern.classId);
+  }
+  if (pattern.kind == SemanticType::Enum && type.kind == SemanticType::Enum &&
+      type.enumId == pattern.enumId && type.valueArguments.empty()) {
+    return type.arguments;
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::matchConformance(
     ConceptId id, const std::vector<SemanticType> &arguments) const
     -> std::optional<ConformanceMatch> {
@@ -673,14 +755,13 @@ auto SemanticVisitor::Impl::matchConformance(
     for (std::size_t position = 0; matches && position < arguments.size();
          ++position) {
       const SemanticType &pattern = conformance.patterns[position];
-      if (conformance.patternTemplates[position] == 0) {
+      if (!openConformancePattern(pattern)) {
         matches =
             pattern == canonicalExactSpecializationType(arguments[position]);
         continue;
       }
       const std::optional<std::vector<SemanticType>> instance =
-          classTemplateArguments(arguments[position],
-                                 conformance.patternTemplates[position]);
+          patternInstanceArguments(pattern, arguments[position]);
       matches = instance && instance->size() == pattern.arguments.size();
       for (std::size_t inner = 0; matches && inner < pattern.arguments.size();
            ++inner) {
@@ -696,14 +777,13 @@ auto SemanticVisitor::Impl::matchConformance(
 }
 
 // Whether some concrete arguments match both blocks. Every pattern is a
-// closed type or a class template applied to block parameters, so unifying
-// two blocks binds parameters only to closed types or to each other: a
-// union-find over both blocks' parameters, each class carrying at most one
-// closed type, decides it.
+// closed type or a class or enum template applied to block parameters, so
+// unifying two blocks binds parameters only to closed types or to each
+// other: a union-find over both blocks' parameters, each class carrying at
+// most one closed type, decides it.
 auto SemanticVisitor::Impl::conformancePatternsOverlap(
     const RegisteredConformance &existing,
-    const std::vector<SemanticType> &patterns,
-    const std::vector<ClassId> &templates) const -> bool {
+    const std::vector<SemanticType> &patterns) const -> bool {
   if (existing.patterns.size() != patterns.size()) {
     return false;
   }
@@ -748,16 +828,17 @@ auto SemanticVisitor::Impl::conformancePatternsOverlap(
   for (std::size_t position = 0; position < patterns.size(); ++position) {
     const SemanticType &left = existing.patterns[position];
     const SemanticType &right = patterns[position];
-    const ClassId leftTemplate = existing.patternTemplates[position];
-    const ClassId rightTemplate = templates[position];
-    if (leftTemplate == 0 && rightTemplate == 0) {
+    const bool leftOpen = openConformancePattern(left);
+    const bool rightOpen = openConformancePattern(right);
+    if (!leftOpen && !rightOpen) {
       if (left != right) {
         return false;
       }
       continue;
     }
-    if (leftTemplate != 0 && rightTemplate != 0) {
-      if (leftTemplate != rightTemplate ||
+    if (leftOpen && rightOpen) {
+      if (left.kind != right.kind || left.classId != right.classId ||
+          left.enumId != right.enumId ||
           left.arguments.size() != right.arguments.size()) {
         return false;
       }
@@ -770,11 +851,9 @@ auto SemanticVisitor::Impl::conformancePatternsOverlap(
       continue;
     }
     // One side is closed: it must be an instance of the other's template.
-    const bool leftOpen = leftTemplate != 0;
     const SemanticType &open = leftOpen ? left : right;
     const std::optional<std::vector<SemanticType>> instance =
-        classTemplateArguments(leftOpen ? right : left,
-                               leftOpen ? leftTemplate : rightTemplate);
+        patternInstanceArguments(open, leftOpen ? right : left);
     if (!instance || instance->size() != open.arguments.size()) {
       return false;
     }
@@ -970,7 +1049,55 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
-  return firstConstraintFailure(conformance.genericParameters, match->binding);
+  if (auto constraint =
+          firstConstraintFailure(conformance.genericParameters, match->binding))
+    return constraint;
+  if (const auto operation =
+          protocolBorrowContractFailure(conformance, match->binding)) {
+    failure.missingConformance = false;
+    failure.conformanceBorrowOperation =
+        conceptInfo.operations[*operation].declaration->name();
+    return failure;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::protocolBorrowContractFailure(
+    const RegisteredConformance &conformance,
+    const std::vector<SemanticType> &binding) const
+    -> std::optional<std::size_t> {
+  const auto &operations = concepts[conformance.conceptId - 1].operations;
+  for (std::size_t index = 0; index < operations.size(); ++index) {
+    const auto &operation = operations[index];
+    if (!operation.returnBorrowParameter)
+      continue;
+    if (index >= conformance.operations.size() ||
+        conformance.operations[index].overloads.size() != 1)
+      return index;
+    const auto &candidate = conformance.operations[index].overloads.front();
+    const auto &parameters = candidate.record().genericParameters;
+    if (parameters.size() != binding.size())
+      return index;
+    GenericSubstitution substitution;
+    for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter)
+      substitution.types.emplace(parameters[parameter].id, binding[parameter]);
+    const auto returnType = substituteType(candidate.returnType, substitution);
+    if (returnType == SemanticType::Unknown ||
+        containsOpenTypeParameter(returnType))
+      return index;
+    if (returnType.kind != SemanticType::Reference)
+      continue;
+    const auto *function = candidate.declaration;
+    const auto *origin =
+        function ? function->findFunctionAttribute("borrowed_from") : nullptr;
+    const auto parameter = *operation.returnBorrowParameter;
+    if (!origin || !origin->argument ||
+        parameter >= function->parameters().size() ||
+        origin->argument->lexeme !=
+            function->parameters()[parameter].name.lexeme)
+      return index;
+  }
+  return std::nullopt;
 }
 
 auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
@@ -1053,6 +1180,8 @@ auto SemanticVisitor::Impl::protocolOperationTarget(const QualifiedName &callee)
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
+  if (protocolBorrowContractFailure(conformance, match->binding))
+    return std::nullopt;
   const std::optional<std::size_t> operation =
       operationIndex(concepts[*id - 1].operations, callee.name().last().lexeme);
   if (!operation || *operation >= conformance.operations.size() ||
@@ -1119,6 +1248,20 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
                    [&](const SemanticType &argument) {
                      return containsOpenTypeParameter(argument);
                    })) {
+    if (const auto match = matchConformance(id, arguments)) {
+      const auto &conformance = conformances[match->conformance - 1];
+      if (const auto failed =
+              protocolBorrowContractFailure(conformance, match->binding)) {
+        const auto &operation = conceptInfo.operations[*failed];
+        reportConformanceError(
+            site,
+            "Operation '" + operation.name +
+                "' must preserve the concept's borrowed_from parameter "
+                "contract for its concrete reference result.",
+            &operation.declaration->name(), "Operation declared here.");
+        return fail();
+      }
+    }
     if (!protocolOperationTarget(callee)) {
       reportConformanceError(site, "No conformance block 'for concept " +
                                        application + "' is declared.");
@@ -1173,11 +1316,27 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
     }
   }
   if (valid) {
-    semanticModel.record(expr,
-                         ResolvedCallInfo{.returnType = returnType,
-                                          .parameterTypes = parameterTypes});
+    ResolvedCallInfo selected{.returnType = returnType,
+                              .parameterTypes = parameterTypes};
+    const auto inferred = functionReturnBorrowSummary(
+        returnType, parameterTypes, 0, false, IntrinsicKind::None);
+    selected.borrowOrigin = inferred.origin;
+    selected.borrowArgument = inferred.parameter;
+    selected.borrowAccess = inferred.access;
+    selected.borrowArguments = inferred.parameters;
+    if (returnType.kind == SemanticType::Reference &&
+        operation.returnBorrowParameter) {
+      selected.borrowOrigin = BorrowOriginKind::Argument;
+      selected.borrowArgument = *operation.returnBorrowParameter;
+      selected.borrowAccess = returnType.referenceAccess;
+    }
+    semanticModel.record(expr, std::move(selected));
   }
-  currentType = valid ? returnType : SemanticType::Unknown;
+  currentType = !valid ? SemanticType::Unknown
+                : returnType.kind == SemanticType::Reference &&
+                        returnType.arguments.size() == 1
+                    ? returnType.arguments.front()
+                    : returnType;
   return true;
 }
 

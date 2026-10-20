@@ -7,6 +7,21 @@
 
 namespace lang::mir_detail {
 
+// Shape of one closed consuming-arm setup: cache every payload address, retire
+// one exact dependency group, then publish its successor bindings. This is not
+// authority by itself: body flow must observe the old group alive, and program
+// verification must prove the sealed field inventory and complete origin sets.
+struct MirSelectedReferenceHandoff {
+  MirBlockId block = 0;
+  MirPlaceId carrier = 0;
+  MirLoanId group = 0;
+  MirInstructionId retirement = 0;
+  std::size_t endPosition = 0;
+  std::vector<MirLoanId> successors;
+};
+[[nodiscard]] std::optional<MirSelectedReferenceHandoff>
+selectedReferenceHandoff(const MirBody &body, const MirLoan &selected);
+
 // Concrete complete object representation, independent of any lifetime action.
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);

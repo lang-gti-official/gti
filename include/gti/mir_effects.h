@@ -112,6 +112,9 @@ deriveMirDefinedFailureEffects(const MirProgram &program);
 // Generated relocation into an empty slot, including lifecycle-guarded
 // source-destructor classes and their complete base/field state. This does
 // not prove assignment safe: replacement must still run the old cleanup.
+// Nor does it establish relocation eligibility. A native mutex move constructs
+// a fresh mutex and transfers its payload without a GTI failure edge, while
+// its byte/structural relocation eligibility remains unavailable.
 [[nodiscard]] bool
 mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
                                       const SemanticType &type);

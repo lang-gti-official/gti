@@ -244,6 +244,27 @@ selectRoutes(const SourceGraph &graph) {
       next.orderingBytes = encodeRoute(next.edges);
       queue.push({.unit = dependency.target, .route = std::move(next)});
     }
+    for (const SourceImplementation &implementation :
+         graph.moduleImplementations()) {
+      if (implementation.interfaceUnit != candidate.unit)
+        continue;
+      const SourceUnit *unit =
+          graph.findUnit(implementation.implementationUnit);
+      if (unit == nullptr || !unit->packageRelativePath)
+        continue;
+      const auto relative =
+          canonicalLogicalRelativePath(*unit->packageRelativePath);
+      if (!relative)
+        continue;
+      SourceRoute next = candidate.route;
+      // A registration is a stable source route, but must never grant the
+      // interface or its importers access to private implementation names.
+      next.edges.push_back(
+          {.spelling = "<module-implementation>/" + *relative});
+      next.orderingBytes = encodeRoute(next.edges);
+      queue.push({.unit = implementation.implementationUnit,
+                  .route = std::move(next)});
+    }
   }
   return selected;
 }
@@ -256,7 +277,7 @@ externalLogicalName(const SourceUnit &unit, const SourceManager &sources,
   const auto route = routes.find(unit.id);
   if (source == nullptr || route == routes.end()) {
     errors.push_back("failure metadata cannot resolve source bytes or an "
-                     "include route for source unit " +
+                     "source route for source unit " +
                      std::to_string(unit.id));
     return std::nullopt;
   }
@@ -418,6 +439,16 @@ FailureMetadata::callerSiteFor(const CallerLocationOrigin &origin) const {
     return std::nullopt;
   }
   return found->site;
+}
+
+const FailureSourceDescriptor *
+FailureMetadata::findSource(SourceUnitId id) const {
+  const auto found = std::lower_bound(
+      sources.begin(), sources.end(), id,
+      [](const FailureSourceDescriptor &source, SourceUnitId wanted) {
+        return source.sourceUnit < wanted;
+      });
+  return found != sources.end() && found->sourceUnit == id ? &*found : nullptr;
 }
 
 FailureMetadataVerificationResult
@@ -628,20 +659,13 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
   }
 
   std::unordered_map<SourceUnitId, std::string> logicalNames;
-  for (const auto &[key, _] : reportingSites) {
-    if (logicalNames.contains(key.sourceUnit)) {
-      continue;
-    }
-    const SourceUnit *unit = sourceGraph.findUnit(key.sourceUnit);
-    if (unit == nullptr) {
-      result.errors.push_back(
-          "failure origin references an unknown source unit");
-      continue;
-    }
+  // This source table also supplies nominal declaration identity to lowering
+  // and representation. Units without a failure site need the same identity.
+  for (const SourceUnit &unit : sourceGraph.sourceUnits()) {
     std::optional<std::string> name =
-        logicalName(*unit, entry, directRoot, sources, routes, result.errors);
+        logicalName(unit, entry, directRoot, sources, routes, result.errors);
     if (name) {
-      logicalNames.emplace(key.sourceUnit, std::move(*name));
+      logicalNames.emplace(unit.id, std::move(*name));
     }
   }
   if (!result.errors.empty()) {

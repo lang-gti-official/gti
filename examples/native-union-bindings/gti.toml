@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "native-union-bindings"
+version = "0.1.0"
+
+[package.native]
+c-sources = ["native/events.c"]
+
+[bindgen.events]
+header = "native/events.h"
+namespace = "native"
+
+[targets.native-union-bindings]
+kind = "executable"
+root = "src/main.gti"

@@ -66,6 +66,42 @@ public:
 
 def runtime_cases():
     cases = {
+        "reference-substitution": (PASSIVE + """
+Event<int32_t&> empty() { return Event<int32_t&>::idle; }
+int32_t inspect(Event<int32_t&>& event) {
+  switch (event) {
+    case Event<int32_t&>::idle: return 0;
+    case Event<int32_t&>::item(value): return value;
+    case Event<int32_t&>::pair(first, second): return first + second;
+  }
+}
+int main() {
+  int32_t first = 3;
+  int32_t second = 4;
+  auto idle = Event<int32_t&>::idle;
+  auto copied = idle;
+  auto returned = empty();
+  auto item = Event<int32_t&>::item(first);
+  auto pair = Event<int32_t&>::pair(first, second);
+  if (inspect(idle) != 0 || inspect(copied) != 0 || inspect(returned) != 0)
+    return 1;
+  if (inspect(item) != 3 || inspect(pair) != 7) return 2;
+  auto moved = std::move(returned);
+  return inspect(moved);
+}
+""", 0, ""),
+        "array-substitution": (PASSIVE + """
+int main() {
+  Event<int32_t[2]> idle = Event<int32_t[2]>::idle;
+  int32_t[2] values = {3, 4};
+  Event<int32_t[2]> event = Event<int32_t[2]>::item(std::move(values));
+  switch (std::move(event)) {
+    case Event<int32_t[2]>::idle: return 1;
+    case Event<int32_t[2]>::item(items): return items[0] + items[1] - 7;
+    case Event<int32_t[2]>::pair(first, second): return 2;
+  }
+}
+""", 0, ""),
         "exact-instances": (PASSIVE + """
 T identity<T>(T value) { return value; }
 int main() {
@@ -581,12 +617,16 @@ int main() {
         "invalid-void-substitution": (PASSIVE + """
 int main() { auto event = Event<void>::idle; return 0; }
 """, "GTI-S2067", "payload"),
-        "invalid-reference-substitution": (PASSIVE + """
-int main() { auto event = Event<int32_t&>::idle; return 0; }
-""", "GTI-S2067", "payload"),
-        "invalid-array-substitution": (PASSIVE + """
-int main() { auto event = Event<int32_t[2]>::idle; return 0; }
-""", "GTI-S2067", "payload"),
+        "reference-temporary-owner": (PASSIVE + """
+int main() { auto event = Event<int32_t&>::item(3); return 0; }
+""", "GTI-S2067", "stable dependency origins"),
+        "reference-local-escape": (PASSIVE + """
+Event<int32_t&> dangling() {
+  int32_t local = 3;
+  return Event<int32_t&>::pair(local, local);
+}
+int main() { return 0; }
+""", "GTI-S2045", "borrowed return"),
         "invalid-signature-substitution": (PASSIVE + """
 int main() { auto event = Event<int32_t(int32_t)>::idle; return 0; }
 """, "GTI-S2067", "payload"),

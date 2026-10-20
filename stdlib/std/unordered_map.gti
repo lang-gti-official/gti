@@ -235,7 +235,7 @@ public:
     return this.nodes[node - 1]->entry.second;
   }
 
-  pair<iterator, bool> insert(K key, V value) mut {
+  [[discardable]] pair<iterator, bool> insert(K key, V value) mut {
     size_t hash = this.hasher(key);
     size_t node = this.locate(key, hash);
     if (node != 0) {
@@ -244,7 +244,7 @@ public:
     size_t position = this.add(std::move(key), std::move(value), hash);
     return pair<iterator, bool>(iterator(this.nodes, position), true);
   }
-  pair<iterator, bool> insert_or_assign(K key, V value) mut {
+  [[discardable]] pair<iterator, bool> insert_or_assign(K key, V value) mut {
     size_t hash = this.hasher(key);
     size_t node = this.locate(key, hash);
     if (node != 0) {
@@ -255,7 +255,7 @@ public:
     return pair<iterator, bool>(iterator(this.nodes, position), true);
   }
 
-  pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
+  [[discardable]] pair<iterator, bool> try_emplace<Args...>(K key, Args... args) mut {
     size_t hash = this.hasher(key);
     size_t node = this.locate(key, hash);
     if (node != 0) {
@@ -265,11 +265,11 @@ public:
     return pair<iterator, bool>(iterator(this.nodes, position), true);
   }
 
-  pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
+  [[discardable]] pair<iterator, bool> emplace<Args...>(K key, Args... args) mut {
     return this.insert(std::move(key), V(args...));
   }
 
-  mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
+  [[discardable]] mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
     size_t hash = this.hasher(key);
     size_t node = this.locate(key, hash);
     if (node != 0) { return this.nodes[node - 1]->entry.second; }
@@ -277,7 +277,7 @@ public:
     return this.nodes[position]->entry.second;
   }
 
-  size_t erase(K& key) mut {
+  [[discardable]] size_t erase(K& key) mut {
     if (this.buckets.empty()) { return 0; }
     size_t hash = this.hasher(key);
     size_t bucket = hash % this.buckets.size();

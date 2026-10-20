@@ -220,6 +220,15 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
            "Required application '" + applicationSpelling(context) + "'."});
     }
     appendMemberReason(diagnostic, failure);
+    if (failure.conformanceBorrowOperation) {
+      diagnostic.hints.push_back(
+          "Operation '" + failure.conformanceBorrowOperation->lexeme +
+          "' must preserve the concept's borrowed_from parameter contract "
+          "for its concrete reference result.");
+      diagnostic.related.push_back(
+          {tokenSpan(*failure.conformanceBorrowOperation),
+           "The required result-origin contract is declared here."});
+    }
     if (failure.missingConformance) {
       const std::string name =
           failure.constraintName

@@ -424,8 +424,10 @@ boundaries from call syntax.
 
 Fresh temporary receiver diagnostics and selected read/mutable overloads use
 the same compiler records. The LSP publishes `GTI-S2081` unchanged and clears
-it only after a newer compiler snapshot accepts the receiver. Hover and
-signature help render the exact selected trailing-`mut` overload; the protocol
+it only after a newer compiler snapshot accepts the receiver. Regression
+coverage checks the reference-escape reason and exact closing-parenthesis
+range separately from the read-only named receiver's mutable-call rejection.
+Hover and signature help render the exact selected trailing-`mut` overload; the protocol
 layer does not infer freshness from constructor-like punctuation.
 
 Fresh temporary arguments use the same compiler snapshot. An ineligible
@@ -965,7 +967,12 @@ and the edit must introduce no new errors. Wrong namespace, access, overload,
 configuration, package, and module guesses therefore fail closed. Existing
 unrelated errors may remain; a candidate that reveals additional errors is
 conservatively withheld until those errors are addressed. No discovery runs
-for a snapshot without unresolved-name requests or for completion-marker analysis.
+for a snapshot without unresolved-name requests, with source-loading or parser
+errors, or for completion-marker analysis. Parser recovery still supplies its
+ordinary diagnostics and semantic queries, but an include edit cannot repair
+syntax in the frozen source graph. Skipping discovery in that case avoids a
+workspace-wide scan whose speculative edits would all be rejected; fixing the
+syntax restores include suggestions on the next snapshot.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
@@ -1042,3 +1049,13 @@ workers, not a per-document scheduler. Its bounded exact-content parsed-unit reu
 contains no semantic records; the bounded instance reuse keeps only validated
 library-only instance deltas, never a translation unit's semantic model. Preserve the boundaries that allow measured
 evolution without importing those systems preemptively.
+
+### Foreign storage queries
+
+Foreign-variable hover uses the compiler's resolved external-storage identity
+to display C linkage, source access, exact renamed native symbol and unsafe
+load/store obligations at both declaration and use sites. Definition, references
+and semantic tokens retain the ordinary global symbol identity. The protocol
+does not infer ownership from an external declaration or add a fix accepting an
+unsafe access. Incremental diagnostic and hover tests cover edited link names,
+UTF-16 positions and clearing stale unsafe-access errors.

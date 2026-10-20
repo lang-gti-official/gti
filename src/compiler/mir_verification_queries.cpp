@@ -9,6 +9,153 @@
 
 namespace lang::mir_detail {
 
+std::optional<MirSelectedReferenceHandoff>
+selectedReferenceHandoff(const MirBody &body, const MirLoan &selected) {
+  if (!selected.referenceSelection || selected.entry || selected.escapes ||
+      selected.kind != MirLoanKind::Local)
+    return std::nullopt;
+  const auto &selection = *selected.referenceSelection;
+  const auto *value = body.findValue(selection.value);
+  const auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+  const auto *group = body.findLoan(selection.transferredFrom);
+  const auto *carrier = body.findPlace(selection.carrier);
+  if (!block || !group || group->kind != MirLoanKind::Stored ||
+      group->escapes || !carrier ||
+      carrier->root != MirPlaceRootKind::Binding ||
+      !carrier->projections.empty() ||
+      carrier->type.kind != SemanticType::Enum ||
+      std::find(group->carriers.begin(), group->carriers.end(),
+                carrier->binding) == group->carriers.end())
+    return std::nullopt;
+  MirSelectedReferenceHandoff result{
+      .block = block->id, .carrier = carrier->id, .group = group->id};
+  std::vector<const MirInstruction *> extracts;
+  std::vector<const MirLoan *> successors;
+  std::size_t position = 0;
+  const auto next = [&]() -> const MirInstruction * {
+    while (position < block->instructions.size() &&
+           block->instructions[position].tombstone)
+      ++position;
+    return position == block->instructions.size()
+               ? nullptr
+               : &block->instructions[position];
+  };
+  while (const auto *instruction = next()) {
+    if (instruction->kind != MirInstructionKind::Compute ||
+        instruction->operation != MirOperation::PayloadExtract)
+      break;
+    if (!instruction->result || !instruction->enumOwner ||
+        !instruction->enumVariant || !instruction->payloadIndex ||
+        *instruction->payloadIndex != extracts.size() ||
+        !instruction->payloadExtractionKind ||
+        !isConsumingPayloadExtraction(*instruction->payloadExtractionKind) ||
+        instruction->operands.size() != 1 ||
+        instruction->operands.front().kind != MirOperandKind::Move ||
+        instruction->operands.front().place != carrier->id ||
+        instruction->operands.front().type != carrier->type ||
+        (!extracts.empty() &&
+         (instruction->enumOwner != extracts.front()->enumOwner ||
+          instruction->enumVariant != extracts.front()->enumVariant)))
+      return std::nullopt;
+    const MirLoan *successor = nullptr;
+    if (*instruction->payloadExtractionKind ==
+        PayloadExtractionKind::TransferReference) {
+      for (const auto &candidate : body.loans) {
+        if (!candidate.referenceSelection ||
+            candidate.referenceSelection->value != *instruction->result ||
+            candidate.producedBy != instruction->hirValue)
+          continue;
+        if (successor || candidate.entry || candidate.escapes ||
+            candidate.kind != MirLoanKind::Local ||
+            candidate.referenceSelection->carrier != carrier->id ||
+            candidate.referenceSelection->transferredFrom != group->id ||
+            candidate.carriers.size() != 1)
+          return std::nullopt;
+        successor = &candidate;
+      }
+      if (!successor)
+        return std::nullopt;
+      result.successors.push_back(successor->id);
+    }
+    extracts.push_back(instruction);
+    successors.push_back(successor);
+    ++position;
+  }
+  if (extracts.empty() ||
+      std::find(result.successors.begin(), result.successors.end(),
+                selected.id) == result.successors.end())
+    return std::nullopt;
+  const auto *retire = next();
+  if (!retire || retire->kind != MirInstructionKind::EndBorrow ||
+      retire->loan != group->id)
+    return std::nullopt;
+  result.retirement = retire->id;
+  ++position;
+  for (std::size_t field = 0; field < extracts.size(); ++field) {
+    const auto *successor = successors[field];
+    const auto *publication = next();
+    if (successor) {
+      const auto *address = publication && publication->operands.size() == 1
+                                ? body.findPlace(publication->operands[0].place)
+                                : nullptr;
+      if (!publication || publication->kind != MirInstructionKind::Borrow ||
+          publication->loan != successor->id || !address ||
+          address->root != MirPlaceRootKind::Value ||
+          address->value != *extracts[field]->result ||
+          !address->projections.empty())
+        return std::nullopt;
+      ++position;
+      publication = next();
+    }
+    const auto *destination = publication && publication->destination
+                                  ? body.findPlace(*publication->destination)
+                                  : nullptr;
+    if (!publication || publication->kind != MirInstructionKind::Initialize ||
+        !destination || destination->root != MirPlaceRootKind::Binding ||
+        !destination->projections.empty() || destination->id == carrier->id ||
+        publication->operands.size() != 1)
+      return std::nullopt;
+    const auto &input = publication->operands.front();
+    if (successor ? (input.kind != MirOperandKind::Loan ||
+                     input.loan != successor->id ||
+                     destination->binding != successor->carriers.front())
+                  : (input.kind != MirOperandKind::Value ||
+                     input.value != *extracts[field]->result))
+      return std::nullopt;
+    ++position;
+  }
+  result.endPosition = position;
+  // An arm entry is not established by a tag assertion attached to an extract:
+  // require its unique executable switch edge over this physical carrier.
+  std::size_t incoming = 0;
+  for (const auto &predecessor : body.blocks) {
+    const auto targets = terminatorSuccessors(predecessor.terminator);
+    if (std::find(targets.begin(), targets.end(), block->id) == targets.end())
+      continue;
+    const auto &terminator = predecessor.terminator;
+    if (++incoming != 1 || terminator.kind != MirTerminatorKind::Switch ||
+        !terminator.value ||
+        terminator.value->kind != MirOperandKind::BorrowRead ||
+        terminator.value->place != carrier->id ||
+        terminator.target == block->id)
+      return std::nullopt;
+    std::size_t matching = 0;
+    for (const auto &target : terminator.switchTargets)
+      if (target.target == block->id) {
+        if (++matching != 1 || !target.value ||
+            target.value->enumOwner != extracts.front()->enumOwner ||
+            target.value->value.negative ||
+            target.value->value.magnitude != *extracts.front()->enumVariant)
+          return std::nullopt;
+      }
+    if (matching != 1)
+      return std::nullopt;
+  }
+  return incoming == 1 && block->id != body.entry
+             ? std::optional{std::move(result)}
+             : std::nullopt;
+}
+
 const MirInstruction *
 referenceInitializerCall(const MirProgram &program,
                          const MirConstructorInstance &constructor,
@@ -649,6 +796,8 @@ bool objectRelocate(const MirProgram &program,
       pointer.pointerAccess != AccessMode::Mutable ||
       pointer.arguments.size() != 1 ||
       !completeObjectType(program, pointer.arguments.front()) ||
+      mirTypeRelocationKind(program, pointer.arguments.front()) ==
+          RelocationKind::Unavailable ||
       !mirTypeRelocationIsDefinedFailureFree(program,
                                              pointer.arguments.front()) ||
       (range && mirTypeRelocationKind(program, pointer.arguments.front()) !=

@@ -1100,14 +1100,80 @@
             "type": "FIELD",
             "name": "declaration",
             "content": {
-              "type": "SYMBOL",
-              "name": "extern_c_function_prototype"
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "extern_c_function_prototype"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "extern_c_variable_declaration"
+                }
+              ]
             }
           }
         },
         {
           "type": "STRING",
           "value": "}"
+        }
+      ]
+    },
+    "extern_c_variable_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "attribute",
+              "content": {
+                "type": "SYMBOL",
+                "name": "native_link_name_attribute"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "mutable",
+              "content": {
+                "type": "STRING",
+                "value": "mut"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "FIELD",
+          "name": "type",
+          "content": {
+            "type": "SYMBOL",
+            "name": "type"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ";"
         }
       ]
     },
@@ -1464,6 +1530,18 @@
           {
             "type": "STRING",
             "value": "="
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "mut"
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
           },
           {
             "type": "FIELD",
@@ -9391,6 +9469,10 @@
     }
   ],
   "conflicts": [
+    [
+      "extern_c_variable_declaration",
+      "extern_c_function_prototype"
+    ],
     [
       "_base_type",
       "numeric_conversion"

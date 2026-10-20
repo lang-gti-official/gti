@@ -251,6 +251,8 @@ struct LoweredClassDeclaration {
   // Every member is emitted public: GTI access control is enforced in
   // semantics, and reflected access may read private fields.
   bool reflectPrivate = false;
+  ComputedTypeProjectionKind computedTypeProjection =
+      ComputedTypeProjectionKind::None;
 
   friend bool operator==(const LoweredClassDeclaration &,
                          const LoweredClassDeclaration &) = default;
@@ -273,6 +275,8 @@ struct LoweredEnumDeclaration {
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
+  // Declaration-bound selector shape; executable payloads below are concrete.
+  std::vector<LoweredGenericParameter> genericParameters;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<LoweredEnumerator> enumerators;
   SemanticTypeTraits traits{};
@@ -367,6 +371,7 @@ struct LoweredDestructorDeclaration {
 
 struct LoweredStorageDeclaration {
   SymbolId symbol = 0;
+  std::string externalSymbol;
   ClassId ownerClass = 0;
   SemanticType type = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;

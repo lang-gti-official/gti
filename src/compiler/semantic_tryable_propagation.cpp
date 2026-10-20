@@ -52,6 +52,24 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   for (const SemanticType &parameter : candidate.parameterTypes) {
     call.parameterTypes.push_back(substituteType(parameter, substitution));
   }
+  const auto &declaration = candidate.record();
+  auto origin = functionReturnBorrowSummary(
+      call.returnType, call.parameterTypes, 0, false, IntrinsicKind::None);
+  if (candidate.declaration != nullptr &&
+      candidate.declaration->hasFunctionAttribute("borrowed_from")) {
+    const auto contract = genericReturnBorrowContract(
+        *candidate.declaration, call.returnType, call.parameterTypes, 0, false);
+    origin = {.origin = contract.origin,
+              .parameter = contract.parameter,
+              .access = contract.access};
+  }
+  call.borrowOrigin = origin.origin;
+  call.borrowArgument = origin.parameter;
+  call.borrowAccess = origin.access;
+  call.borrowArguments = origin.parameters;
+  call.borrowFields = declaration.returnBorrowFields;
+  call.neverReturns = declaration.neverReturns;
+  call.tracksCaller = declaration.tracksCaller;
   return call;
 }
 
@@ -203,10 +221,13 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   const bool consumes =
       operandInfo != nullptr && operandInfo->category == ValueCategory::Value;
   const SemanticTypeTraits traits = typeTraits(operandType);
-  if (traits.containsBorrowedState) {
+  const auto operandInventory = storedReferenceInventory(operandType);
+  if (traits.containsBorrowedState &&
+      (!operandInventory || operandInventory->empty())) {
     return reject("Error propagation through '" + operand +
-                      "' requires an operand without stored borrows.",
-                  "Propagate an owning type, or test the value explicitly.");
+                      "' needs a complete checked stored-dependency inventory.",
+                  "Propagate an owning type or a carrier whose complete "
+                  "external dependencies can be checked.");
   }
   if (consumes ? !traits.movable : !traits.copyable) {
     return reject(std::string("Error propagation passes its operand like a "
@@ -237,11 +258,13 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                       operand + ">' block is declared.",
                   blockHint);
   }
-  // The propagation plan stages a class operand's temporary or place; other
-  // operand kinds, such as payload enums, are a later slice.
-  if (operandType.kind != SemanticType::Class) {
+  // The propagation plan stages a class, struct or payload-enum operand's
+  // temporary or place. A temporary is borrowed for the test exactly as an
+  // ordinary call borrows one; other operand kinds are a later slice.
+  if (operandType.kind != SemanticType::Class &&
+      !payloadEnumType(operandType)) {
     return reject("Error propagation through 'std::tryable' currently needs "
-                  "a class or struct operand, but received '" +
+                  "a class, struct or payload-enum operand, but received '" +
                       operand + "'.",
                   "Wrap the value in a class or struct and give that type "
                   "the 'std::tryable' block.");
@@ -268,18 +291,40 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     requireFunctionDefinition(conformance.operations[index].overloads.front(),
                               site);
   }
-  const SemanticType resultType = output->returnType;
+  const bool borrowedResult =
+      output->returnType.kind == SemanticType::Reference;
+  std::optional<SemanticBorrowDependencySet> outputDependencies;
+  if (borrowedResult) {
+    auto candidate = conformance.operations[*takeValue].overloads.front();
+    candidate.returnType = output->returnType;
+    candidate.parameterTypes = output->parameterTypes;
+    const auto complete =
+        completeFunctionReturnBorrow(candidate, output->typeArguments,
+                                     output->valueArguments, tokenSpan(site));
+    const std::vector<const ExprPtr *> actualArguments{&expr.right()};
+    if (complete)
+      outputDependencies = instantiateCompleteBorrowArguments(
+          *output, *complete, actualArguments);
+  }
+  const SemanticType resultType =
+      borrowedResult && output->returnType.arguments.size() == 1
+          ? output->returnType.arguments.front()
+          : output->returnType;
   const SemanticType residualType = residual->returnType;
-  if (resultType.kind == SemanticType::Reference ||
+  if ((borrowedResult && (output->borrowOrigin != BorrowOriginKind::Argument ||
+                          output->borrowArgument != 0 ||
+                          (!outputDependencies &&
+                           !storedReferencePath(operandType).has_value()))) ||
       typeTraits(resultType).containsBorrowedState ||
       residualType.kind == SemanticType::Reference ||
       residualType == SemanticType::Void ||
       typeTraits(residualType).containsBorrowedState) {
     return reject("Error propagation through '" + operand +
-                      "' needs an owned 'value_type' and a non-void owned "
-                      "'residual_type' without stored borrows.",
-                  "Declare owning associated types in the "
-                  "'std::tryable' block.");
+                      "' needs an owned value or a reference transferred "
+                      "from its operand's exact external dependency, and a "
+                      "non-void owned residual without stored borrows.",
+                  "Declare a checked borrowed_from contract on take_value "
+                  "when returning a reference, and keep the residual owned.");
   }
   const SemanticType returnType = currentReturnType;
   if (returnType == SemanticType::Unknown || returnType == SemanticType::Void) {
@@ -298,6 +343,12 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   if (!selectResidualReturn(expr, returnType, residualType, construction)) {
     return SemanticType::Unknown;
   }
+  // This path returns from the enclosing callable even though its source is
+  // an expression, not a ReturnStmt. Until the selected residual operation's
+  // complete result contract is instantiated here, it contributes unknown.
+  loanFlow.unknownImplicitResultReturn = true;
+  if (outputDependencies)
+    semanticModel.recordBorrowDependencySet(expr, *outputDependencies);
   semanticModel.recordTryablePropagation(
       expr, {.operandType = operandType,
              .resultType = resultType,

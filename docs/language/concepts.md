@@ -707,8 +707,9 @@ adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
 ### Conformance blocks
 
 The block applies the concept to one pattern per concept parameter. Each
-pattern is either a concrete type, or one class template applied to block
-type parameters, in any order, such as `Box<T>` or `Pair<K, V>`. A bare
+pattern is either a concrete type, or one class or enum template applied to
+block type parameters, in any order, such as `Box<T>`, `Pair<K, V>` or an
+enum `result<T, E>`. A bare
 parameter, such as `T` on its own, and a nested pattern, such as
 `Box<Box<T>>`, are not patterns. Every block parameter appears in some
 pattern. A parameter may appear more than once, within one pattern or across
@@ -766,6 +767,26 @@ A block function is reachable only through its concept. It never takes part
 in member or ordinary name lookup, so a block cannot change what
 `value.member()` means. Calls to block functions are ordinary calls,
 including evaluation order, ownership transfer and failure cleanup.
+
+An associated type definition can name a checked reference: `using element =
+int&;` is shared and `using element = mut int&;` is exclusive. The modifier
+belongs to the reference type, not mutable storage for the alias. `mut` on a
+non-reference associated type is rejected; this does not add general reference
+aliases outside conformance blocks.
+
+An operation may declare `[[borrowed_from(parameter)]]`. This names the
+parameter position that supplies a checked reference result; an implementation
+may rename that parameter but must preserve its position and contract. For an
+associated or dependent result type the contract applies only to reference
+instances, and is inert for owned results. A generic implementation need not
+annotate an owned-returning instance merely because its uninstantiated return
+type is open. Selecting a concrete reference-returning conformance, including
+through a generic requirement, checks the implementation's exact parameter
+contract before permitting the call. A by-value argument may supply the
+reference through one exact stored external dependency. It never supplies a
+reference to the consumed argument's own storage. Each implementation body is
+checked against that declaration contract, including in generic instances.
+Unsafe implementations cannot satisfy ordinary safe operation declarations.
 
 Violations are reported as `GTI-S2123`; an unsatisfied requirement at a call
 is `GTI-S2029`. See [ADR 028](../decisions/028-protocol-concepts.md).

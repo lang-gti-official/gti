@@ -87,6 +87,15 @@ std::shared_ptr<void> *cppScopedBodyAnalysis(const MirBody &body,
 
 namespace {
 
+[[nodiscard]] std::string_view sourceIdentity(const LoweredProgram &program,
+                                              SourceUnitId sourceUnit) {
+  const auto *source = program.mir().failureMetadata().findSource(sourceUnit);
+  if (source == nullptr) {
+    throw std::logic_error("C++ declaration lacks a logical source identity");
+  }
+  return source->logicalName;
+}
+
 [[nodiscard]] std::string cppLoweredQualifiedName(std::string_view qualified,
                                                   bool global) {
   std::string result = global ? "::" : "::__gti_program::";
@@ -523,7 +532,8 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     appendIdentityText(output, declaration->qualifiedName);
     // A compiler-private or same-spelled nominal declaration in another
     // source unit remains distinct without importing snapshot-local IDs.
-    appendIdentityText(output, row->source.source);
+    appendIdentityText(output,
+                       sourceIdentity(program, declaration->sourceUnit));
     const std::vector<SemanticType> &arguments =
         declaration->exactSpecializationPrimary == 0
             ? type.arguments
@@ -555,7 +565,8 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     }
     appendIdentityText(output, "enum");
     appendIdentityText(output, declaration->qualifiedName);
-    appendIdentityText(output, row->source.source);
+    appendIdentityText(output,
+                       sourceIdentity(program, declaration->sourceUnit));
     return appendArguments();
   }
   case SemanticType::Reference:
@@ -725,7 +736,7 @@ std::string cppClassDeclarationNameSpelling(const LoweredProgram &program,
   std::vector<std::uint8_t> identity;
   appendIdentityText(identity, "lexical-class-primary");
   appendIdentityText(identity, info->qualifiedName);
-  appendIdentityText(identity, row->source.source);
+  appendIdentityText(identity, sourceIdentity(program, info->sourceUnit));
   // Same-spelled disjoint signature primaries remain distinct declarations.
   // Use their source identity, never traversal-local semantic IDs.
   appendIdentityInteger(identity, row->source.start);
@@ -751,6 +762,17 @@ std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
              : cppLoweredQualifiedName(info->qualifiedName,
                                        info->cOpaqueHandle && row != nullptr &&
                                            row->ownerClass == 0);
+}
+
+std::string cppAccessQualifiedTypeSpelling(const SemanticType &type,
+                                           AccessMode access,
+                                           std::string spelling) {
+  if (access != AccessMode::ReadOnly)
+    return spelling;
+  // CString is spelled directly as const char*, rather than through a named
+  // value/alias type. Its reference borrows the pointer slot, not the bytes.
+  return type.kind == SemanticType::CString ? spelling + " const"
+                                            : "const " + spelling;
 }
 
 std::string cppNativeTypeSpelling(const LoweredProgram &program,
@@ -867,20 +889,9 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
   return inspect(inspect, type, false);
 }
 
-std::string cppSemanticTypeSpelling(const LoweredProgram &program,
-                                    CppStandard standard,
-                                    const SemanticType &type) {
-  if (type.nativeCScalar != NativeCScalarKind::None) {
-    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
-        type) {
-      throw std::logic_error(
-          "invalid native C scalar identity reached C++ representation");
-    }
-    return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
-  }
-  const auto spell = [&](const SemanticType &inner) {
-    return cppSemanticTypeSpelling(program, standard, inner);
-  };
+namespace {
+std::string cppValueExpressionSpelling(const LoweredProgram &program,
+                                       const GenericValueExpression &value) {
   // Spell declaration-bound dependent metadata; never evaluate it here.
   // Executable concrete instances already carry checked literal arguments.
   const auto spellValueExpression =
@@ -937,6 +948,24 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     }
     return '(' + self(self, *expression.left) + ' ' + std::string(operation) +
            ' ' + self(self, *expression.right) + ')';
+  };
+  return spellValueExpression(spellValueExpression, value);
+}
+} // namespace
+
+std::string cppSemanticTypeSpelling(const LoweredProgram &program,
+                                    CppStandard standard,
+                                    const SemanticType &type) {
+  if (type.nativeCScalar != NativeCScalarKind::None) {
+    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+        type) {
+      throw std::logic_error(
+          "invalid native C scalar identity reached C++ representation");
+    }
+    return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+  }
+  const auto spell = [&](const SemanticType &inner) {
+    return cppSemanticTypeSpelling(program, standard, inner);
   };
   const auto dependent = [&](const auto &self,
                              const SemanticType &inner) -> bool {
@@ -1040,7 +1069,8 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   case SemanticType::FunctionItem:
     return type.hasFunctionItemShape()
                ? "::gti_internal::backend::function_item<" +
-                     std::to_string(type.functionId) + ">"
+                     std::to_string(type.functionId) + ", " +
+                     spell(*type.functionItemReturnType()) + ">"
                : "void";
   case SemanticType::Array: {
     const bool pointerElements =
@@ -1076,6 +1106,17 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         program.findClassDeclaration(type.classId);
     if (classInfo == nullptr) {
       return "void";
+    }
+    if (classInfo->computedTypeProjection ==
+        ComputedTypeProjectionKind::CallableReturn) {
+      if (type.arguments.size() == 1 && type.valueArguments.empty())
+        if (const auto *result =
+                type.arguments.front().nativeFunctionReturnType())
+          return spell(*result);
+      return type.arguments.size() == 1 && type.valueArguments.empty()
+                 ? "typename ::gti_internal::backend::source_callable_result<" +
+                       spell(type.arguments.front()) + ">::type"
+                 : "";
     }
     if (classInfo->compilerCapability ==
         CompilerCapabilityTypeKind::ErasedObject)
@@ -1210,8 +1251,7 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
               program.findGenericParameter(argument.parameterId);
           result += parameter == nullptr ? "0" : parameter->name;
         } else if (argument.expression) {
-          result +=
-              spellValueExpression(spellValueExpression, *argument.expression);
+          result += cppValueExpressionSpelling(program, *argument.expression);
         } else {
           result += '0';
         }
@@ -1223,8 +1263,21 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   }
   case SemanticType::Enum: {
     const LoweredEnumDeclaration *enumInfo = program.findEnumDeclaration(type);
-    if (enumInfo == nullptr)
-      return "void";
+    if (enumInfo == nullptr) {
+      // A native overlay may name a dependent application, but never creates
+      // its own payload layout. Select from the exact closed GTI catalog.
+      if (type.enumId == 0 ||
+          (!dependent(dependent, type) &&
+           std::all_of(type.valueArguments.begin(), type.valueArguments.end(),
+                       [](const auto &value) {
+                         return value.kind == CompileTimeValue::UInt64;
+                       })))
+        throw std::logic_error("enum representation lacks an exact verified "
+                               "instance or dependent family");
+      return "typename ::__gti_program::__gti_enum_selector_" +
+             std::to_string(type.enumId) +
+             cppEnumSelectorArguments(program, standard, type) + "::type";
+    }
     if (const auto name = cppConcreteEnumName(program, type)) {
       const auto separator = enumInfo->qualifiedName.rfind("::");
       return cppLoweredQualifiedName(
@@ -1240,11 +1293,10 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     return cppLoweredQualifiedName(enumInfo->qualifiedName, false);
   }
   case SemanticType::Reference: {
-    std::string result;
-    if (type.referenceAccess == AccessMode::ReadOnly) {
-      result += "const ";
-    }
-    result += type.arguments.empty() ? "void" : spell(type.arguments.front());
+    const SemanticType referent =
+        type.arguments.empty() ? SemanticType::Void : type.arguments.front();
+    std::string result = cppAccessQualifiedTypeSpelling(
+        referent, type.referenceAccess, spell(referent));
     result += " &";
     return result;
   }
@@ -1312,6 +1364,49 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   }
 }
 
+std::string cppEnumSelectorArguments(const LoweredProgram &program,
+                                     CppStandard standard,
+                                     const SemanticType &type) {
+  if (type.kind != SemanticType::Enum || type.enumId == 0)
+    throw std::logic_error("enum selector lacks an exact family identity");
+  std::string result = "<::__gti_program::__gti_enum_types<";
+  bool separator = false;
+  const auto append = [&](const auto &self,
+                          const SemanticType &argument) -> void {
+    if (argument.kind == SemanticType::TypePack && argument.concretePack) {
+      for (const auto &element : argument.arguments)
+        self(self, element);
+      return;
+    }
+    if (separator)
+      result += ", ";
+    result += cppSemanticTypeSpelling(program, standard, argument);
+    if (argument.kind == SemanticType::TypePack)
+      result += "...";
+    separator = true;
+  };
+  for (const auto &argument : type.arguments)
+    append(append, argument);
+  result += ">, std::integer_sequence<std::uint64_t";
+  for (const auto &argument : type.valueArguments) {
+    result += ", ";
+    if (argument.kind == CompileTimeValue::UInt64)
+      result += std::to_string(argument.value) + "ULL";
+    else if (argument.kind == CompileTimeValue::Parameter) {
+      const auto *parameter =
+          program.findGenericParameter(argument.parameterId);
+      if (!parameter || !parameter->value)
+        throw std::logic_error(
+            "enum selector lost its value parameter identity");
+      result += parameter->name;
+    } else if (argument.expression)
+      result += cppValueExpressionSpelling(program, *argument.expression);
+    else
+      throw std::logic_error("enum selector has an unresolved value argument");
+  }
+  return result + ">>";
+}
+
 std::optional<std::string> cppConcreteEnumName(const LoweredProgram &program,
                                                const SemanticType &type) {
   if (type.kind != SemanticType::Enum ||
@@ -1367,7 +1462,7 @@ std::optional<std::string> cppConcreteClassName(const LoweredProgram &program,
   std::vector<std::uint8_t> identity;
   appendIdentityText(identity, "GTI-CONCRETE-CLASS-V1");
   appendIdentityText(identity, primary->qualifiedName);
-  appendIdentityText(identity, primaryRow->source.source);
+  appendIdentityText(identity, sourceIdentity(program, primary->sourceUnit));
   appendIdentityInteger(identity, primary->genericParameters.size());
   for (const LoweredGenericParameter &parameter : primary->genericParameters) {
     appendIdentityInteger(identity, parameter.value ? 1 : 0);
@@ -1544,7 +1639,7 @@ cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
   appendIdentityText(identity, row.name);
   appendIdentityInteger(identity, function.internalLinkage ? 1 : 0);
   if (function.internalLinkage) {
-    appendIdentityText(identity, row.source.source);
+    appendIdentityText(identity, sourceIdentity(program, function.sourceUnit));
   }
   appendIdentityInteger(identity, function.genericParameters.size());
   for (const LoweredGenericParameter &parameter : function.genericParameters) {
@@ -1694,6 +1789,10 @@ cppConcreteMemberFunctionSpelling(const LoweredProgram &program,
 // Ported verbatim from the compatibility emitter's
 // emittedStaticVariableBaseName / emittedStaticVariableName, which now
 // delegate here.
+std::string cppForeignStorageSpelling(SymbolId symbol) {
+  return "__gti_foreign_storage_" + std::to_string(symbol);
+}
+
 std::string cppStaticStorageBaseSpelling(SymbolId symbol,
                                          std::string_view name) {
   return "__gti_static_" + std::to_string(symbol) + "_" + std::string(name);

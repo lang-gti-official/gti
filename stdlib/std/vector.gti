@@ -425,7 +425,7 @@ public:
     unsafe { this.data.insert_unchecked(index, std::move(value)); }
   }
 
-  mut T& emplace_back<Args...>(Args... args) mut {
+  [[discardable]] mut T& emplace_back<Args...>(Args... args) mut {
     this.ensure_capacity_for_one();
     size_t index = this.data.length();
     unsafe {

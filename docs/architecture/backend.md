@@ -74,6 +74,34 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+Guarded enum reference inventories include abstract referent paths that are
+provenance, not unconditional reads of native fields in possibly inactive
+alternatives. The backend omits a path's physical alias only after checking its
+exact typed enum-field/dereference chain and absence of runtime storage/address
+uses. Stored loans carry no native pointer; selected-reference extraction,
+reference-returning calls and exact return-pointer transfers supply their own
+runtime addresses. Generic Borrow or entry-address uses cannot hide behind this
+classification. Fresh owning enum returns may cross their verified erased
+Stored-to-Return borrow publication and EndBorrow markers without inventing a
+second result slot; all actual cleanup and success-only initialization remains
+in the original MIR order.
+
+Payload alternatives construct in place from their already selected MIR
+operands. The native enum's in-place alternative constructor avoids temporary
+alternative and whole-enum transfers. List initialization preserves operand
+evaluation order. An owning fresh alternative followed immediately by its
+constructor-field `Initialize` may use the final field storage directly: the
+existing publication proof establishes the observation-free empty field shell,
+unique result consumer, result activation, field rollback obligation and exact
+`Reparent`. Adjacency excludes intervening failures or observations. Non-adjacent
+and returned/moved inputs retain their original staged publication. MIR cleanup
+and lifetime events are not removed or rescheduled by this representation choice.
+
+A switch over a payload-enum place observes that place's discriminant even
+when all payloads are passive. It does not first copy the complete enum. Arm
+bindings independently retain their selected copy, borrow or consuming-transfer
+semantics; an ordinary integral enum still uses the scalar switch path.
+
 A staged call receiver can cross the existing scalar conditional-argument
 control flow when its exact origin remains unchanged. The receiver place may be
 a bare local, the exact full-expression slot, or a binding-rooted path of field
@@ -266,13 +294,19 @@ Checked references to raw pointers remain outside the current language slice;
 the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
 Failure-free passive C-compatible call results share one consumer proof for
-bare assignment, discard, and unchanged return. The exact record/type/signature
+bare assignment, a single enum payload field, discard, and unchanged return.
+The exact record/type/signature
 must agree, no result cleanup obligation may be invented, and return permits
 only the existing passive cleanup tail. A return writes caller-provided result
 storage at its Call; discard still executes the foreign call. Assignment and
 discard use byte-preserving representation transfer rather than native
 memberwise pointer reads. Neither source default construction nor owning-result
 transport is inferred from this passive representation rule.
+The payload consumer additionally proves the exact typed alternative/field,
+sole SSA use without value-rooted storage, and producer dominance/order. The
+call executes into its passive representation at its original MIR position;
+later payload operands cannot reorder it. Missing or duplicated uses, changed
+tags/types, and newly fallible payload publication fail representation admission.
 
 Checked class-payload extraction can construct a function's exact return result
 at its existing MIR Call, without an intermediate object or a second source
@@ -920,11 +954,17 @@ passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
 (`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. A nested join is proved on its own, and the
-nested arm's region starts at that inner join's branch block. A passive arm may
-also evaluate its inputs before that entry, as in `c ? f(a + 1) : f(b + 2)`
-with overflow-checked additions, a call that can fail, a `?` operand, or scalar
-control flow inside an argument. Without an exact diamond, the branch is the
+events stay outside this form. An arm may also move a whole named local out,
+as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
+obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
+ownership event that takes the local's key to `Moved`, and the local keeps its
+passive binding drop. That drop ends the moved-from shell after the join on
+the path that moved it, and the live object on the other. A nested join is
+proved on its own, and the nested arm's region starts at that inner join's
+branch block. A passive arm may also evaluate its inputs before that entry, as
+in `c ? f(a + 1) : f(b + 2)` with overflow-checked additions, a call that can
+fail, a `?` operand, or scalar control flow inside an argument. Without an
+exact diamond, the branch is the
 nearest common dominator of the two arm entries, and its two successors start
 the arms' regions (`conditionalArmRegionBranch`). Each region is proved exactly
 (`exactConditionalArmRegion`): the branch enters it once and nothing else
@@ -933,14 +973,22 @@ region's start; and their ordinary edges stay inside or reach the entry. An
 Invoke's failure edge leaves through its own failure record's cleanup and a
 `Return` leaves the body (a propagated `?` residual), both before the arm
 publishes anything. An owning join whose arms evaluate inputs first keeps the
-ordinary owned-temporary publication it already has. When a passive join's
-single move reaches neither the binding nor the prepared argument
-terminal, the moved value is staged in its own representation-only slot and
-the join's representation ends right after. That staged slot then serves a
-return, field read, assignment or field initializer exactly as a fresh
-result's slot does. In the failure form too, a Return of that staged value
-publishes the caller's result from the slot; the staging Move does not
-publish it.
+ordinary owned-temporary publication it already has. The outer arm's move
+out of a nested join is that join's single move, and the nested join's
+representation ends right after it, so a loop that evaluates the conditional
+again finds both storages empty. Slot retirement always clears engagement and
+preserves the empty-slot guards. For a trivially destructible C++ representation,
+retirement need not invoke a destructor: its physical lifetime ends on storage
+reuse or release. This avoids an unnecessary native lifetime-end barrier while
+MIR still forbids subsequent use of the retired value. Nontrivial representations
+still run their destructor at retirement, including cleanup-bearing source
+objects and representation-only shells. When a passive join's single move reaches
+neither the binding nor the prepared argument terminal, the moved value is
+staged in its own representation-only slot and the join's representation ends
+right after. That staged slot then serves a return, field read, assignment or
+field initializer exactly as a fresh result's slot does. In the failure form
+too, a Return of that staged value publishes the caller's result from the
+slot; the staging Move does not publish it.
 A member call on the joined value itself, as in `(c ? a() : b()).read()`,
 has a different MIR shape. MIR gives the join temporary a full-expression
 value obligation, stages the temporary as the call's receiver (a read-only
@@ -949,13 +997,19 @@ mutable one), and drops it at the end of the full expression. The join's Move is
 has no use. Each arm's `Initialize` activates the temporary's obligation
 directly, because a cleanup-free arm result has none of its own. A
 construction arm already constructed the temporary at that `Initialize`.
-`classValueDestinationSlot` also names the temporary for a call arm with no
-lifecycle event beyond its prepared input transfers, and for a copied place,
-when the `Initialize` follows the producer directly or opens its Invoke
-success block. Each constructs the temporary directly, a call that can fail
-only on success, and the receiver borrows it as `directTemporaryReceiver`
-borrows a fresh result's slot. A nested-join arm and a moved named local are
-not admitted in this form.
+`classValueDestinationSlot` also names the temporary for a call or ordinary
+constructor arm with no lifecycle event beyond its exact prepared input
+transfers, for a copied place, and for a whole named local moved out by the
+same ownership and passive-drop facts as the arm above, when the `Initialize`
+follows the producer directly or opens its Invoke success block. Each
+constructs the temporary directly, a call that can fail only on success.
+Constructor admission requires its complete input schedule; input transfers
+do not substitute for the temporary's real full-expression drop, which stays
+inactive if construction fails. The receiver borrows it as
+`directTemporaryReceiver` borrows a fresh result's slot. An arm may also move
+out of a nested cleanup-free join, whose storage has no obligation either.
+That move is the nested join's single move, and its writer ends the nested
+storage right after constructing the temporary.
 An owning join's synthetic temporary, once a move has emptied it, ends its
 native shell where MIR hands its obligation away. In a plain body that staged
 the returned value, that point is the return's transfer-out. Otherwise it is
@@ -1087,10 +1141,32 @@ private constructor even when the originating GTI member can. The selected
 MIR constructor, staged arguments, destination, success activation, and
 rollback remain unchanged; source visibility is never widened.
 
-Empty-field admission for a containing owner of the sealed optional slot retains
+Legacy empty-field admission for a containing owner of the sealed optional slot retains
 the exact selected private constructor's instruction-free, nonborrowed void
 `Return` witness. A recursive fields-only aggregate proof cannot substitute the
 slot's shape for that witness after the selected constructor has been corrupted.
+The promoted standard optional no longer instantiates this capability: its
+state is an ordinary payload enum and uses the general constructor, active-tag,
+assignment and cleanup proofs. Legacy capability implementation code is retained
+but is not declared by `<std/optional>`.
+
+The declaration-bound `fail_empty_owner` terminal operation takes no arguments,
+never returns, and selects the existing `EmptyOwnerAccess`/`MemberAccess`
+failure. Semantics establishes those facts; HIR preserves them and MIR checks
+arity, termination, caller tracking and the exact failure identity independently.
+The backend publishes that verified failure using ordinary failure cleanup. It
+does not recognize `std::optional`, inspect its tag or grant access to its value.
+
+Owning enum replacement is admitted from an exact paired cleanup recipe,
+source slot and lifecycle transfer. It uses payload move construction even
+when payload assignment is unavailable; borrowed-state assignment rules do not
+change. After checked replacement cleanup, the backend retires the drained
+native alternative and leaves a vacant shell until commit or lexical drop.
+An enum nested in a containing class also retires its drained alternative on a
+first cleanup failure, preventing the containing failure edge from repeating
+child cleanup. Secondary-failure abandonment does not retire incompletely
+drained storage. Failure-free movement and raw relocation eligibility remain
+independent proofs, including for address-stable mutex storage.
 
 The existing MIR double-failure contract also has an inherited dynamic component:
 an ordinary source destructor or helper called by a failure-cleanup `Drop` cannot
@@ -1631,8 +1707,10 @@ nested call can participate in an ordinary constructor full expression.
 
 A cleanup-free class result with one exact value-rooted field projection and
 one scalar `Load` uses the same uninitialized lifetime-slot representation.
-An admitted GTI call or ordinary `Construct` publishes once into the slot, and
-the load spells through its verified field chain. The constructor form also
+An admitted GTI call or ordinary `Construct` publishes once into the slot, as
+does a failure-free `Move` of a whole object out of a place, as in
+`std::move(a).x`, which constructs the slot from its source, and the load
+spells through its verified field chain. The constructor form also
 requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
@@ -1640,12 +1718,18 @@ non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
-slot. The result may come from a call, as in `make_tracked(7).number`, or from
-an ordinary `Construct`, as in `tracked(7).number`. A failure-free constructor
+slot. The result may come from a call, as in `make_tracked(7).number`, from
+an ordinary `Construct`, as in `tracked(7).number`, or from a `Move` out of an
+available place, as in `std::move(a).number` on a local or by-value parameter.
+A failure-free constructor
 constructs the slot in place and arms the result's obligation with its own
 `Initialize`. A raising one places the object at the slot's construction
-address and arms the obligation on its Invoke success edge. Either way the
-construction's only other uses must be field views. Views cover nested fields
+address and arms the obligation on its Invoke success edge. A `Move` with no
+failure of its own move-constructs the slot from its source; its one lifecycle
+event transfers the source's obligation to the result (or arms it when the
+source had none), and the source's later Drop ends only the moved-from shell.
+Either way the
+construction's or move's only other uses must be field views. Views cover nested fields
 and a field lent to one member call as in `make_named().text.size()`, in
 function bodies as well as field defaults, member initializers and base
 argument preparations, whose carrier holds the slot. A view is a pure field
@@ -1658,10 +1742,13 @@ result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
 An owning Expected temporary's payload whose fields alone are read moves into
 the payload's own result slot on the checked extraction's success edge, then is
 read the same way, as in `make_named(true).value().text.size()`.
-Inside a short-circuit operand or a conditional arm, the producer, a call or a
-construction, instead constructs the result in a conditional temporary that
+Inside a short-circuit operand or a conditional arm, the producer, a call, a
+construction or a `Move` out of a place (as in `c ? std::move(a).number : 0`),
+instead constructs the result in a conditional temporary that
 holds the result's own obligation. A failure-free producer does so at its
-destination; a transformed one arms the temporary on its Invoke success edge.
+destination; a transformed one arms the temporary on its Invoke success edge;
+a `Move` names the temporary as its destination and arms it with its one
+lifecycle event.
 Either may also transfer out the prepared inputs it consumes, as the moved
 receiver in `c ? std::move(p).loud().id : 0` is; the proof admits exactly
 those transfers beside the result's activation.
@@ -1729,6 +1816,18 @@ out at the call, so in a plain body their slots end the moved-from
 representation at C++ scope exit, after the returned object is initialized. A
 targetless default construction never takes that route; it spells `return T{}`
 itself.
+
+Generated native destructors test their class's initialized active-drop flag
+before calling its cleanup adapter. This is the same guard the adapter already
+checks, not a new assumption that moved-from cleanup is harmless. MIR-directed
+move/drop operations disarm the flag; a false flag therefore bypasses only an
+effect-free adapter path (emergency-state observation and an empty failure
+record, with no source cleanup). A true flag still enters the unchanged adapter,
+including emergency handling, failure propagation and exact source destructor
+order. Native base/member destructors still run after either branch. Exposing
+the guard at this boundary lets native optimization remove retired-shell calls
+without inlining the cold defined-failure machinery or weakening GTI cleanup.
+
 When cleanup such as the drop of a moved-from parameter runs between the call
 and the Return, the result stays in its value-rooted slot and the Return takes
 it out. A fallible cleanup in between reparents the result to its return-result
@@ -1797,6 +1896,20 @@ discard, one consuming call or constructor, a state test, a checked `value()`
 or `error()` extraction, a constructor field, or a whole binding it replaces.
 A binding the result initializes directly keeps the direct construction into
 that binding.
+
+A class result of a callable value invocation follows the same rule
+(`callableClassResultInvocation`). Verified MIR binds the invocation's result
+and parameters to its exact lambda instance, and the invocation completes the
+result on its Invoke success edge under callable propagation, as a
+transformed source call does. A cleanup-free result therefore takes the
+representation-only SSA slot (`classSsaLifetimeSlot`) for one field read,
+by-value call argument, assignment, constructor field or discard. An owning
+result takes the value-rooted slot (`valueRootedClassCallResultSlot`) that its
+field views or one consuming call read, and a by-value argument with a
+prepared parameter receives the result directly in that parameter's slot
+(`stagedClassResultForSource`). The invocation writer passes the selected
+slot's construction address and marks it constructed on success. No class
+result of an invocation becomes a default-constructed C++ local.
 
 The same slot may instead feed one by-value parameter of an exact ordinary
 source constructor, mirroring the owning route's constructor consumer. The
@@ -2313,7 +2426,13 @@ cleanup. Re-entered passive local bindings and passive value-root slots retire
 only their representation before reconstructing the next loop iteration's
 environment. Owning closures and prepared argument temporaries keep their
 verified explicit lifetime protocol. Fused non-escaping closures can still
-use native lambdas.
+use native lambdas. A fused literal is spelled only where its chain is
+consumed: at an invocation, a deduced callable argument or a comma discard,
+each of which selects the literal's calling convention. A chain with no such
+consumer spells no lambda body, so the vocabulary requires neither convention
+of that body. A lambda whose body has no plain form, for example because it
+passes a move-only or destructor-bearing temporary by value into a class
+constructor, can therefore be declared and never invoked.
 Each materialized environment carries a private type alias for its exact
 artifact-local MIR lambda identity. Source-template member families use this
 identity alongside signature and cleanup selectors when distinct closure
@@ -2469,13 +2588,13 @@ initializer shortcut. The representation snapshot copies the exact MIR enum
 traits, enum-wide active-cleanup bit, dense variants, field types, and
 per-field cleanup facts. Admission exact-compares every row with MIR.
 `PayloadConstruct` consumes only operands carrying the matching `TransferOut`
-events, constructs the selected `std::variant` alternative in an enum lifetime
+events, constructs the selected tagged-carrier alternative in an enum lifetime
 slot, and publishes that slot only through the matching enum lifecycle event.
 Whole-enum move and tag-only switch observation use the exact MIR places and
 obligations. The exact adjacent Move -> Replace -> Drop schedule also admits
 whole-enum move assignment: native assignment replaces the destination's
 active alternative, then MIR destroys only the moved-from staging shell.
-Generated C++ names and `std::variant` are representation choices; neither
+Generated C++ names and native tagged storage are representation choices; neither
 selects ownership behavior or identifies a source enum. Owning enum
 call/return is admitted only through an exact verified-MIR transport shape.
 Named and fresh arguments are moved from their one lifetime slot into the
@@ -2495,9 +2614,32 @@ names that storage and declares no slot. When a fallible drop, such as a
 moved-from parameter's, precedes the return, MIR's unpublished-result
 reparent keeps the obligation, and its rollback destroys the caller storage.
 An active payload-enum return must be published by a fresh `PayloadConstruct`,
-a verified `Move`, or that direct call. Any other return fails admission
-rather than assigning into uninitialized caller storage.
+a verified `Move`, or that direct call. A failure-free call's owning result,
+and a fresh variant whose publication cannot be fused because later cleanup
+such as another local's fallible drop intervenes, instead wait in their
+value-rooted slot; at the Return the caller's result is constructed from that
+slot, and a failure on the way destroys the still-unpublished value. Any other
+return fails admission rather than assigning into uninitialized caller
+storage. A cleanup-free enum's value-rooted place, which a call borrows for a
+fresh temporary, is the SSA value itself and has no separate local.
 Constructor arguments use the same proof, including fresh unit variants.
+A fallible ordinary source call may also construct its owning enum result
+directly in a binding when its sole executable value use is the first
+instruction on the Invoke success edge: an exact unconditional Initialize
+reparent from the result obligation to the initially inactive binding
+obligation. The original value-rooted MIR storage and drop identities remain
+verified metadata. Emission marks the binding's native representation engaged
+only on call success and erases only that matching Initialize's redundant
+representation move/retirement. Non-immediate or non-unique publication keeps
+the ordinary value-rooted representation. The admission and emission paths
+share the same publication query; no source lifetime or cleanup is removed.
+The analogous exact `Move` value-to-binding publication preserves the original
+source object, its move, and its scheduled moved-from-shell cleanup. Only the
+intermediate value-rooted native object is omitted: its sole use must be an
+adjacent Initialize in the same block, with distinct source/value/binding drop
+identities and an identical cleanup type. Temporary destinations, intervening
+instructions, multiple consumers, and incomplete transfer evidence retain the
+existing representation path.
 A fresh cleanup-free class construction that is one alternative field fuses
 into the variant braces only when it is adjacent to its `PayloadConstruct`.
 Otherwise, when its constructor ends the block at an Invoke or sibling field
@@ -2506,6 +2648,91 @@ representation-only storage. Its success edge must dominate the sole
 `PayloadConstruct` use, the class must move without defined failure, and MIR
 must record no value-rooted place or drop for it. The alternative moves the
 completed value, and the moved-from shell is destroyed immediately afterward.
+
+The same exact transfer proof stages owning array and result operands
+into their value-rooted slots. Empty-slot relocation must be defined-failure
+free; this is distinct from assignment into a live destination, whose old
+value may have a fallible destructor. Consuming `PayloadExtract` initializes
+its one pattern binding directly for every admitted value family, including
+nested enums, instead of reading an uninitialized intermediate slot.
+Recursive enum cleanup emits distinct local sequence names at each depth:
+an inner sequence's initializer must read the outer record/unwinding state,
+not a shadowing, not-yet-initialized local. Both ordinary and secondary failure
+reports are checked by the composition runtime matrix.
+
+Payload enum rows use backend-private `payload_variant`: a recursive native
+union and compact active tag, with direct tag-dispatched native retirement.
+Constrained-default special members preserve trivial copy/move/assignment and
+destruction for passive members, including inert byte transport. Ordinary
+integer enums are unchanged. Payload enums are accessed through
+`payload_get<Index>` selected from the sealed variant inventory, under the
+existing MIR active-tag proof. This is not a public layout/ABI guarantee or
+a source-visible unchecked access operation. It removes standard-library
+visitor-table dispatch from retirement without changing which GTI cleanup
+obligations run. Native copy/move/assignment availability follows the member
+representations; it cannot admit an operation absent from GTI's sealed traits.
+
+For private passive SSA and binding transport, a construction-only member
+such as a class containing a reference still needs native copy transport.
+When every alternative is trivially destructible and nothrow copy-constructible,
+but at least one is not copy-assignable, the carrier's private native copy
+assignment reconstructs the selected alternative instead. Self-copy is inert;
+the source tag, including the private vacant state, is preserved. This does not
+enable GTI assignment: semantic traits and MIR admission still reject assignment
+of a construction-only source type. Throwing-copy or nontrivially destructible
+alternatives do not receive this passive fallback.
+
+The carrier starts with only its private empty alternative active. Construction
+starts the selected union-member lifetime, then publishes its tag; an exception
+before publication leaves no complete alternative to destroy. Recursive empty
+union tails contain no resource. Native moves retain a valid moved-from member
+until MIR's scheduled shell retirement. Cross-alternative assignment retires
+the old member before constructing and publishing the replacement; same-tag
+assignment retains its member lifetime where member assignment is available;
+construction-only transport uses the guarded reconstruction above. Self-assignment
+is inert. A failed
+cross-alternative native construction leaves a private vacant tag, which can
+only be retired or reconstructed, not exposed as a GTI value. GTI defined
+failure remains governed by MIR's explicit success/rollback edges, not native
+exceptions. Independent emitted-carrier tests cover empty/unit alternatives,
+equal payload types at different indices, alignment, nested carriers/arrays,
+native construction/move/assignment failures and exact retirement counts;
+source runtime tests retain failure-cleanup and sanitizer coverage.
+
+Cleanup-free enum fields use the same destination-construction policy through
+their existing MIR initializer-record publication. The exact source constructor,
+declared field, root value, unique initializer and immediately following full-
+expression boundary must agree; an explicit `Initialize` takes precedence over
+that record route. The enum must be borrow-free, trivial to drop and free of
+relocation failure, with no other runtime use or value-rooted place. Its native
+empty field shell is replaced directly at the producer, preserving operand
+order and avoiding a whole-enum temporary assignment. Substituted fields,
+duplicated roots, borrowed state, effects and mismatched boundaries retain the
+ordinary staged path or fail representation admission.
+
+A bounded closed-tag-domain proof exposes an exhaustive switch's impossible
+default edge to the native optimizer. It independently matches the exact
+payload enum/type/traits and copied dense alternative inventory, each unique
+typed enumerator case, and an empty `Unreachable` default block. The source
+must be an initialized entry reference parameter dereference or an exact
+immediate enum field of an ordinary read-only source-method receiver. Only
+inert full-expression/read metadata may precede it, and entry cannot have a
+backedge. The receiver rule relies on verified call-boundary availability of
+the complete object, not merely the method's read-only declaration. Semantics
+rejects calls after a projected field move; MIR independently checks receiver
+operands against its solved projected-place availability. Constructor bodies
+begin after required fields are initialized, and destructor bodies precede
+automatic field retirement. The focused moved-enum-field/observer regression
+retains that invariant alongside the general projected-field ownership tests.
+Constructor/destructor bodies, local/value roots, consuming or mutable
+receivers, moved state, intervening effects and incomplete/substituted rows do
+not qualify. This distinction excludes the carrier's private empty/vacant
+shells; an exhaustive-case count alone is never sufficient. The proof emits
+`mir_closed_enum_unreachable_v1` only on that switch edge. Ordinary MIR
+`Unreachable`, explicit defaults and defined-failure paths retain their existing
+abort/diagnostic behavior. Mutation tests cover omitted, duplicate, substituted
+and mistyped cases, unavailable sources, wrong fields/formals, effectful entry,
+changed defaults and backedges.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
@@ -3568,6 +3795,31 @@ the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
 
+Checked references, retained loan pointers and failure-result pointer channels
+share value-object qualification. In particular, a read-only `c_string&`
+borrows the pointer slot as `const char* const &`, not by adding another const
+to its character pointee. The same top-level qualifier is retained when that
+reference crosses nested returns, callable adapters or stored-reference fields.
+This is representation policy only; semantic owner dependencies and access
+permissions remain unchanged.
+
+Generated nominal and instance names hash logical source identities rather
+than host filesystem paths. The source descriptor table carried with failure
+metadata covers every loaded unit, including those without failure sites:
+`<prelude>`, standard-library include names, root/package-relative paths, and
+content-plus-include-route identities for external units. Lowered declaration
+source-unit references must resolve in that table before emission. Declaration
+spans retain physical paths for diagnostics and opt-in debug locations; those
+paths do not participate in generated identifier hashes. This preserves names
+across checkout and toolchain relocation without conflating same-basename
+external units. Failure-site serialization and runtime descriptor IDs retain
+their existing contract; the additional source rows are compiler metadata.
+Private module implementation roots retain their registering interface as
+loading provenance. Their external identity route extends that interface's
+route with the implementation's package-relative path, also covering files
+included only by the implementation. This provenance is separate from
+dependency/visibility edges and grants no access to private declarations.
+
 Interface-owned static functions use the ordinary static declaration and direct
 call path. Purity comes only from the verified function's `pureVirtual` fact,
 never from the enclosing interface kind. Lowered declaration and MIR instance
@@ -3599,6 +3851,23 @@ instance of a generic active-drop class defines its cleanup adapter and
 destructor failure entries in its own deferred concrete row; the primary's
 lifecycle pass leaves that instance alone and emits explicit specializations
 only for instances that remain specializations of the primary.
+
+Dependent generic enum fields and signatures in these native carriers use a
+closed selector catalog. Its key retains the GTI enum family, expanded type
+arguments, and separate checked uint64 value arguments; trailing packs and
+namespace-distinct families remain distinct. Each specialization names an
+already-verified concrete enum representation. The native compiler does not
+instantiate payload semantics or invent a layout. An unused dependent family
+may have only an undefined selector primary; an executable concrete application
+must have its exact lowered/MIR instance. Missing concrete instances never
+become `void` fields. The catalog is emitted only for dependently referenced
+families, and rejects textual duplicate keys. Full native specializations also
+reject typedef-equivalent duplicate keys as redefinitions, without quadratic
+pairwise comparisons or silently selecting another GTI identity. Such a native
+representation collision remains a backend limitation, not a source legality
+rule; exact-only applications do not demand a selector catalog.
+Enum declaration parameter metadata is serialized and validated for exact
+argument kind/count and consistency across the family's concrete rows.
 
 Generated constructors have no source member declaration row. For a retained
 native primary, their exact ordinary and status-form specialization declarations

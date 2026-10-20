@@ -441,11 +441,13 @@ Unused owning results are destroyed at the same full-expression boundary as
 explicitly discarded results. An unused reference does not destroy its referent.
 The compiler trusts the API author's discard policy; the annotation does not
 prove that ignoring an error/status/guard result is appropriate. Error-bearing
-APIs should normally keep the default. `storage<T>::emplace` uses the opt-out
-because insertion is useful independently of its returned element reference.
+APIs should normally keep the default. Emplacement, associative insertion and
+erasure, removal counts, `for_each`, and scalar atomic fetch/exchange operations
+use the opt-out where the returned value is optional; see the
+[standard-library policy](standard-library.md#optional-mutation-results).
 
 See `examples/115-discardable-results.gti` for an unrelated user-defined method
-and the storage API, with both consumed and ignored results.
+and the storage, optional and vector APIs, with both consumed and ignored results.
 
 ### Program initialization and call ordering
 
@@ -713,6 +715,15 @@ bindings, and a failure while the subject's other temporaries end drops the
 consumed enum once. A moved place stays moved after the switch on every path.
 A consumed subject cannot supply borrowed bindings.
 
+When a payload field itself stores a checked reference, its ordinary binding
+transfers that reference rather than borrowing the consumed enum's storage.
+Every selected field address is captured before the old dependency group ends;
+only then are the successor reference bindings published. This same sequence
+applies to passive enums with no destructor obligation. Each successor retains
+its exact external owner and access, and a selected reference returned through
+an ordinary call retains all possible external owners rather than only the
+first payload's owner.
+
 When any alternative contains an active-cleanup class, the enum owns one
 variant-aware lexical cleanup obligation. Payload construction transfers each
 successfully produced owning class value into the selected alternative before
@@ -720,11 +731,17 @@ arming the enum value. A failure before publication cleans the produced
 operand through its existing construction obligation; a failure after
 publication, ordinary fallthrough, `return`, `break`, and `continue` all drop
 the enum exactly once. Whole-enum move construction transfers the active
-alternative and disarms the source. When the payloads permit assignment,
-whole-enum move assignment drops the old destination alternative exactly once,
-transfers the source alternative, and
-later destroys only the moved-from staging shell. A unit alternative has no
-payload cleanup to run.
+alternative and disarms the source. For sums without borrowed state, movable
+payloads permit whole-enum move replacement even if an individual payload is
+not assignable. Replacement prepares the right-hand side, drops the old
+destination alternative exactly once, and constructs the new alternative in
+the cleared destination. A preparation failure preserves the destination; a
+destination-cleanup failure prevents publication and cleans the prepared
+right-hand side. The native staging shell is retired only after checked cleanup.
+Borrow-carrying sums retain their separate dependency and assignment rules.
+A unit alternative has no payload cleanup to run. Failure-free move
+construction does not confer permission to relocate an address-stable object:
+raw relocation independently requires the type's relocation capability.
 
 Owning payload enums may remain direct local values, cross a top-level checked
 reference for non-consuming observation, or cross an admitted ordinary
@@ -863,7 +880,16 @@ would: the residual is `R` itself, or `R` has exactly one `implicit`
 constructor taking it. The failure edge performs the same full-expression
 and lexical cleanup as an `expected` error. Each step is an ordinary call of
 the selected block function, so its own cleanup and defined failures follow
-the ordinary rules.
+the ordinary rules. A reference success uses `take_value`'s declared
+`borrowed_from` contract to preserve the operand's external owner, not the
+lifetime of its consumed wrapper. Its loan remains live through the success
+reference's uses; the residual branch does not create that success loan.
+For a conditional enum dependency, the selected operation's complete checked
+return mapping chooses the actual external origin and permission. Propagation
+does not forward every operand dependency to a scalar success reference, and
+`has_value` grants no special tag authority to `take_value`. Owning enum operands
+use the same ordered argument staging and failure cleanup as other owning
+arguments.
 
 GTI does not provide language exceptions.
 
