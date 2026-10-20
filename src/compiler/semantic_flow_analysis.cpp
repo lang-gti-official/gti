@@ -5933,20 +5933,23 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
   }
-  // A class that stores references is not yet an enum payload: the selected
-  // alternative would need a composed field-origin proof that verified MIR
-  // does not carry. Direct reference and enum payloads remain supported.
+  // A class whose own stored references are guarded by alternatives is not
+  // yet an enum payload: the selected alternative would nest one guarded set
+  // inside another, which verified MIR does not compose. Unconditional
+  // borrowed classes, direct references and enum payloads remain supported.
   for (std::size_t index = 0; index < common; ++index) {
     const auto &field = enumerator.payloadTypes[index];
     if (field.kind != SemanticType::Class)
       continue;
     const auto inventory = storedReferenceInventory(field);
-    if (!inventory || inventory->empty())
+    if (!inventory ||
+        std::none_of(inventory->begin(), inventory->end(),
+                     [](const auto &path) { return !path.conditions.empty(); }))
       continue;
     report(expressionToken(call.arguments()[index]),
            "Payload field type '" + typeSpelling(field) +
-               "' stores references; a class that retains references cannot "
-               "be an enum payload yet.",
+               "' conditionally retains references; a class carrying a "
+               "guarded dependency set cannot be an enum payload yet.",
            "GTI-S2067");
     currentType = enumerator.symbol.type;
     return;
