@@ -9,6 +9,52 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.448.1 — Moved projections, move-only payloads and array-element switches
+
+### No `mut` warning for moved fields and elements
+
+- `warning[GTI-S2096]` ("Mutable binding '…' is never used mutably") no
+  longer appears for a `mut` local whose field or constant-index array element
+  is moved out, such as `mut std::string[2] pair = …;` followed by
+  `std::string taken = std::move(pair[0]);`. Such a move requires a writable
+  binding, so removing the `mut` as the warning suggested turned the program
+  into `error[GTI-S2018]`. Moving an element through a consuming call, as in
+  `std::move(tokens[1]).take()`, and moves inside generic functions count the
+  same way. Reading a field through reflected `field.get_mut(owner)`, which
+  requires a writable owner (`GTI-S2112`), also counts as a mutable use.
+- Moving a whole local with `std::move` does not need `mut`, so an otherwise
+  unused `mut` on that local still receives the warning and its quick fix.
+
+### Move-only payloads without a destructor
+
+- Fix native C++ compile errors ("copy assignment operator is implicitly
+  deleted", "call to implicitly-deleted copy constructor") for a payload enum
+  whose alternative holds a move-only class without a destructor, such as
+  `enum class Choice { none, some(Token token) }` where `Token` deletes its
+  copy constructor. Passing such an enum by value now moves it, whether to a
+  function, method, constructor, lambda or generic function. This covers
+  `Token pick(Choice choice)` whose `switch (std::move(choice))` arm returns
+  its binding. It also moves through fixed-array and `std::vector` elements,
+  both arms of `?:`, and results of functions that can fail.
+- A `switch` that observes a named enum, a parameter or a field of such a type
+  now reads it in place instead of copying it, so tag-only matches compile.
+- `std::experimental::optional<T>` now compiles for such a `T`.
+
+### Switches over fixed-array elements
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a `switch` observes an element of a
+  fixed array of a payload enum and an arm borrows a payload field, as in
+  `switch (items[i]) { case Choice::some(auto& t): return t.id; ... }`. The
+  index is checked first, so an index out of range still stops with
+  `index_out_of_bounds` before any arm runs. The switch, `auto&` and
+  `mut auto&` bindings and copied fields then all read the element itself.
+  Arrays held in locals, globals and class fields, nested arrays such as
+  `grid[r][c]`, and an enum field of an element at a constant index, such as
+  `records[1].state`, work the same way. An array field read through
+  `this`, as in `switch (this.items[i])`, failed in the native C++ compiler
+  instead and now works too.
+
 ## 0.448.0 — One-step declared return initialization
 
 - Explicitly declared value returns use the same single implicit constructor or
