@@ -43,8 +43,10 @@ mutate its writable fields while consuming its receiver; free and static
 functions have no receiver and cannot use this qualifier.
 
 An explicit `mut` on an ordinary local value that is never required for a
-write, mutable-reference argument, mutable raw address, or mutable receiver is
-well-formed but produces warning `GTI-S2096`. Removing that token is a
+write, mutable-reference argument, mutable raw address, mutable receiver,
+explicit move out of one of its fields or constant-index elements, or reflected
+`get_mut` field access is well-formed but produces warning `GTI-S2096`. Moving
+the whole binding does not require `mut`. Removing that token is a
 semantics-preserving quick fix. The compiler is conservative at boundaries it
 cannot prove: generated range/reference bindings and compiler-trusted library
 implementation locals do not receive this advisory warning.

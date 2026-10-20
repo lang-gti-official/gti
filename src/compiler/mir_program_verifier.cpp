@@ -7335,13 +7335,41 @@ verifyMirPayloadEnums(const MirProgram &program) {
     }
   }
 
+  // A payload enum whose folded traits forbid copying has no copy operation,
+  // even when it needs no cleanup: a switch observing a named place
+  // read-borrows it, and every transfer moves.
+  const auto copiesMoveOnlyEnum = [&](const MirOperand &operand) {
+    const MirPayloadEnum *copied =
+        operand.kind == MirOperandKind::Copy &&
+                operand.type.kind == SemanticType::Enum
+            ? program.findPayloadEnum(operand.type)
+            : nullptr;
+    return copied != nullptr && !copied->traits.copyable;
+  };
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
       continue;
     }
     for (const MirBlock &block : body->blocks) {
+      if (block.terminator.value && copiesMoveOnlyEnum(*block.terminator.value))
+        result.errors.push_back({.bodyKind = address.kind,
+                                 .owner = address.owner,
+                                 .block = block.id,
+                                 .message = "move-only payload enum is "
+                                            "copied by its terminator"});
       for (const MirInstruction &instruction : block.instructions) {
+        if (std::any_of(instruction.operands.begin(),
+                        instruction.operands.end(), copiesMoveOnlyEnum)) {
+          result.errors.push_back({.bodyKind = address.kind,
+                                   .owner = address.owner,
+                                   .block = block.id,
+                                   .instruction = instruction.id,
+                                   .message = "move-only payload enum is "
+                                              "copied instead of borrowed or "
+                                              "moved"});
+          continue;
+        }
         if (instruction.operation != MirOperation::PayloadConstruct &&
             instruction.operation != MirOperation::PayloadExtract) {
           continue;
@@ -7825,6 +7853,98 @@ verifyMirPayloadEnums(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "payload-enum instruction differs from its "
                           "verified variant table"});
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// A switch that read-borrows its subject observes the enum in place, so no
+// Load performs the bounds check of a fixed-array element that the subject
+// place selects. Each such selection completes first, at the checked
+// `AddressOf` of the place prefix that ends in its `Index`: the successful
+// edge of that check's `Invoke` dominates the switch. The backend then spells
+// the switch and the payload extractions over the same element subscription
+// without checking it again.
+[[nodiscard]] MirVerificationResult
+verifyMirCheckedSwitchSubjects(const MirProgram &program) {
+  MirVerificationResult result;
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    const MirBody *body = findMirBody(program, address);
+    if (body == nullptr) {
+      continue;
+    }
+    std::optional<std::optional<MirDominanceInfo>> dominance;
+    for (const MirBlock &block : body->blocks) {
+      const MirTerminator &terminator = block.terminator;
+      const MirPlace *subject =
+          terminator.kind == MirTerminatorKind::Switch && terminator.value &&
+                  terminator.value->kind == MirOperandKind::BorrowRead
+              ? body->findPlace(terminator.value->place)
+              : nullptr;
+      if (subject == nullptr ||
+          std::none_of(subject->projections.begin(), subject->projections.end(),
+                       [](const MirPlaceProjection &projection) {
+                         return projection.kind == MirProjectionKind::Index;
+                       })) {
+        continue;
+      }
+      if (!dominance) {
+        dominance = computeMirDominance(*body);
+      }
+      // Control-flow verification reports a body without dominance; a switch
+      // that never executes reads no element.
+      if (!*dominance || !(*dominance)->isReachable(block.id)) {
+        continue;
+      }
+      const auto checkedPrefix = [&](std::size_t length) {
+        return std::any_of(
+            body->blocks.begin(), body->blocks.end(),
+            [&](const MirBlock &candidate) {
+              const MirTerminator &edge = candidate.terminator;
+              if (edge.kind != MirTerminatorKind::Invoke)
+                return false;
+              const auto check = std::find_if(
+                  candidate.instructions.begin(), candidate.instructions.end(),
+                  [&](const MirInstruction &instruction) {
+                    return instruction.id == edge.invokeInstruction;
+                  });
+              const MirPlace *selected =
+                  check != candidate.instructions.end() && !check->tombstone &&
+                          check->kind == MirInstructionKind::Compute &&
+                          check->operation == MirOperation::AddressOf &&
+                          !check->definedFailure.localOrigins.empty() &&
+                          check->operands.size() == 1 &&
+                          check->operands.front().kind ==
+                              MirOperandKind::Address
+                      ? body->findPlace(check->operands.front().place)
+                      : nullptr;
+              return selected != nullptr && selected->root == subject->root &&
+                     selected->binding == subject->binding &&
+                     selected->symbol == subject->symbol &&
+                     selected->capture == subject->capture &&
+                     selected->temporary == subject->temporary &&
+                     selected->value == subject->value &&
+                     selected->loan == subject->loan &&
+                     selected->projections.size() == length &&
+                     std::equal(selected->projections.begin(),
+                                selected->projections.end(),
+                                subject->projections.begin()) &&
+                     (*dominance)->dominates(edge.target, block.id);
+            });
+      };
+      for (std::size_t length = 1; length <= subject->projections.size();
+           ++length) {
+        if (subject->projections[length - 1].kind == MirProjectionKind::Index &&
+            !checkedPrefix(length)) {
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .block = block.id,
+               .message = "switch subject reads a fixed-array element before "
+                          "its checked selection"});
+          break;
         }
       }
     }
@@ -16789,6 +16909,7 @@ verifyMirProgramContracts(const MirProgram &program) {
     integralEnumIds.push_back(enumeration.type);
   }
   appendVerification(result, verifyMirPayloadEnums(program));
+  appendVerification(result, verifyMirCheckedSwitchSubjects(program));
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];
