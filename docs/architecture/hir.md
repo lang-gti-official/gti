@@ -872,7 +872,12 @@ in the primary model, without retaining a second semantic model in HIR. The HIR
 model checks every entry against that semantic evidence: the
 selected constructor, parameter types and defaults, the constructor failure
 channel, and the absence of a result borrow. MIR lowers it as any constructor
-call; no MIR operation is added.
+call; no MIR operation is added. The constructor's first argument may carry a
+different source than the entry when `HirBody::sourceAliases` records that
+argument as an alias of the entry's source, as when a reflected expression
+lowers through a wrapper value. A selected constructor with a built-in owning
+handle parameter (`UniqueOwner` or `SharedPointer`) keeps that handle's
+unstaged transport and no call plan, as the same explicit construction would.
 
 The bounded M-EXEC-01 invocation slices give an eligible ordinary call,
 resolved class operator call, or ordinary constructor a `HirCallPlan`.

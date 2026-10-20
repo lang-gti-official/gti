@@ -56,7 +56,9 @@ for (T value : range) {
 
 The compiler evaluates the range expression exactly once. For a read-only
 loop, an addressable lvalue is retained by one read-only hidden owner
-reference. For a mutable-reference loop, an addressable lvalue must provide a
+reference. When the range expression is a call returning a mutable
+reference, the read-only loop retains that call's mutable loan for the whole
+traversal, but every element it binds is read-only. For a mutable-reference loop, an addressable lvalue must provide a
 mutable place and is retained by one exclusive hidden owner reference. An
 owned prvalue is transferred into hidden loop storage and can supply either
 access mode. A second range carrier borrows that owner. Nominal read-only
@@ -166,10 +168,10 @@ still owns a distinct range plan and loop-bounded element loan. A mutable
 traversal remains exclusive and therefore cannot overlap either another
 traversal or an ordinary read of the same owner.
 
-## Named Expected-payload ranges
+## Ranges over `expected` payloads
 
-A read-only range expression may be the exact `value()` extraction from an
-available named local or by-value parameter of type `expected<T, E>`:
+`expected` observers are ordinary source accessors, so a range expression such
+as `result.value()` or `result.error()` uses the general rules above:
 
 ```gti
 int count(expected<std::string, int32_t> result) {
@@ -181,22 +183,17 @@ int count(expected<std::string, int32_t> result) {
 }
 ```
 
-`T` must independently satisfy the ordinary read-only structural range
-contract. This is not recognition of `expected`, `string`, or another public
-library spelling: the frontend admits only the exact compiler-trusted checked
-value extraction and records it in the existing range plan. The extraction's
-wrong-state failure occurs before the loop starts. On success, the range loan
-is rooted in and conservatively protects the complete named `expected`.
-Nested read-only traversals of the same payload are permitted; `continue`,
-`break`, `return`, normal exhaustion, and defined failure end element loans
-before their parent range loans.
-
-The receiver cannot be a field, global/static, returned reference, or opaque
-call result for this retained form. The loop cannot request mutable elements,
-iterate `error()`, move or replace the `expected`, or let an element reference
-escape. A fresh rvalue such as `make_result().value()` may still be transferred
-into the ordinary owned range-temporary path when its payload is itself a
-valid range; that case does not create a retained named-owner projection.
+On a named carrier, including a field or a reference parameter, the accessor
+returns a checked reference tied to its receiver, and the loop retains that
+reference as its owner. A mutable carrier selects the mutable accessor; its
+loop may request mutable elements, and a read-only loop still binds only
+read-only elements. A fresh result such as `make_result().value()` selects the
+consuming accessor and transfers the owned payload into the ordinary owned
+range temporary. The extraction's wrong-state failure, `GTI-R0009`, occurs
+before the loop starts. While the traversal is live, replacing or mutating the
+carrier is rejected as for any other borrowed owner. No part of this is
+specific to `expected`; a user-defined carrier with the same accessors behaves
+the same way.
 
 ## Mutable structural protocol
 

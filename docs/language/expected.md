@@ -49,6 +49,13 @@ path; `T` need not have a default constructor and may be `void`. The error's
 ordinary copying or explicit movement rules still apply. This does not extend
 the checked-reference specialization described below.
 
+A `std::string_view` or `c_string` alternative is stored text, so it follows
+the ownerless storage rule for text fields in
+[ownership and lifetimes](ownership-and-lifetimes.md): it must be ownerless,
+such as a string literal or a view forwarded from one. A view of a dynamic
+string, even one the caller owns, is rejected (`GTI-S2045`); return an owned
+`std::string` for such text.
+
 `unexpected(error)` checks ownership when it constructs the error payload,
 including in returns, initializers and call arguments. A noncopyable place is
 rejected there with an ownership diagnostic rather than deferred to native
@@ -297,6 +304,11 @@ pointer neither moves nor aliases its pointee, and every dereference remains an
 ordinary `unsafe` operation. Raw pointers are not constant values, so these
 results are runtime-only.
 
+A raw-pointer error alternative, such as `expected<T, const U*>`, is not
+currently supported. The source error storage has no raw-pointer profile, so
+such a type is rejected during semantic analysis (`GTI-S2056`, related to the
+prelude's error field) rather than reaching code generation.
+
 ## Mapping and chaining owned successes
 
 `transform` maps one successful value into another, preserving the error type:
@@ -394,8 +406,9 @@ or propagated with the ordinary prefix `?`. There is no separate `?.` operator.
 
 The mapper follows the same read-callable `F&` rule. It receives the moved
 `E` through an ordinary exact call, without an implicit conversion. The source
-alternatives must be movable, and the mapped error must be a non-void owned
-value without borrowed state. Callable classes are not mappers, and
+alternatives must be movable, and the mapped error must be a movable, non-void
+owned value without borrowed state; the member's `requires` clause rejects a
+non-movable result with `GTI-S2029`. Callable classes are not mappers, and
 `expected<T&, E>` receivers do not offer this member. No additional include is
 required.
 

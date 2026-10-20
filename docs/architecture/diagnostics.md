@@ -9,10 +9,12 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
-`GTI-S2082` follows inline Expected/Unexpected alternatives as well as fixed
-arrays when detecting a recursive by-value class layout. It anchors the field's
-written type and retains the containing declaration and indirection hint;
-an error-only initializer does not make inline alternative storage indirect.
+`GTI-S2082` follows payload-enum alternatives, including those inside the
+source `expected` class, as well as fixed arrays when detecting a recursive
+by-value class layout. It anchors the field's written type and retains the
+containing declaration and indirection hint; an error-only initializer does not
+make inline alternative storage indirect. A type whose field reaches an
+already-diagnosed recursive layout is marked invalid without a second report.
 The CLI and LSP use this semantic diagnostic, without an automatic ownership
 rewrite, and editor publication clears it after a nonrecursive type edit.
 
@@ -341,17 +343,28 @@ hints explain scoped login or the configured environment override; no fix-it
 stores credentials or changes package permissions. See
 [registry authentication](build-and-driver.md#source-package-registries).
 
-`GTI-S2097` reports an invalid built-in expected mapper contract, naming the
-selected combinator and its exact required signature. It points at the mapper
-expression and retains candidate declarations when function-item selection
-fails. `transform`, `and_then`, and `transform_error` share the same checker;
-an `and_then` result with a different error type explains the explicit
-`transform_error` alternative. `GTI-S2018` reports implicit consumption of a
-named expected by those members or `expect`, and suggests explicit movement
-without an automatic ownership-changing fix. Invalid `expect` messages use
-`GTI-S2016`; unsupported checked-borrow extraction uses `GTI-S2045`. The LSP
-publishes these frontend records and receives member completion signatures
-from the same semantic expected surface, including consuming `&&` qualifiers.
+The source `expected` class checks mapper contracts with ordinary rules, so
+the built-in mapper family `GTI-S2097` is retired. A mapper that fails a
+member's `requires` clause, such as `and_then` with a different error type or
+`transform_error` with a non-movable result, reports `GTI-S2029` at the call's
+closing parenthesis. Mapper arity and argument mismatches use the ordinary call
+diagnostics (`GTI-S2005`, `GTI-S2003`, `GTI-S2017`) at the member name, with
+the prelude invocation as related information. `GTI-S2018` reports implicit
+consumption of a named expected by the consuming members or `expect`, and
+suggests explicit movement without an automatic ownership-changing fix. The
+LSP publishes these frontend records, and member completion reads the same
+source declarations, including consuming `&&` qualifiers.
+
+`GTI-S2029` names a requirement's subject by its written type, such as
+`type 'expected<int32_t, bool>'`, when the requirement argument is qualified or
+has arguments, and its related note reads `Constraint on <subject> is declared
+here.` A by-value argument rejected only because copy construction is deleted
+(`GTI-S2018`) adds the hint `Pass the argument with std::move(...) when this
+call should transfer ownership.` when the type is movable; the constructor path
+reports that hint once. A call that passes dynamic text to a function requiring
+ownerless text (`GTI-S2045`) relates the callee parameter with the note
+`This parameter requires ownerless text because the function stores or
+forwards it.`
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,

@@ -440,10 +440,12 @@ owned value at its written argument position, begins one read loan, evaluates
 later arguments, invokes the selected callable, ends the loan immediately
 afterward, and retains the value's drop obligation until the enclosing
 full-expression boundary. A by-value exact overload remains preferred because
-this borrowed form is a fallback viability tier. The permission does not apply
-to `mut T&`, local or stored bindings, explicit moves, compound or native
-producers, borrowed-state values, or a callable result that can retain the
-loan.
+this borrowed form is a fallback viability tier. An explicit
+`std::move(local)` of a whole local or parameter is admitted the same way: the
+moved value becomes a temporary owned by the enclosing full expression, and the
+local is moved on every later path. The permission does not apply to `mut T&`,
+local or stored bindings, moves of a projection, compound or native producers,
+borrowed-state values, or a callable result that can retain the loan.
 
 A concrete payload-enum construction with copyable, movable, trivial-drop
 value traits and no stored borrows supports the same ordinary call-only
@@ -535,6 +537,16 @@ global borrow earlier. The concurrent execution profile does not admit this
 unsynchronized mutable process-wide storage: its existing `GTI-S2060` rule
 requires immutable, share-capable globals/statics until an atomic, mutex, or
 guard contract provides synchronization.
+
+The same exact global or static place may be the origin of a
+reference-bearing source carrier, such as a class with a reference field or a
+payload enum with a reference alternative. A free or static function may return
+a carrier whose complete dependency set names that place: for example, a
+`lookup<int32_t&> find_global()` that returns `global_value` through an
+`implicit` constructor, or `slot::item(global_value)`. Each call creates a
+checked loan against that storage rather than against a parameter or local. A
+reference-free alternative still carries no dependency, and the single-threaded
+profile and same-path rules above still apply.
 
 Retaining a borrow from a move-only receiver prevents moving or replacing that
 receiver and calling its mutable methods while the semantic loan remains live.
@@ -1780,7 +1792,10 @@ constructor input; the constructed result carries a distinct checked set.
 A fresh wrapper can also be consumed immediately, and an ordinary reference
 return can relay the extracted external reference. The temporary's mutable
 shell loan retains its producer's complete stored group through invocation;
-retiring that shell does not retire the caller's referent. A relay must still
+retiring that shell does not retire the caller's referent. Consuming a fresh or
+explicitly moved wrapper does not upgrade its dependencies either: a read-only
+dependency stays read-only, so another wrapper may keep reading the same owner
+while one is consumed. A relay must still
 obey its own parameter-origin/access contract and cannot escape a local owner
 or permit mutation while a returned shared reference remains live.
 

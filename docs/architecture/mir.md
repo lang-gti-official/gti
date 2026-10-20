@@ -407,6 +407,25 @@ states; neither shares an origin interpreter or trusts the other's attached
 facts. Nonempty call substitution preserves the complete guarded external
 dependency group rather than selecting one representative origin.
 
+A complete mapping may name static storage: its origin is `Global`, with the
+storage symbol in `globalRoot`, and its source path is built from that
+storage's own type. A capture-free `Symbol` place is that storage even in the
+provisional program, which is lowered before its initialization plan exists.
+A carrier whose contract names a global borrows the global's storage-typed
+place, not a place typed as the carrier. The per-input returned-field checks
+skip `Global` mappings, which have no call input; the global-origin check and
+the complete-set flow verify them. A mapping may also name caller storage that
+contains the referent, such as an accessor receiver, an owned element buffer or
+an owning handle's checked pointee, provided that storage is reached without a
+stored reference and stores none itself. A dereference through a class ends
+that path. Published dependencies keep a `CallResult` accessor as their parent
+together with its exact source, as reference loan facts do; a parentless
+referent names the exact input place, either the reference argument's place or
+a by-value carrier's `Stored` sources. Dependency transport compares sources
+structurally: distinct place ids with one root, binding, symbol, capture,
+temporary, value, loan, projection path, type and access are one source, as
+when two calls through one reference formal each create a dereference place.
+
 Constructor rows also retain complete result contracts. For a conditional
 borrowed field, verification requires the exact `Initialize` destination and
 operand, its independently reconstructed complete value fact, and a distinct
@@ -614,6 +633,12 @@ dependency survives through full-expression destruction of owned fields.
 Independent verification rejects missing dependencies, changed permissions,
 forged shell authority and owner-loan retirement before cleanup. Shared-only
 and mixed carriers use one schedule rather than a separate passive exception.
+A temporary carrier borrowed only by argument-role `CallArgument` loans may
+be consumed once those loans end; loan flow still rejects an earlier move. A
+temporary borrowed by a receiver stage or a call result keeps the drop-only
+rule. A copied carrier argument relays the binding's retained `Stored` group as
+the parent of a scalar reference result, and lowering maps a `Parameter` entry
+loan's complete dependency to the key-matched place under its referent.
 Borrowed-result operators keep their ordinary value receiver stage. When their
 result protects the receiver's own storage, lowering and independent verification
 select the exact producer-owned temporary and its full-expression drop, retaining
@@ -1829,6 +1854,22 @@ method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
 operand retains both the external owner loan and the separately verified
 runtime field/dereference place, never the carrier shell's address.
+
+`verifyOwnerlessTextContracts` independently derives every ownerless text
+input contract. A write to a text field, to a text element of an array reached
+through a field, to a payload-enum text field, or any other checked text
+assignment outside local storage needs an operand whose source is known: a
+string or null literal (including `nullptr` for a `c_string` field), an
+ownerless field projection, unprojected static text storage, a temporary or
+block parameter whose every incoming value is known, or a formal parameter.
+A formal becomes a requirement of its function. Requirements propagate to a
+fixed point through calls and constructions and must equal the semantic
+`ownerlessTextParameters` exactly. Virtual, override or native dispatch,
+function items, lambdas and native exports cannot carry a nonempty
+requirement. Local text bindings and local text arrays are not field storage
+and may hold dynamic text. Static text storage counts as ownerless because
+semantics admits only ownerless initializers and stores into it; MIR checks
+assignments to it but does not yet re-verify global initializers.
 
 Plain and fallible reference returns share the exact runtime-alias selection
 for a reference parameter's entry loan. If a local alias stores an accessor's
@@ -3598,7 +3639,17 @@ over range entry. A by-value Expected parameter remains native parameter
 storage; the backend may transfer it into its MIR binding and defer its final
 drop to native parameter scope only when that exact verified range relation is
 present. No other Expected call-result loan receives this representation
-permission.
+permission. Since `expected` became a source-defined prelude class, no source
+program reaches this extraction: `result.value()` is an ordinary receiver-tied
+call result in the general plans above. The route remains only until the
+built-in Expected representation is removed.
+
+A read-only plan may share a mutable parent. When the range expression is a
+call returning `mut T&`, the plan's range loan is that call's mutable result
+loan, and the element-owner and element loans may name that loan directly
+instead of a read-only child. Verification still requires the declared
+element access to be read-only in that case, and a mutable element access
+requires a mutable range loan.
 
 Verification requires semantic, HIR, and MIR access modes to agree; a mutable
 element loan must be a non-escaping child of the exact mutable range parent.

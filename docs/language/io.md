@@ -204,9 +204,8 @@ if (!closed) {
 ```
 
 Ordinary projections in this example are consumed within their enclosing full
-expressions. One bounded retained form is also available: a read-only range may
-iterate `value()` from a named local or by-value
-`expected<std::string, E>` while the complete `expected` remains unchanged:
+expressions. A range may also iterate `value()` directly, because the observer
+returns a checked reference tied to the `expected`:
 
 ```gti
 mut auto chunk = std::fread(stream, std::size_t(4096));
@@ -219,12 +218,10 @@ for (auto& byte : chunk.value()) {
 ```
 
 The checked extraction happens before `begin()`. Its failure follows the
-ordinary defined-failure path, and the successful loop holds a shared loan on
-the complete `expected` until every loop exit has cleaned up. Moving,
-replacing, mutating, or dropping `chunk` during the loop is rejected. Mutable
-payload traversal, field or global receivers, retaining a standalone payload
-reference, and returning an element remain unsupported; see
-[`ranges.md`](ranges.md#named-expected-payload-ranges).
+ordinary defined-failure path, and the successful loop holds a loan on the
+complete `expected` until every loop exit has cleaned up. Moving, replacing,
+or dropping `chunk` during the loop is rejected, and so is any other mutation
+of it; see [`ranges.md`](ranges.md#ranges-over-expected-payloads).
 
 ## Composable buffered I/O
 
