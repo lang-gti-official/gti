@@ -1,0 +1,111 @@
+#include <std/string>
+#include <std/vector>
+
+// A class temporary borrowed by a read-only reference parameter inside a
+// conditionally evaluated operand: the right operand of `&&` or `||`, or an
+// arm of `?:`. The temporary exists only when its operand runs. It lives in
+// the one hidden slot that carries its conditional drop to the end of the
+// enclosing full expression, so it is destroyed exactly once when it was
+// constructed and never when its operand was skipped, on normal and defined-
+// failure paths alike.
+//
+// Tracked prints its id when constructed and the negated id when destroyed.
+// Pod has no destructor. Nothing else prints outside main and run.
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) { std::println(this.id); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(-this.id); }
+};
+
+class Pod {
+public:
+  int value;
+  Pod(int value) : value(value) {}
+};
+
+class Factory {
+public:
+  Factory() {}
+  Tracked build(int id) { return Tracked(id); }
+};
+
+Tracked make(int id) { return Tracked(id); }
+
+Pod pod(int value) { return Pod(value); }
+
+bool seen(Tracked& item) { return item.id > 0; }
+
+bool held(Pod& item) { return item.value > 0; }
+
+bool pick(Tracked& item, bool choice) { return choice && item.id > 0; }
+
+int weight(Tracked& item, Pod& extra) { return item.id + extra.value; }
+
+bool ordered(Tracked& item, int value) { return item.id + value > 0; }
+
+// These fail when divisor is zero: while the argument is borrowed, before
+// the temporary exists, and in a plain computation.
+bool divided(Tracked& item, int divisor) { return item.id / divisor > 0; }
+
+Tracked make_divided(int id, int divisor) { return Tracked(id / divisor); }
+
+int quotient(int value, int divisor) { return value / divisor; }
+
+// Runs every shape once. `on` selects which operands run, and `base` keeps
+// the two runs' ids apart.
+int run(bool on, int base) {
+  bool off = !on;
+  Factory factory{};
+  mut int total = 0;
+  // `&&` right operands, with and without cleanup.
+  if (on && seen(make(base + 1))) { total += 1; }
+  if (on && held(pod(base + 2)) && seen(Tracked(base + 3))) { total += 1; }
+  // `||` right operands.
+  if (on || seen(make(base + 4))) { total += 1; }
+  if (off || held(Pod(base + 5))) { total += 1; }
+  // `?:` arms, each borrowing two temporaries.
+  total += on ? weight(make(base + 6), pod(base + 7))
+              : weight(Tracked(base + 8), Pod(base + 9));
+  // A temporary borrowed by the condition outlives the selected arm's own;
+  // both are destroyed at the end of the full expression.
+  bool chosen = pick(make(base + 10), on) ? seen(make(base + 11))
+                                          : seen(factory.build(base + 12));
+  if (chosen) { total += 1; }
+  // Nested operators.
+  bool nested = (off && seen(make(base + 13))) || (on && seen(make(base + 14)));
+  if (nested) { total += 1; }
+  // A loop condition evaluates its operand on every iteration.
+  mut int count = 0;
+  while (count < 2 && seen(make(base + 15 + count))) { count += 1; }
+  return total + count;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true, 0));
+  std::println(run(false, 100));
+  // Defined failure. Scenario 1 fails the borrowing callee in an `&&`
+  // operand, 2 a later argument in an `||` operand after the temporary was
+  // produced, 3 the producer in a `?:` arm, 4 the right operand of an `&&`
+  // whose left operand still holds its temporary, and 5 the same after that
+  // temporary's operand was skipped. Cleanup destroys exactly what exists.
+  int scenario = argc - 1;
+  bool live = argc > 0;
+  Tracked outer{201};
+  bool first = live && divided(make(202), scenario == 1 ? 0 : 1);
+  std::println("first");
+  bool second =
+      !live || ordered(make(203), quotient(1, scenario == 2 ? 0 : 1));
+  std::println("second");
+  bool third = scenario == 3 ? seen(make_divided(204, 0)) : seen(make(204));
+  std::println("third");
+  bool fourth = (live && seen(make(205))) &&
+                quotient(1, scenario == 4 ? 0 : 1) > 0;
+  std::println("fourth");
+  bool fifth = (!live && seen(make(206))) ||
+               quotient(1, scenario == 5 ? 0 : 1) > 0;
+  std::println("last");
+  return first && second && third && fourth && fifth ? 0 : 1;
+}
