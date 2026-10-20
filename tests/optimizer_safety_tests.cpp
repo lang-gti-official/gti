@@ -2131,10 +2131,10 @@ int32_t main() {
                                   " (bounds=" + std::to_string(bounds) + ")";
       expect(optimized.valid(),
              std::string(fixture.name) + " must remain verified");
-      const bool recoveryPending =
-          fixture.name == "floating-store" ||
-          fixture.name == "floating-field-store" ||
-          fixture.name == "scalar-fill" || fixture.name == "enum-fill";
+      const bool recoveryPending = fixture.name == "floating-store" ||
+                                   fixture.name == "floating-field-store" ||
+                                   fixture.name == "scalar-fill" ||
+                                   fixture.name == "enum-fill";
       if (recoveryPending)
         pending(bounds == fixture.bounds, message);
       else

@@ -1607,7 +1607,7 @@
       "outcome": "rejected"
     },
     "own-x10-borrowed-expected-value-or": {
-      "code": "GTI-S2045",
+      "code": "GTI-S2000",
       "outcome": "rejected"
     },
     "own-x11-borrowed-expected-field": {

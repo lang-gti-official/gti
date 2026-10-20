@@ -1344,7 +1344,8 @@ private:
     if (instruction.kind == MirInstructionKind::Call &&
         intrinsicTerminalFailureOutcome(instruction.intrinsic))
       return fail(frame, ConstantEvaluationFailure::InvalidOperands,
-                  "A terminal defined-failure operation executed during constant evaluation.");
+                  "A terminal defined-failure operation executed during "
+                  "constant evaluation.");
     if (instruction.kind == MirInstructionKind::AllocateObject) {
       if (!instruction.destination || !instruction.objectAllocation)
         return fail(frame, ConstantEvaluationFailure::InvalidOperands);
@@ -2066,6 +2067,48 @@ private:
             ++writes;
         }
       }
+      if (writes == 0) {
+        // A text field publishes through the constructor record rather than
+        // an explicit Initialize, as the backend expects. Its exact initial
+        // value is still one SSA value of this body; write it at completion.
+        const auto initializer = std::find_if(
+            constructor->initializers.begin(), constructor->initializers.end(),
+            [&](const MirConstructorInitializer &candidate) {
+              return candidate.kind ==
+                         ConstructorInitializerTargetKind::Field &&
+                     candidate.field == field.symbol;
+            });
+        const bool text =
+            initializer->targetType.kind == SemanticType::StringView ||
+            initializer->targetType.kind == SemanticType::CString;
+        const auto value =
+            text && initializer->arguments.size() == 1
+                ? std::find_if(constructor->body.values.begin(),
+                               constructor->body.values.end(),
+                               [&](const MirValue &candidate) {
+                                 return candidate.sourceValue ==
+                                            initializer->arguments.front() &&
+                                        (candidate.info.type ==
+                                             initializer->targetType ||
+                                         (initializer->targetType.kind ==
+                                              SemanticType::CString &&
+                                          candidate.info.type.kind ==
+                                              SemanticType::NullPtr));
+                               })
+                : constructor->body.values.end();
+        if (value == constructor->body.values.end())
+          return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
+                  .body = {MirBodyKind::Constructor, id}};
+        auto &pending = declarativeFields[&constructor->body];
+        if (std::none_of(pending.begin(), pending.end(),
+                         [&](const DeclarativeField &entry) {
+                           return entry.symbol == field.symbol;
+                         }))
+          pending.push_back({.symbol = field.symbol,
+                             .value = value->id,
+                             .type = initializer->targetType});
+        continue;
+      }
       if (writes != 1)
         return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
                 .body = {MirBodyKind::Constructor, id}};
@@ -2338,6 +2381,39 @@ private:
       }
       case MirTerminatorKind::Return: {
         if (frame.address.kind == MirBodyKind::Constructor && frame.receiver) {
+          if (const auto pending = declarativeFields.find(&frame.body);
+              pending != declarativeFields.end()) {
+            const auto *aggregate =
+                std::get_if<ConstantAggregateValue>(&*frame.receiver);
+            if (!aggregate || !aggregate->value)
+              return fail(frame, ConstantEvaluationFailure::UnsupportedType);
+            auto updated = *aggregate->value;
+            for (const auto &entry : pending->second) {
+              const auto &value = frame.values[entry.value];
+              if (!value ||
+                  std::any_of(updated.fields.begin(), updated.fields.end(),
+                              [&](const ConstantAggregateField &item) {
+                                return item.symbol == entry.symbol;
+                              }))
+                return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+              const auto converted = exactValue(*value, entry.type);
+              if (!converted)
+                return fail(frame, converted.failure);
+              updated.fields.push_back({entry.symbol, *value});
+            }
+            // Keep the declaration order an Initialize schedule produces, so
+            // equal objects have one exact constant representation.
+            if (const auto *instance = record(returnType)) {
+              std::vector<ConstantAggregateField> ordered;
+              for (const auto &field : instance->declaredFields)
+                for (const auto &item : updated.fields)
+                  if (item.symbol == field.symbol)
+                    ordered.push_back(item);
+              if (ordered.size() == updated.fields.size())
+                updated.fields = std::move(ordered);
+            }
+            frame.receiver = makeConstantAggregate(std::move(updated));
+          }
           const auto complete = exactValue(*frame.receiver, returnType);
           return complete ? MirConstantEvaluation{.value = complete.value}
                           : fail(frame, complete.failure);
@@ -2422,6 +2498,15 @@ private:
   std::unordered_map<const MirBody *,
                      std::unordered_map<MirInstructionId, MirPlaceId>>
       hiddenSlots;
+  // Text fields a constructor body publishes through its record, keyed by
+  // that body; each is written from its exact SSA value at completion.
+  struct DeclarativeField {
+    std::size_t symbol = 0;
+    MirValueId value = 0;
+    SemanticType type;
+  };
+  std::unordered_map<const MirBody *, std::vector<DeclarativeField>>
+      declarativeFields;
 };
 } // namespace
 

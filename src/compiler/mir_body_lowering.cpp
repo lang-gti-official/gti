@@ -390,21 +390,22 @@ public:
                       initializer.targetType.kind == SemanticType::Lambda) &&
                      initializer.arguments.size() == 1) {
             const auto *input = findValue(initializer.arguments.front());
-            const bool knownEmpty = input && input->borrowDependencies &&
+            const bool knownEmpty =
+                input && input->borrowDependencies &&
                 input->borrowDependencies->dependencies.empty() &&
                 !input->borrowDependencies->possibleAlternatives.empty();
             // An independently typed empty alternative has no owner to
             // publish. Every nonempty carrier still transfers its full group.
             if (!knownEmpty) {
-            const MirLoanId transferred = markStoredCarrierBorrow(
-                initializer.arguments.front(), initializer.field,
-                initializer.borrowAccess);
-            // Publication retired this exact entry dependency inside the
-            // initializer. It is no longer part of the pre-expression live
-            // prefix against which transient cleanup is computed.
-            for (Scope &scope : incomingScopes) {
-              std::erase(scope.loans, transferred);
-            }
+              const MirLoanId transferred = markStoredCarrierBorrow(
+                  initializer.arguments.front(), initializer.field,
+                  initializer.borrowAccess);
+              // Publication retired this exact entry dependency inside the
+              // initializer. It is no longer part of the pre-expression live
+              // prefix against which transient cleanup is computed.
+              for (Scope &scope : incomingScopes) {
+                std::erase(scope.loans, transferred);
+              }
             }
           }
           const HirConstructorInstance *target =
@@ -3461,8 +3462,9 @@ private:
     // complete, typed dependency-free alternative. A missing loan or missing
     // dependency set is not evidence of emptiness; the program verifier still
     // independently reconstructs the producer and storage flow.
-    return (type.kind == SemanticType::Enum || type.kind == SemanticType::Class) && value &&
-           value->info.type == type && value->borrowDependencies &&
+    return (type.kind == SemanticType::Enum ||
+            type.kind == SemanticType::Class) &&
+           value && value->info.type == type && value->borrowDependencies &&
            value->borrowDependencies->dependencies.empty() &&
            !value->borrowDependencies->possibleAlternatives.empty() &&
            lowered && lowered->info.type == type &&
@@ -3796,11 +3798,9 @@ private:
     if (!origin.valid() || step == steps.end())
       return 0;
     const auto &bindings = program.module().bindings;
-    const auto global =
-        std::find_if(bindings.begin(), bindings.end(),
-                     [&](const HirBinding &binding) {
-                       return binding.id == step->binding;
-                     });
+    const auto global = std::find_if(
+        bindings.begin(), bindings.end(),
+        [&](const HirBinding &binding) { return binding.id == step->binding; });
     std::vector<SymbolId> fields;
     for (const auto &projection : origin.projections) {
       if (projection.kind != PlaceProjectionKind::Field)
@@ -7663,9 +7663,9 @@ private:
         };
         std::vector<MirPlaceId> argumentPlaces;
         const auto addPlace = [&](MirPlaceId place) {
-          if (place != 0 && std::find(argumentPlaces.begin(),
-                                      argumentPlaces.end(),
-                                      place) == argumentPlaces.end())
+          if (place != 0 &&
+              std::find(argumentPlaces.begin(), argumentPlaces.end(), place) ==
+                  argumentPlaces.end())
             argumentPlaces.push_back(place);
         };
         std::vector<std::size_t> mappedParameters = value.borrowArguments;
@@ -7678,16 +7678,14 @@ private:
           if (parameter >= call.operands.size() ||
               parameter >= call.parameterTypes.size())
             continue;
-          const MirOperand *input =
-              stagedOperand(parameter < sourceArguments.size()
-                                ? sourceArguments[parameter]
-                                : call.operands[parameter]);
-          const MirPlace *place = input ? output.findPlace(input->place)
-                                        : nullptr;
+          const MirOperand *input = stagedOperand(
+              parameter < sourceArguments.size() ? sourceArguments[parameter]
+                                                 : call.operands[parameter]);
+          const MirPlace *place =
+              input ? output.findPlace(input->place) : nullptr;
           if (!place)
             continue;
-          if (call.parameterTypes[parameter].kind ==
-              SemanticType::Reference) {
+          if (call.parameterTypes[parameter].kind == SemanticType::Reference) {
             addPlace(place->id);
             continue;
           }
@@ -11169,12 +11167,12 @@ private:
     const MirLoanId sourceLoan = loanForValue(valueId);
     const MirLoan *source = output.findLoan(sourceLoan);
     const HirValue *value = findValue(valueId);
-    const bool constructed = source != nullptr && value != nullptr &&
-                             !source->entry && !source->escapes &&
-                             source->producedBy == valueId &&
-                             (value->constructorTarget.has_value() ||
-                              (value->kind == HirValueKind::PayloadConstruction &&
-                               value->borrowDependencies.has_value()));
+    const bool constructed =
+        source != nullptr && value != nullptr && !source->entry &&
+        !source->escapes && source->producedBy == valueId &&
+        (value->constructorTarget.has_value() ||
+         (value->kind == HirValueKind::PayloadConstruction &&
+          value->borrowDependencies.has_value()));
     if (source == nullptr || source->kind != MirLoanKind::Stored ||
         (!constructed &&
          (!source->entry || source->designatedFields.empty())) ||
@@ -14155,14 +14153,13 @@ private:
               // its exact address. This builder has an unfinished CFG;
               // independent verification proves unique alias initialization
               // and dominance on the final CFG.
-              const bool referenceAliases =
-                  std::all_of(candidate.carriers.begin(),
-                              candidate.carriers.end(), [&](HirBindingId id) {
-                                const auto *alias = findBinding(id);
-                                return alias != nullptr &&
-                                       alias->info.type.kind ==
-                                           SemanticType::Reference;
-                              });
+              const bool referenceAliases = std::all_of(
+                  candidate.carriers.begin(), candidate.carriers.end(),
+                  [&](HirBindingId id) {
+                    const auto *alias = findBinding(id);
+                    return alias != nullptr &&
+                           alias->info.type.kind == SemanticType::Reference;
+                  });
               if (candidate.kind != MirLoanKind::CallResult ||
                   (!candidate.carriers.empty() && !restoredAliases &&
                    !referenceAliases) ||
@@ -14202,19 +14199,20 @@ private:
                 function->returnBorrowOrigin == BorrowOriginKind::Argument &&
                 function->returnBorrowParameter <
                     function->parameterBindings.size()) {
-              const auto transfers = callResultTransferredFrom.find(borrow.loan);
+              const auto transfers =
+                  callResultTransferredFrom.find(borrow.loan);
               if (transfers != callResultTransferredFrom.end())
                 for (const MirLoanId id : transfers->second) {
                   const MirLoan *entry = output.findLoan(id);
-                  const MirPlace *root =
-                      entry == nullptr ? nullptr : output.findPlace(entry->source);
+                  const MirPlace *root = entry == nullptr
+                                             ? nullptr
+                                             : output.findPlace(entry->source);
                   if (entry != nullptr && entry->entry &&
                       entry->kind == MirLoanKind::Stored && root != nullptr &&
                       root->root == MirPlaceRootKind::Binding &&
                       root->projections.empty() &&
-                      root->binding ==
-                          function->parameterBindings
-                              [function->returnBorrowParameter])
+                      root->binding == function->parameterBindings
+                                           [function->returnBorrowParameter])
                     transferredEntry = id;
                 }
             }

@@ -77,8 +77,8 @@ int main() {}
       "the frontend should reject return, parameter, and definition shapes "
       "outside the two supported main entry contracts");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("missing-return.gti", R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "missing-return.gti", R"(
 int branch(bool value) {
   if (value) {
     return 1;
@@ -133,8 +133,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()}, {},
-                               {standardLibraryRoot()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              countDiagnosticCode(invalid.diagnostics, "GTI-S2031") == 8 &&
              hasDiagnostic(invalid.diagnostics,
@@ -1612,8 +1611,8 @@ int inspect(bool condition) {
          "conditional arm states should merge explicit moves across runtime "
          "paths");
 
-  const lang::FrontendResult borrowedResult =
-      lang::Frontend().analyze("conditional-borrowed-result.gti", R"(
+  const lang::FrontendResult borrowedResult = lang::Frontend().analyze(
+      "conditional-borrowed-result.gti", R"(
 class BorrowedValue {
   int& value;
 
@@ -1626,8 +1625,7 @@ BorrowedValue choose_borrowed(
   return condition ? std::move(left) : std::move(right);
 }
 )",
-                               {standardLibraryPrelude()}, {},
-                               {standardLibraryRoot()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!borrowedResult.canGenerateCode() &&
              hasDiagnosticCode(borrowedResult.diagnostics, "GTI-S2051"),
          "conditional values should reject branch-selected borrowed state "

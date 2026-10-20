@@ -367,9 +367,12 @@ void testGeneralTextStepMatchesProductionEmission() {
                std::string::npos)) {
         loanBodies = true;
       }
-      if (emission.text.find("integer_add_overflow_flag") != std::string::npos ||
-          emission.text.find("integer_subtract_overflow_flag") != std::string::npos ||
-          emission.text.find("integer_multiply_overflow_flag") != std::string::npos) {
+      if (emission.text.find("integer_add_overflow_flag") !=
+              std::string::npos ||
+          emission.text.find("integer_subtract_overflow_flag") !=
+              std::string::npos ||
+          emission.text.find("integer_multiply_overflow_flag") !=
+              std::string::npos) {
         checkedIntrinsicBodies = true;
       }
       directControlFlowBodies =

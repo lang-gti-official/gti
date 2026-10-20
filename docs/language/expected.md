@@ -137,13 +137,14 @@ replaced while either the carrier or an extracted reference remains live. The
 ordinary path-aware last-use rules release that dependency. Retaining a result
 from a temporary owner is rejected.
 
-The initial surface intentionally excludes `expected<mut T&, E>`, fields,
-global variables, parameters, and lambda returns containing a fallible borrow.
-`value_or` is unavailable because choosing between a borrowed referent and a
-fallback needs an explicit lifetime contract. A local fallible borrow cannot
-yet be initialized directly from `unexpected`; obtain that state from a function
-returning the complete type. These cases receive semantic diagnostics before
-HIR or MIR lowering.
+The surface excludes `expected<mut T&, E>`, fields, global variables, and
+lambda returns containing a fallible borrow. A by-value parameter is an
+ordinary carrier input: it retains the caller's dependency for the call.
+`value_or` is not a member, because choosing between a borrowed referent and a
+fallback needs an explicit lifetime contract. A local fallible borrow may be
+initialized directly from `unexpected(error)`, since the error state carries no
+borrow. The excluded cases receive semantic diagnostics before HIR or MIR
+lowering.
 
 Prefix `?` and consuming `.expect(message)` both support this borrowed form:
 
@@ -406,9 +407,8 @@ or propagated with the ordinary prefix `?`. There is no separate `?.` operator.
 
 The mapper follows the same read-callable `F&` rule. It receives the moved
 `E` through an ordinary exact call, without an implicit conversion. The source
-alternatives must be movable, and the mapped error must be a movable, non-void
-owned value without borrowed state; the member's `requires` clause rejects a
-non-movable result with `GTI-S2029`. Callable classes are not mappers, and
+alternatives must be movable, and the mapped error must be a non-void owned
+value without borrowed state. Callable classes are not mappers, and
 `expected<T&, E>` receivers do not offer this member. No additional include is
 required.
 

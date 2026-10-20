@@ -3098,8 +3098,17 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             !completeConditionalReturn && functionInfo != nullptr &&
-             !stmt.hasFunctionAttribute("borrowed_from")) {
+             functionInfo != nullptr &&
+             !stmt.hasFunctionAttribute("borrowed_from") &&
+             // A complete conditional contract comes from the body, but it
+             // cannot choose between several eligible owners: that signature
+             // is ambiguous for a carrier just as for a plain reference.
+             (!completeConditionalReturn ||
+              functionReturnBorrowSummary(
+                  functionInfo->returnType, functionInfo->parameterTypes,
+                  functionInfo->ownerClass, functionInfo->staticMember,
+                  functionInfo->intrinsic)
+                      .eligibleParameters > 1)) {
     reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   }
   if (stmt.returnMutability() == Mutability::Mutable) {

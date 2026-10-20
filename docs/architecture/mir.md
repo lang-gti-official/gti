@@ -177,6 +177,13 @@ and exact underlying integer domain. `EnumConstant`, exact-type comparisons and
 enumerator switch labels execute here, including enum locals, record fields and
 array elements in mutable builders. Value reads of resolved enumerators lower
 to constants; explicit place formation and source borrowing rules are unchanged.
+A constructor whose text field publishes through the constructor record,
+without an explicit `Initialize`, still executes in this profile: the field
+takes its initializer's exact SSA value when the body completes, and the object
+keeps declaration field order. The compatibility walker is required only when
+an executed body holds a payload-enum place or value; a type that merely names
+a payload enum, such as a reflected field metaobject, does not force the MIR
+profile.
 Payload enums retain their exact concrete type, active variant and ordered
 active fields in immutable constant aggregates. Existing `PayloadConstruct`,
 `PayloadExtract` and switch MIR execute their ordinary verified selection rules;

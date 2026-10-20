@@ -1009,13 +1009,17 @@ int main() {
   return retained - 42;
 }
 )gti"));
-    for (const auto *suffix : {
-             "View escape() { int local = 42; return View(local); } int main() { return 0; }",
-             "int& escape() { int local = 42; mut auto view = View(local); return std::move(view).take(); } int main() { return 0; }",
-             "int main() { mut int owner = 42; auto view = View(owner); owner = 7; return view.read(); }"}) {
+    for (const auto *suffix :
+         {"View escape() { int local = 42; return View(local); } int main() { "
+          "return 0; }",
+          "int& escape() { int local = 42; mut auto view = View(local); return "
+          "std::move(view).take(); } int main() { return 0; }",
+          "int main() { mut int owner = 42; auto view = View(owner); owner = "
+          "7; return view.read(); }"}) {
       const auto result = analyze(wrapper + suffix);
       expect(result.syntaxValid && !result.semanticValid,
-             "borrowed class cannot escape a local or invalidate a live external owner");
+             "borrowed class cannot escape a local or invalidate a live "
+             "external owner");
     }
     const auto owned = analyze(R"gti(
 class Owner {
@@ -1026,8 +1030,9 @@ public:
 };
 int main() { return 0; }
 )gti");
-    expect(owned.syntaxValid && !owned.semanticValid,
-           "consuming reference extraction cannot retain receiver-owned storage");
+    expect(
+        owned.syntaxValid && !owned.semanticValid,
+        "consuming reference extraction cannot retain receiver-owned storage");
   }
   {
     const std::string generic = R"gti(

@@ -134,6 +134,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testConsumedPassivePayloadTagObservation",
+      "suite": "preflight"
+    },
+    {
       "name": "testPayloadObserverRequiresCompleteReceiver",
       "suite": "preflight"
     },

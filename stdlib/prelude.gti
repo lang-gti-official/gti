@@ -458,8 +458,7 @@ public:
     }
   }
 
-  expected<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) &&
-      requires std::movable<std::meta::callable_return_type<F>> {
+  expected<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value):
       return expected<T, std::meta::callable_return_type<F>>(std::move(value));
@@ -555,8 +554,7 @@ public:
     }
   }
 
-  expected<T*, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) &&
-      requires std::movable<std::meta::callable_return_type<F>> {
+  expected<T*, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T*, E>::value(value):
       return expected<T*, std::meta::callable_return_type<F>>(std::move(value));
@@ -648,8 +646,7 @@ public:
     }
   }
 
-  expected<const T*, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) &&
-      requires std::movable<std::meta::callable_return_type<F>> {
+  expected<const T*, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<const T*, E>::value(value):
       return expected<const T*, std::meta::callable_return_type<F>>(std::move(value));
@@ -730,8 +727,7 @@ public:
     }
   }
 
-  expected<void, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) &&
-      requires std::movable<std::meta::callable_return_type<F>> {
+  expected<void, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
     switch (std::move(this.state)) {
     case std::detail::expected_void_state<E>::value:
       return expected<void, std::meta::callable_return_type<F>>();

@@ -93,10 +93,10 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
   diagnostic.related.push_back({tokenSpan(*declaration.constexprKeyword()),
                                 "constexpr binding declared here."});
   diagnostic.hints.emplace_back(std::move(hint));
-    if (libraryLocation)
-    diagnostic.related.insert(
-        diagnostic.related.begin(),
-        {tokenSpan(*libraryLocation), "Reported inside this library instance."});
+  if (libraryLocation)
+    diagnostic.related.insert(diagnostic.related.begin(),
+                              {tokenSpan(*libraryLocation),
+                               "Reported inside this library instance."});
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -579,11 +579,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       expressionSubject
           ? "type '" + semantic_spelling::typeRefSpelling(*subject) + "'"
           : "parameter '" + failure.parameter.lexeme + "'";
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2029", DiagnosticPhase::Semantics, site,
-      "Type '" + typeSpelling(failure.argument) +
-          "' does not satisfy generic constraint '" + constraint + "' for " +
-          subjectSpelling + ".");
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2029", DiagnosticPhase::Semantics, site,
+                     "Type '" + typeSpelling(failure.argument) +
+                         "' does not satisfy generic constraint '" +
+                         constraint + "' for " + subjectSpelling + ".");
   if (failure.constraintName) {
     diagnostic.related.push_back(
         {tokenSpan(failure.constraintName->last()),

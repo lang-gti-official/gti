@@ -9207,9 +9207,19 @@ follow-ups:
 - Diagnostics: `GTI-S2029` hints name `std::detail` helpers and `for concept`
   blocks; callable-class mappers report `GTI-S2023` three times; mapper arity
   errors cascade `GTI-S2023` with `GTI-S2005`; a reference-returning
-  `transform` mapper gets a misleading `GTI-S2017`; contextual-return copies
-  report the constructor argument's `GTI-S2018` rather than a return-copy
-  `GTI-S2003`; `std::detail::unexpected_value` appears in user-facing types.
+  `transform` mapper gets a misleading `GTI-S2017`; a `void` or reference
+  `transform_error` mapper and an `expected<T, void>` error type cascade
+  through the prelude's instantiation; contextual-return copies report the
+  constructor argument's `GTI-S2018` rather than a return-copy `GTI-S2003`;
+  `std::detail::unexpected_value` appears in user-facing types, and a
+  nested-carrier payload error points into the prelude.
+- Nested conditional carriers: a class field whose type is another
+  conditionally borrowed class, an enum payload that is a reference-holding
+  class, and a conditional reference relayed through a field, element or
+  dereference of another value are rejected in semantics. Supporting them needs
+  a composed receiver-prefix proof in both MIR verifiers; the same gap already
+  makes `for (auto& item : borrowed.bag.elements())` an internal error on
+  0.448.4.
 - MIR checks assignments to static text storage but does not yet re-verify
   global text initializers.
 - Several emitter-independence tests now accept combined admission

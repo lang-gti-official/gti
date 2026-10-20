@@ -3151,8 +3151,9 @@ auto SemanticVisitor::Impl::contextualConstructionRawFields(
   // single actual argument, and the constructor body's recorded raw fields
   // name which parameter (or fresh address) each stored pointer came from.
   if (const auto *contextual =
-          rawAuditEnabled() ? semanticModel.findContextualConstruction(initializer)
-                            : nullptr;
+          rawAuditEnabled()
+              ? semanticModel.findContextualConstruction(initializer)
+              : nullptr;
       contextual != nullptr && contextual->constructor != 0 &&
       contextual->kind == ConstructorKind::Ordinary &&
       contextual->declaration != nullptr &&
@@ -5931,6 +5932,24 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   }
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
+  }
+  // A class that stores references is not yet an enum payload: the selected
+  // alternative would need a composed field-origin proof that verified MIR
+  // does not carry. Direct reference and enum payloads remain supported.
+  for (std::size_t index = 0; index < common; ++index) {
+    const auto &field = enumerator.payloadTypes[index];
+    if (field.kind != SemanticType::Class)
+      continue;
+    const auto inventory = storedReferenceInventory(field);
+    if (!inventory || inventory->empty())
+      continue;
+    report(expressionToken(call.arguments()[index]),
+           "Payload field type '" + typeSpelling(field) +
+               "' stores references; a class that retains references cannot "
+               "be an enum payload yet.",
+           "GTI-S2067");
+    currentType = enumerator.symbol.type;
+    return;
   }
   // A payload constructor evaluates its fields in the same ordered input
   // region as an ordinary call. In particular, retaining an earlier reference
@@ -8987,9 +9006,10 @@ auto SemanticVisitor::Impl::rawProducedFields(
   const auto *resolved = invocation ? &invocation->resolved
                          : call     ? semanticModel.findCall(*call)
                                     : nullptr;
-  const auto *construction = invocation    ? nullptr
-                             : contextual ? contextual
-                                          : semanticModel.findConstruction(expression);
+  const auto *construction = invocation ? nullptr
+                             : contextual
+                                 ? contextual
+                                 : semanticModel.findConstruction(expression);
   const auto type = construction ? construction->constructedType
                     : resolved   ? resolved->returnType
                                  : semanticModel.typeOf(expression);
@@ -12164,7 +12184,8 @@ auto SemanticVisitor::Impl::baseTypeOf(
             resolveClassPath(type.name, fromScope)) {
       const ClassInfo &owner = classInfo(*id);
       if (!owner.declaration->genericArgumentPatterns().empty() ||
-          !owner.definitionFamilyMembers.empty() || owner.definitionFamilyPrimary != 0) {
+          !owner.definitionFamilyMembers.empty() ||
+          owner.definitionFamilyPrimary != 0) {
         std::vector<SemanticType> arguments;
         for (const TypeRef &argument : type.arguments) {
           arguments.push_back(typeOf(argument, fromScope));

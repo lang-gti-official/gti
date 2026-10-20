@@ -76,8 +76,7 @@ classArgumentProfile(const ClassDecl &owner) {
     const bool pointer = pattern.pointers.size() == 1 && !pattern.reference;
     if (pattern.isFunctionSignature() || pattern.isNativeFunction() ||
         pattern.qualifiedOwner || pattern.name.segments.size() != 1 ||
-        !pattern.arguments.empty() ||
-        (!pattern.pointers.empty() && !pointer) ||
+        !pattern.arguments.empty() || (!pattern.pointers.empty() && !pointer) ||
         !pattern.arrayExtents.empty() || pattern.packExpansion)
       return std::nullopt;
     if (pattern.name.last().kind == TokenKind::VOID && !pattern.reference &&
@@ -89,9 +88,9 @@ classArgumentProfile(const ClassDecl &owner) {
                             : ArgumentProfile::MutablePointer);
     } else if (pattern.name.last().kind == TokenKind::IDENTIFIER) {
       profile.push_back(!pattern.reference ? ArgumentProfile::Any
-                       : pattern.referenceMutability
-                           ? ArgumentProfile::MutableReference
-                           : ArgumentProfile::ReadOnlyReference);
+                        : pattern.referenceMutability
+                            ? ArgumentProfile::MutableReference
+                            : ArgumentProfile::ReadOnlyReference);
     } else {
       return std::nullopt;
     }
@@ -2667,7 +2666,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
             profile && first.kind == classDecl->kind() &&
             samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit)) {
           const auto compatible = [&](ClassId member) {
-            const auto other = classArgumentProfile(*classInfo(member).declaration);
+            const auto other =
+                classArgumentProfile(*classInfo(member).declaration);
             return other && compatibleProfiles(*profile, *other);
           };
           if (compatible(existing->second) &&
@@ -5142,10 +5142,9 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayout(
                       std::vector<SemanticType> visitingInvalidEnums;
                       bool exhaustedInvalid = false;
                       return invalid != ownerType &&
-                             byValueTypeReachesClass(fieldType, invalid,
-                                                     visitingInvalid,
-                                                     visitingInvalidEnums,
-                                                     exhaustedInvalid);
+                             byValueTypeReachesClass(
+                                 fieldType, invalid, visitingInvalid,
+                                 visitingInvalidEnums, exhaustedInvalid);
                     });
     requestSession.invalidOrdinaryLayouts.push_back(ownerType);
     if (exhausted) {
@@ -6885,8 +6884,9 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     }
     const auto dependencies =
         storedReferencePaths(SemanticType::classType(owner.id));
-    if (std::any_of(dependencies.begin(), dependencies.end(),
-                    [](const auto &path) { return !path.conditions.empty(); })) {
+    if (std::any_of(
+            dependencies.begin(), dependencies.end(),
+            [](const auto &path) { return !path.conditions.empty(); })) {
       // Conditional fields are checked by the concrete constructor's complete
       // result summary. A type-wide unconditional origin map would invent a
       // dependency for alternatives which hold no reference.
@@ -6895,6 +6895,27 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                "A conditionally borrowed value requires a declared constructor "
                "with a complete checked field-initialization contract.",
                "GTI-S2045");
+      // The guarded set may come from a payload-enum field. A field whose
+      // class is itself a conditional carrier would nest one carrier's
+      // guarded set inside another's, which is not yet a supported view graph.
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr || field.declaration->type().reference)
+          continue;
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member == owner.members.end() ||
+            member->second.symbol.type.kind != SemanticType::Class)
+          continue;
+        const auto nested = storedReferencePaths(member->second.symbol.type);
+        if (std::any_of(nested.begin(), nested.end(), [](const auto &path) {
+              return !path.conditions.empty();
+            }))
+          report(field.declaration->name(),
+                 "Borrowed field state must use checked stored-reference "
+                 "paths through ordinary nominal fields; fallible and other "
+                 "non-nominal carriers cannot be stored as fields.",
+                 "GTI-S2045");
+      }
       continue;
     }
     if (dependencies.size() > 1) {

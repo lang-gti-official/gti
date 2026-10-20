@@ -2084,7 +2084,7 @@ public:
 private:
   friend class SemanticModel;
   SemanticOwnerlessTextContractProof(const FunctionInfo &function,
-                                    std::uint64_t snapshot)
+                                     std::uint64_t snapshot)
       : source_(function.bodyDeclaration()), function_(function.id),
         parameters_(function.parameterTypes),
         required_(function.ownerlessTextParameters), snapshot_(snapshot) {}

@@ -294,12 +294,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         "HIR semantic-analysis seal differs from the semantic model");
   }
   for (const auto &function : program.functionInstances()) {
-    const bool textSignature = std::any_of(
-        function.parameterTypes.begin(), function.parameterTypes.end(),
-        [](const auto &type) {
-          return type.kind == SemanticType::StringView ||
-                 type.kind == SemanticType::CString;
-        });
+    const bool textSignature =
+        std::any_of(function.parameterTypes.begin(),
+                    function.parameterTypes.end(), [](const auto &type) {
+                      return type.kind == SemanticType::StringView ||
+                             type.kind == SemanticType::CString;
+                    });
     if (!textSignature && function.ownerlessTextParameters.empty())
       continue;
     const auto &proof = function.ownerlessTextContractProof;
@@ -318,8 +318,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         proofParameters != function.parameterTypes ||
         proof->required() != function.ownerlessTextParameters ||
         proof->snapshot() != program.analysisSeal().programSnapshot)
-      result.errors.emplace_back(
-          "HIR ownerless text contract differs from its exact semantic signature and proof");
+      result.errors.emplace_back("HIR ownerless text contract differs from its "
+                                 "exact semantic signature and proof");
   }
   if (program.programKind() != semantics.programKind()) {
     result.errors.emplace_back(

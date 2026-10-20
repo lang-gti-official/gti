@@ -346,6 +346,11 @@ struct IndexedMirBody {
   // `uniqueCleanupProgram`, as failureDestructorTarget asks.
   const MirProgram *uniqueCleanupProgram = nullptr;
   std::unordered_map<const MirDropObligation *, bool> uniqueCleanupDrops;
+  // The conditional temporaries that store a result read only through field
+  // views, as computed under `conditionalViewProgram` and its representations.
+  const MirProgram *conditionalViewProgram = nullptr;
+  const void *conditionalViewRepresentations = nullptr;
+  std::optional<std::unordered_set<const MirPlace *>> conditionalViewStorages;
 };
 
 // Each emitter operation remembers which index belongs to each body it has
@@ -12075,20 +12080,20 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
     return false;
   if (ownedOperandTransfer(body, producer, event))
     return true;
-  return std::count_if(
-             producer.operands.begin(), producer.operands.end(),
-             [&](const MirOperand &operand) {
-               const MirInstruction *stage =
-                   materializedConstructorArgumentStage(body, operand.value);
-               if (stage == nullptr) {
-                 const StagedClassResult staged =
-                     stagedClassResultForResult(body, operand.value);
-                 if (staged.consumer == &producer)
-                   stage = staged.stage;
-               }
-               return stage != nullptr &&
-                      stage->preparedParameterDrop == event.source;
-             }) == 1;
+  return std::count_if(producer.operands.begin(), producer.operands.end(),
+                       [&](const MirOperand &operand) {
+                         const MirInstruction *stage =
+                             materializedConstructorArgumentStage(
+                                 body, operand.value);
+                         if (stage == nullptr) {
+                           const StagedClassResult staged =
+                               stagedClassResultForResult(body, operand.value);
+                           if (staged.consumer == &producer)
+                             stage = staged.stage;
+                         }
+                         return stage != nullptr &&
+                                stage->preparedParameterDrop == event.source;
+                       }) == 1;
 }
 
 // A by-value argument staging temporary: one CallInput carries a source
@@ -13035,15 +13040,14 @@ materializedClosure(const MirProgram &program, const MirBody &body,
   const bool hiddenSlot =
       destination != nullptr &&
       publication.publication == LambdaValuePublication::Direct &&
-      destination->root == MirPlaceRootKind::Temporary &&
-      closure.destination && *closure.destination == destination->id;
+      destination->root == MirPlaceRootKind::Temporary && closure.destination &&
+      *closure.destination == destination->id;
   if (closure.kind != MirInstructionKind::Compute ||
       closure.operation != MirOperation::Closure || lambda == nullptr ||
       result == nullptr || result->info.type != lambda->type ||
       destination == nullptr || (closure.destination && !hiddenSlot) ||
-      closure.receiver ||
-      closure.literal || !closure.localFailureSites.empty() ||
-      !closure.definedFailure.empty() ||
+      closure.receiver || closure.literal ||
+      !closure.localFailureSites.empty() || !closure.definedFailure.empty() ||
       closure.operands.size() != lambda->captureSymbols.size() ||
       closure.operands.size() != lambda->captureModes.size() ||
       closure.operands.size() != lambda->captureTypes.size() ||
@@ -18487,22 +18491,23 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       commonProducer ? preparedReceiverStage(body, *producer) : nullptr;
   const bool preparedInputTransfers =
       commonProducer &&
-      std::all_of(
-          producer->lifecycle.begin(), producer->lifecycle.end(),
-          [&](const MirLifecycleEvent &event) {
-            // A completed owning result passed directly hands its own value
-            // obligation to the callee; its slot proof keeps the result
-            // through the producer's success edge and retires it here. A
-            // fresh owning result already materialized in its prepared slot
-            // keeps its checked producer edge and exact reparenting.
-            if (preparedArgumentTransfer(body, *producer, event))
-              return true;
-            return preparedReceiver != nullptr &&
-                   event.kind == MirLifecycleEventKind::TransferOut &&
-                   event.target == 0 && !event.conditional &&
-                   !event.failureCleanup &&
-                   event.source == *preparedReceiver->preparedParameterDrop;
-          });
+      std::all_of(producer->lifecycle.begin(), producer->lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    // A completed owning result passed directly hands its own
+                    // value obligation to the callee; its slot proof keeps the
+                    // result through the producer's success edge and retires it
+                    // here. A fresh owning result already materialized in its
+                    // prepared slot keeps its checked producer edge and exact
+                    // reparenting.
+                    if (preparedArgumentTransfer(body, *producer, event))
+                      return true;
+                    return preparedReceiver != nullptr &&
+                           event.kind == MirLifecycleEventKind::TransferOut &&
+                           event.target == 0 && !event.conditional &&
+                           !event.failureCleanup &&
+                           event.source ==
+                               *preparedReceiver->preparedParameterDrop;
+                  });
   // A virtual member call reaches the same transformed status ABI through its
   // exact virtual failure contract (VirtualCall propagation), as an ordinary
   // raising static call does through DirectCall. Either way the success edge
@@ -24388,14 +24393,38 @@ conditionalTemporaryViewStorage(const MirProgram &program,
                                 const MirBody &body, const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Temporary || place.temporary == 0)
     return false;
-  for (const MirBlock &block : body.blocks)
-    for (const MirInstruction &instruction : block.instructions)
-      if (instruction.result &&
-          (instruction.destination || instruction.successResultDrop) &&
-          conditionalTemporaryViewedResult(program, representations, body,
-                                           *instruction.result) == &place)
-        return true;
-  return false;
+  const auto scan = [&](const auto &found) {
+    for (const MirBlock &block : body.blocks)
+      for (const MirInstruction &instruction : block.instructions)
+        if (instruction.result &&
+            (instruction.destination || instruction.successResultDrop))
+          if (const MirPlace *storage = conditionalTemporaryViewedResult(
+                  program, representations, body, *instruction.result);
+              storage != nullptr && found(storage))
+            return true;
+    return false;
+  };
+  // Every temporary of a long body asks the same question; answer it from
+  // one body-order scan instead of rescanning the body per place.
+  IndexedMirBody *index = indexedMirBody(body);
+  if (index == nullptr ||
+      index->building.contains(&index->conditionalViewStorages))
+    return scan([&](const MirPlace *storage) { return storage == &place; });
+  if (!index->conditionalViewStorages ||
+      index->conditionalViewProgram != &program ||
+      index->conditionalViewRepresentations != &representations) {
+    index->building.insert(&index->conditionalViewStorages);
+    std::unordered_set<const MirPlace *> storages;
+    (void)scan([&](const MirPlace *storage) {
+      storages.insert(storage);
+      return false;
+    });
+    index->building.erase(&index->conditionalViewStorages);
+    index->conditionalViewStorages = std::move(storages);
+    index->conditionalViewProgram = &program;
+    index->conditionalViewRepresentations = &representations;
+  }
+  return index->conditionalViewStorages->contains(&place);
 }
 
 // A value moved out of an owning conditional temporary that keeps its own
@@ -26018,8 +26047,7 @@ lifetimeSlotPlace(const MirProgram &program,
       return true;
     }
     // An explicitly moved closure borrowed for one call owns this slot.
-    if (definition != nullptr &&
-        definition->kind == MirInstructionKind::Move &&
+    if (definition != nullptr && definition->kind == MirInstructionKind::Move &&
         directTemporaryArgumentForValue(body, place.value).slot == &place) {
       return true;
     }
@@ -28996,7 +29024,8 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
       (!parameters.empty() &&
        instruction.operands.front().type != parameters.front()) ||
       instruction.neverReturns != terminal.has_value() ||
-      instruction.tracksCaller != intrinsicTracksCaller(instruction.intrinsic) ||
+      instruction.tracksCaller !=
+          intrinsicTracksCaller(instruction.intrinsic) ||
       instruction.parameterTypes != parameters ||
       instruction.definedFailure.propagation != FailurePropagationKind::None ||
       instruction.localFailureSites.size() != 1 ||
@@ -34286,18 +34315,16 @@ classSsaLifetimeSlot(const MirProgram &program,
     bool adjacent = false;
     if (const MirBlock *invoke = invokeProducerBlock(body, *producer)) {
       const MirBlock *success = body.findBlock(invoke->terminator.target);
-      adjacent = success != nullptr &&
-                 success->instructions.size() > activations &&
-                 (activations == 0 ||
-                  activation(success->instructions.front())) &&
-                 success->instructions[activations].id == consumer->id;
+      adjacent =
+          success != nullptr && success->instructions.size() > activations &&
+          (activations == 0 || activation(success->instructions.front())) &&
+          success->instructions[activations].id == consumer->id;
     } else {
       for (const MirBlock &block : body.blocks) {
         for (std::size_t index = 0;
              index + 1 + activations < block.instructions.size(); ++index) {
           if (block.instructions[index].id == producer->id &&
-              (activations == 0 ||
-               activation(block.instructions[index + 1])) &&
+              (activations == 0 || activation(block.instructions[index + 1])) &&
               block.instructions[index + 1 + activations].id == consumer->id) {
             adjacent = true;
           }
@@ -43931,16 +43958,14 @@ private:
                 "verified temporary argument move lost its source slot");
           // A temporary whose passive obligation the argument did not take
           // over keeps its moved-from shell until MIR drops it.
-          const bool reparented =
-              argument.stage->lifecycle.size() == 1 &&
-              argument.stage->lifecycle.front().kind ==
-                  MirLifecycleEventKind::Reparent;
-          if (reparented ||
-              std::none_of(facts.body.dropObligations.begin(),
-                           facts.body.dropObligations.end(),
-                           [&](const MirDropObligation &drop) {
-                             return drop.place == source->id;
-                           })) {
+          const bool reparented = argument.stage->lifecycle.size() == 1 &&
+                                  argument.stage->lifecycle.front().kind ==
+                                      MirLifecycleEventKind::Reparent;
+          if (reparented || std::none_of(facts.body.dropObligations.begin(),
+                                         facts.body.dropObligations.end(),
+                                         [&](const MirDropObligation &drop) {
+                                           return drop.place == source->id;
+                                         })) {
             writeIndent();
             output << "__gti_mir_p_"
                    << canonicalSlotPlaceId(facts.body, *source)
@@ -58242,8 +58267,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     }
     if (place.root == MirPlaceRootKind::Temporary &&
-        place.projections.empty() &&
-        place.type.kind == SemanticType::Lambda) {
+        place.projections.empty() && place.type.kind == SemanticType::Lambda) {
       // A fresh closure borrowed in a branch-only region keeps its hidden
       // full-expression slot; its type is spelled from its verified factory.
       if (!slotPlace(place) ||
@@ -59836,13 +59860,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               observation->definedFailure.empty() &&
               observation->localFailureSites.empty() &&
               source->terminator.hirValue != 0 &&
-              std::any_of(success->instructions.begin(),
-                          success->instructions.end(),
-                          [&](const MirInstruction &output) {
-                            return output.kind == MirInstructionKind::Call &&
-                                   output.hirValue ==
-                                       source->terminator.hirValue;
-                          });
+              std::any_of(
+                  success->instructions.begin(), success->instructions.end(),
+                  [&](const MirInstruction &output) {
+                    return output.kind == MirInstructionKind::Call &&
+                           output.hirValue == source->terminator.hirValue;
+                  });
           if (source->terminator.kind != MirTerminatorKind::Branch ||
               place == nullptr ||
               (place->root != MirPlaceRootKind::Binding &&
@@ -62394,14 +62417,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                        &instruction &&
                    classValuePublicationSlot(program_, body,
                                              *instruction.result) == nullptr &&
-                   expectedPayloadInitialize(
-                       program_, body, *instruction.result) == nullptr &&
+                   expectedPayloadInitialize(program_, body,
+                                             *instruction.result) == nullptr &&
                    // A result moved into an existing binding is staged in
                    // its own slot first: value-rooted with a full-expression
                    // Drop, or representation-only when it is cleanup-free.
                    !valueRootedClassCallResultSlot(program_, representations_,
-                                                   body,
-                                                   *instruction.result) &&
+                                                   body, *instruction.result) &&
                    classSsaLifetimeSlot(program_, representations_, body,
                                         *instruction.result)
                            .producer != &instruction))) ||
@@ -63510,7 +63532,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // Overflow queries return a mathematical fact. Result-carrier
           // construction and error policy remain ordinary source calls.
           if ((instruction.intrinsic == IntrinsicKind::IntegerAddOverflows ||
-               instruction.intrinsic == IntrinsicKind::IntegerSubtractOverflows ||
+               instruction.intrinsic ==
+                   IntrinsicKind::IntegerSubtractOverflows ||
                instruction.intrinsic ==
                    IntrinsicKind::IntegerMultiplyOverflows) &&
               !instruction.functionTarget && instruction.result &&
