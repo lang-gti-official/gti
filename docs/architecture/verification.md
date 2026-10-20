@@ -7835,8 +7835,15 @@ with and without destructors, nested operators and a loop condition, and
 defined failure in the borrowing callee, a later argument, the producer, and
 after the merge with the temporary engaged or skipped, under C++20/C++23
 O0/O1/O3, no-elide and ASan/UBSan. `testHiddenSlotTemporaryArguments`
-admits class hidden slots and a linear payload-enum argument, and refuses a
-payload-enum hidden slot whose producer never writes it.
+admits class and payload-enum hidden slots, cleanup-free and owning, called
+and constructed, plus a linear payload-enum argument, and refuses a hidden
+slot whose producer was forged to never activate it.
+`short_circuit_payload_enum_argument_runtime` traces owning payload enums
+built in place and returned by calls, and cleanup-free ones read back, in
+taken and skipped `&&`/`||`/`?:` operands, nested operators and a loop
+condition; defined failure covers the borrowing callee, the producer, and
+failure after the merge with the enum engaged or skipped, in the same eight
+native modes.
 `testConstexprConditionalTemporaries`
 runs argument and receiver borrows of such slots, one destructor-bearing,
 through exactly four staged MIR executions with exact results; a wrong
