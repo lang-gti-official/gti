@@ -4722,6 +4722,52 @@ private:
     return id;
   }
 
+  // Calls the conversion operator on an already lowered receiver value; the
+  // call is the source's last value, so the context consumes its result.
+  [[nodiscard]] HirValueId
+  appendContextualConversion(const Expr &raw,
+                             const ResolvedOperatorInfo &resolved,
+                             HirFunctionInstanceId target,
+                             HirValueId receiverValue, HirBody &body) {
+    (void)enqueueClass(resolved.returnType);
+    HirValue conversion{
+        .id = nextValueId++,
+        .kind = HirValueKind::Call,
+        .source = &raw,
+        .info = {.type = resolved.returnType,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits = instanceProvider->traitsFor(resolved.returnType)},
+        .operands = {receiverValue},
+        .definedFailure = {.propagation =
+                               resolved.dispatch == CallDispatch::Virtual
+                                   ? FailurePropagationKind::VirtualCall
+                                   : FailurePropagationKind::DirectCall},
+        .dispatch = resolved.dispatch,
+        .dispatchOwner = resolved.dispatchOwner,
+        .receiver = receiverValue,
+        .functionTarget = target,
+        .callableBoundary = resolved.boundary,
+    };
+    conversion.borrowOrigin = resolved.borrowOrigin;
+    conversion.borrowArgument = resolved.borrowArgument;
+    conversion.borrowAccess = resolved.borrowAccess;
+    if (resolved.receiverMode == CallReceiverMode::Consuming) {
+      conversion.callableInvocation = resolved.capability;
+    }
+    if (const std::optional<HirCallReceiver> planned =
+            orderedReceiver(receiverValue, resolved.receiverMutability,
+                            resolved.receiverMode, body)) {
+      conversion.callPlan = HirCallPlan{.receiver = *planned, .arguments = {}};
+    } else {
+      lifecycleValid = false;
+    }
+    const HirValueId conversionId = conversion.id;
+    body.values.push_back(std::move(conversion));
+    output.program.sourceValueIds[&raw].push_back(conversionId);
+    return conversionId;
+  }
+
   // Prefix `?` through `std::tryable`: each step is an ordinary call of the
   // selected block function on the once-evaluated operand, and the residual
   // return is the enclosing return type's implicit construction. MIR
@@ -5524,7 +5570,13 @@ private:
       }
       return id;
     }
-    if (const Expr *producer = model.directInitializationSource(expression)) {
+    // A parenthesized fresh value converted by a condition's operator bool is
+    // an ordinary grouping that the conversion consumes, not an alias of the
+    // producer's direct initialization.
+    if (const Expr *producer = model.directInitializationSource(expression);
+        producer != nullptr &&
+        !(exprAs<Grouping>(&expression) != nullptr &&
+          model.findContextualConversion(expression) != nullptr)) {
       const ExpressionInfo *info = model.findExpression(expression);
       const ExpressionInfo *input = model.findExpression(*producer);
       const Binary *comma = model.builtinComma(expression);
@@ -7164,49 +7216,11 @@ private:
             model.findContextualConversion(*raw);
         resolved != nullptr && contextualConversionTarget) {
       const HirValueId receiverValue = value.id;
-      const HirFunctionInstanceId target = *contextualConversionTarget;
       body.values.push_back(std::move(value));
       output.program.sourceValueIds[raw].push_back(receiverValue);
-
-      (void)enqueueClass(resolved->returnType);
-      HirValue conversion{
-          .id = nextValueId++,
-          .kind = HirValueKind::Call,
-          .source = raw,
-          .info = {.type = resolved->returnType,
-                   .category = ValueCategory::Value,
-                   .access = AccessMode::ReadOnly,
-                   .traits = instanceProvider->traitsFor(resolved->returnType)},
-          .operands = {receiverValue},
-          .definedFailure = {.propagation =
-                                 resolved->dispatch == CallDispatch::Virtual
-                                     ? FailurePropagationKind::VirtualCall
-                                     : FailurePropagationKind::DirectCall},
-          .dispatch = resolved->dispatch,
-          .dispatchOwner = resolved->dispatchOwner,
-          .receiver = receiverValue,
-          .functionTarget = target,
-          .callableBoundary = resolved->boundary,
-      };
-      conversion.borrowOrigin = resolved->borrowOrigin;
-      conversion.borrowArgument = resolved->borrowArgument;
-      conversion.borrowAccess = resolved->borrowAccess;
-      if (resolved->receiverMode == CallReceiverMode::Consuming) {
-        conversion.callableInvocation = resolved->capability;
-      }
-      if (const std::optional<HirCallReceiver> planned =
-              orderedReceiver(receiverValue, resolved->receiverMutability,
-                              resolved->receiverMode, body)) {
-        conversion.callPlan =
-            HirCallPlan{.receiver = *planned, .arguments = {}};
-      } else {
-        lifecycleValid = false;
-      }
-
-      const HirValueId conversionId = conversion.id;
-      body.values.push_back(std::move(conversion));
-      output.program.sourceValueIds[raw].push_back(conversionId);
-      return conversionId;
+      return appendContextualConversion(*raw, *resolved,
+                                        *contextualConversionTarget,
+                                        receiverValue, body);
     }
 
     const HirValueId id = value.id;

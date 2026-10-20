@@ -102,6 +102,27 @@ int main() {
 )gti",
            "explicit conversions and an implicit declaration must resolve");
 
+  // A parenthesized fresh value or conditional join is still the value the
+  // condition's operator bool converts.
+  accepted(R"gti(
+struct Flag {
+  bool on;
+  Flag(bool value) : on(value) {}
+  operator bool() { return this.on; }
+};
+Flag make(bool value) { return Flag(value); }
+bool choose(bool yes) {
+  mut int total = 0;
+  if ((make(true))) { total += 1; }
+  if ((yes ? make(true) : make(false))) { total += 2; }
+  total += (yes ? make(true) : make(false)) ? 4 : 0;
+  total += (make(true)) ? 8 : 0;
+  return total == 15;
+}
+int main() { return choose(true) ? 0 : 1; }
+)gti",
+           "a parenthesized condition keeps its operator bool conversion");
+
   // Declaration conversion everywhere a declaration's initializer is
   // analyzed: locals, namespace bindings, field defaults, field constructor
   // initializers and static members, plus `implicit operator bool()`.
