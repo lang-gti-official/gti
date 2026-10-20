@@ -3947,6 +3947,10 @@ independentlyStaticTextBinding(const MirProgram &program,
 
       std::vector<MirLoanDependency> mappedCallSources;
       for (const auto &mapping : instruction.borrowFields) {
+        // Static storage is no call input. The global-origin check below and
+        // the complete-set flow verify its exact storage place.
+        if (mapping.origin == BorrowOriginKind::Global)
+          continue;
         const MirOperand *input =
             mapping.origin == BorrowOriginKind::Receiver && instruction.receiver
                 ? &*instruction.receiver
@@ -6569,7 +6573,11 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         const bool root =
             mapping.origin == BorrowOriginKind::Receiver
                 ? origin.root == MirPlaceRootKind::This
+            : mapping.origin == BorrowOriginKind::Global
+                ? origin.root == MirPlaceRootKind::Symbol &&
+                      origin.symbol == mapping.globalRoot
                 : origin.root == MirPlaceRootKind::Binding &&
+                      mapping.parameter < instance.parameterBindings.size() &&
                       origin.binding ==
                           instance.parameterBindings[mapping.parameter];
         std::vector<SymbolId> fields;
@@ -12780,6 +12788,32 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto path = completeBorrowSourcePath(program, target, mapping);
       if (!path || path->externalReferences > 1)
         continue;
+      if (mapping.origin == BorrowOriginKind::Global) {
+        // Static storage needs no input: this body's own place for that
+        // exact global path supplies the dependency.
+        const auto global = std::find_if(
+            body.places.begin(), body.places.end(), [&](const MirPlace &place) {
+              return place.root == MirPlaceRootKind::Symbol &&
+                     place.symbol == mapping.globalRoot &&
+                     place.projections.size() == mapping.sourceFields.size() &&
+                     std::equal(place.projections.begin(),
+                                place.projections.end(),
+                                mapping.sourceFields.begin(),
+                                [](const auto &projection, SymbolId field) {
+                                  return projection.kind ==
+                                             MirProjectionKind::Field &&
+                                         projection.field == field;
+                                });
+            });
+        if (global == body.places.end())
+          continue;
+        supplying[index].push_back({.source = global->id,
+                                    .designatedFields = mapping.resultFields,
+                                    .access = mapping.access,
+                                    .conditions = mapping.resultConditions});
+        availability[index] = Availability::Available;
+        continue;
+      }
       const MirOperand *argument = nullptr;
       bool referenceInput = false;
       if (mapping.origin == BorrowOriginKind::Argument &&
@@ -13554,6 +13588,35 @@ completeBorrowSourcePath(const MirProgram &program,
     source.access = receiverAllowsMutation(function.receiverMutability)
                         ? AccessMode::Mutable
                         : AccessMode::ReadOnly;
+  } else if (mapping.origin == BorrowOriginKind::Global) {
+    // Static storage outlives every caller; its program storage place names
+    // the exact type and mutability the selected path starts from.
+    const auto *step = mapping.globalRoot == 0
+                           ? nullptr
+                           : program.programInitializationPlan()
+                                 .findStepForSymbol(mapping.globalRoot);
+    const MirPlace *storage =
+        step ? program.module().findPlace(step->storagePlace) : nullptr;
+    // Without a storage step (a provisional program has no initialization
+    // plan), the unprojected symbol place in the module or this body names
+    // the storage type.
+    const auto rootPlace = [&](const MirBody &body) -> const MirPlace * {
+      for (const auto &place : body.places)
+        if (place.root == MirPlaceRootKind::Symbol &&
+            place.symbol == mapping.globalRoot && place.capture == 0 &&
+            place.projections.empty())
+          return &place;
+      return nullptr;
+    };
+    if (!storage && mapping.globalRoot != 0)
+      storage = rootPlace(program.module());
+    if (!storage && mapping.globalRoot != 0)
+      storage = rootPlace(function.body);
+    if (!storage || mapping.parameter != 0)
+      return std::nullopt;
+    type = storage->type;
+    physicalCallerStorage = true;
+    source.access = storage->access;
   } else
     return std::nullopt;
   std::vector<SymbolId> prefix;
@@ -13688,6 +13751,17 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
       mapping.origin = BorrowOriginKind::Argument;
       mapping.parameter =
           std::distance(function.parameterBindings.begin(), formal);
+    } else if (source.root == MirPlaceRootKind::Symbol && source.symbol != 0 &&
+               std::any_of(body.places.begin(), body.places.end(),
+                           [&](const MirPlace &place) {
+                             return place.root == MirPlaceRootKind::Symbol &&
+                                    place.symbol == source.symbol &&
+                                    place.capture == 0;
+                           })) {
+      // A capture-free symbol root is static storage. The provisional
+      // program, lowered before its initialization plan, carries no step.
+      mapping.origin = BorrowOriginKind::Global;
+      mapping.globalRoot = source.symbol;
     } else
       return std::nullopt;
     for (const auto &projection : source.projections) {

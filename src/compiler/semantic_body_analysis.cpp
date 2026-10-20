@@ -3066,8 +3066,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   // a single unconditional origin (for example, a dependency-free variant).
   // Each return and each call still requires its independently checked complete
   // dependency set; a declaration alone cannot supply this authority.
+  // A class whose stored references are guarded by a payload field is such a
+  // conditional carrier too.
   const bool completeConditionalReturn =
-      stmt.body() && declaredReturnType.kind == SemanticType::Enum && [&] {
+      stmt.body() &&
+      (declaredReturnType.kind == SemanticType::Enum ||
+       declaredReturnType.kind == SemanticType::Class) &&
+      [&] {
         const auto inventory = storedReferenceInventory(declaredReturnType);
         return inventory && std::any_of(inventory->begin(), inventory->end(),
                                         [](const auto &path) {

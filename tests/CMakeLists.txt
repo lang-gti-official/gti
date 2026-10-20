@@ -947,6 +947,10 @@ add_test(NAME source_expected_example_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/169-source-expected.gti" --ownership-checks)
 set_tests_properties(source_expected_example_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME global_borrow_carriers_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/global_borrow_carriers.gti" --ownership-checks)
+set_tests_properties(global_borrow_carriers_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)

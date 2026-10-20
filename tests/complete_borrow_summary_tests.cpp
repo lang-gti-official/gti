@@ -757,6 +757,64 @@ int main() { return 0; }
       }
     }
   }
+  {
+    // Static storage is its own origin: the contract names the global, not an
+    // argument, and the verifier rejects a lost, substituted or strengthened
+    // global from the provisional program onward.
+    const auto result = analyze(R"gti(
+enum Slot { item(int& value), empty };
+int global_value = 19;
+Slot borrow_global(bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(global_value);
+}
+bool occupied(Slot value) {
+  switch (value) {
+  case Slot::item: return true;
+  case Slot::empty: return false;
+  }
+}
+int main() { auto value = borrow_global(true); return occupied(value) ? 0 : 1; }
+)gti");
+    const auto id = functionId(result, "borrow_global");
+    const auto *function = result.mir.findFunctionInstance(id);
+    const bool globalContract =
+        function && function->completeReturnBorrow &&
+        function->completeReturnBorrow->dependencies.size() == 1 &&
+        function->completeReturnBorrow->dependencies.front().origin ==
+            lang::BorrowOriginKind::Global &&
+        function->completeReturnBorrow->dependencies.front().globalRoot != 0;
+    expect(result.canGenerateCode() && globalContract,
+           "global-borrowing carrier names its static storage origin");
+    if (result.canGenerateCode() && globalContract) {
+      for (int mutation = 0; mutation < 4; ++mutation) {
+        auto malformed = result.mir;
+        auto &dependency =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1]
+                .completeReturnBorrow->dependencies.front();
+        if (mutation == 0)
+          dependency.globalRoot = 0;
+        else if (mutation == 1)
+          dependency.globalRoot += 1000;
+        else if (mutation == 2) {
+          dependency.origin = lang::BorrowOriginKind::Argument;
+          dependency.globalRoot = 0;
+        } else
+          dependency.access = lang::AccessMode::Mutable;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "global summary rejects a lost, substituted or strengthened "
+               "static origin " +
+                   std::to_string(mutation));
+      }
+      for (const auto level :
+           {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+        const auto optimized = lang::OptimizationPipeline().run(
+            {.hir = result.hir, .mir = result.mir, .level = level});
+        expect(optimized.valid(),
+               "optimizer preserves the global result contract");
+      }
+    }
+  }
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";

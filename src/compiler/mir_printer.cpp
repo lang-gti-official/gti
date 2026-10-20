@@ -1263,8 +1263,10 @@ private:
         separator(path);
         output << field.resultFields[path];
       }
-      output << "];origin=" << number(field.origin) << ':' << field.parameter
-             << ";source=[";
+      output << "];origin=" << number(field.origin) << ':' << field.parameter;
+      if (field.globalRoot != 0)
+        output << ";global=" << field.globalRoot;
+      output << ";source=[";
       for (std::size_t path = 0; path < field.sourceFields.size(); ++path) {
         separator(path);
         output << field.sourceFields[path];
