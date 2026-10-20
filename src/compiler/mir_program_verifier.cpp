@@ -3957,15 +3957,40 @@ independentlyStaticTextBinding(const MirProgram &program,
             });
         std::size_t prefixLength =
             selected == sources.end() ? 0 : selected->designatedFields.size();
+        // A mapping of the whole input takes its single dependency as it is,
+        // whatever carrier path that dependency was reached through.
         if (selected == sources.end() && sources.size() == 1 &&
-            sources.front().designatedFields.empty()) {
+            (sources.front().designatedFields.empty() ||
+             mapping.sourceFields.empty())) {
           const auto &paths = inputPaths;
+          const auto inventory =
+              findStoredCarrierReferenceInventory(program, carrierType);
           if (mapping.sourceFields.empty() ||
               (paths.size() == 1 &&
                prefixOf(paths.front().fields, mapping.sourceFields))) {
             selected = sources.begin();
             prefixLength =
                 mapping.sourceFields.empty() ? 0 : paths.front().fields.size();
+          } else if (inventory && inventory->size() == 1 &&
+                     prefixOf(inventory->front().fields,
+                              mapping.sourceFields) &&
+                     inventory->front().conditions ==
+                         mapping.sourceConditions) {
+            // A compact dependency covers its carrier's sole stored
+            // reference, including one inside a payload alternative whose
+            // guard the mapping selects exactly.
+            selected = sources.begin();
+            prefixLength = inventory->front().fields.size();
+          } else if (inventory && inventory->empty()) {
+            // An input that stores no reference, in any alternative, is
+            // itself the borrowed owner: its selected fields project its own
+            // storage.
+            const auto alternatives =
+                findStoredCarrierAlternativeInventory(program, carrierType);
+            if (alternatives && alternatives->empty()) {
+              selected = sources.begin();
+              prefixLength = 0;
+            }
           }
         }
         if (selected == sources.end() || selected->source == 0)
@@ -5987,10 +6012,14 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
                    returnedCarrier && returnedCarrier->arguments.size() == 1) {
           resultReferent = returnedCarrier->arguments.front();
         }
-        if (!resultReferent ||
-            (!dynamicTextCarrier &&
-             *resultReferent !=
-                 storedCarrierReference->reference.arguments.front())) {
+        // A proved complete conditional result has already matched every
+        // result path's referent to its typed source path, including paths
+        // inside payload alternatives that no single stored reference names.
+        if (!completeConditionalResult &&
+            (!resultReferent ||
+             (!dynamicTextCarrier &&
+              *resultReferent !=
+                  storedCarrierReference->reference.arguments.front()))) {
           return invalidSummary(
               "stored-carrier return dependency type does not match its "
               "exact external referent type");
@@ -12322,6 +12351,37 @@ completeBorrowSourcePath(const MirProgram &program,
       }
       return std::nullopt;
     }
+    // The referent behind a stored reference of a by-value carrier formal is
+    // the caller's storage that the formal's entry group names at exactly
+    // that field path. A borrow of it depends on that external referent, as
+    // a borrow through a reference formal does.
+    if (place->root == MirPlaceRootKind::Binding &&
+        place->projections.size() >= 2 &&
+        place->projections.back().kind == MirProjectionKind::Dereference &&
+        std::all_of(place->projections.begin(),
+                    std::prev(place->projections.end()),
+                    [](const auto &projection) {
+                      return projection.kind == MirProjectionKind::Field;
+                    }) &&
+        place->initiallyAvailable && !place->foreignStorage) {
+      std::vector<SymbolId> fields;
+      for (auto projection = place->projections.begin();
+           projection != std::prev(place->projections.end()); ++projection)
+        fields.push_back(projection->field);
+      const auto loans = bindingLoans.find(place->binding);
+      const MirLoan *group =
+          loans != bindingLoans.end() && loans->second.size() == 1
+              ? body.findLoan(loans->second.front())
+              : nullptr;
+      if (group != nullptr && group->entry &&
+          group->kind == MirLoanKind::Stored && !group->escapes &&
+          group->designatedFields == fields && group->conditions.empty() &&
+          group->additionalDependencies.empty() &&
+          (place->access == AccessMode::ReadOnly ||
+           group->access == AccessMode::Mutable))
+        return MirBorrowDependencySet{
+            .dependencies = {{.source = place->id, .access = place->access}}};
+    }
     if (place->root == MirPlaceRootKind::Loan ||
         place->type.kind == SemanticType::Reference ||
         std::any_of(place->projections.begin(), place->projections.end(),
@@ -12341,8 +12401,16 @@ completeBorrowSourcePath(const MirProgram &program,
       return operand.value && operand.value <= state.values.size()
                  ? state.values[operand.value - 1]
                  : std::nullopt;
-    if (operand.kind == MirOperandKind::Loan)
+    if (operand.kind == MirOperandKind::Loan) {
+      // An entry carrier group's loan that addresses the referent behind its
+      // stored reference names that referent, as a borrow of the place does.
+      const auto *loan = body.findLoan(operand.loan);
+      if (loan != nullptr && loan->entry && loan->kind == MirLoanKind::Stored &&
+          operand.place != 0)
+        if (auto fact = fromReferencePlace(state, operand.place))
+          return fact;
       return fromReferenceLoan(state, operand.loan);
+    }
     if (operand.kind == MirOperandKind::BorrowRead ||
         operand.kind == MirOperandKind::BorrowWrite) {
       auto fact = fromReferencePlace(state, operand.place);
@@ -12585,10 +12653,29 @@ completeBorrowSourcePath(const MirProgram &program,
                          mapping.sourceFields.begin()) &&
               dependency.conditions == inputGuard)
             sources.push_back(dependency);
-      } else if (const auto address = fromOperand(state, *argument)) {
-        if (!address->possibleAlternatives.empty())
-          continue;
-        sources = address->dependencies;
+      } else {
+        // Physical storage of a borrowed receiver is its address. Its stage
+        // retains the addressed object's contents instead, the source of a
+        // stored reference the result forwards.
+        const MirOperand *storage = argument;
+        if (mapping.origin == BorrowOriginKind::Receiver && referenceInput &&
+            argument->kind == MirOperandKind::Value && argument->value &&
+            argument->value <= definitions.size()) {
+          const auto *stage = definitions[argument->value - 1];
+          if (stage && stage->kind == MirInstructionKind::CallInput &&
+              stage->callInputRole == MirCallInputRole::Receiver &&
+              stage->result == argument->value &&
+              stage->callSite == instruction.callSite &&
+              stage->operands.size() == 1 &&
+              (stage->operands.front().kind == MirOperandKind::BorrowRead ||
+               stage->operands.front().kind == MirOperandKind::BorrowWrite))
+            storage = &stage->operands.front();
+        }
+        if (const auto address = fromOperand(state, *storage)) {
+          if (!address->possibleAlternatives.empty())
+            continue;
+          sources = address->dependencies;
+        }
       }
       if (sources.empty())
         continue;

@@ -962,8 +962,10 @@ the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
 A passive arm may also be a static source call, publishing plainly or on its
-Invoke success edge, a copy of a named place, or the move out of a nested
-passive join. A member call arm keeps the receiver identity that ordinary call
+Invoke success edge, a callable value invocation (a closure literal, a stored
+closure or a callable parameter), which publishes on its Invoke success edge
+like a checked source call, a copy of a named place, or the move out of a
+nested passive join. A member call arm keeps the receiver identity that ordinary call
 admission proves: its exact read-only or mutable borrow
 (`exactMemberBorrowReceiver`), or a consumed receiver
 (`exactMemberConsumingReceiver`), where a cleanup-free receiver moved out of a
@@ -1520,10 +1522,18 @@ When an exact temporary-place extraction moves into prepared parameter storage,
 its MIR Reparent ends the source temporary's lifetime. The native lifetime-slot
 carrier is retired after movement so a loop can execute the same temporary
 again; generated movement has already disarmed source user cleanup. Named
-binding carriers do not take this early-retirement route. A stable unprojected
-local receiver may remain staged across an expected propagation branch only
-when the branch is the exact `ExpectedHasValue` observation and its unique
-success edge proves extraction of that same carrier.
+binding carriers do not take this early-retirement route. A cleanup-free
+temporary may instead keep a passive obligation of its own, as the hidden
+branch-only temporary of a `?` operand in a conditional arm or on the right of
+`||` does. It moves into a directly activated prepared slot, and its moved-from
+shell ends where MIR drops it rather than at the move. A stable unprojected
+local receiver may remain staged across a propagation branch. The branch is
+either the exact `ExpectedHasValue` observation, whose unique success edge
+proves extraction of that same carrier, or the failure-free `has_value` call
+of a `?` through `std::tryable`. Its success edge continues with the
+`take_value` call, which MIR names with the propagation's own HIR value as it
+does the branch, and only the ends of the test's own input loans may follow
+the test in its block.
 
 A cleanup-free direct result may forward into caller storage without inventing
 a result-drop obligation when it has one exact return use and only inert
@@ -1964,10 +1974,17 @@ slot on its Invoke success edge. The `Assign` then move-assigns the slot's
 value into the binding, and the generated representation retires. A failed
 construction leaves the binding untouched. The class needs a generated move
 constructor and move assignment, no borrowed state and no active drop state.
-The construction's only lifecycle events may transfer its owning arguments'
-own value drops into the constructor, once each, so a consumed owning Expected
-argument is accepted too. A failure-free construction, or any construction
-the fused assignment already spells, keeps that fused route.
+The construction's only lifecycle events may hand each by-value argument to
+the constructor once (`preparedArgumentTransfer`): an owning argument's own
+value drop, so a consumed owning Expected argument is accepted too, or the
+prepared-parameter slot of a class argument, a named copy or move staged there
+or a fresh result already published into it, as in `h = holder(q)`. A
+failure-free construction, or any construction the fused assignment already
+spells, keeps that fused route. A cleanup-free class call result may likewise
+replace the exact mutable referent returned by a source call, as in
+`*cursor = make()`. The referent's loan, not the synthesized place's
+contextual access, owns the permission, and only that loan's canonical
+two-phase activation may sit between the publication and the `Assign`.
 
 The success class of such an Expected often has no default constructor. An
 ordinary SSA local would value-initialize the native wrapper and invent that
