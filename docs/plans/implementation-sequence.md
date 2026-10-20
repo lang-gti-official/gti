@@ -2990,6 +2990,13 @@ rescheduling the completed cutover.
 - **State/role:** complete bounded systems-readiness integration for portable
   byte-input parsers and serializers; `M-OWN-02`, `M-LIFE-01`, and
   `L-RANGE-01` remain its foundation.
+- **Superseded (2026-10-20):** `expected` is now a source-defined prelude
+  class whose `value()` and `error()` are ordinary accessors returning
+  receiver-tied references. The client and the shapes listed as non-goals
+  below (fields, reference parameters, mutable payload traversal, `error()`
+  ranges) now follow the general range and borrow rules; the compiler-trusted
+  `ExpectedValue` extraction no longer participates. See
+  [ranges over `expected` payloads](../language/ranges.md#ranges-over-expected-payloads).
 - **Named client:** iterate the owned string returned by
   `std::fread(...).value()` without moving it out of the named
   `expected<std::string, std::io_errc>` solely to satisfy the ownership model.
@@ -9169,6 +9176,45 @@ retain that proof, selected defaults and one full-expression cleanup schedule;
 it must not manufacture a source expression or treat missing raw-address origins
 as safe. Focused access, ambiguity, unsafe-contract, cleanup and malformed-proof
 validation remains in progress.
+
+**Release outcome (2026-10-20, 0.449.0).** The source class is the production
+`expected`. The general gaps it exposed are closed in semantics and verified
+MIR, each with a user-defined fixture: complete dependency sets that name
+static storage, consuming carriers that keep their dependencies' access,
+residual `?` returns with complete sets, read-only ranges over mutable call
+results, reflected contextual construction, and terminal failures that are
+inert in the raw audit. By owner decision the optimizer proofs and exit sharing
+it lost are re-baselined as recovery-pending under `RT-12`. Remaining
+follow-ups:
+
+- Retire the built-in Expected path: `SemanticType::Expected`, the
+  `IntrinsicKind::Expected*` and `MirOperation::Unexpected` operations, the
+  M-OWN-04 `expectedPayloadExtraction` route and the backend's Expected
+  representation. No source program reaches them.
+- Dynamic text in results: a `std::string_view` or `c_string` alternative
+  must be ownerless, so `unexpected(input.view())` over a caller's string is
+  rejected (`GTI-S2045`), although the built-in carrier tracked that borrow.
+  Restoring it needs retained dynamic-view fields with explicit owner
+  dependencies, not an `expected` exception.
+- Raw-pointer error alternatives (`expected<T, const U*>`) are rejected
+  (`GTI-S2056` inside the prelude's error storage). Supporting them needs a
+  raw-pointer error-storage profile or a general rule for constructor-initialized
+  generic raw-pointer fields; the built-in carrier allowed them.
+- Use-based receiver access: an overloaded read-only/mutable accessor on a
+  `mut` receiver selects the mutable overload even for a read-only use, so a
+  concurrent read of the same carrier conflicts where the built-in place
+  access did not.
+- Diagnostics: `GTI-S2029` hints name `std::detail` helpers and `for concept`
+  blocks; callable-class mappers report `GTI-S2023` three times; mapper arity
+  errors cascade `GTI-S2023` with `GTI-S2005`; a reference-returning
+  `transform` mapper gets a misleading `GTI-S2017`; contextual-return copies
+  report the constructor argument's `GTI-S2018` rather than a return-copy
+  `GTI-S2003`; `std::detail::unexpected_value` appears in user-facing types.
+- MIR checks assignments to static text storage but does not yet re-verify
+  global text initializers.
+- Several emitter-independence tests now accept combined admission
+  (`analyze(...).ready()` together with `supportsFailureBodyText`); restore
+  per-check independence once the source class's bodies allow it.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 

@@ -340,7 +340,9 @@ Source helpers, constructors, and overloaded operators also preserve raw-access
 requirements. A known expired pointer, or a pointer conflicting with a live
 checked loan, remains visible to the audit when passed to a helper that reads
 or writes through it. Diagnostics point to the caller invocation. Source
-copy/equality-only helpers remain inert. Concrete lambdas may likewise prove
+copy/equality-only helpers remain inert, and so do terminal failure operations,
+such as a panic or an inactive `expected` observer's failure: they never
+return, so they cannot access a pointee. Concrete lambdas may likewise prove
 that their bodies perform no raw access; unknown foreign calls do not establish
 that proof.
 Identity-bound restoring transfer also permits inert address transport when

@@ -1679,6 +1679,13 @@ residual type. In a generic body these checks happen for each concrete
 instance. Propagation through `std::tryable` is not available in constant
 evaluation. Violations are `GTI-S2086`.
 
+The early return of a residual counts as a return of the converted value.
+When `R` carries borrowed dependencies, as `expected<T&, E>` does, that return
+contributes the selected conversion's complete dependency set, which names no
+dependency for an owned residual. A function using `?` therefore keeps a
+complete borrowed-return contract; it is unknown only when the conversion has
+no complete dependency contract.
+
 An owning operand whose expression category is a value selects move transport
 for both alternatives. A named owning place selects copy transport for both
 alternatives.
