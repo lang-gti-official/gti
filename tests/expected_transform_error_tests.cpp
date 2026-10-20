@@ -4,11 +4,11 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <initializer_list>
 #include <iostream>
 #include <string>
-#include <initializer_list>
-#include <tuple>
 #include <string_view>
+#include <tuple>
 
 namespace {
 int failures = 0;
@@ -93,14 +93,17 @@ void testDiagnostics() {
   }
   // The mapped error must be movable: the member's own requirement rejects a
   // void or reference result at the call.
-  for (const std::string declaration :
-       {"void map(int e) {}\n",
-        "int global = 1; int& map(int e) { return global; }\n"}) {
-    reject(producer + declaration +
-               "int main() { [[discard]] read().transform_error(map); "
-               "return 0; }\n",
-           "GTI-S2029", ")", "move construction");
-  }
+  // A void or reference mapper result cannot form the mapped error. The
+  // member's ordinary instantiation rejects it at the call; generic callers
+  // with an open error type stay valid, so no eager constraint is declared.
+  reject(producer + "void map(int e) {}\n"
+                    "int main() { [[discard]] read().transform_error(map); "
+                    "return 0; }\n",
+         "GTI-S2000", "transform_error", "void");
+  reject(producer + "int global = 1; int& map(int e) { return global; }\n"
+                    "int main() { [[discard]] read().transform_error(map); "
+                    "return 0; }\n",
+         "GTI-S2022", ")", "cannot return a reference");
   reject(producer + "int map(int e) { return e; }\n"
                     "bool map(int e) { return true; }\n"
                     "int main() { [[discard]] read().transform_error(map); "
@@ -131,8 +134,7 @@ void testDiagnostics() {
          "wrong mapper arity reports the call's arity rather than cascades");
   // A lambda mapper is invoked inside the member's instance; its errors are
   // anchored at the requesting member call and noted inside the library.
-  for (const auto &[lambda, code, explanation] :
-       std::initializer_list<
+  for (const auto &[lambda, code, explanation] : std::initializer_list<
            std::tuple<std::string, std::string_view, std::string_view>>{
            {"[](bool error) -> int { return 1; }", "GTI-S2003",
             "requires 'bool'"},
@@ -149,7 +151,7 @@ void testDiagnostics() {
   }
   reject(producer + "int main() { auto map = [](int error) -> void {};\n"
                     "  [[discard]] read().transform_error(map); return 0; }\n",
-         "GTI-S2029", ")", "move construction");
+         "GTI-S2000", "transform_error", "void");
   const auto movedCapture = analyze(producer + R"(
 struct Owner { ~Owner() {} };
 int main() {
@@ -684,7 +686,8 @@ int main() {
                   result.hir.findFunctionInstance(*instruction.functionTarget);
               target && target->source &&
               target->source->name().lexeme == "transform_error")
-            member = result.mir.findFunctionInstance(*instruction.functionTarget);
+            member =
+                result.mir.findFunctionInstance(*instruction.functionTarget);
   }
   expect(member != nullptr, "returned selects its transform_error instance");
   if (member != nullptr) {
@@ -692,8 +695,7 @@ int main() {
     for (const auto &block : member->body.blocks)
       for (const auto &instruction : block.instructions)
         if (instruction.kind == lang::MirInstructionKind::Construct &&
-            instruction.constructorTarget &&
-            resultClass(instruction.info.type))
+            instruction.constructorTarget && resultClass(instruction.info.type))
           constructs.push_back(instruction.id);
     publications = constructs.size();
     for (std::size_t index = 0; index < constructs.size(); ++index)

@@ -1839,8 +1839,7 @@ private:
         diagnostic.related.push_back(
             {*site, "Concrete generic instance requested here."});
       }
-      if (origin && site && *origin != *site &&
-          diagnostic.primary != *origin) {
+      if (origin && site && *origin != *site && diagnostic.primary != *origin) {
         diagnostic.related.push_back(
             {*origin, "First required by this non-generic use."});
       }
@@ -2307,8 +2306,10 @@ private:
     HirBody body;
     std::vector<HirBindingId> parameterBindings;
     if (!snapshot.generatedDefault) {
-      if (const auto *concrete = analysis->model.findConstructor(*snapshot.source))
-        output.program.constructors[index].completeBorrow = concrete->completeBorrow;
+      if (const auto *concrete =
+              analysis->model.findConstructor(*snapshot.source))
+        output.program.constructors[index].completeBorrow =
+            concrete->completeBorrow;
       parameterBindings.reserve(snapshot.source->parameters().size());
       for (const Parameter &parameter : snapshot.source->parameters()) {
         parameterBindings.push_back(
@@ -4724,11 +4725,9 @@ private:
 
   // Calls the conversion operator on an already lowered receiver value; the
   // call is the source's last value, so the context consumes its result.
-  [[nodiscard]] HirValueId
-  appendContextualConversion(const Expr &raw,
-                             const ResolvedOperatorInfo &resolved,
-                             HirFunctionInstanceId target,
-                             HirValueId receiverValue, HirBody &body) {
+  [[nodiscard]] HirValueId appendContextualConversion(
+      const Expr &raw, const ResolvedOperatorInfo &resolved,
+      HirFunctionInstanceId target, HirValueId receiverValue, HirBody &body) {
     (void)enqueueClass(resolved.returnType);
     HirValue conversion{
         .id = nextValueId++,
@@ -5531,14 +5530,12 @@ private:
                                         argument ? 1 : 0)) {
       value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                    .arguments = std::move(*arguments)};
-    } else if (std::none_of(value.parameterTypes.begin(),
-                            value.parameterTypes.end(),
-                            [](const SemanticType &parameter) {
-                              return parameter.kind ==
-                                         SemanticType::UniqueOwner ||
-                                     parameter.kind ==
-                                         SemanticType::SharedPointer;
-                            })) {
+    } else if (std::none_of(
+                   value.parameterTypes.begin(), value.parameterTypes.end(),
+                   [](const SemanticType &parameter) {
+                     return parameter.kind == SemanticType::UniqueOwner ||
+                            parameter.kind == SemanticType::SharedPointer;
+                   })) {
       lifecycleValid = false;
       return std::nullopt;
     }
@@ -5553,7 +5550,8 @@ private:
       body.contextualConstructions.push_back(
           {.source = initializer,
            .value = id,
-           .constructionProof = model.contextualConstructionProof(*initializer)});
+           .constructionProof =
+               model.contextualConstructionProof(*initializer)});
     return id;
   }
 
@@ -7229,9 +7227,8 @@ private:
       const HirValueId receiverValue = value.id;
       body.values.push_back(std::move(value));
       output.program.sourceValueIds[raw].push_back(receiverValue);
-      return appendContextualConversion(*raw, *resolved,
-                                        *contextualConversionTarget,
-                                        receiverValue, body);
+      return appendContextualConversion(
+          *raw, *resolved, *contextualConversionTarget, receiverValue, body);
     }
 
     const HirValueId id = value.id;

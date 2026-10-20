@@ -1109,13 +1109,13 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     while (const auto *grouping = exprAs<Grouping>(source))
       source = grouping->expression().get();
     const ExpressionInfo *info = semanticModel.findExpression(*expression);
-    const ClassInfo *record = argument.kind == SemanticType::Class
-                                  ? classInfo(argument)
-                                  : nullptr;
+    const ClassInfo *record =
+        argument.kind == SemanticType::Class ? classInfo(argument) : nullptr;
     return exprAs<Variable>(source) != nullptr && info != nullptr &&
            info->category == ValueCategory::Value && info->type == argument &&
            info->traits.movable && !info->traits.containsBorrowedState &&
-           (argument.kind == SemanticType::Lambda || payloadEnumType(argument) ||
+           (argument.kind == SemanticType::Lambda ||
+            payloadEnumType(argument) ||
             (record != nullptr && (record->kind == ClassKind::Class ||
                                    record->kind == ClassKind::Struct)));
   }
@@ -1361,7 +1361,8 @@ auto SemanticVisitor::Impl::resolveClassArguments(
     resolveClassGenericDefaults(classId);
   const ClassInfo &owner = classInfo(classId);
   if (!owner.declaration->genericArgumentPatterns().empty() ||
-      !owner.definitionFamilyMembers.empty() || owner.definitionFamilyPrimary != 0) {
+      !owner.definitionFamilyMembers.empty() ||
+      owner.definitionFamilyPrimary != 0) {
     resolveClassArgumentPatterns(classId);
     for (const TypeRef &argument : arguments) {
       const std::size_t before = diagnostics.size();
@@ -1374,8 +1375,7 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       result.types.push_back(typeOf(argument));
       result.valid = result.valid && diagnostics.size() == before;
     }
-    const ClassId selected =
-        selectClassDefinition(classId, result.types);
+    const ClassId selected = selectClassDefinition(classId, result.types);
     resolveClassArgumentPatterns(selected);
     if (sourceGraph != nullptr && currentSourceUnit != 0 &&
         !sourceGraph->isDeclarationVisible(currentSourceUnit,
@@ -1387,9 +1387,9 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       result.valid = false;
     }
     if (classInfo(selected).declaration->genericArgumentPatterns().empty()) {
-      auto ordinary = resolveNominalArguments(classInfo(selected).genericParameters,
-                                             classInfo(selected).name, arguments, site,
-                                             std::move(diagnosticCode));
+      auto ordinary = resolveNominalArguments(
+          classInfo(selected).genericParameters, classInfo(selected).name,
+          arguments, site, std::move(diagnosticCode));
       ordinary.valid = ordinary.valid && result.valid;
       return ordinary;
     }
@@ -2410,9 +2410,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                                 : selected.constructor->borrowAccess;
   std::vector<std::size_t> storedParameters;
   const auto storedPaths = storedReferencePaths(constructedType);
-  const bool conditionalFields = std::any_of(
-      storedPaths.begin(), storedPaths.end(),
-      [](const auto &path) { return !path.conditions.empty(); });
+  const bool conditionalFields =
+      std::any_of(storedPaths.begin(), storedPaths.end(),
+                  [](const auto &path) { return !path.conditions.empty(); });
   if (const auto paths = storedReferencePaths(constructedType);
       !paths.empty() && !conditionalFields &&
       selected.kind == ConstructorKind::Ordinary) {
@@ -2486,13 +2486,15 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     std::vector<const ExprPtr *> inputs;
     for (const auto &argument : arguments)
       inputs.push_back(argument.expression);
-    const auto dependencies = summary
-        ? instantiateCompleteBorrowArguments(publication, *summary, inputs)
-        : std::nullopt;
+    const auto dependencies =
+        summary
+            ? instantiateCompleteBorrowArguments(publication, *summary, inputs)
+            : std::nullopt;
     if (!dependencies) {
       report(paren,
              "Construction requires a complete checked dependency contract "
-             "for every active borrowed field and alternative.", "GTI-S2045");
+             "for every active borrowed field and alternative.",
+             "GTI-S2045");
     } else {
       resolved.borrowFields = summary->dependencies;
       if (!summary->dependencies.empty()) {

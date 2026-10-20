@@ -345,9 +345,12 @@ stores credentials or changes package permissions. See
 
 The source `expected` class checks mapper contracts with ordinary rules, so
 the built-in mapper family `GTI-S2097` is retired. A mapper that fails a
-member's `requires` clause, such as `and_then` with a different error type or
-`transform_error` with a non-movable result, reports `GTI-S2029` at the call's
-closing parenthesis. Mapper arity and argument mismatches use the ordinary call
+member's `requires` clause, such as `and_then` with a different error type,
+reports `GTI-S2029` at the call's closing parenthesis. A `transform_error`
+mapper returning `void` or a reference fails in the member's instantiation
+(`GTI-S2000` or `GTI-S2022` at the call); an eager constraint would reject
+generic callers whose error type is still open. Mapper arity and argument
+mismatches use the ordinary call
 diagnostics (`GTI-S2005`, `GTI-S2003`, `GTI-S2017`) at the member name, with
 the prelude invocation as related information. `GTI-S2018` reports implicit
 consumption of a named expected by the consuming members or `expect`, and

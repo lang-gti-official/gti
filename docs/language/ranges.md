@@ -58,7 +58,8 @@ The compiler evaluates the range expression exactly once. For a read-only
 loop, an addressable lvalue is retained by one read-only hidden owner
 reference. When the range expression is a call returning a mutable
 reference, the read-only loop retains that call's mutable loan for the whole
-traversal, but every element it binds is read-only. For a mutable-reference loop, an addressable lvalue must provide a
+traversal, but every element it binds is read-only. For a mutable-reference
+loop, an addressable lvalue must provide a
 mutable place and is retained by one exclusive hidden owner reference. An
 owned prvalue is transferred into hidden loop storage and can supply either
 access mode. A second range carrier borrows that owner. Nominal read-only

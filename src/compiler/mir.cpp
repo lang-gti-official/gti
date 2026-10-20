@@ -4945,7 +4945,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                     : MirTemporaryCarrierDependency{};
             const bool exactAncestry =
                 inheritedParent(operandPlace.throughLoan) ||
-                (temporaryCarrier && inheritedParent(temporaryCarrier.loan->id)) ||
+                (temporaryCarrier &&
+                 inheritedParent(temporaryCarrier.loan->id)) ||
                 (binding != bindingLoans.end() &&
                  std::count_if(binding->second.begin(), binding->second.end(),
                                [&](MirLoanId id) {
@@ -5432,8 +5433,7 @@ joinLifecycleState(const MirLifecycleState &left,
     for (const MirLoan &loan : body.loans) {
       if ((loan.kind != MirLoanKind::CallArgument &&
            loan.kind != MirLoanKind::CallResult) ||
-          loan.source != place->id ||
-          loan.storedDependency != carrier.loan->id)
+          loan.source != place->id || loan.storedDependency != carrier.loan->id)
         continue;
       borrowed = true;
       const auto role = callInputRoles.find(loan.id);
@@ -7025,7 +7025,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            !instruction.receiver && !instruction.destination &&
            instruction.info.type == SemanticType::Void &&
            instruction.neverReturns == terminal.has_value() &&
-           instruction.tracksCaller == intrinsicTracksCaller(instruction.intrinsic) &&
+           instruction.tracksCaller ==
+               intrinsicTracksCaller(instruction.intrinsic) &&
            instruction.operands.size() == parameters.size() &&
            (parameters.empty() ||
             instruction.operands.front().type == parameters.front()) &&
@@ -8362,6 +8363,20 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                    "range iteration inventory has an invalid body CFG");
   }
   std::unordered_set<HirStatementId> sourceRanges;
+  // A readonly element plan may share the mutable result loan of a call that
+  // selected mutable access (`mut T&`); that call, not the loan's own access
+  // field, is the witness. A widened local or readonly result loan is not.
+  const auto mutableCallResult = [&](const MirLoan *loan) {
+    if (loan == nullptr || loan->kind != MirLoanKind::CallResult ||
+        loan->access != AccessMode::Mutable)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Call && instruction.loan &&
+            *instruction.loan == loan->id)
+          return instruction.borrowAccess == AccessMode::Mutable;
+    return false;
+  };
   for (std::size_t index = 0; index < body.rangeIterations.size(); ++index) {
     const MirRangeIteration &range = body.rangeIterations[index];
     const MirPlace *ownerPlace = body.findPlace(range.owner);
@@ -8455,10 +8470,11 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                                           AccessMode::ReadOnly) ||
             !elementOwnerLoan || elementOwnerLoan->entry ||
             elementOwnerLoan->escapes ||
-            // The readonly alias may share the range family's wider loan;
-            // its own place and type are readonly above.
+            // The readonly alias may share the range family's mutable call
+            // result loan; its own place and type are readonly above.
             (elementOwnerLoan->access != AccessMode::ReadOnly &&
-             elementOwnerLoan->id != range.rangeLoan) ||
+             !(elementOwnerLoan->id == range.rangeLoan &&
+               mutableCallResult(elementOwnerLoan))) ||
             !carries(*elementOwnerLoan, elementOwner->binding) ||
             !elementLoan || elementLoan->id != elementOwnerLoan->id)
           return failure(body, owner,
@@ -8845,16 +8861,18 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                        "immediately after its call");
       }
     }
-    // A loan grants at least the access its element uses: a readonly element
-    // may iterate a range borrowed mutably, never the reverse.
-    if ((range.elementAccess == AccessMode::Mutable &&
-         rangeLoan->access != AccessMode::Mutable) ||
+    // A loan grants exactly the access its element uses, except that a
+    // readonly element may iterate a call's mutable result, never the reverse.
+    if ((rangeLoan->access != range.elementAccess &&
+         !(range.elementAccess == AccessMode::ReadOnly &&
+           mutableCallResult(rangeLoan))) ||
         rangeLoan->escapes ||
         (range.elementLoan != 0 &&
          (elementLoan == nullptr ||
           (elementLoan->access != range.elementAccess &&
            !(range.elementAccess == AccessMode::ReadOnly &&
-             elementLoan->id == range.rangeLoan)) ||
+             elementLoan->id == range.rangeLoan &&
+             mutableCallResult(elementLoan))) ||
           elementLoan->escapes ||
           (range.elementAccess == AccessMode::Mutable &&
            (range.elementLoan == range.rangeLoan ||
@@ -10042,7 +10060,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     const bool callable = instruction.kind == MirInstructionKind::Call ||
                           instruction.kind == MirInstructionKind::Construct;
-    if (const auto arithmetic = integerArithmeticIntrinsic(instruction.intrinsic)) {
+    if (const auto arithmetic =
+            integerArithmeticIntrinsic(instruction.intrinsic)) {
       if (instruction.kind != MirInstructionKind::Call || !instruction.result ||
           instruction.receiver || instruction.destination ||
           instruction.functionTarget || instruction.constructorTarget ||

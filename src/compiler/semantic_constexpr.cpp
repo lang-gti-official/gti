@@ -391,8 +391,32 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                          return resultType(resultType, value.info.type);
                        });
   };
+  // The compatibility walker does not model a payload enum's active
+  // alternative, so a body holding one requires the MIR profile. A type that
+  // only names an enum, such as a reflected payload-field metaobject, does not.
+  const auto payloadValues = [&](const MirBody &body) {
+    const auto payload = [&](const SemanticType &type) {
+      return type.kind == SemanticType::Enum &&
+             mir.program.findPayloadEnum(type) != nullptr;
+    };
+    return payload(body.returnType) ||
+           std::any_of(
+               body.places.begin(), body.places.end(),
+               [&](const auto &place) { return payload(place.type); }) ||
+           std::any_of(
+               body.values.begin(), body.values.end(),
+               [&](const auto &value) { return payload(value.info.type); });
+  };
   const bool requiresMir =
-      !mir.program.payloadEnums().empty() ||
+      std::any_of(
+          mir.program.functionInstances().begin(),
+          mir.program.functionInstances().end(),
+          [&](const auto &function) { return payloadValues(function.body); }) ||
+      std::any_of(mir.program.constructorInstances().begin(),
+                  mir.program.constructorInstances().end(),
+                  [&](const auto &constructor) {
+                    return payloadValues(constructor.body);
+                  }) ||
       !mir.program.destructorInstances().empty() ||
       std::any_of(
           mir.program.functionInstances().begin(),

@@ -236,15 +236,16 @@ private:
   TextSources joinSources(const TextBody &context, MirValueId id,
                           std::set<std::pair<bool, std::size_t>> &active) {
     const auto *value = context.body.findValue(id);
-    const auto *block =
-        value && value->definition == 0
-            ? context.body.findBlock(value->definitionBlock)
-            : nullptr;
+    const auto *block = value && value->definition == 0
+                            ? context.body.findBlock(value->definitionBlock)
+                            : nullptr;
     if (!block)
       return {};
-    const auto parameter = std::find_if(
-        block->parameters.begin(), block->parameters.end(),
-        [&](const MirBlockParameter &candidate) { return candidate.value == id; });
+    const auto parameter =
+        std::find_if(block->parameters.begin(), block->parameters.end(),
+                     [&](const MirBlockParameter &candidate) {
+                       return candidate.value == id;
+                     });
     if (parameter == block->parameters.end())
       return {};
     const auto index =
@@ -266,7 +267,8 @@ private:
                                source.parameters.end());
     };
     for (const auto &predecessor : context.body.blocks) {
-      edge(predecessor.terminator.target, predecessor.terminator.targetArguments);
+      edge(predecessor.terminator.target,
+           predecessor.terminator.targetArguments);
       edge(predecessor.terminator.elseTarget,
            predecessor.terminator.elseArguments);
       for (const auto &target : predecessor.terminator.switchTargets)
@@ -336,12 +338,12 @@ private:
         const bool uncheckedWrite =
             destination &&
             (destination->foreignStorage ||
-             std::any_of(destination->projections.begin(),
-                         destination->projections.end(),
-                         [](const auto &projection) {
-                           return projection.kind == MirProjectionKind::RawIndex ||
-                                  projection.kind == MirProjectionKind::RawDereference;
-                         }));
+             std::any_of(
+                 destination->projections.begin(),
+                 destination->projections.end(), [](const auto &projection) {
+                   return projection.kind == MirProjectionKind::RawIndex ||
+                          projection.kind == MirProjectionKind::RawDereference;
+                 }));
         // A text field's invariant must survive every safe writer, including
         // assignments rooted in accessor loans rather than a Field projection.
         // Raw writes keep their explicit unsafe validity obligations.
@@ -357,11 +359,10 @@ private:
                         });
         const bool checkedTextAssignment =
             destination && textType(destination->type) && !uncheckedWrite &&
-            !localTextStorage &&
-            instruction.kind == MirInstructionKind::Assign;
-        if (destination &&
-            (isOwnerlessTextFieldProjection(program, context.body, *destination) ||
-             checkedTextAssignment)) {
+            !localTextStorage && instruction.kind == MirInstructionKind::Assign;
+        if (destination && (isOwnerlessTextFieldProjection(
+                                program, context.body, *destination) ||
+                            checkedTextAssignment)) {
           if (instruction.operands.size() == 1)
             require(instruction, instruction.operands.front());
           else if (diagnose)
@@ -498,8 +499,8 @@ MirVerificationResult TextContracts::verify() {
 } // namespace
 
 bool isOwnerlessTextFieldProjection(const MirProgram &program,
-                                     const MirBody &body,
-                                     const MirPlace &place) {
+                                    const MirBody &body,
+                                    const MirPlace &place) {
   // A text field, or an element of a text array reached through a field,
   // holds only text its checked writers proved ownerless. A local array does
   // not: it never crosses a field projection.
@@ -541,7 +542,8 @@ bool isOwnerlessTextFieldProjection(const MirProgram &program,
               return false;
       if (const auto *enumeration = program.findPayloadEnum(*current))
         for (const auto &variant : enumeration->variants)
-          for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+          for (std::size_t index = 0; index < variant.payloadSymbols.size();
+               ++index)
             if (variant.payloadSymbols[index] == projection.field &&
                 (index >= variant.payloadTypes.size() ||
                  !accept(variant.payloadTypes[index])))

@@ -33,13 +33,12 @@ bool isExpectedClass(const lang::FrontendResult &result,
 // `recoveryPending` names positive controls whose discharge waits on RT-12
 // (proofs through the source result class, docs/plans/optimization.md). They
 // stay reached, censused controls; only their discharge is not yet required.
-void checkAddressFixture(std::string_view filename,
-                         std::initializer_list<std::string_view> positiveNames,
-                         std::size_t negativeCount, bool rawReads = true,
-                         bool requireOpaque = true,
-                         bool inspectResultDrops = false,
-                         std::initializer_list<std::string_view>
-                             recoveryPending = {}) {
+void checkAddressFixture(
+    std::string_view filename,
+    std::initializer_list<std::string_view> positiveNames,
+    std::size_t negativeCount, bool rawReads = true, bool requireOpaque = true,
+    bool inspectResultDrops = false,
+    std::initializer_list<std::string_view> recoveryPending = {}) {
   const lang::OptimizationPipeline pipeline;
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + std::string(filename));
@@ -454,7 +453,8 @@ int main() {
                       false, {"accepted_ticket", "denied_ticket"});
   checkAddressFixture("optimizer_passive_result_cleanup.gti",
                       {"after_local_result", "after_record_result"}, 1, false,
-                      false, true, {"after_local_result", "after_record_result"});
+                      false, true,
+                      {"after_local_result", "after_record_result"});
   checkAddressFixture("optimizer_pointer_field_contents.gti", {"observe"}, 6);
   checkAddressFixture("optimizer_sibling_field_publication.gti",
                       {"sibling_publication"}, 4, false, false, false,

@@ -497,9 +497,9 @@ The success path publishes the referent together with the receiver, argument,
 or global owner dependency; an `unexpected(E)` path publishes no loan. A local
 complete result is itself a carrier of that dependency, and `value()` creates
 a child read loan rather than copying `T`. Copying, moving, or forwarding the
-complete carrier preserves the one dependency. Fields, globals, parameters,
-lambda returns, mutable reference payloads, and multiple-owner results remain
-outside this bounded form. See [Expected values](expected.md#fallible-borrows).
+complete carrier preserves the one dependency, including a by-value
+parameter. Fields, globals, lambda returns, mutable reference payloads, and
+multiple-owner results remain outside this bounded form. See [Expected values](expected.md#fallible-borrows).
 
 Under the default single-threaded execution profile, a free function or static
 method may instead return `T&` or `mut T&` from one exact namespace-global or
@@ -713,16 +713,15 @@ field access, replacement, and calls, retaining each intermediate borrow until
 its dependent child ends. Empty intermediate owners retain checked failure
 and ordinary cleanup, including an already staged replacement value.
 
-General retained nested owner projections remain outside this checkpoint. In
-particular, a borrow reached through `expected<owner, E>.value()` may be
-consumed immediately within the same full expression, but it cannot be stored
-or returned through another helper. The one bounded exception is a read-only
-range sourced by exact `value()` on a named local or by-value parameter. That
-loop retains a shared loan rooted in the complete `expected`, allows nested
-read-only traversal, and blocks owner movement, replacement, mutation, and
-drop until every loop exit ends the range loan. It does not authorize a
-standalone payload reference, field/global receiver, mutable payload range, or
-escaping element.
+A borrow reached through an owner stored inside a result follows the same
+rules. `value()` returns a reference tied to its receiver, and an owning
+handle's checked pointee is storage the receiver contains, so
+`DirectPayload& payload = *opened.value();` may be retained in a local, or
+returned from a function whose result borrows from a read-only
+`expected<std::unique_ptr<DirectPayload>, E>& opened` parameter. Replacing,
+moving or mutating the `expected` while that reference is live is rejected.
+Ranges over `value()` and `error()` use the general range rules; see
+[ranges over `expected` payloads](ranges.md#ranges-over-expected-payloads).
 
 Reference globals, nested references, and references over fixed arrays or
 compiler-private owner handles remain unavailable to ordinary source. A
@@ -1777,7 +1776,16 @@ the complete enum move-only, including when nested in another enum.
 A source class can retain that conditional dependency set in a field. The
 current structural slice requires every retained dependency and alternative
 guard to share one exact field prefix; selecting the field removes that prefix
-from the whole set, never just the convenient subset. Empty-body constructors
+from the whole set, never just the convenient subset. That field holds the
+payload enum itself: a field whose type is another conditionally borrowed
+class, such as a `Holder` storing an `expected<int&, E>`, is not yet supported
+(`GTI-S2045`), and neither is an enum payload whose type is a class that stores
+references (`GTI-S2067`). A reference selected from a conditional carrier is
+relayed only from a named local, parameter or temporary carrier, not through a
+field, element or dereference of another value (`GTI-S2045`). A free function
+whose carrier result could borrow from more than one eligible parameter is
+ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
+reference return. Empty-body constructors
 establish the result from their exact field initializers, including a proved
 reference-free alternative. A missing proof is not an empty alternative.
 Implicit copying remains conditional on all fields being copyable; copying a

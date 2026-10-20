@@ -2334,8 +2334,8 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
     const SemanticType &pattern, const SemanticType &argument,
     const std::vector<GenericParameterInfo> &parameters,
     GenericSubstitution &substitution, const ExprPtr *expression,
-    GenericParameterId *conflictingParameter, bool *conflictingValueParameter) const
-    -> bool {
+    GenericParameterId *conflictingParameter,
+    bool *conflictingValueParameter) const -> bool {
   if (pattern.kind == SemanticType::Reference &&
       pattern.arguments.size() == 1) {
     const SemanticType &referent = argument.kind == SemanticType::Reference &&
@@ -4651,7 +4651,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     CallReceiverMode receiverMode) -> bool {
   if (function.receiverMutability == ReceiverMutability::Consuming &&
       !conditionalReferenceReturn(function.returnType, function.parameterTypes,
-                                   function.dispatchOwner) &&
+                                  function.dispatchOwner) &&
       (function.returnType.kind == SemanticType::Reference ||
        function.returnBorrowOrigin != BorrowOriginKind::None ||
        typeTraits(function.returnType).containsBorrowedState)) {
@@ -7366,8 +7366,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (function.returnType.kind == SemanticType::Enum ||
       (function.returnType.kind == SemanticType::Class &&
        typeTraits(function.returnType).containsBorrowedState) ||
-      conditionalReferenceReturn(function.returnType,
-                                 function.parameterTypes, function.dispatchOwner)) {
+      conditionalReferenceReturn(function.returnType, function.parameterTypes,
+                                 function.dispatchOwner)) {
     const auto complete = completeFunctionReturnBorrow(
         function, resolved.typeArguments, resolved.valueArguments,
         tokenSpan(expressionToken(call.callee())));
@@ -7382,6 +7382,31 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         complete && (function.returnType.kind == SemanticType::Class ||
                      (function.returnType.kind == SemanticType::Reference &&
                       function.dispatchOwner.kind == SemanticType::Class));
+    // A reference selected from a receiver's alternative-guarded stored path
+    // is relayed only from a named or fresh receiver. Reaching that carrier
+    // through a field, element or dereference of another value needs a
+    // composed receiver-prefix proof that verified MIR does not yet carry.
+    if (instantiated && function.returnType.kind == SemanticType::Reference &&
+        std::any_of(complete->dependencies.begin(),
+                    complete->dependencies.end(),
+                    [](const BorrowedFieldOrigin &mapping) {
+                      return mapping.origin == BorrowOriginKind::Receiver &&
+                             !mapping.sourceConditions.empty();
+                    }))
+      if (const auto *member = exprAs<Get>(call.callee().get())) {
+        const Expr *receiver = member->object().get();
+        while (const auto *grouping = exprAs<Grouping>(receiver))
+          receiver = grouping->expression().get();
+        const auto *dereference = exprAs<Unary>(receiver);
+        if (exprAs<Get>(receiver) || exprAs<Index>(receiver) ||
+            (dereference && dereference->oper().kind == TokenKind::STAR))
+          report(member->name(),
+                 "A reference selected from a conditional borrowed carrier "
+                 "cannot yet be returned through a field, element or "
+                 "dereference of another value; call it on a named local, "
+                 "parameter or temporary carrier.",
+                 "GTI-S2045");
+      }
     if (instantiated) {
       if (contractFields)
         resolved.borrowFields = complete->dependencies;

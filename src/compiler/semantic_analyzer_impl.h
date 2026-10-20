@@ -1815,10 +1815,9 @@ private:
                 bool structural = false) const;
 
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
-  [[nodiscard]] bool
-  conditionalReferenceReturn(const SemanticType &result,
-                             std::span<const SemanticType> parameters,
-                             const SemanticType &receiver = SemanticType::Unknown) const;
+  [[nodiscard]] bool conditionalReferenceReturn(
+      const SemanticType &result, std::span<const SemanticType> parameters,
+      const SemanticType &receiver = SemanticType::Unknown) const;
   // Normalize one already checked return expression before end-of-body
   // summary publication. Failure is unknown/invalid, never an empty proof.
   // The caller still enforces ordinary child-loan escape and availability.
@@ -1831,8 +1830,9 @@ private:
                            ReceiverMutability receiverMutability,
                            const SemanticBorrowDependencySet &complete);
   void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
-  std::optional<FunctionBorrowDependencySummary> completeConstructorBorrow(
-      const ResolvedConstructionInfo &construction, const SourceSpan &site);
+  std::optional<FunctionBorrowDependencySummary>
+  completeConstructorBorrow(const ResolvedConstructionInfo &construction,
+                            const SourceSpan &site);
   std::optional<FunctionBorrowDependencySummary> completeBorrowQuery(
       const InstanceAnalysisKey &key, const SemanticType &result,
       std::span<const SemanticType> parameters, const Token &name,
@@ -1949,10 +1949,9 @@ private:
 
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
-  [[nodiscard]] bool
-  requireOwnerlessTextParameter(const ExprPtr &expression);
+  [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
   void recordOwnerlessTextCall(const Call &call,
-                              const CallableCandidate &target);
+                               const CallableCandidate &target);
   void finalizeOwnerlessTextContracts();
 
   [[nodiscard]] std::vector<
@@ -3798,8 +3797,9 @@ private:
   [[nodiscard]] SemanticType
   selectExactClassSpecialization(SemanticType type) const;
 
-  [[nodiscard]] ClassId selectClassDefinition(
-      ClassId id, const std::vector<SemanticType> &arguments) const;
+  [[nodiscard]] ClassId
+  selectClassDefinition(ClassId id,
+                        const std::vector<SemanticType> &arguments) const;
 
   [[nodiscard]] static bool
   isConcreteExactSpecializationType(const SemanticType &type);

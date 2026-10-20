@@ -396,11 +396,11 @@ int main() {
             auto *body = lang::findMirBody(
                 malformed, {lang::MirBodyKind::Function, function.id});
             auto *changedBlock = body->findBlock(block.id);
-            auto changed = std::find_if(
-                changedBlock->instructions.begin(),
-                changedBlock->instructions.end(), [&](const auto &candidate) {
-                  return candidate.id == instruction.id;
-                });
+            auto changed = std::find_if(changedBlock->instructions.begin(),
+                                        changedBlock->instructions.end(),
+                                        [&](const auto &candidate) {
+                                          return candidate.id == instruction.id;
+                                        });
             if (mutation == 0)
               changed->intrinsic = lang::IntrinsicKind::IntegerWrappingAdd;
             else if (mutation == 1)

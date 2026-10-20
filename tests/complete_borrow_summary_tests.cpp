@@ -16,7 +16,9 @@ namespace lang {
 struct MirProgramTestAccess {
   static auto &functions(MirProgram &program) { return program.functions; }
   static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
-  static auto &constructors(MirProgram &program) { return program.constructors; }
+  static auto &constructors(MirProgram &program) {
+    return program.constructors;
+  }
 };
 } // namespace lang
 
@@ -871,7 +873,8 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
         if (root == function->body.places.end())
           continue;
         auto malformed = result.mir;
-        auto &changed = lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
         changed.body.values[value.id - 1]
             .borrowDependencies->dependencies.front()
             .source = root->id;
@@ -887,8 +890,8 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
   {
     // A readonly element may iterate a range whose hidden family shares a
     // call's mutable loan, but a forged mutable element is still rejected.
-    std::ifstream input(root /
-                        "tests/fixtures/readonly_range_over_mutable_result.gti");
+    std::ifstream input(
+        root / "tests/fixtures/readonly_range_over_mutable_result.gti");
     const std::string source{std::istreambuf_iterator<char>(input), {}};
     const auto result = analyze(source);
     expect(result.canGenerateCode(),
@@ -1790,13 +1793,19 @@ int main() { return 0; }
     }
     if (result.semanticValid) {
       std::size_t tested = 0;
-      const auto ctorProofFailed = [](const lang::MirVerificationResult &checked) {
-        return std::any_of(checked.errors.begin(), checked.errors.end(), [](const auto &error) {
-          return error.message.find("complete constructor dependency summary lacks") != std::string::npos;
-        });
-      };
+      const auto ctorProofFailed =
+          [](const lang::MirVerificationResult &checked) {
+            return std::any_of(
+                checked.errors.begin(), checked.errors.end(),
+                [](const auto &error) {
+                  return error.message.find(
+                             "complete constructor dependency summary lacks") !=
+                         std::string::npos;
+                });
+          };
       expect(!ctorProofFailed(lang::verifyMirProgram(result.mir)),
-             "constructor complete proof independently verifies exact initialized fields");
+             "constructor complete proof independently verifies exact "
+             "initialized fields");
       for (const auto &constructor : result.mir.constructorInstances()) {
         if (!constructor.completeBorrow ||
             constructor.completeBorrow->dependencies.empty())
@@ -1804,16 +1813,18 @@ int main() { return 0; }
         ++tested;
         for (int mutation = 0; mutation < 10; ++mutation) {
           auto malformed = result.mir;
-          auto &changed = lang::MirProgramTestAccess::constructors(malformed)
-                              [constructor.id - 1];
+          auto &changed = lang::MirProgramTestAccess::constructors(
+              malformed)[constructor.id - 1];
           if (mutation == 0)
             changed.completeBorrow->dependencies.clear();
           if (mutation == 1)
             changed.completeBorrow->dependencies.front().parameter = 999;
           if (mutation == 2)
-            changed.completeBorrow->dependencies.front().resultConditions.clear();
+            changed.completeBorrow->dependencies.front()
+                .resultConditions.clear();
           if (mutation == 3)
-            changed.completeBorrow->dependencies.front().access = lang::AccessMode::Mutable;
+            changed.completeBorrow->dependencies.front().access =
+                lang::AccessMode::Mutable;
           if (mutation == 4)
             for (auto &block : changed.body.blocks)
               for (auto &instruction : block.instructions)
@@ -1823,23 +1834,31 @@ int main() { return 0; }
             for (auto &loan : changed.body.loans) {
               if (!loan.escapes || !loan.storedField)
                 continue;
-              if (mutation == 6) loan.source = 0;
-              if (mutation == 7) loan.conditions.clear();
-              if (mutation == 8) loan.storedField = 0;
+              if (mutation == 6)
+                loan.source = 0;
+              if (mutation == 7)
+                loan.conditions.clear();
+              if (mutation == 8)
+                loan.storedField = 0;
               for (auto &block : changed.body.blocks)
                 for (auto &instruction : block.instructions)
                   if (instruction.kind == lang::MirInstructionKind::Borrow &&
                       instruction.loan == loan.id) {
-                    if (mutation == 5) instruction.operands.clear();
-                    if (mutation == 9) instruction.operands.front().value = 0;
+                    if (mutation == 5)
+                      instruction.operands.clear();
+                    if (mutation == 9)
+                      instruction.operands.front().value = 0;
                   }
             }
-          expect(ctorProofFailed(lang::verifyMirProgram(malformed)),
-                 "borrowed constructor rejects absent/substituted origin, guard, "
-                 "access, field initialization or exact publication " + std::to_string(mutation));
+          expect(
+              ctorProofFailed(lang::verifyMirProgram(malformed)),
+              "borrowed constructor rejects absent/substituted origin, guard, "
+              "access, field initialization or exact publication " +
+                  std::to_string(mutation));
         }
       }
-      expect(tested != 0, "borrowed constructor has an independently checked summary");
+      expect(tested != 0,
+             "borrowed constructor has an independently checked summary");
     }
     if (result.canGenerateCode()) {
       std::size_t freshConsumingProofs = 0;

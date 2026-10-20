@@ -735,7 +735,8 @@ public:
       } else {
         borrowFields(instance.completeBorrow->dependencies);
         output << " alternatives=[";
-        for (const auto &alternative : instance.completeBorrow->possibleAlternatives)
+        for (const auto &alternative :
+             instance.completeBorrow->possibleAlternatives)
           borrowConditions(alternative.conditions);
         output << ']';
       }

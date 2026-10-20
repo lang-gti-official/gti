@@ -561,8 +561,10 @@ int main() { return 0; }
   const lang::FrontendResult expectedReturned = lang::Frontend().analyze(
       "move-only-expected-return.gti", expectedReturnSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  // The return initializes the result through its implicit constructor, so
+  // the copy is the general deleted-copy argument diagnostic at the payload.
   const lang::Diagnostic *expectedCopy =
-      findDiagnosticByCode(expectedReturned.diagnostics, "GTI-S2003");
+      findDiagnosticByCode(expectedReturned.diagnostics, "GTI-S2018");
   const std::size_t expectedName =
       expectedReturnSource.find("return text") + std::string("return ").size();
   expect(!expectedReturned.canGenerateCode() && expectedCopy != nullptr &&
@@ -573,30 +575,35 @@ int main() { return 0; }
              expectedCopy->primary.start == expectedName &&
              expectedCopy->primary.end == expectedName + 4 &&
              expectedCopy->message ==
-                 "Cannot return 'text' by copy because type 'std::string' "
-                 "is move-only." &&
+                 "Constructor argument 1 would call the deleted copy "
+                 "constructor of 'std::string'." &&
              expectedCopy->hints ==
-                 std::vector<std::string>{"Use 'return std::move(text);' to "
-                                          "transfer ownership."} &&
+                 std::vector<std::string>{
+                     "Pass the argument with std::move(...) when this call "
+                     "should transfer ownership."} &&
              expectedCopy->fixes.empty(),
          "wrapping a named success payload must diagnose its attempted copy "
          "before backend admission, with the same exact ownership hint");
+  // Only one implicit conversion applies, so a nested result names its inner
+  // construction; that construction still owns the payload copy.
   std::string nestedReturnSource = expectedReturnSource;
   nestedReturnSource.replace(
       nestedReturnSource.find("expected<std::string, error>"),
       std::string("expected<std::string, error>").size(),
       "expected<expected<std::string, error>, error>");
+  nestedReturnSource.replace(nestedReturnSource.find("return text"),
+                             std::string("return text").size(),
+                             "return expected<std::string, error>(text)");
   const auto nestedReturned = lang::Frontend().analyze(
       "nested-expected-return.gti", nestedReturnSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto *nestedCopy =
-      findDiagnosticByCode(nestedReturned.diagnostics, "GTI-S2003");
+      findDiagnosticByCode(nestedReturned.diagnostics, "GTI-S2018");
   expect(!nestedReturned.canGenerateCode() && nestedCopy != nullptr &&
+             expectedCopy != nullptr &&
              nestedCopy->message == expectedCopy->message &&
              nestedCopy->hints == expectedCopy->hints &&
-             nestedCopy->primary.start ==
-                 nestedReturnSource.find("return text") +
-                     std::string("return ").size(),
+             nestedCopy->primary.start == nestedReturnSource.find("text)"),
          "nested expected success conversions cannot bypass payload ownership");
   for (const std::string replacement :
        {"std::move(text)", "std::string(\"tea\")"}) {
@@ -2238,7 +2245,8 @@ int main() {
 }
 )";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "language-queries.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+      "language-queries.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   expect(frontend.semanticValid,
          "language-query fixture should pass semantic analysis");
 

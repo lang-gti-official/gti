@@ -737,7 +737,8 @@ SemanticModel::callerLocationProof(const Expr &expression) const {
 }
 
 std::optional<SemanticOwnerlessTextContractProof>
-SemanticModel::ownerlessTextContractProof(const FunctionDecl &declaration) const {
+SemanticModel::ownerlessTextContractProof(
+    const FunctionDecl &declaration) const {
   const auto *function = findFunction(declaration);
   if (!function || !function->bodyDeclaration())
     return std::nullopt;

@@ -40,7 +40,8 @@ lang::MirPlaceId carrierStorage(const lang::MirBody &body,
                                 lang::MirOperand operand) {
   for (unsigned depth = 0; depth != 4 && operand.place == 0; ++depth) {
     const auto *value = body.findValue(operand.value);
-    const auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
     const lang::MirInstruction *producer = nullptr;
     if (block)
       for (const auto &instruction : block->instructions)
@@ -187,8 +188,7 @@ int main() {
   unsigned propagationPlans = 0;
   for (const auto &function : result.hir.functionInstances()) {
     for (const auto &value : function.body.values) {
-      if (value.kind != lang::HirValueKind::Propagation ||
-          !value.propagation ||
+      if (value.kind != lang::HirValueKind::Propagation || !value.propagation ||
           value.info.category != lang::ValueCategory::Place)
         continue;
       ++propagationPlans;

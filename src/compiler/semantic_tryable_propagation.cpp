@@ -125,12 +125,20 @@ auto SemanticVisitor::Impl::selectResidualReturn(
     }
   }
   if (matches.size() != 1) {
+    // A trusted library type cannot gain a constructor from this program;
+    // the failure itself must change before it can propagate here.
     return reject(returned + ", which declares " +
                       (matches.empty() ? "no" : "more than one") +
                       " implicit constructor taking exactly that residual.",
-                  "Declare one 'implicit " + owner->name.lexeme + "(" +
-                      typeSpelling(residualType) +
-                      " residual)' constructor without further parameters.");
+                  isCompilerTrustedUnit(owner->sourceUnit)
+                      ? "Convert the operand's failure to a residual '" +
+                            typeSpelling(target) +
+                            "' accepts, or handle the failure explicitly "
+                            "instead of applying '?'."
+                      : "Declare one 'implicit " + owner->name.lexeme + "(" +
+                            typeSpelling(residualType) +
+                            " residual)' constructor without further "
+                            "parameters.");
   }
   const ConstructorInfo &selected = *matches.front();
   if (!selected.requirements.empty() || selected.requiresUnsafe) {
@@ -229,12 +237,19 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                   "external dependencies can be checked.");
   }
   if (consumes ? !traits.movable : !traits.copyable) {
+    const Expr *named = expr.right().get();
+    while (const auto *grouping = exprAs<Grouping>(named))
+      named = grouping->expression().get();
+    const auto *variable = exprAs<Variable>(named);
+    const std::string spelling =
+        variable != nullptr ? variable->name().lexeme : std::string("name");
     return reject(std::string("Error propagation passes its operand like a "
                               "by-value argument, so it cannot ") +
                       (consumes ? "move" : "copy") + " '" + operand + "'.",
-                  consumes ? "Propagate a movable type."
-                           : "Apply '?' to std::move(name) to consume a "
-                             "named move-only operand explicitly.");
+                  consumes ? std::string("Propagate a movable type.")
+                           : "Apply '?' to std::move(" + spelling +
+                                 ") to consume a named move-only operand "
+                                 "explicitly.");
   }
 
   const std::vector<SemanticType> arguments{operandType};
@@ -355,8 +370,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
       publication.returnType = construction->constructedType;
       publication.parameterTypes = construction->parameterTypes;
       const std::array<const ExprPtr *, 1> residualInput{nullptr};
-      residualReturn = instantiateCompleteBorrowArguments(
-          publication, *summary, residualInput);
+      residualReturn = instantiateCompleteBorrowArguments(publication, *summary,
+                                                          residualInput);
     }
   if (residualReturn && residualReturn->dependencies.empty())
     loanFlow.implicitResultReturns.push_back(std::move(*residualReturn));

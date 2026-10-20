@@ -2651,7 +2651,9 @@ int main() { return exercise() - 5; }
 }
 
 void testScopedBodyQueryParity() {
-  const auto makeProgram = [](int seed) {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto makeProgram = [&](int seed) {
     const auto frontend =
         lang::Frontend().analyze("scoped-body-queries.gti", R"gti(
 class Parcel {
@@ -2671,7 +2673,8 @@ int32_t inspect(bool success) {
   return result.value().read();
 }
 int main() { return inspect(true) + inspect(false); }
-)gti");
+)gti",
+                                 {library / "prelude.gti"}, {}, {library});
     expect(frontend.canGenerateCode(),
            "scoped query fixture must lower owning Expected and root records");
     if (!frontend.canGenerateCode()) {

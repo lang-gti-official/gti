@@ -18,8 +18,8 @@ for what minor and patch releases mean.
   and need no include, and the API is unchanged: `has_value()`, `bool`
   conversion, `value()`, `error()`, `value_or`, `expect`, `transform`,
   `transform_error`, `and_then`, prefix `?`, and the owned, `void`, `T&`, `T*`
-  and `const T*` success forms. Hover and completion show the prelude
-  declarations.
+  and `const T*` success forms. Hover, completion and go-to-definition use
+  the prelude declarations.
 - Range-for over `value()` and `error()` follows the ordinary range rules.
   `for (auto& byte : result.value())` now also works when `result` is a field
   or a reference parameter, `for (mut auto& byte : result.value())` edits a
@@ -27,10 +27,12 @@ for what minor and patch releases mean.
   `make_result().value()` iterates the moved payload. These were
   `error[GTI-S2017]` or `error[GTI-S2045]` before.
 - Mapper mistakes use ordinary diagnostics, and `GTI-S2097` is retired. An
-  `and_then` mapper returning a different error type, or a `transform_error`
-  mapper whose result cannot be moved, reports `error[GTI-S2029]` at the
-  call's closing parenthesis. A mapper taking the wrong number of arguments
-  reports `error[GTI-S2005]`.
+  `and_then` mapper returning a different error type reports
+  `error[GTI-S2029]` at the call's closing parenthesis, and a mapper taking
+  the wrong number of arguments reports `error[GTI-S2005]`. A
+  `transform_error` mapper returning `void` or a reference is still rejected,
+  through the member's own instantiation (`error[GTI-S2000]` or
+  `error[GTI-S2022]`).
 
 ### Compatibility notes for `expected`
 
@@ -46,8 +48,13 @@ for what minor and patch releases mean.
 - On a `mut` result, `value()` and `error()` now select the mutable accessor,
   as they do for any class with a read-only and a `mut` overload. A view taken
   from one call therefore conflicts with a second call in the same expression,
-  as in `r.error().path.view() != "p" || r.error().code != 1`
-  (`error[GTI-S2017]`). Declare the result without `mut` when it is only read.
+  as in `r.error().path.view() != "p" || r.error().code != 1`, and nested
+  range-for loops over the same `mut` result conflict too (`error[GTI-S2017]`).
+  Declare the result without `mut` when it is only read.
+- A return that needs two implicit conversions, such as
+  `return std::string("tea");` from a function returning
+  `expected<expected<std::string, E>, E>`, is now `error[GTI-S2003]`.
+  Construct the inner result explicitly.
 - Optimized code that uses `expected` can run slower than in 0.448.4. Some
   optimizer proofs and shared exit paths the built-in type allowed are not yet
   recovered for the source class; that work is tracked as RT-12.
