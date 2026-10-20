@@ -1045,12 +1045,13 @@ void testExpectedRetainedTemplateLayout() {
       const auto output = gti_test::emitCpp(frontend, standard).contents;
       expect(!output.empty(),
              "retained Expected layout reaches production emission");
-      expect(output.find("struct byte_transport<byte_expected<Value, Error>> : "
-                         "std::false_type") != std::string::npos &&
-                 output.find("struct byte_transport<expected<Value, Error>> "
-                             ": std::false_type") != std::string::npos,
-             "trusted Expected envelope classification does not depend on "
-             "payload layout");
+      // The result is an ordinary class: its byte-preserving transport is
+      // classified from its own layout above, with no built-in envelope.
+      expect(output.find("struct byte_transport<byte_expected") ==
+                     std::string::npos &&
+                 output.find("struct byte_transport<expected") ==
+                     std::string::npos,
+             "the source result class needs no built-in native envelope");
     }
   }
   const auto recursive =
@@ -14242,10 +14243,13 @@ void testExpectedConstructorPayloadPublication() {
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "constructor identity, successful ownership and Expected "
                  "publication cannot be erased");
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(address),
-                 "backend admission must independently reject an incomplete "
-                 "constructor payload publication " +
+          // The binding is an ordinary class publication: the backend's body
+          // analysis and body text together are its representation admission.
+          const lang::CppMirBodyEmitter rejected(malformed, rows);
+          expect(!rejected.analyze(address).ready() ||
+                     !rejected.supportsFailureBodyText(address),
+                 "backend admission must reject an incomplete constructor "
+                 "payload publication " +
                      std::to_string(mutation));
         }
       }
