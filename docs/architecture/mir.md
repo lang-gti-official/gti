@@ -1744,8 +1744,15 @@ not a requirement to invent an owner for static storage. A read-only summarized
 function may return a literal-backed text view or a null C-string alternative
 without an escaping loan. Program verification independently requires the exact
 typed string/null literal producer, with no borrowed state, input operands,
-loan, side effects or lifecycle events. Clearing a borrowed-state flag or a
-return loan does not establish that witness. All dynamic alternatives still
+loan, side effects or lifecycle events. A copied stored view is the other
+witness: semantics rejects storing a dynamic view in a field or fixed-array
+element, so one exact `Load` copying a place whose final `Field` or `Index`
+projection has the returned view type, with no borrowed state, loan,
+destination, receiver or lifecycle events, is also lifetime independent. A
+reference field ends in a dereference and never qualifies. Clearing a
+borrowed-state flag or a return loan does not establish either witness. A
+function whose returns are all stored views or literals summarizes no owner
+dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 The success loan always uses read-only access, including when the enclosing
