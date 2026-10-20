@@ -4114,6 +4114,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "thread_join" || name == "thread_result_join") {
       return IntrinsicKind::ThreadJoin;
     }
+    if (name == "thread_result_take") {
+      return IntrinsicKind::ThreadResultTake;
+    }
     if (name == "thread_auto_join" || name == "thread_result_auto_join") {
       return IntrinsicKind::ThreadAutoJoin;
     }
@@ -9769,6 +9772,7 @@ auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
   if (handle == nullptr || handle->category != ValueCategory::Place ||
       ((intrinsic == IntrinsicKind::ThreadSpawn ||
         intrinsic == IntrinsicKind::ThreadJoin ||
+        intrinsic == IntrinsicKind::ThreadResultTake ||
         intrinsic == IntrinsicKind::ThreadAutoJoin) &&
        handle->access != AccessMode::Mutable)) {
     report(expressionToken(expr.arguments().front()),
@@ -9851,17 +9855,22 @@ auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
     }
   }
 
-  currentType =
-      intrinsic == IntrinsicKind::ThreadJoinable   ? SemanticType::Bool
-      : intrinsic == IntrinsicKind::ThreadAutoJoin ? SemanticType::Void
-      : intrinsic == IntrinsicKind::ThreadJoin     ? declaration.returnType
-                                                   : SemanticType::Int32;
-  if (intrinsic == IntrinsicKind::ThreadJoin &&
-      *resultType != SemanticType::Void &&
-      currentType.kind == SemanticType::Expected &&
-      currentType.arguments.size() == 2) {
-    currentType.arguments.front() = *resultType;
+  // Both joins report a status. A typed join keeps a successful worker's
+  // result in the handle until the take operation moves it out, so the
+  // public wrapper builds its own result type in source.
+  if (intrinsic == IntrinsicKind::ThreadResultTake &&
+      *resultType == SemanticType::Void) {
+    report(expr.paren(),
+           "thread_result_take requires a result-bearing thread handle.",
+           "GTI-S2084");
+    currentType = SemanticType::Unknown;
+    return;
   }
+  currentType =
+      intrinsic == IntrinsicKind::ThreadJoinable     ? SemanticType::Bool
+      : intrinsic == IntrinsicKind::ThreadAutoJoin   ? SemanticType::Void
+      : intrinsic == IntrinsicKind::ThreadResultTake ? *resultType
+                                                     : SemanticType::Int32;
   semanticModel.record(
       expr, ResolvedCallInfo{.returnType = currentType,
                              .parameterTypes = std::move(parameterTypes),
@@ -11302,6 +11311,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::ThreadSpawn ||
       intrinsic == IntrinsicKind::ThreadJoinable ||
       intrinsic == IntrinsicKind::ThreadJoin ||
+      intrinsic == IntrinsicKind::ThreadResultTake ||
       intrinsic == IntrinsicKind::ThreadAutoJoin) {
     analyzeThreadIntrinsicCall(expr, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);

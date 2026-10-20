@@ -411,6 +411,8 @@ enum class IntrinsicKind {
   ThreadSpawn,
   ThreadJoinable,
   ThreadJoin,
+  // Moves a successful typed join's owned result out of its handle.
+  ThreadResultTake,
   ThreadAutoJoin,
   AtomicLoad,
   AtomicStore,

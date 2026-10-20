@@ -30,7 +30,10 @@ int32_t thread_join(mut gti_internal::thread_handle& handle);
 void thread_auto_join(mut gti_internal::thread_handle& handle);
 bool thread_result_joinable<Result>(gti_internal::thread_result_handle<Result>& handle);
 int32_t thread_result_spawn<Result, Task>(mut gti_internal::thread_result_handle<Result>& handle, Task task);
-expected<Result, std::thread_errc> thread_result_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
+// Joins once and reports 0 (joined), 1 (not joinable) or 2 (join failed). A
+// successful join keeps the worker's result in the handle for one take.
+int32_t thread_result_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
+Result thread_result_take<Result>(mut gti_internal::thread_result_handle<Result>& handle);
 void thread_result_auto_join<Result>(mut gti_internal::thread_result_handle<Result>& handle);
 // Identity-bound operation with verified task ownership and dependency loans.
 int32_t thread_scope<Tasks...>(Tasks... tasks);
@@ -137,7 +140,14 @@ public:
 
   /// Joins once and transfers the worker's owned result to this thread.
   expected<Result, thread_errc> join() mut {
-    return gti_internal::thread_result_join(this.handle);
+    int32_t status = gti_internal::thread_result_join(this.handle);
+    if (status == 1) {
+      return unexpected(thread_errc::not_joinable);
+    }
+    if (status != 0) {
+      return unexpected(thread_errc::join_failed);
+    }
+    return gti_internal::thread_result_take(this.handle);
   }
 
   ~thread_result() {

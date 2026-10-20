@@ -362,6 +362,7 @@ public:
           case IntrinsicKind::ThreadScope:
           case IntrinsicKind::ThreadJoinable:
           case IntrinsicKind::ThreadJoin:
+          case IntrinsicKind::ThreadResultTake:
           case IntrinsicKind::ThreadAutoJoin:
             return true;
           default:

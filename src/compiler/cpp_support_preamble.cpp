@@ -3164,20 +3164,29 @@ public:
   thread_handle &operator=(const thread_handle &) = delete;
 
   thread_handle(thread_handle &&other) noexcept
-      : state_(std::exchange(other.state_, nullptr)) {}
+      : state_(std::exchange(other.state_, nullptr)),
+        pending_context_(std::exchange(other.pending_context_, nullptr)),
+        pending_take_(std::exchange(other.pending_take_, nullptr)),
+        pending_abandon_(std::exchange(other.pending_abandon_, nullptr)) {}
 
   thread_handle &operator=(thread_handle &&other) noexcept {
     if (this == &other) {
       return *this;
     }
-    if (state_ != nullptr) {
+    if (state_ != nullptr || pending_context_ != nullptr) {
       std::terminate();
     }
     state_ = std::exchange(other.state_, nullptr);
+    pending_context_ = std::exchange(other.pending_context_, nullptr);
+    pending_take_ = std::exchange(other.pending_take_, nullptr);
+    pending_abandon_ = std::exchange(other.pending_abandon_, nullptr);
     return *this;
   }
 
   ~thread_handle() {
+    // A typed join's result that the source wrapper did not take is still
+    // owned here; release it exactly once.
+    abandon_pending_result();
     if (mir_cleanup_emergency_abandonment()) {
       // Preserve mandatory-join ownership until the terminal report. This
       // does not detach or invoke the abandoned source join operation.
@@ -3206,8 +3215,48 @@ public:
     ::gti_runtime_detail::quarantine_managed_thread_state(&state_);
   }
 
+  // A successful typed join stores the worker's result here; the take
+  // operation then moves it out without default-constructing Result.
+  void stash_result(::gti_thread_value_join_result_v2 &joined) noexcept {
+    if (pending_context_ != nullptr || joined.result_context == nullptr ||
+        joined.take_result == nullptr || joined.abandon_result == nullptr) {
+      std::terminate();
+    }
+    pending_context_ = std::exchange(joined.result_context, nullptr);
+    pending_take_ = std::exchange(joined.take_result, nullptr);
+    pending_abandon_ = std::exchange(joined.abandon_result, nullptr);
+  }
+
+  template <typename Result> Result take_result() {
+    if (pending_context_ == nullptr || pending_take_ == nullptr) {
+      std::terminate();
+    }
+    mir_lifetime_slot<Result, true> result;
+    void *context = std::exchange(pending_context_, nullptr);
+    const auto take = std::exchange(pending_take_, nullptr);
+    pending_abandon_ = nullptr;
+    take(context, result.construction_address());
+    result.mark_constructed();
+    return result.take();
+  }
+
 private:
+  void abandon_pending_result() noexcept {
+    if (pending_context_ == nullptr) {
+      return;
+    }
+    void *context = std::exchange(pending_context_, nullptr);
+    const auto abandon = std::exchange(pending_abandon_, nullptr);
+    pending_take_ = nullptr;
+    if (abandon != nullptr) {
+      abandon(context);
+    }
+  }
+
   ::gti_thread_state_v1 *state_ = nullptr;
+  void *pending_context_ = nullptr;
+  ::gti_thread_result_take_v1 pending_take_ = nullptr;
+  ::gti_thread_result_abandon_v1 pending_abandon_ = nullptr;
 };
 
 template <typename Task> struct managed_thread_task_box final {
@@ -3503,37 +3552,6 @@ managed_thread_join_value(thread_handle &handle) noexcept {
     malformed_thread_runtime_result();
   }
   return result;
-}
-
-template <typename Result, typename Error>
-inline expected_result<Result, Error> managed_thread_take_join_result(
-    ::gti_thread_value_join_result_v2 &joined) {
-  if (joined.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) {
-    return make_unexpected_result(static_cast<Error>(2));
-  }
-  if (joined.join.status == GTI_THREAD_JOIN_FAILED_V1) {
-    return make_unexpected_result(static_cast<Error>(3));
-  }
-  if (joined.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {
-    // The paired MIR invoke edge immediately propagates the exact worker
-    // record. This unreachable value only gives the C++ local a total
-    // representation before that edge is emitted.
-    return make_unexpected_result(static_cast<Error>(3));
-  }
-  if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
-      joined.result_context == nullptr || joined.take_result == nullptr ||
-      joined.abandon_result == nullptr) {
-    malformed_thread_runtime_result();
-  }
-  mir_lifetime_slot<Result, true> result;
-  void *context = std::exchange(joined.result_context, nullptr);
-  const auto take = std::exchange(joined.take_result, nullptr);
-  joined.abandon_result = nullptr;
-  take(context, result.construction_address());
-  result.mark_constructed();
-  expected_result<Result, Error> output{std::move(result.get())};
-  result.destroy();
-  return output;
 }
 
 inline void managed_thread_abandon_join_result(
