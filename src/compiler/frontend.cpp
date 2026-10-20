@@ -737,6 +737,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                      entry->declarationCount};
         }
       }
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+        if (result.sourceGraph.isCompilerTrusted(unit.id))
+          scope.trustedSources.push_back(unit.path.string());
       if (!options.lowerLibraryOnlyInstanceBodies) {
         scope.omitLibraryOnlyBodies = true;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits())

@@ -1027,6 +1027,10 @@ struct HirLoweringScope {
       completeDeclarations;
   bool omitLibraryOnlyBodies = false;
   std::vector<SourceUnitId> trustedUnits;
+  // Diagnostic paths of compiler-trusted units. An error inside a generic
+  // instance located in one of them is reported at the first request from
+  // other code, with the library location kept as related information.
+  std::vector<std::string> trustedSources;
 };
 
 class HirLowerer {

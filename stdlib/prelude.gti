@@ -338,17 +338,27 @@ concept expected_result<R, Error> { typename value_type; };
 // A void invocation publishes an empty success; a value invocation moves its
 // result into the success alternative. Both policies use ordinary source class
 // profiles, so their callable contracts remain visible before instantiation.
+// The mapper input is one exact argument (none for a void source), so a
+// function item's signature is checked where the combinator is called.
 class expected_mapping<R, E> {
 public:
-  expected<R, E> invoke<F, Args...>(F& mapper, Args... arguments) {
-    R mapped = mapper(arguments...);
+  expected<R, E> invoke<F>(F& mapper) {
+    R mapped = mapper();
+    return expected<R, E>(std::move(mapped));
+  }
+  expected<R, E> invoke<F, A>(F& mapper, A argument) {
+    R mapped = mapper(std::move(argument));
     return expected<R, E>(std::move(mapped));
   }
 };
 class expected_mapping<void, E> {
 public:
-  expected<void, E> invoke<F, Args...>(F& mapper, Args... arguments) {
-    mapper(arguments...);
+  expected<void, E> invoke<F>(F& mapper) {
+    mapper();
+    return expected<void, E>();
+  }
+  expected<void, E> invoke<F, A>(F& mapper, A argument) {
+    mapper(std::move(argument));
     return expected<void, E>();
   }
 };
@@ -396,7 +406,7 @@ public:
   [[track_caller]] constexpr T value() && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value): return std::move(value);
-    case std::detail::expected_state<T, E>::error: gti_internal::fail_inactive_value();
+    case std::detail::expected_state<T, E>::error(error): gti_internal::fail_inactive_value();
     }
   }
 
@@ -414,7 +424,7 @@ public:
   }
   [[track_caller]] constexpr E error() && {
     switch (std::move(this.state)) {
-    case std::detail::expected_state<T, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T, E>::value(value): gti_internal::fail_inactive_error();
     case std::detail::expected_state<T, E>::error(error): return std::move(error);
     }
   }
@@ -435,7 +445,7 @@ public:
   [[track_caller]] T expect(std::string_view message) && {
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value): return std::move(value);
-    case std::detail::expected_state<T, E>::error: gti_internal::panic(message);
+    case std::detail::expected_state<T, E>::error(error): gti_internal::panic(message);
     }
   }
 
@@ -516,7 +526,7 @@ public:
   [[track_caller]] void expect(std::string_view message) && {
     switch (std::move(this.state)) {
     case std::detail::expected_void_state<E>::value: return;
-    case std::detail::expected_void_state<E>::error: gti_internal::panic(message);
+    case std::detail::expected_void_state<E>::error(error): gti_internal::panic(message);
     }
   }
 

@@ -14049,11 +14049,16 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
         if (valid)
           evidence = fact;
       } else if (producer.kind == MirInstructionKind::CallInput &&
-                 producer.callInputRole == MirCallInputRole::Receiver &&
-                 (producer.callInputKind ==
-                      HirCallInputKind::ReadTemporaryBorrow ||
-                  producer.callInputKind ==
-                      HirCallInputKind::MutableTemporaryBorrow) &&
+                 ((producer.callInputRole == MirCallInputRole::Receiver &&
+                   (producer.callInputKind ==
+                        HirCallInputKind::ReadTemporaryBorrow ||
+                    producer.callInputKind ==
+                        HirCallInputKind::MutableTemporaryBorrow)) ||
+                  // A fresh carrier borrowed read-only for one argument has
+                  // the same physical shell loan over its retained group.
+                  (producer.callInputRole == MirCallInputRole::Argument &&
+                   producer.callInputKind ==
+                       HirCallInputKind::ReadTemporaryBorrow)) &&
                  producer.operands.size() == 1 && producer.result &&
                  *producer.result <= flow.values.size()) {
         const auto *place = body.findPlace(producer.operands.front().place);

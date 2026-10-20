@@ -17,7 +17,9 @@ public:
         entryDeclarations(scope.entryDeclarations),
         completeDeclarations(std::move(scope.completeDeclarations)),
         omitLibraryOnlyBodies(scope.omitLibraryOnlyBodies),
-        trustedUnits(scope.trustedUnits.begin(), scope.trustedUnits.end()) {}
+        trustedUnits(scope.trustedUnits.begin(), scope.trustedUnits.end()),
+        trustedSources(scope.trustedSources.begin(),
+                       scope.trustedSources.end()) {}
 
   [[nodiscard]] HirLoweringResult lowerConstantFunction(
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
@@ -1824,10 +1826,23 @@ private:
             {diagnostic.primary,
              "This selected call requires the missing definition."});
         diagnostic.primary = *request;
+      } else if (origin && trustedSources.contains(diagnostic.primary.source) &&
+                 !trustedSources.contains(origin->source)) {
+        // Library internals are not the user's to fix: report where other
+        // code first required this instance and keep the library location.
+        diagnostic.related.insert(
+            diagnostic.related.begin(),
+            {diagnostic.primary, "Reported inside this library instance."});
+        diagnostic.primary = *origin;
       }
       if (site && (!missingDefinition || diagnostic.primary != *site)) {
         diagnostic.related.push_back(
             {*site, "Concrete generic instance requested here."});
+      }
+      if (origin && site && *origin != *site &&
+          diagnostic.primary != *origin) {
+        diagnostic.related.push_back(
+            {*origin, "First required by this non-generic use."});
       }
       output.diagnostics.push_back(std::move(diagnostic));
     }
@@ -7213,6 +7228,7 @@ private:
   // `HirLoweringScope::omitLibraryOnlyBodies`.
   bool omitLibraryOnlyBodies = false;
   std::unordered_set<SourceUnitId> trustedUnits;
+  std::unordered_set<std::string> trustedSources;
   SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
