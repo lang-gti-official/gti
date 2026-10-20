@@ -910,8 +910,8 @@ int main() {
 }
 
 void checkMixedReturnComposition() {
-  const auto frontend =
-      lang::Frontend().analyze("mixed-return-composition.gti", R"(
+  const auto frontend = lang::Frontend().analyze(
+      "mixed-return-composition.gti", R"(
 struct Services {
   int& first;
   mut int& second;
@@ -932,7 +932,7 @@ int main() {
   return first + b + c - 82;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "mixed borrowed aggregates compose through value relay and reference "
          "parameters");
@@ -971,7 +971,8 @@ int main() {
   return b + c - 42;
 }
 )",
-                                                 {standardLibraryPrelude()});
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
   expect(frontend.canGenerateCode(), "concrete generic relay retains each "
                                      "borrowed field's origin and permission");
   if (!frontend.canGenerateCode())

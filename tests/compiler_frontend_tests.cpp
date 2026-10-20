@@ -1,6 +1,7 @@
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
 
+#include <regex>
 #include <set>
 
 namespace {
@@ -131,7 +132,9 @@ int main() {
   };
   return 0;
 }
-)");
+)",
+                               {standardLibraryPrelude()}, {},
+                               {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              countDiagnosticCode(invalid.diagnostics, "GTI-S2031") == 8 &&
              hasDiagnostic(invalid.diagnostics,
@@ -1004,8 +1007,9 @@ void testStandardLibraryImports() {
       tcpCpp.find("class socket") != std::string::npos &&
           tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "socket") +
                       "(") != std::string::npos &&
-          tcpCpp.find("open__gti_mir_failure(::gti_internal::backend::"
-                      "expected") != std::string::npos &&
+          std::regex_search(
+              tcpCpp, std::regex(R"(open__gti_mir_failure\(::__gti_program::)"
+                                 R"(__gti_type_[0-9a-f]+_expected)")) &&
           tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "close") +
                       "(") != std::string::npos &&
           tcpCpp.find("socket(socket &&other) noexcept") != std::string::npos &&
@@ -1622,7 +1626,8 @@ BorrowedValue choose_borrowed(
   return condition ? std::move(left) : std::move(right);
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {},
+                               {standardLibraryRoot()});
   expect(!borrowedResult.canGenerateCode() &&
              hasDiagnosticCode(borrowedResult.diagnostics, "GTI-S2051"),
          "conditional values should reject branch-selected borrowed state "

@@ -65,10 +65,11 @@ int main() {
                           .emitFailureBodyText(address, "test", 0);
     expect(text.emitted(), "pending payload emits complete status body");
     const auto *place = function.body.findPlace(pending->place);
-    const auto slot = "__gti_mir_v_" + std::to_string(place->value);
-    expect(text.text.find(
-               slot + ".destroy(); // GTI MIR unpublished return cleanup") !=
-               std::string::npos,
+    // expected<T, E> is an ordinary class result constructed in place in the
+    // caller's output, so its pending rollback destroys that constructed
+    // output object rather than a separate local payload slot.
+    expect(text.text.find("std::destroy_at(__gti_mir_out_result); // GTI MIR "
+                          "unpublished return cleanup") != std::string::npos,
            "pending rollback destroys local payload, not uninitialized "
            "Expected output");
     expect(text.text.find("__gti_mir_out_result->value()") == std::string::npos,
@@ -105,10 +106,16 @@ int main() {
               lang::MirInstruction{.id = 999999,
                                    .kind = lang::MirInstructionKind::Compute});
       }
-      expect(!lang::CppMirBodyEmitter(malformed, rows)
-                  .supportsFailureBodyText(address),
-             "pending payload proof independently rejects altered ownership, "
-             "initial state, or effectful success chain");
+      // The result is an ordinary class constructed in the caller's output:
+      // MIR verification and the backend's body analysis own its lifecycle
+      // authority, not a result-specific emission route.
+      const lang::CppMirBodyEmitter rejected(malformed, rows);
+      expect(!lang::verifyMirProgram(malformed).valid() &&
+                 (!rejected.analyze(address).ready() ||
+                  !rejected.supportsFailureBodyText(address)),
+             "pending payload rejects altered ownership, initial state, or "
+             "effectful success chain: " +
+                 std::to_string(mutation));
     }
   }
   expect(checked == 1,

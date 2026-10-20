@@ -8455,7 +8455,10 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                                           AccessMode::ReadOnly) ||
             !elementOwnerLoan || elementOwnerLoan->entry ||
             elementOwnerLoan->escapes ||
-            elementOwnerLoan->access != AccessMode::ReadOnly ||
+            // The readonly alias may share the range family's wider loan;
+            // its own place and type are readonly above.
+            (elementOwnerLoan->access != AccessMode::ReadOnly &&
+             elementOwnerLoan->id != range.rangeLoan) ||
             !carries(*elementOwnerLoan, elementOwner->binding) ||
             !elementLoan || elementLoan->id != elementOwnerLoan->id)
           return failure(body, owner,
@@ -8842,10 +8845,17 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                        "immediately after its call");
       }
     }
-    if (rangeLoan->access != range.elementAccess || rangeLoan->escapes ||
+    // A loan grants at least the access its element uses: a readonly element
+    // may iterate a range borrowed mutably, never the reverse.
+    if ((range.elementAccess == AccessMode::Mutable &&
+         rangeLoan->access != AccessMode::Mutable) ||
+        rangeLoan->escapes ||
         (range.elementLoan != 0 &&
          (elementLoan == nullptr ||
-          elementLoan->access != range.elementAccess || elementLoan->escapes ||
+          (elementLoan->access != range.elementAccess &&
+           !(range.elementAccess == AccessMode::ReadOnly &&
+             elementLoan->id == range.rangeLoan)) ||
+          elementLoan->escapes ||
           (range.elementAccess == AccessMode::Mutable &&
            (range.elementLoan == range.rangeLoan ||
             (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||

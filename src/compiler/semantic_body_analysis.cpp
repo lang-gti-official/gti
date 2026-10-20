@@ -12668,9 +12668,13 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
     for (const ExprPtr &argument : call->arguments()) {
       explicitArguments.push_back(argument.get());
     }
+    // A member call's evaluation site is its member name: that token names
+    // the operation the user wrote and is where a library-internal constant
+    // evaluation failure is reported.
     return evaluateConstexprCall(
         source, *resolved, member == nullptr ? nullptr : member->object().get(),
-        explicitArguments, call->paren(), context);
+        explicitArguments, member == nullptr ? call->paren() : member->name(),
+        context);
   }
 
   return constexprFailure(expressionToken(source),
@@ -13359,7 +13363,8 @@ auto SemanticVisitor::Impl::reportConstexprFailure(
     const VariableDecl &declaration, const SemanticType &type,
     const ConstexprEvaluation &evaluation) -> void {
   reporter.reportConstexprFailure(declaration, type, evaluation.failure,
-                                  evaluation.detail, evaluation.location);
+                                  evaluation.detail, evaluation.location,
+                                  evaluation.libraryLocation);
 }
 
 auto SemanticVisitor::Impl::reportConstexprConditionFailure(

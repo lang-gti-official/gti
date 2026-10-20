@@ -495,10 +495,21 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       }
     }
   }
-  return result ? ConstexprEvaluation{.value = std::move(result.value),
-                                      .location = callSite}
-                : constexprFailure(location, result.failure,
-                                   std::move(result.detail));
+  if (result)
+    return ConstexprEvaluation{.value = std::move(result.value),
+                               .location = callSite};
+  // Library internals are not the user's to fix: a failure executed inside a
+  // compiler-trusted unit is reported at the evaluation site that required
+  // it, with the library location kept as a note (the same policy as
+  // concrete-instance diagnostics).
+  auto failure =
+      constexprFailure(location, result.failure, std::move(result.detail));
+  if (!location.lexeme.empty() && isCompilerTrustedRequester(location) &&
+      !isCompilerTrustedRequester(callSite)) {
+    failure.libraryLocation = location;
+    failure.location = callSite;
+  }
+  return failure;
 }
 
 } // namespace lang

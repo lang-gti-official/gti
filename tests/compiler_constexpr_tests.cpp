@@ -532,7 +532,7 @@ int main() {
   return 1;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
          "character values and literal-backed string views should validate");
 
@@ -583,7 +583,7 @@ int main() {
       "int main() { mut std::string_view view = \"abc\"; "
       "view[0] = 'x'; char outside = \"abc\"[3]; "
       "char wrong = view[false]; view.missing(); return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidView.canGenerateCode() &&
              countDiagnosticCode(invalidView.diagnostics, "GTI-S2035") == 4 &&
              hasDiagnostic(invalidView.diagnostics,
@@ -616,7 +616,7 @@ int main() {
       "character-numeric.gti",
       "int main() { char value = 'A'; int number = value; "
       "return value + 1; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!numeric.canGenerateCode() &&
              hasDiagnostic(numeric.diagnostics, "value of type 'char'") &&
              hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
@@ -628,7 +628,7 @@ int main() {
       "static_assert(uint8_t('B') == uint8_t(66)); "
       "int main() { mut uint8_t byte = uint8_t(67); char value = char(byte); "
       "return value == 'C' ? 0 : 1; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(codeUnitBridge.canGenerateCode(),
          "char and uint8_t should support an explicit, lossless code-unit "
          "bridge in both directions");
@@ -637,7 +637,7 @@ int main() {
       "invalid-character-code-unit.gti",
       "int main() { uint8_t byte = uint8_t(65); char implicit = byte; "
       "char wide = char(uint16_t(65)); return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidCodeUnitBridge.canGenerateCode() &&
              hasDiagnostic(invalidCodeUnitBridge.diagnostics,
                            "Cannot initialize 'implicit'") &&
@@ -648,7 +648,7 @@ int main() {
 
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const lang::Diagnostic *migration =
       findDiagnosticByCode(obsolete.diagnostics, "GTI-S2033");
   expect(!obsolete.canGenerateCode() && migration != nullptr &&
@@ -1484,7 +1484,7 @@ static_assert(sum_result == 10 && factorial_result == 720 && text_result == 461)
 static_assert(table_sum(5) == 22 && array_defaults(4) == 5);
 int main() { return twice<int32_t>(21) == 42 ? 0 : 1; }
 )",
-                                     {standardLibraryPrelude()});
+                                     {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(), "MIR constexpr fixture should lower");
   expect(metrics.constexprMirExecutions >= 5,
          "semantic constant calls actually use staged MIR before whole-program "
@@ -1867,7 +1867,7 @@ int enclosing(int value) {
   else { return should_not_exist; }
 }
 )",
-                   {standardLibraryPrelude()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!stagedGeneric.semanticValid ||
       genericMetrics.constexprMirExecutions < 6) {
     std::cerr << "Generic MIR executions: "
@@ -1892,7 +1892,7 @@ int invalid(int input) {
   return borrowed;
 }
 )",
-                                          {standardLibraryPrelude()});
+                                          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!loanIsolation.semanticValid &&
              loanMetrics.constexprMirExecutions == 1 &&
              hasDiagnostic(loanIsolation.diagnostics, "borrow"),
@@ -4192,7 +4192,7 @@ int main() {
   else { return unselected_invalid_name; }
 }
 )",
-                                              {standardLibraryPrelude()});
+                                              {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const auto &diagnostic : valid.diagnostics) {
     std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
   }
@@ -4205,7 +4205,7 @@ int main() {
                                "constexpr char value = text[" +
                                index + "];";
     const auto invalid = lang::Frontend().analyze(
-        "constexpr-text-bounds.gti", source, {standardLibraryPrelude()});
+        "constexpr-text-bounds.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     const auto *diagnostic =
         findDiagnosticByCode(invalid.diagnostics, "GTI-S2057");
     expect(
@@ -4228,7 +4228,7 @@ uint64_t inspect(std::string_view text) {
   return size;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!runtime.semanticValid &&
              findDiagnosticByCode(runtime.diagnostics, "GTI-S2057") != nullptr,
          "runtime text cannot be inspected in a required constant context");
@@ -4241,7 +4241,7 @@ constexpr uint64_t spin(std::string_view text) {
 }
 constexpr uint64_t result = spin("x");
 )",
-                                              {standardLibraryPrelude()});
+                                              {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!limit.semanticValid && hasDiagnostic(limit.diagnostics, "limit"),
          "constant text operations share the deterministic execution budget");
 }
@@ -5371,7 +5371,7 @@ int main() { return 0; }
   const lang::FrontendResult nonShareable =
       lang::Frontend(concurrentOptions)
           .analyze("concurrent-non-shareable-globals.gti", nonShareableSource,
-                   {standardLibraryPrelude()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (countDiagnosticCode(nonShareable.diagnostics, "GTI-S2060") != 6 ||
       countDiagnosticCode(nonShareable.diagnostics, "GTI-S2061") != 1) {
     for (const lang::Diagnostic &diagnostic : nonShareable.diagnostics) {

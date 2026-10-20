@@ -1619,6 +1619,8 @@ int main() {
 }
 
 void testOrderedClassValueCallInputVerification() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "ordered-class-call-verification.gti", R"(
 class Copyable {
@@ -1647,8 +1649,7 @@ int main() {
   return accept(copied, other, std::move(moved)) - 6;
 }
 )",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   const lang::HirFunctionInstance *accept = findHirFunction(frontend, "accept");
   const lang::HirFunctionInstance *main = findHirFunction(frontend, "main");
   const lang::MirFunctionInstance *mirMain =
@@ -3596,6 +3597,8 @@ int effect_recursive(int value) {
 }
 
 void testDefinedFailureIdentityAndPropagation() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "defined-failure-metadata.gti", R"(
 class Box {
@@ -3644,8 +3647,7 @@ int main() {
 }
 
 )",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   const lang::HirFunctionInstance *hirMain = findHirFunction(frontend, "main");
   const lang::MirFunctionInstance *mirMain =
       hirMain == nullptr ? nullptr
@@ -3676,6 +3678,29 @@ int main() {
                          return hasOutcome(value.definedFailure, code, detail);
                        });
   };
+  // expected<T, E> is a source class: its value() body raises the
+  // compiler-owned inactive-value outcome, and main's call propagates it.
+  bool expectedValueRaises = false;
+  for (const lang::HirValue &value : hirMain->body.values) {
+    const lang::HirFunctionInstance *target =
+        value.functionTarget
+            ? frontend.hir.findFunctionInstance(*value.functionTarget)
+            : nullptr;
+    if (target == nullptr || target->source == nullptr ||
+        target->source->name().lexeme != "value")
+      continue;
+    expectedValueRaises =
+        expectedValueRaises ||
+        (value.definedFailure.propagation ==
+             lang::FailurePropagationKind::DirectCall &&
+         std::any_of(target->body.values.begin(), target->body.values.end(),
+                     [&](const lang::HirValue &callee) {
+                       return hasOutcome(
+                           callee.definedFailure,
+                           lang::DefinedFailureCode::InvalidExpectedAccess,
+                           lang::DefinedFailureDetail::ValueOnError);
+                     }));
+  }
   bool sawMultipleLocalOrigins = false;
   bool unsignedDivisionIsExact = false;
   bool unsignedShiftIsExact = false;
@@ -3721,10 +3746,8 @@ int main() {
                         lang::DefinedFailureDetail::NumericCast) &&
           hirHasOutcome(lang::DefinedFailureCode::IndexOutOfBounds,
                         lang::DefinedFailureDetail::FixedArray) &&
-          hirHasOutcome(lang::DefinedFailureCode::InvalidExpectedAccess,
-                        lang::DefinedFailureDetail::ValueOnError) &&
-          sawMultipleLocalOrigins && unsignedDivisionIsExact &&
-          unsignedShiftIsExact,
+          expectedValueRaises && sawMultipleLocalOrigins &&
+          unsignedDivisionIsExact && unsignedShiftIsExact,
       "HIR should preserve the exact compiler-owned failure vocabulary");
 
   bool sawIndexedLoad = false;
@@ -6733,18 +6756,23 @@ void testExactValueRootBorrowProducerIdentity() {
   const std::filesystem::path repository =
       std::filesystem::path(__FILE__).parent_path().parent_path();
   const std::filesystem::path standardLibrary = repository / "stdlib";
+  // expected<T, E>::value() is a source accessor whose result borrows its
+  // named carrier, so a fresh by-value call result supplies the Value root.
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "value-root-borrow-producer.gti", R"(
-#include <std/cstdio>
+class Reader {
+  int value = 7;
+public:
+  Reader() {}
+  int& get() { return this.value; }
+};
+
+Reader open() { return Reader(); }
 
 int main() {
-  mut auto opened = std::fopen("bytes.bin", "rb");
-  if (!opened) { return 1; }
-  auto first = opened.value()->get();
-  auto second = std::fgetc(*opened.value());
-  auto third = opened.value()->get();
-  auto exhausted = opened.value()->get();
-  return 0;
+  int first = open().get();
+  int second = open().get();
+  return first + second - 14;
 }
 )",
       {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
@@ -6756,18 +6784,33 @@ int main() {
     lang::MirLoanId loan = 0;
     lang::MirPlaceId source = 0;
   };
-  const auto valueRootBorrows = [](const lang::MirBody &body) {
+  // A staged receiver names its place through its single CallInput.
+  const auto receiverPlace = [](const lang::MirBody &body,
+                                const lang::MirOperand &receiver) {
+    if (receiver.place != 0 || receiver.kind != lang::MirOperandKind::Value) {
+      return receiver.place;
+    }
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &input : block.instructions) {
+        if (input.kind == lang::MirInstructionKind::CallInput &&
+            input.result == receiver.value && input.operands.size() == 1) {
+          return input.operands.front().place;
+        }
+      }
+    }
+    return lang::MirPlaceId{0};
+  };
+  const auto valueRootBorrows = [&](const lang::MirBody &body) {
     std::vector<ValueRootBorrow> result;
     for (const lang::MirBlock &block : body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Call ||
             instruction.borrowOrigin != lang::BorrowOriginKind::Receiver ||
-            !instruction.receiver || instruction.receiver->place == 0 ||
-            !instruction.loan) {
+            !instruction.receiver || !instruction.loan) {
           continue;
         }
         const lang::MirPlace *receiver =
-            body.findPlace(instruction.receiver->place);
+            body.findPlace(receiverPlace(body, *instruction.receiver));
         const lang::MirLoan *loan = body.findLoan(*instruction.loan);
         if (receiver != nullptr && loan != nullptr &&
             receiver->root == lang::MirPlaceRootKind::Value &&
@@ -7400,6 +7443,8 @@ int main() {
            "the source callable parameter binding");
   }
 
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const lang::FrontendResult onceForwarding = lang::Frontend().analyze(
       "once-callable-forwarding-mir.gti", R"(
 class Once {
@@ -7422,8 +7467,7 @@ int outer_once<Operation>(Operation operation) {
 
 int main() { return outer_once(Once()) - 1; }
 )",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   const lang::HirFunctionInstance *outerOnce =
       findHirFunction(onceForwarding, "outer_once");
   const lang::MirFunctionInstance *mirOuterOnce =
@@ -7522,8 +7566,7 @@ int main() {
   return 0;
 }
 )",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   const lang::HirFunctionInstance *linearInvoke =
       findHirFunction(linearOnce, "invoke_once");
   const lang::MirFunctionInstance *mirLinearInvoke =
@@ -7647,6 +7690,8 @@ int main() {
 }
 
 void testOwnedCallableTransportMirMetadata() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "owned-callable-transport-mir.gti", R"(
 class CallableOwner<T> {
@@ -7670,8 +7715,7 @@ int main() {
   return 0;
 }
 )",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   const lang::HirFunctionInstance *relay = findHirFunction(frontend, "relay");
   const lang::HirFunctionInstance *own = findHirFunction(frontend, "own");
   const lang::HirFunctionInstance *main = findHirFunction(frontend, "main");

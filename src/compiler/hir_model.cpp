@@ -1038,7 +1038,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           owner == nullptr || !listed.insert(entry.value).second ||
           value->kind != HirValueKind::DirectInitializer ||
           value->source != nullptr || argument == nullptr ||
-          argument->source != entry.source ||
+          // An initializer with an expression alias (a reflected expression)
+          // lowers as the value of the expression it denotes.
+          (argument->source != entry.source &&
+           std::none_of(body.sourceAliases.begin(), body.sourceAliases.end(),
+                        [&](const auto &alias) {
+                          return alias.source == entry.source &&
+                                 alias.value == argument->id;
+                        })) ||
           body.valueForSource(*entry.source) != argument ||
           construction->constructor == 0 || construction->generatedDefault ||
           construction->kind != ConstructorKind::Ordinary ||

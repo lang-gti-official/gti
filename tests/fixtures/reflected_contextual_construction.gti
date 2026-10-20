@@ -1,0 +1,40 @@
+#include <std/meta>
+
+// A contextual construction whose initializer is a reflected expression, here
+// a conversion to a field's reflected type, receives the value that
+// expression denotes.
+class Wrap<T> {
+  T value;
+public:
+  implicit Wrap(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+struct Point {
+  uint32_t x = 1;
+  bool visible = true;
+};
+
+Wrap<std::meta::field_type<T, I>> produce<T, uint64_t I>(
+    std::meta::field<T, I> field) {
+  if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_bool()) {
+    return false;
+  } else {
+    return std::meta::field_type<T, I>(5);
+  }
+}
+
+int main() {
+  mut uint64_t total = 0;
+  constexpr for (auto field : std::meta::fields_of<Point>()) {
+    auto produced = produce(field);
+    if constexpr (field.type().is_integral()) {
+      total = total + uint64_t(produced.get());
+    } else {
+      if (produced.get()) {
+        return 1;
+      }
+    }
+  }
+  return total == uint64_t(5) ? 0 : 2;
+}

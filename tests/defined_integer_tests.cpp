@@ -216,18 +216,33 @@ constantCheckedResult(const lang::FrontendResult &result,
   const auto *node = constant
                          ? std::get_if<lang::ConstantAggregateValue>(&*constant)
                          : nullptr;
-  if (!node || !node->value || !node->value->exactType ||
-      node->value->exactType->kind != lang::SemanticType::Expected)
+  // expected<T, E> is an ordinary source class: its constant is an object
+  // whose single `state` field holds the active payload-enum alternative.
+  const auto *info =
+      node && node->value && node->value->exactType &&
+              node->value->kind == lang::ConstantAggregateKind::Object &&
+              node->value->exactType->kind == lang::SemanticType::Class
+          ? result.semantics.findClassType(node->value->exactType->classId)
+          : nullptr;
+  if (!info || !info->declaration ||
+      info->declaration->name().lexeme != "expected" ||
+      node->value->exactType->arguments.size() != 2 ||
+      node->value->fields.size() != 1)
     return std::nullopt;
   const auto domain =
       lang::constantIntegerDomain(node->value->exactType->arguments[0]);
-  if (!domain)
+  const auto *state = std::get_if<lang::ConstantAggregateValue>(
+      &node->value->fields.front().value);
+  if (!domain || !state || !state->value ||
+      state->value->kind != lang::ConstantAggregateKind::PayloadEnum ||
+      state->value->elements.size() != 1)
     return std::nullopt;
-  const auto payload = lang::constantResultPayload(*constant, true);
-  return CheckedConstant{
-      *domain,
-      payload ? std::optional{std::get<lang::ConstantInteger>(*payload.value)}
-              : std::nullopt};
+  // Alternative 0 is `value(T payload)`; alternative 1 is `error(E failure)`.
+  return CheckedConstant{*domain,
+                         state->value->variant == 0
+                             ? std::optional{std::get<lang::ConstantInteger>(
+                                   state->value->elements.front())}
+                             : std::nullopt};
 }
 
 void printDiagnostics(const lang::FrontendResult &result) {
@@ -448,7 +463,7 @@ int after = 42;
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const lang::Diagnostic &candidate) {
         return candidate.code == "GTI-S2057" &&
-               candidate.message.find("inactive or void result alternative") !=
+               candidate.message.find("terminal defined-failure operation") !=
                    std::string::npos;
       });
   expect(!result.canGenerateCode() && diagnostic != result.diagnostics.end(),

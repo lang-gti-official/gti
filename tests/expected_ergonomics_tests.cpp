@@ -93,43 +93,60 @@ void testDiagnostics() {
         member == "transform"
             ? "int map(int value) { return value; }\n"
             : "expected<int, int> map(int value) { return value; }\n";
+    // Consuming source members report the general consuming-receiver
+    // diagnostic at the call's closing parenthesis.
     reject(producer + mapper +
                "int main() { auto result = read(); /* 😀 */ [[discard]] "
                "result." +
                member + "(map); return 0; }\n",
-           "GTI-S2018", member, "std::move");
+           "GTI-S2022", ")", "std::move");
     reject(producer +
                "int map(bool value) { return 0; }\n"
                "int main() { /* 😀 */ [[discard]] read()." +
                member + "(map); return 0; }\n",
-           "GTI-S2097", "map", "exact signature");
+           "GTI-S2090", "map",
+           "exactly matches the required callable signature");
   }
   reject(producer + "int main() { auto result = read(); [[discard]] "
                     "result.expect(\"required\"); return 0; }\n",
-         "GTI-S2018", "expect", "std::move");
+         "GTI-S2022", ")", "std::move");
+  // expect(std::string_view) is an ordinary source parameter.
   reject(producer + "int main() { [[discard]] read().expect(42); return 0; }\n",
-         "GTI-S2016", "42", "std::string_view");
+         "GTI-S2003", "42", "std::string_view");
+  // and_then's own requirement accepts only a result of the same family and
+  // error type; the unsatisfied requirement is reported at the call.
   reject(producer +
              "expected<int, bool> map(int value) { return value; }\n"
              "int main() { [[discard]] read().and_then(map); return 0; }\n",
-         "GTI-S2097", "map", "exactly the source error type");
+         "GTI-S2029", ")", "expected<int32_t, bool>");
   reject(producer +
              "int map(int value) { return value; }\n"
              "int main() { [[discard]] read().and_then(map); return 0; }\n",
-         "GTI-S2097", "map", "expected<U, E>");
+         "GTI-S2029", ")", "int32_t");
+  // A reference-returning mapper makes the result borrow the temporary
+  // mapper argument, which the general fresh-argument rule rejects.
   reject("int value = 7; int& map(int input) { return value; }\n" + producer +
              "int main() { [[discard]] read().transform(map); return 0; }\n",
-         "GTI-S2097", "map", "movable owned");
+         "GTI-S2017", "map", "Bind the value to a local");
+  // A void success passes no value, so a one-parameter mapper's call arity
+  // fails inside the selected mapping instance, reported at the request.
   reject("expected<void, int> read() { return; }\n"
          "int main() { [[discard]] read().transform([](int value) -> int { "
          "return value; }); return 0; }\n",
-         "GTI-S2097", "[", "no parameters");
-  reject("struct Resource { ~Resource() {} };\n"
-         "enum class Packet { item(Resource value), idle };\n"
-         "expected<int, int> read() { return 7; }\n"
-         "Packet map(int input) { return Packet::item(Resource()); }\n"
-         "int main() { [[discard]] read().transform(map); return 0; }\n",
-         "GTI-S2067", "map", "expected mapping result");
+         "GTI-S2005", "transform", "expects 1 argument");
+  // expected<T, E> is an ordinary source class, so an owning payload enum is
+  // an admitted mapping result rather than a carrier containment error.
+  const auto payloadResult =
+      analyze("struct Resource { ~Resource() {} };\n"
+              "enum class Packet { item(Resource value), idle };\n"
+              "expected<int, int> read() { return 7; }\n"
+              "Packet map(int input) { return Packet::item(Resource()); }\n"
+              "int main() { [[discard]] read().transform(map); return 0; }\n");
+  if (!payloadResult.canGenerateCode())
+    diagnostics(payloadResult);
+  check(payloadResult.canGenerateCode() &&
+            lang::verifyMirProgram(payloadResult.mir).valid(),
+        "an owning payload enum is an ordinary expected mapping result");
   const auto moved = analyze(
       producer +
       "int main() { auto result = read(); [[discard]] "
@@ -214,35 +231,17 @@ int main() {
       "the compiler-private panic declaration exercises a tracked body shell");
   check(lang::verifyHirProgramPlans(result.semantics, result.hir).valid(),
         "expected ergonomics retain verified selected HIR plans");
-  unsigned sequencePlans = 0;
+  // A void mapper is an ordinary statement of the source
+  // expected_mapping<void, E>::invoke body, ordered before its result
+  // construction by that body itself; no separate sequencing plan exists.
   unsigned terminalArms = 0;
   for (const auto &function : result.hir.functionInstances()) {
     for (const auto &value : function.body.values) {
-      if (!value.sequencedInputs.empty()) {
-        ++sequencePlans;
-        for (unsigned mutation = 0; mutation != 4; ++mutation) {
-          auto malformed = result.hir;
-          auto *changed = const_cast<lang::HirFunctionInstance *>(
-              malformed.findFunctionInstance(function.id));
-          for (auto &candidate : changed->body.values) {
-            if (candidate.id != value.id)
-              continue;
-            if (mutation == 0)
-              candidate.sequencedInputs.clear();
-            if (mutation == 1)
-              candidate.sequencedInputs = {candidate.id};
-            if (mutation == 2)
-              candidate.sequencedInputs = {999999};
-            if (mutation == 3)
-              candidate.sequencedInputs.push_back(candidate.sequencedInputs[0]);
-          }
-          check(
-              !lang::verifyHirProgramPlans(result.semantics, malformed).valid(),
-              "void mapping rejects lost, cyclic, missing and repeated "
-              "sequencing");
-        }
-      }
-      if (value.intrinsic == lang::IntrinsicKind::Panic) {
+      // expect() is a source member: its terminal arm is the panic inside
+      // each selected expect instance.
+      if (value.intrinsic == lang::IntrinsicKind::Panic &&
+          function.source != nullptr &&
+          function.source->name().lexeme == "expect") {
         ++terminalArms;
         auto malformed = result.hir;
         auto *changed = const_cast<lang::HirFunctionInstance *>(
@@ -255,8 +254,9 @@ int main() {
       }
     }
   }
-  check(sequencePlans >= 2 && terminalArms >= 4,
-        "void mapper sequencing and terminal expect arms are present");
+  // One shared instance per selected result type: expected<int, int> and
+  // expected<void, int>.
+  check(terminalArms == 2, "terminal expect arms are present");
   for (const auto standard :
        {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
     try {
@@ -429,12 +429,15 @@ int main() { exercise(); return 0; }
       continue;
     const auto *value = body.findValue(call->operands[mutatedArgument].value);
     lang::MirDropObligationId sourceDrop = 0;
+    // Each fresh class argument, expected included, is staged as a prepared
+    // parameter whose obligation the call transfers.
     if (value != nullptr)
       for (const auto &block : body.blocks)
         for (const auto &instruction : block.instructions)
           if (instruction.id == value->definition &&
-              instruction.successResultDrop)
-            sourceDrop = *instruction.successResultDrop;
+              instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.preparedParameterDrop)
+            sourceDrop = *instruction.preparedParameterDrop;
     const auto transfer = std::find_if(
         call->lifecycle.begin(), call->lifecycle.end(),
         [&](const auto &event) { return event.source == sourceDrop; });

@@ -347,8 +347,21 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
            label + ": the editor omits a library-only body");
     expect(editorWork.hirFunctionInstances < completeWork.hirFunctionInstances,
            label + ": the editor discovers fewer instances");
-    expect(editor.semanticValid && complete.semanticValid,
-           label + ": primary analysis is valid");
+    // Source errors found by concrete instance discovery are semantic
+    // failures (src/compiler/frontend.cpp): each check is semantically valid
+    // exactly when it reports no semantic error, instance diagnostics included.
+    const auto semanticErrorFree = [](const lang::FrontendResult &result) {
+      return std::none_of(
+          result.diagnostics.begin(), result.diagnostics.end(),
+          [](const lang::Diagnostic &diagnostic) {
+            return diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+                   diagnostic.severity == lang::DiagnosticSeverity::Error;
+          });
+    };
+    expect(editor.semanticValid == semanticErrorFree(editor) &&
+               complete.semanticValid == semanticErrorFree(complete),
+           label + ": semantic validity reflects exactly the reported "
+                   "semantic errors");
     if (expectEqual) {
       if (keys(complete) != keys(editor))
         report(label, entry, keys(complete), keys(editor));

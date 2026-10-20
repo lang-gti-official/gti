@@ -212,7 +212,7 @@ int main() {
   return reusable + forwarded + generic + moved_record.value;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected explicit-move diagnostic: " << diagnostic.message
@@ -336,7 +336,7 @@ int main() {
   return twice + maybe_moved + closure();
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
@@ -394,7 +394,7 @@ int main() {
   return copy.value;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected implicit-return-move diagnostic: "
@@ -562,7 +562,7 @@ public:
 Pinned return_immovable(Pinned value) { return value; }
 int main() { return 0; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!excluded.canGenerateCode() &&
              countDiagnosticCode(excluded.diagnostics, "GTI-S2003") == 2 &&
              hasDiagnosticCode(excluded.diagnostics, "GTI-S2018") &&
@@ -604,7 +604,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!loopBackedges.canGenerateCode() &&
              countDiagnosticContaining(loopBackedges.diagnostics,
                                        "reachable loop backedge") == 3,
@@ -625,7 +625,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!conditionBackedges.canGenerateCode() &&
              countDiagnosticContaining(conditionBackedges.diagnostics,
                                        "reachable loop backedge") == 2,
@@ -647,7 +647,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!projectedBackedge.canGenerateCode() &&
              hasDiagnostic(projectedBackedge.diagnostics,
                            "Place 'field' is not available at a reachable "
@@ -684,7 +684,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(reinitialized.canGenerateCode(),
          "a value reinitialized on every reachable backedge should remain "
          "available for the next iteration");
@@ -708,7 +708,7 @@ int test_or(bool gate) {
 
 int main() { return test_and(false) + test_or(true); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!shortCircuit.canGenerateCode() &&
              countDiagnosticContaining(
                  shortCircuit.diagnostics,
@@ -729,7 +729,7 @@ int main() {
   return and_value.value + or_value.value - 14;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(skippedLogical.canGenerateCode(),
          "literal short-circuit operands should analyze a skipped RHS "
          "without consuming reachable move state");
@@ -747,7 +747,7 @@ int read_after(bool stop) {
 }
 int main() { return read_after(false) - 7; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(terminatingArm.canGenerateCode(),
          "a moved state from a terminating if arm should not reach following "
          "statements");
@@ -780,7 +780,7 @@ int main() {
   return read_after_switch(0);
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!unreachableRepair.canGenerateCode() &&
              hasDiagnostic(unreachableRepair.diagnostics,
                            "reachable loop backedge") &&
@@ -1427,7 +1427,7 @@ int main() {
   return consumed.value + moved[1].value;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!partialOwner.canGenerateCode() &&
              hasDiagnostic(partialOwner.diagnostics,
                            "one of its owned places remains moved"),
@@ -1444,7 +1444,7 @@ int main() {
 int after() { return 0; }
 )";
   const lang::FrontendResult dynamicMove = lang::Frontend().analyze(
-      "dynamic-index-move.gti", dynamicMoveSource, {standardLibraryPrelude()});
+      "dynamic-index-move.gti", dynamicMoveSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto dynamicMoveDiagnostic = std::find_if(
       dynamicMove.diagnostics.begin(), dynamicMove.diagnostics.end(),
       [](const lang::Diagnostic &diagnostic) {
@@ -1479,7 +1479,7 @@ int read(bool select) {
 }
 int main() { return read(false) - 1; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!branchMove.canGenerateCode() &&
              hasDiagnostic(branchMove.diagnostics,
                            "may have been moved on another control-flow path"),
@@ -1498,7 +1498,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!loopMove.canGenerateCode() &&
              hasDiagnostic(loopMove.diagnostics,
                            "not available at a reachable loop backedge"),
@@ -1515,7 +1515,7 @@ int read(mut int index) {
 }
 int main() { return read(1) - 3; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!dynamicRead.canGenerateCode() &&
              hasDiagnostic(dynamicRead.diagnostics, "has already been moved"),
          "a dynamic index should may-alias an unavailable constant element");
@@ -2576,7 +2576,7 @@ int run(mut Box parent) {
 }
 int main() { return run(Box()) - 4; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!movedCallOperand.canGenerateCode() &&
              countDiagnosticCode(movedCallOperand.diagnostics, "GTI-S2017") ==
                  1 &&
@@ -4372,7 +4372,7 @@ int main() {
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "stored-references.gti", source, {standardLibraryPrelude()});
+      "stored-references.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected stored-reference diagnostic: "
@@ -4388,7 +4388,7 @@ int main() {
                             "  auto moved_wrapper = std::move(wrapped);\n");
   const auto movedWrapper =
       lang::Frontend().analyze("stored-reference-external-adapter-move.gti",
-                               movedWrapperSource, {standardLibraryPrelude()});
+                               movedWrapperSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(movedWrapper.canGenerateCode() &&
              lang::verifyMirProgram(movedWrapper.mir).valid(),
          "an adapter relayed through a stored reference does not freeze the "
@@ -4398,7 +4398,7 @@ int main() {
                               "  wrapped_range.replace(9);\n");
   const auto invalidWrapper = lang::Frontend().analyze(
       "stored-reference-external-adapter-reset.gti", invalidWrapperSource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidWrapper.canGenerateCode() &&
              hasDiagnosticCode(invalidWrapper.diagnostics, "GTI-S2017"),
          "an externally relayed adapter still freezes its actual range owner");
@@ -6133,7 +6133,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics,
@@ -6209,7 +6209,7 @@ int main() {
 }
 )";
   const lang::FrontendResult valid = lang::Frontend().analyze(
-      "mutable-stored-dependency.gti", validSource, {standardLibraryPrelude()});
+      "mutable-stored-dependency.gti", validSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected mutable stored-dependency diagnostic: "
@@ -6474,7 +6474,7 @@ int main() {
   return first_value + second_value;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!overlapping.canGenerateCode() &&
              hasDiagnosticCode(overlapping.diagnostics, "GTI-S2017") &&
              hasDiagnostic(overlapping.diagnostics,
@@ -6508,7 +6508,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!unsupported.canGenerateCode() &&
              hasDiagnostic(unsupported.diagnostics,
                            "Borrowed return dependency is ambiguous") &&
@@ -6556,7 +6556,7 @@ int main() {
   const auto analyze = [&](const std::string &name, const std::string &body,
                            const std::string &extra = "") {
     return lang::Frontend().analyze(name, declarations + extra + setup + body,
-                                    {standardLibraryPrelude()});
+                                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   };
   const auto valid = analyze("composed-carrier-forwarding.gti", forwarding + R"(
   active.update();
@@ -6842,7 +6842,7 @@ int main() {
   return left.value + right.value - 8;
 }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(looped.canGenerateCode() && lang::verifyMirProgram(looped.mir).valid(),
          "a loop-local carrier transfer retires its exact loan on each "
          "iteration without leaking statement acknowledgement state");
@@ -6926,7 +6926,7 @@ int main() {
   return record.value - 9;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(arrowUpdate.canGenerateCode() &&
              lang::verifyMirProgram(arrowUpdate.mir).valid(),
          "a scalar compound store must invoke the selected nested arrow "
@@ -6967,7 +6967,7 @@ public:
 };
 int main() { mut int owner = 42; View view{owner}; return view.get(); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(readonlyReturn.canGenerateCode() &&
              lang::verifyMirProgram(readonlyReturn.mir).valid(),
          "a mutable stored reference can publish a read-only receiver borrow");
@@ -7009,7 +7009,7 @@ int main() {
   return copied.value.read() + nested.value.value.read() - 84;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics) {
       std::cerr << "Nested-borrow diagnostic: " << diagnostic.code << ' '
@@ -7090,7 +7090,7 @@ int main() {
 )";
   const auto projected =
       lang::Frontend().analyze("stored-carrier-projected-relay.gti",
-                               projectedSource, {standardLibraryPrelude()});
+                               projectedSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       projected.canGenerateCode() &&
           lang::verifyMirProgram(projected.mir).valid(),
@@ -7105,7 +7105,7 @@ int main() {
                           "  owner.value = 9;\n");
   const auto invalidProjection =
       lang::Frontend().analyze("stored-carrier-projected-relay-owner-write.gti",
-                               invalidProjected, {standardLibraryPrelude()});
+                               invalidProjected, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidProjection.canGenerateCode() &&
              hasDiagnosticCode(invalidProjection.diagnostics, "GTI-S2017"),
          "moving a relay's carrier must not allow mutation of its still "
@@ -7135,7 +7135,7 @@ int main() {
 )";
   const auto ownedAccessor =
       lang::Frontend().analyze("stored-carrier-generic-owned-accessor.gti",
-                               ownedAccessorSource, {standardLibraryPrelude()});
+                               ownedAccessorSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(ownedAccessor.canGenerateCode() &&
              lang::verifyMirProgram(ownedAccessor.mir).valid(),
          "generic accessor composition must preserve the called method's "
@@ -7149,7 +7149,7 @@ int main() {
       invalidOwnedAccessorSource.find("  return value"), "  owner.set(9);\n");
   const auto invalidOwnedAccessor = lang::Frontend().analyze(
       "stored-carrier-generic-owned-accessor-write.gti",
-      invalidOwnedAccessorSource, {standardLibraryPrelude()});
+      invalidOwnedAccessorSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidOwnedAccessor.canGenerateCode() &&
              hasDiagnosticCode(invalidOwnedAccessor.diagnostics, "GTI-S2017"),
          "a composed owned-storage accessor still freezes its external owner "
@@ -7177,7 +7177,7 @@ int main() {
 )";
   const auto mutableStorage = lang::Frontend().analyze(
       "stored-carrier-mutable-owned-storage.gti", mutableStorageSource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(mutableStorage.canGenerateCode() &&
              lang::verifyMirProgram(mutableStorage.mir).valid(),
          "mutable owned storage is independent of the carrier's read-only "
@@ -7192,7 +7192,7 @@ int main() {
       std::string("owner.get_mut()").size(), "owner.external_value()");
   const auto invalidMutableStorage = lang::Frontend().analyze(
       "stored-carrier-read-only-external-storage.gti",
-      invalidMutableStorageSource, {standardLibraryPrelude()});
+      invalidMutableStorageSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidMutableStorage.canGenerateCode() &&
              hasDiagnosticCode(invalidMutableStorage.diagnostics, "GTI-S2017"),
          "mutable carrier storage cannot upgrade its read-only external "
@@ -7224,7 +7224,7 @@ int main() {
 )";
   const auto factory =
       lang::Frontend().analyze("stored-carrier-reference-factory.gti",
-                               factorySource, {standardLibraryPrelude()});
+                               factorySource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(factory.canGenerateCode() &&
              lang::verifyMirProgram(factory.mir).valid(),
          "a source factory retains both its argument's physical shell and "
@@ -7238,7 +7238,7 @@ int main() {
                               "  owner.reset();\n");
   const auto invalidFactory = lang::Frontend().analyze(
       "stored-carrier-reference-factory-reset.gti", invalidFactorySource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidFactory.canGenerateCode() &&
              hasDiagnosticCode(invalidFactory.diagnostics, "GTI-S2017"),
          "a reference factory must not allow mutation of its carrier shell "
@@ -7283,7 +7283,7 @@ int main() {
 )";
   const auto adapter =
       lang::Frontend().analyze("stored-carrier-value-receiver-adapter.gti",
-                               adapterSource, {standardLibraryPrelude()});
+                               adapterSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(adapter.canGenerateCode() &&
              lang::verifyMirProgram(adapter.mir).valid(),
          "a value-returning receiver adapter and its copies retain physical "
@@ -7299,7 +7299,7 @@ int main() {
                                 "  " + mutation + "\n");
     const auto invalidAdapter = lang::Frontend().analyze(
         "stored-carrier-value-adapter-invalidation.gti", invalidAdapterSource,
-        {standardLibraryPrelude()});
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalidAdapter.canGenerateCode() &&
                hasDiagnosticCode(invalidAdapter.diagnostics, "GTI-S2017"),
            "an independently copied adapter rejects physical owner "
@@ -7342,7 +7342,7 @@ int main() {
 )";
   const lang::FrontendResult valid =
       lang::Frontend().analyze("stored-carrier-exact-relay.gti", validSource,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected stored-carrier relay diagnostic: "
@@ -8035,7 +8035,7 @@ int main() {
   return outer[uint64_t(1)] - 11;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected nested-return diagnostic: " << diagnostic.code
@@ -13880,7 +13880,7 @@ int main() {
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "consuming-callables.gti", source, {standardLibraryPrelude()});
+      "consuming-callables.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected consuming-callable diagnostic: "
@@ -14135,7 +14135,7 @@ int main() {
   return invoke_twice(operation) + direct;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(
@@ -14168,7 +14168,7 @@ int outer<Operation>(Operation operation) {
 
 int main() { return outer(Once()); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!implicitForwarding.canGenerateCode() &&
              countDiagnosticCode(implicitForwarding.diagnostics, "GTI-S2046") ==
                  1 &&
@@ -14199,7 +14199,7 @@ int forward_twice<Operation>(Operation operation) {
 
 int main() { return forward_twice(Once()); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!repeatedForwarding.canGenerateCode() &&
              hasDiagnosticCode(repeatedForwarding.diagnostics, "GTI-S2018") &&
              hasDiagnostic(repeatedForwarding.diagnostics,
@@ -14251,7 +14251,7 @@ int main() {
   return first + second + third;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!cleanupReceiver.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : cleanupReceiver.diagnostics) {
       std::cerr << "Unexpected cleanup-consuming diagnostic ["
@@ -14285,7 +14285,7 @@ int main() {
   return invoke_once(std::move(generic));
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(genericCleanupReceiver.canGenerateCode(),
          "concrete generic once-call selection retains its cleanup-owning "
          "nominal receiver through the full expression");
@@ -14335,7 +14335,7 @@ int main() {
 }
 )";
   const auto frontend = lang::Frontend().analyze(
-      "consuming-methods.gti", source, {standardLibraryPrelude()});
+      "consuming-methods.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const auto &diagnostic : frontend.diagnostics)
     std::cerr << "Consuming methods: " << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(), "ordinary methods and value operators "
@@ -14475,7 +14475,7 @@ int main() {
   };
   for (const auto &[text, fragment] : invalid) {
     const auto result = lang::Frontend().analyze(
-        "invalid-consuming-method.gti", text, {standardLibraryPrelude()});
+        "invalid-consuming-method.gti", text, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     if (!hasDiagnostic(result.diagnostics, fragment)) {
       std::cerr << "Missing diagnostic " << fragment << " for " << text << '\n';
       for (const auto &diagnostic : result.diagnostics)
@@ -14497,7 +14497,7 @@ public:
 };
 int main() { return Box<int>(4).identity<int>(0).take() - 4; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!generic.canGenerateCode())
     for (const auto &diagnostic : generic.diagnostics)
       std::cerr << "Generic consuming: " << diagnostic.message << '\n';
@@ -14800,7 +14800,7 @@ int main() {
 }
 )";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "read-only-range-loans.gti", source, {standardLibraryPrelude()});
+      "read-only-range-loans.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected read-only range diagnostic: "
@@ -15049,7 +15049,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!movedReuse.canGenerateCode() &&
              hasDiagnosticCode(movedReuse.diagnostics, "GTI-S2018"),
          "moving an owned range into loop storage should invalidate later "
@@ -15094,7 +15094,7 @@ int main() {
   return total - 5 + first_over(6) - 7;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected passive range diagnostic: " << diagnostic.message
               << '\n';
@@ -15226,7 +15226,7 @@ int32_t three_siblings() {
 
 int main() { return generic_pair() + three_siblings(); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected shared payload diagnostic: " << diagnostic.message
               << '\n';
@@ -16324,7 +16324,7 @@ int main() {
   return result.value_or(0) - 1;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::string cpp20 =
       expectedLambda.canGenerateCode()
           ? gti_test::emitCppText(expectedLambda, lang::CppStandard::Cpp20)
@@ -17877,7 +17877,7 @@ int main() {
   return mapped + mapped_twice + object_result + advanced.read() - 18;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valueResults.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valueResults.diagnostics) {
       std::cerr << "Unexpected callable-value diagnostic: "
@@ -18680,7 +18680,7 @@ int main() {
   expect(!parser.hadError(), "expected types and values should parse");
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "expected-values.gti", source, {standardLibraryPrelude()});
+      "expected-values.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "expected construction and observers should pass semantic checks");
 
@@ -20722,7 +20722,7 @@ int main() {
 )";
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-mutable-temporary-receivers.gti",
-                               invalidSource, {standardLibraryPrelude()});
+                               invalidSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.semanticValid &&
           hasDiagnostic(invalid.diagnostics,
@@ -22222,7 +22222,7 @@ int main() {
 )";
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("cleanup-owning-temporary-arguments.gti", source,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected cleanup-temporary diagnostic: "
@@ -22359,7 +22359,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!rejected.canGenerateCode() &&
              hasDiagnosticCode(rejected.diagnostics, "GTI-S2018"),
          "a named move-only lvalue should remain rejected as a deleted "
@@ -22407,7 +22407,7 @@ int main() {
 )";
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("expression-join-assignment-places.gti",
-                               accepted, {standardLibraryPrelude()});
+                               accepted, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected expression-join diagnostic: " << diagnostic.message
               << '\n';
@@ -22433,7 +22433,7 @@ int main() {
 )";
   const lang::FrontendResult rejected =
       lang::Frontend().analyze("expression-join-assignment-conflict.gti",
-                               conflicting, {standardLibraryPrelude()});
+                               conflicting, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t assignment = conflicting.find("seen = armed && ready");
   const auto conflict =
       std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),

@@ -3146,9 +3146,23 @@ auto SemanticVisitor::Impl::analyzeDeclarationConversion(
 auto SemanticVisitor::Impl::contextualConstructionRawFields(
     const Expr &initializer, const SemanticType &type)
     -> std::vector<ProjectedRawPointerOrigins> {
-  // The selected constructor or conversion operator may store any address it
-  // receives or creates, and no query of its body is recorded here: every raw
-  // field is unresolved.
+  // An ordinary source constructor selected for a contextual construction is
+  // queried like any other constructor call: the written expression is its
+  // single actual argument, and the constructor body's recorded raw fields
+  // name which parameter (or fresh address) each stored pointer came from.
+  if (const auto *contextual =
+          rawAuditEnabled() ? semanticModel.findContextualConstruction(initializer)
+                            : nullptr;
+      contextual != nullptr && contextual->constructor != 0 &&
+      contextual->kind == ConstructorKind::Ordinary &&
+      contextual->declaration != nullptr &&
+      contextual->declaration->body() != nullptr &&
+      contextual->constructedType == type &&
+      contextual->parameterTypes.size() == 1 &&
+      !containsOpenTypeParameter(type))
+    return rawProducedFields(initializer, nullptr, nullptr, contextual);
+  // A conversion operator or an unqueryable constructor may store any address
+  // it receives or creates: every raw field stays unresolved.
   std::vector<ProjectedRawPointerOrigins> fields;
   for (auto path : rawPointerFieldPaths(type)) {
     mergeRawPointerFields(
@@ -8961,17 +8975,21 @@ auto SemanticVisitor::Impl::runRawResultQuery(
 
 auto SemanticVisitor::Impl::rawProducedFields(
     const Expr &expression, const std::vector<RawResultField> *suppliedFields,
-    const RawInvocation *invocation)
+    const RawInvocation *invocation, const ResolvedConstructionInfo *contextual)
     -> std::vector<ProjectedRawPointerOrigins> {
   if (!rawAuditEnabled())
     return {};
-  const auto *call = exprAs<Call>(&expression);
-  const auto *direct = exprAs<DirectInitializer>(&expression);
+  // A contextual construction's only written argument is the expression
+  // itself; it is never a call or direct initializer of the constructed type.
+  const auto *call = contextual ? nullptr : exprAs<Call>(&expression);
+  const auto *direct =
+      contextual ? nullptr : exprAs<DirectInitializer>(&expression);
   const auto *resolved = invocation ? &invocation->resolved
                          : call     ? semanticModel.findCall(*call)
                                     : nullptr;
-  const auto *construction =
-      invocation ? nullptr : semanticModel.findConstruction(expression);
+  const auto *construction = invocation    ? nullptr
+                             : contextual ? contextual
+                                          : semanticModel.findConstruction(expression);
   const auto type = construction ? construction->constructedType
                     : resolved   ? resolved->returnType
                                  : semanticModel.typeOf(expression);
@@ -9002,6 +9020,12 @@ auto SemanticVisitor::Impl::rawProducedFields(
       : call     ? ResolvedCallArguments(*call, resolved)
       : direct   ? ResolvedCallArguments(direct->arguments())
                  : ResolvedCallArguments{};
+  const std::size_t argumentCount = contextual ? 1 : arguments.size();
+  const auto actualArgument = [&](std::size_t index) -> const Expr * {
+    if (contextual)
+      return index == 0 ? &expression : nullptr;
+    return index < arguments.size() ? arguments[index].get() : nullptr;
+  };
   const auto &defaults = construction ? construction->defaultArguments
                                       : resolved->defaultArguments;
   std::vector<ProjectedRawPointerOrigins> result;
@@ -9017,11 +9041,11 @@ auto SemanticVisitor::Impl::rawProducedFields(
     std::vector<RawPointerOrigin> origins;
     for (const auto &source : field.origins) {
       const Expr *actual = nullptr;
-      if (source.parameter && *source.parameter < arguments.size())
-        actual = arguments[*source.parameter].get();
+      if (source.parameter && *source.parameter < argumentCount)
+        actual = actualArgument(*source.parameter);
       else if (source.parameter &&
-               *source.parameter - arguments.size() < defaults.size())
-        actual = defaults[*source.parameter - arguments.size()];
+               *source.parameter - argumentCount < defaults.size())
+        actual = defaults[*source.parameter - argumentCount];
       else if (source.receiver && invocation)
         actual = invocation->receiver;
       else if (source.receiver && call)
@@ -9116,6 +9140,26 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
     return {};
   if (const auto *call = exprAs<Call>(&expression)) {
     const auto intrinsic = resolvedIntrinsicKind(*call);
+    // A statically selected source call whose result query completed has an
+    // exact origin summary: its produced fields name every pointer the result
+    // can carry, so the receiver and arguments are not possible origins.
+    // Only a producing context may demand that query: a collecting worker
+    // (includeProduced == false) must not re-enter its own family.
+    const auto *resolved = semanticModel.findCall(*call);
+    const auto exactQuery =
+        includeProduced && resolved != nullptr &&
+                resolved->intrinsic == IntrinsicKind::None &&
+                resolved->dispatch == CallDispatch::Static &&
+                !semanticModel.findLambdaCall(*call) &&
+                !semanticModel.findDeferredCallableCall(*call)
+            ? rawResultQuery(*call, *resolved)
+            : nullptr;
+    if (exactQuery && exactQuery->complete && exactQuery->valid) {
+      std::vector<RawPointerOrigin> result;
+      for (const auto &field : rawProducedFields(expression))
+        mergeRawPointerOrigins(result, field.origins);
+      return result;
+    }
     if (intrinsic == IntrinsicKind::ExpectedValue ||
         intrinsic == IntrinsicKind::ExpectedError ||
         intrinsic == IntrinsicKind::ExpectedValueOr ||
