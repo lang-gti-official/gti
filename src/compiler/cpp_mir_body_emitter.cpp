@@ -11997,6 +11997,36 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
   return stage;
 }
 
+// A call or construction consuming a by-value class argument hands it to the
+// callee once and unconditionally at invocation. The event transfers either a
+// completed owning result's own value obligation, or the prepared-parameter
+// slot of exactly one operand: a named copy or move MIR materialized there, or
+// a fresh owning result already published into that slot. These are input
+// handoffs, never publication of the producer's own result.
+[[nodiscard]] bool preparedArgumentTransfer(const MirBody &body,
+                                            const MirInstruction &producer,
+                                            const MirLifecycleEvent &event) {
+  if (event.kind != MirLifecycleEventKind::TransferOut || event.source == 0 ||
+      event.target != 0 || event.conditional || event.failureCleanup)
+    return false;
+  if (ownedOperandTransfer(body, producer, event))
+    return true;
+  return std::count_if(
+             producer.operands.begin(), producer.operands.end(),
+             [&](const MirOperand &operand) {
+               const MirInstruction *stage =
+                   materializedConstructorArgumentStage(body, operand.value);
+               if (stage == nullptr) {
+                 const StagedClassResult staged =
+                     stagedClassResultForResult(body, operand.value);
+                 if (staged.consumer == &producer)
+                   stage = staged.stage;
+               }
+               return stage != nullptr &&
+                      stage->preparedParameterDrop == event.source;
+             }) == 1;
+}
+
 // A by-value argument staging temporary: one CallInput carries a source
 // place — copied, or moved through its staged value — into a bare
 // class-typed temporary that nothing else references, and the staged
@@ -18396,37 +18426,18 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       std::all_of(
           producer->lifecycle.begin(), producer->lifecycle.end(),
           [&](const MirLifecycleEvent &event) {
-            if (event.kind != MirLifecycleEventKind::TransferOut ||
-                event.source == 0 || event.target != 0 || event.conditional ||
-                event.failureCleanup)
-              return false;
             // A completed owning result passed directly hands its own value
             // obligation to the callee; its slot proof keeps the result
-            // through the producer's success edge and retires it here.
-            if (ownedOperandTransfer(body, *producer, event))
+            // through the producer's success edge and retires it here. A
+            // fresh owning result already materialized in its prepared slot
+            // keeps its checked producer edge and exact reparenting.
+            if (preparedArgumentTransfer(body, *producer, event))
               return true;
-            if (preparedReceiver != nullptr &&
-                event.source == *preparedReceiver->preparedParameterDrop)
-              return true;
-            return std::count_if(
-                       producer->operands.begin(), producer->operands.end(),
-                       [&](const MirOperand &operand) {
-                         const auto *stage =
-                             materializedConstructorArgumentStage(
-                                 body, operand.value);
-                         // A fresh owning call/constructor result is already
-                         // materialized in the same prepared-parameter slot.
-                         // Preserve its checked producer edge and exact
-                         // reparenting, rather than requiring a named source.
-                         if (stage == nullptr) {
-                           const auto staged =
-                               stagedClassResultForResult(body, operand.value);
-                           if (staged.consumer == producer)
-                             stage = staged.stage;
-                         }
-                         return stage != nullptr &&
-                                stage->preparedParameterDrop == event.source;
-                       }) == 1;
+            return preparedReceiver != nullptr &&
+                   event.kind == MirLifecycleEventKind::TransferOut &&
+                   event.target == 0 && !event.conditional &&
+                   !event.failureCleanup &&
+                   event.source == *preparedReceiver->preparedParameterDrop;
           });
   // A virtual member call reaches the same transformed status ABI through its
   // exact virtual failure contract (VirtualCall propagation), as an ordinary
@@ -33479,14 +33490,14 @@ classSsaLifetimeSlot(const MirProgram &program,
   const bool directConstructionProducer =
       directConstructionShape && producer->lifecycle.empty();
   // A construction assigned to an existing binding may also consume owning
-  // arguments: its only lifecycle events transfer each such operand's own
-  // value drop into the constructor, once and unconditionally. Only the
-  // assignment proof below admits it.
+  // arguments: its only lifecycle events hand each by-value argument to the
+  // constructor, once and unconditionally — an operand's own value drop or
+  // its prepared-parameter slot. Only the assignment proof below admits it.
   const bool transferringConstructionProducer =
       directConstructionShape && !producer->lifecycle.empty() &&
       std::all_of(producer->lifecycle.begin(), producer->lifecycle.end(),
                   [&](const MirLifecycleEvent &event) {
-                    return ownedOperandTransfer(body, *producer, event);
+                    return preparedArgumentTransfer(body, *producer, event);
                   });
   // A construction that can fail and that the fused assignment does not spell
   // publishes on its success edge before the Assign moves it in. Every
@@ -34125,6 +34136,12 @@ classSsaLifetimeSlot(const MirProgram &program,
         mirTypeMoveIsDefinedFailureFree(program, value->info.type);
     const MirValue *result =
         consumer->result ? body.findValue(*consumer->result) : nullptr;
+    // A mutable reference returned by a source call names existing storage:
+    // its verified loan, not the synthesized place's contextual access, owns
+    // the write permission.
+    const bool callResultDestination =
+        destination != nullptr &&
+        exactMutableCallResultDestination(program, body, *destination);
     if (cleanupFreeArray ||
         (callee == nullptr && !callableClassProducer &&
          !raisingAssignedConstruction && !joinMoveProducer &&
@@ -34151,10 +34168,11 @@ classSsaLifetimeSlot(const MirProgram &program,
            destination->projections.empty()) ||
           exactMutablePassiveClassField(program, body, *destination) ||
           exactMutableReferenceDestination(body, *destination) ||
-          checkedWrite) ||
+          callResultDestination || checkedWrite) ||
         destination->type != value->info.type ||
         (destination->projections.empty() &&
-         destination->access != AccessMode::Mutable) ||
+         destination->access != AccessMode::Mutable &&
+         !callResultDestination) ||
         !destination->traits.moveAssignable ||
         (!checkedWrite && (!consumer->localFailureSites.empty() ||
                            !consumer->definedFailure.empty())) ||
@@ -34166,17 +34184,36 @@ classSsaLifetimeSlot(const MirProgram &program,
                     })) {
       return {};
     }
+    // Only a two-phase call-result destination's neutral activation may
+    // separate the publication from its commit; the producer and the Assign
+    // keep their MIR order.
+    const MirLoan *destinationLoan =
+        callResultDestination ? body.findLoan(destination->loan) : nullptr;
+    const std::size_t activations =
+        destinationLoan != nullptr && destinationLoan->twoPhase ? 1 : 0;
+    const auto activation = [&](const MirInstruction &item) {
+      const MirInstruction canonical{.id = item.id,
+                                     .kind = MirInstructionKind::ActivateBorrow,
+                                     .hirValue = consumer->hirValue,
+                                     .loan = destinationLoan->id};
+      return item == canonical;
+    };
     bool adjacent = false;
     if (const MirBlock *invoke = invokeProducerBlock(body, *producer)) {
       const MirBlock *success = body.findBlock(invoke->terminator.target);
-      adjacent = success != nullptr && !success->instructions.empty() &&
-                 success->instructions.front().id == consumer->id;
+      adjacent = success != nullptr &&
+                 success->instructions.size() > activations &&
+                 (activations == 0 ||
+                  activation(success->instructions.front())) &&
+                 success->instructions[activations].id == consumer->id;
     } else {
       for (const MirBlock &block : body.blocks) {
-        for (std::size_t index = 0; index + 1 < block.instructions.size();
-             ++index) {
+        for (std::size_t index = 0;
+             index + 1 + activations < block.instructions.size(); ++index) {
           if (block.instructions[index].id == producer->id &&
-              block.instructions[index + 1].id == consumer->id) {
+              (activations == 0 ||
+               activation(block.instructions[index + 1])) &&
+              block.instructions[index + 1 + activations].id == consumer->id) {
             adjacent = true;
           }
         }
