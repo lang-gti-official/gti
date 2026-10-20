@@ -1,2 +1,0 @@
-// expected and unexpected are ordinary source declarations in the implicit
-// prelude. This compatibility header requires no additional declarations.
