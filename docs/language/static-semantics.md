@@ -273,16 +273,20 @@ under the separate callable ownership/cleanup contract. The declaration syntax
 alone does not supply storage, erasure or `std::function` policy.
 
 An argument-profile family can also combine an ordinary type-parameter definition
-with void and checked-reference profiles, for example `class Packet<T, E>`,
-`class Packet<void, E>`, and `class Packet<T&, E>`. Each has its own members and
-layout. A profile head contains bare type binders, `void`, or reference binders;
-it has no packs, defaults, value parameters, pointer patterns or nested patterns.
+with void, checked-reference and raw-pointer profiles, for example
+`class Packet<T, E>`, `class Packet<void, E>`, `class Packet<T&, E>`, and
+`class Packet<const T*, E>`. Each has its own members and layout. A profile head
+contains bare type binders, `void`, reference binders, or one raw-pointer layer
+over a binder (`T*`, `const T*`); it has no packs, defaults, value parameters,
+deeper pointer patterns or nested patterns.
 All definitions have the same public arity, class/struct kind and package owner.
 Non-fallback profiles must be mutually disjoint: `Packet<T&, E>` and
 `Packet<T, E&>` overlap and cannot form a family. At most one ordinary definition
 is the fallback. Selection is independent of declaration order and precedes
 member lookup; constraints on a selected definition do not cause fallback to a
-different one. Read-only and mutable references are distinct profiles.
+different one. Read-only and mutable references are distinct profiles, as are
+pointers to read-only and mutable pointees; a pointer binder binds the pointee,
+so `T*` matching `int**` binds `T` to `int*`.
 Generic deduction uses the family's public arguments, then concrete checking
 uses the selected definition's exact identity. This does not allow conversions
 between definitions or erase checked references' origins/access/lifetimes.

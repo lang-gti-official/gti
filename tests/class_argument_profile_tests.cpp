@@ -237,6 +237,38 @@ int main() {
 }
 )");
 
+  // Raw-pointer profiles distinguish pointee access, as reference profiles
+  // distinguish referent access; the binder names the pointee.
+  const std::string pointers = R"(
+class Packet<T*, E> {
+  T* payload = nullptr;
+public:
+  Packet(T* value) : payload(value) {}
+  T* value() { return this.payload; }
+  int kind() { return 4; }
+};
+class Packet<const T*, E> {
+  const T* payload = nullptr;
+public:
+  Packet(const T* value) : payload(value) {}
+  const T* value() { return this.payload; }
+  int kind() { return 5; }
+};
+)";
+  accepted(owned + pointers + R"(
+int main() {
+  mut int number = 7;
+  Packet<int*, bool> writable{&number};
+  Packet<const int*, bool> readable{&number};
+  Packet<int**, bool> nested{nullptr};
+  Packet<int, bool> value{3};
+  int* address = writable.value();
+  unsafe { *address = 8; }
+  return writable.kind() + readable.kind() + nested.kind() + value.kind() -
+      14;
+}
+)");
+
   rejected(owned + owned, "GTI-S2006", "Duplicate declaration");
   rejected(owned + empty + empty, "GTI-S2006", "Duplicate declaration");
   rejected("class Packet<T&, E> {}; class Packet<T, E&> {};", "GTI-S2006",

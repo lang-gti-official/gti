@@ -290,6 +290,13 @@ the referent and the same owner dependency described above. Other alternatives
 carrying checked borrowed state remain outside this operation; the error must
 be movable and owned.
 
+A raw-pointer success, `expected<T*, E>` or `expected<const T*, E>`, is
+observed by value: `value()`, `value_or` and `expect` return the pointer
+itself, because GTI has no checked reference to a raw pointer. Copying the
+pointer neither moves nor aliases its pointee, and every dereference remains an
+ordinary `unsafe` operation. Raw pointers are not constant values, so these
+results are runtime-only.
+
 ## Mapping and chaining owned successes
 
 `transform` maps one successful value into another, preserving the error type:

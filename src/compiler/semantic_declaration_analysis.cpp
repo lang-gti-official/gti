@@ -43,7 +43,14 @@ signatureClassKey(const ClassDecl &owner) {
 // mutually disjoint void/reference profiles. This is source type selection:
 // each definition has its own class identity and ordinary member semantics.
 // It does not change reference access, lifetime, or constructor eligibility.
-enum class ArgumentProfile { Any, Void, ReadOnlyReference, MutableReference };
+enum class ArgumentProfile {
+  Any,
+  Void,
+  ReadOnlyReference,
+  MutableReference,
+  ReadOnlyPointer,
+  MutablePointer,
+};
 using ClassProfile = std::vector<ArgumentProfile>;
 
 [[nodiscard]] std::optional<ClassProfile>
@@ -64,13 +71,22 @@ classArgumentProfile(const ClassDecl &owner) {
     return profile;
   }
   for (const auto &pattern : owner.genericArgumentPatterns()) {
+    // One raw-pointer layer over a type parameter distinguishes its pointee
+    // access, as a reference pattern distinguishes its referent access.
+    const bool pointer = pattern.pointers.size() == 1 && !pattern.reference;
     if (pattern.isFunctionSignature() || pattern.isNativeFunction() ||
         pattern.qualifiedOwner || pattern.name.segments.size() != 1 ||
-        !pattern.arguments.empty() || !pattern.pointers.empty() ||
+        !pattern.arguments.empty() ||
+        (!pattern.pointers.empty() && !pointer) ||
         !pattern.arrayExtents.empty() || pattern.packExpansion)
       return std::nullopt;
-    if (pattern.name.last().kind == TokenKind::VOID && !pattern.reference) {
+    if (pattern.name.last().kind == TokenKind::VOID && !pattern.reference &&
+        !pointer) {
       profile.push_back(ArgumentProfile::Void);
+    } else if (pattern.name.last().kind == TokenKind::IDENTIFIER && pointer) {
+      profile.push_back(pattern.pointers.front().pointeeConst
+                            ? ArgumentProfile::ReadOnlyPointer
+                            : ArgumentProfile::MutablePointer);
     } else if (pattern.name.last().kind == TokenKind::IDENTIFIER) {
       profile.push_back(!pattern.reference ? ArgumentProfile::Any
                        : pattern.referenceMutability
@@ -2986,13 +3002,16 @@ auto SemanticVisitor::Impl::selectClassDefinition(
     bool matches = true;
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       const auto &argument = arguments[index];
-      const auto shape = argument.kind == SemanticType::Void
-                             ? ArgumentProfile::Void
-                         : argument.kind != SemanticType::Reference
-                             ? ArgumentProfile::Any
-                         : argument.referenceAccess == AccessMode::Mutable
-                             ? ArgumentProfile::MutableReference
-                             : ArgumentProfile::ReadOnlyReference;
+      const auto shape =
+          argument.kind == SemanticType::Void ? ArgumentProfile::Void
+          : argument.kind == SemanticType::RawPointer
+              ? (argument.pointerAccess == AccessMode::Mutable
+                     ? ArgumentProfile::MutablePointer
+                     : ArgumentProfile::ReadOnlyPointer)
+          : argument.kind != SemanticType::Reference ? ArgumentProfile::Any
+          : argument.referenceAccess == AccessMode::Mutable
+              ? ArgumentProfile::MutableReference
+              : ArgumentProfile::ReadOnlyReference;
       matches = matches && ((*profile)[index] == ArgumentProfile::Any ||
                             (*profile)[index] == shape);
     }
