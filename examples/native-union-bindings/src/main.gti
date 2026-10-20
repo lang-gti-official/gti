@@ -1,0 +1,46 @@
+#include <events/bindings>
+
+// Safe policy lives outside the ABI declaration; copying the complete union
+// preserves the alternative selected by the native factory.
+native::EventData relay(native::EventData value) { return value; }
+native::Event relay_event(native::Event value) { return value; }
+struct NumberEvent {
+  native::EventData data;
+  // Caller establishes that the number alternative is active.
+  unsafe NumberEvent(native::EventData value) : data(value) {}
+  uint64_t number() { unsafe { return this.data.number; } }
+};
+
+int main() {
+  if (sizeof(native::Event) != native::event_size() ||
+      alignof(native::EventData) != native::data_alignment()) { return 1; }
+  mut auto event = native::make_event();
+  // The native tag identifies the initialized alternative. GTI deliberately
+  // requires unsafe for every untagged union member access.
+  unsafe {
+    if (event.kind != c_uint(1) || event.data.number != uint64_t(42)) { return 2; }
+    mut auto copied = relay(native::roundtrip_data(event.data));
+    for (mut int32_t i = 0; i < 32; i += 1) {
+      copied = relay(native::roundtrip_data(copied));
+      event = relay_event(event);
+    }
+    NumberEvent wrapped{copied};
+    if (wrapped.number() != uint64_t(42)) { return 8; }
+    // Native union payloads also survive cleanup-free conditional receivers.
+    // Exercise both selected arms without changing the active alternative.
+    if ((event.kind == c_uint(1) ? NumberEvent(copied) : NumberEvent(event.data)).number() != uint64_t(42)) { return 9; }
+    if ((event.kind == c_uint(2) ? NumberEvent(copied) : NumberEvent(event.data)).number() != uint64_t(42)) { return 10; }
+    if (copied.number != uint64_t(42)) { return 3; }
+    event.kind = c_uint(2);
+    event.data.position.x = 3.0;
+    event.data.position.y = 4.0;
+    if (native::check_event(event) != c_int(1)) { return 4; }
+    native::update_event(&event);
+    if (event.kind != c_uint(3) || event.data.bytes[15] != uint8_t(99)) { return 5; }
+    auto userdata = native::make_userdata();
+    if (userdata.pointer != nullptr) { return 6; }
+    auto nested = native::make_nested();
+    if (nested.data[1].number != uint64_t(42)) { return 7; }
+  }
+  return 0;
+}

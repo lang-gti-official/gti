@@ -18,7 +18,11 @@ struct Mixed<T, F> {
   Mixed(T value, F function) : native(value), callback(std::move(function)) {}
   int invoke() { return this.callback(); }
 };
-extern "C" { NativeAddress empty_native(); }
+extern "C" {
+  NativeAddress empty_native();
+  NativeAddress counted_native(int stamp);
+  int native_call_count();
+}
 
 int retained_transport<T, F>(T native, F callback) {
   Mixed<T, F> first{native, std::move(callback)};
@@ -51,6 +55,9 @@ expected<int&, NativeAddress> borrow_or_error(int& owner, NativeAddress error,
 }
 
 enum class Event { address(NativeAddress value), empty };
+enum SequencedNative {
+  pair(NativeAddress first, int between, NativeAddress second)
+};
 mut int drops = 0;
 class Managed {
 public:
@@ -71,6 +78,23 @@ expected<Managed, NativeAddress> managed_or_native_error(NativeAddress value,
 }
 
 int main() {
+  // Native calls must remain sequenced at their MIR positions, not sink into
+  // the enum's native constructor arguments with unspecified evaluation order.
+  unsafe {
+    auto sequence = SequencedNative::pair(
+        counted_native(11), native_call_count(), counted_native(22));
+    switch (sequence) {
+      case SequencedNative::pair(first, between, second):
+        if (first.stamp != 11 || between != 1 || second.stamp != 22 ||
+            native_call_count() != 2) { return 23; }
+        break;
+    }
+  }
+  auto direct = Event::address(expired_native());
+  switch (direct) {
+    case Event::address(value): if (value.stamp != 19) { return 24; } break;
+    case Event::empty: return 25;
+  }
   NativeAddress native = expired_native();
   NativeAddress entries[2] = {native, native};
   if (entries[0].address != entries[1].address) { return 18; }

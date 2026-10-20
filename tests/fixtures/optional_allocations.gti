@@ -1,0 +1,42 @@
+#include <std/optional>
+#include <std/string>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+}
+
+int main() {
+  adoption_count_begin();
+  {
+    mut std::optional<int> value{};
+    [[discard]] value.emplace(7);
+    auto moved = std::optional<int>(std::move(value));
+    if (moved.value() != 7) return 1;
+    mut std::optional<int> assigned{};
+    assigned = std::move(moved);
+    if (assigned.value() != 7) return 2;
+    assigned.reset();
+  }
+  adoption_count_end();
+  if (adoption_allocations() != uint64_t(0) ||
+      adoption_bytes() != uint64_t(0)) return 3;
+
+  adoption_count_begin();
+  mut uint64_t length = uint64_t(0);
+  for (mut int i = 0; i < 32; i += 1) {
+    if (i % 4 == 0) {
+      std::optional<std::string> empty{};
+      if (empty) return 4;
+    } else {
+      auto value = std::optional<std::string>(
+          std::string("some sufficiently long text to force allocated string storage"));
+      length += uint64_t(value.value().size());
+    }
+  }
+  adoption_count_end();
+  return length == uint64_t(1464) &&
+         adoption_allocations() == uint64_t(24) ? 0 : 5;
+}

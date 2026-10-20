@@ -287,6 +287,7 @@ struct MirPlace {
   SemanticTypeTraits traits{};
   HirValueId sourceValue = 0;
   std::optional<PlaceKey> key;
+  bool foreignStorage = false;
   bool initiallyAvailable = false;
 
   friend bool operator==(const MirPlace &, const MirPlace &) = default;
@@ -334,9 +335,39 @@ struct MirLoanDependency {
   MirLoanId parent = 0;
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
+  std::vector<BorrowDependencyCondition> conditions;
 
   friend bool operator==(const MirLoanDependency &,
                          const MirLoanDependency &) = default;
+};
+
+// Complete producer-attached borrow facts. Loan identity remains the authority
+// for origin, access and liveness; the set records which typed alternative
+// paths can carry those loans, including an explicitly proven empty set.
+struct MirBorrowDependencySet {
+  std::vector<MirLoanDependency> dependencies;
+  std::vector<BorrowAlternativePath> possibleAlternatives;
+
+  friend bool operator==(const MirBorrowDependencySet &,
+                         const MirBorrowDependencySet &) = default;
+};
+
+// The evaluated reference address is selected from this exact payload
+// extraction, not from the first of its possible external owner places.
+// This descriptor does not grant a loan: independent dependency/liveness
+// verification must establish every possible owner of the selected referent.
+struct MirReferenceSelection {
+  MirValueId value = 0;
+  MirPlaceId carrier = 0;
+  // Independently matched to the consumed carrier's complete dependency
+  // group. Ending that shell does not end transferred external authority.
+  MirLoanId transferredFrom = 0;
+  std::vector<SymbolId> fields;
+  std::vector<BorrowDependencyCondition> conditions;
+  SemanticType reference = SemanticType::Unknown;
+
+  friend bool operator==(const MirReferenceSelection &,
+                         const MirReferenceSelection &) = default;
 };
 
 struct MirLoan {
@@ -353,6 +384,7 @@ struct MirLoan {
   // Abstract entry dependencies designate a field rather than a concrete
   // caller place; concrete dependencies name their body-local source place.
   std::vector<MirLoanDependency> additionalDependencies;
+  std::optional<MirReferenceSelection> referenceSelection;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
@@ -362,6 +394,9 @@ struct MirLoan {
   // metadata for a by-value carrier dependency and has no backend
   // representation.
   std::vector<SymbolId> designatedFields;
+  // Exact active-alternative requirements for the primary dependency. These
+  // are structural provenance, not runtime reads of inactive payloads.
+  std::vector<BorrowDependencyCondition> conditions;
   // An owned carrier needs this dependency until cleanup, including read-only
   // dependencies used by source destructors. EndBorrow follows the exact Drop
   // or verified ownership transfer on every normal and failure edge. This
@@ -726,6 +761,7 @@ struct MirInstruction {
   std::optional<EnumConstant> enumValue;
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
+  std::optional<PayloadExtractionKind> payloadExtractionKind;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   // Concrete queried representation; only ObjectSize/ObjectAlignment may
   // carry this field. It is not a runtime argument or a borrow origin.
@@ -976,6 +1012,7 @@ struct MirValue {
   ExpressionInfo info;
   MirBlockId definitionBlock = 0;
   MirInstructionId definition = 0;
+  std::optional<MirBorrowDependencySet> borrowDependencies;
 
   friend bool operator==(const MirValue &, const MirValue &) = default;
 };
@@ -1377,10 +1414,13 @@ struct MirFunctionInstance {
   ProcessMemoryRuntimeOperation processMemoryOperation =
       ProcessMemoryRuntimeOperation::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  // Resolved source intent supplied by semantics, not inferred from this body.
+  bool explicitReturnBorrowOrigin = false;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> returnBorrowFields;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
@@ -1743,6 +1783,7 @@ struct MirIntegralEnum {
 struct MirPayloadEnumVariant {
   std::size_t variantIndex = 0;
   std::vector<SemanticType> payloadTypes;
+  std::vector<SymbolId> payloadSymbols;
   std::vector<bool> payloadRequiresActiveCleanup;
 
   friend bool operator==(const MirPayloadEnumVariant &,
@@ -1763,6 +1804,18 @@ struct MirPayloadEnum {
 
 class MirProgram {
 public:
+  [[nodiscard]] const std::vector<ForeignStorageInfo> &
+  foreignStorageDeclarations() const {
+    return foreignStorage_;
+  }
+  [[nodiscard]] const ForeignStorageInfo *
+  findForeignStorage(SymbolId symbol) const {
+    const auto found = std::find_if(
+        foreignStorage_.begin(), foreignStorage_.end(),
+        [symbol](const auto &storage) { return storage.symbol == symbol; });
+    return found == foreignStorage_.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] bool valid() const { return valid_; }
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
@@ -1931,6 +1984,7 @@ public:
   friend bool operator==(const MirProgram &, const MirProgram &) = default;
 
 private:
+  std::vector<ForeignStorageInfo> foreignStorage_;
   friend class MirLowerer;
   friend struct MirProgramTestAccess;
 

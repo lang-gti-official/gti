@@ -1,0 +1,11 @@
+#include "enum_replacement_support.gti"
+
+int main() {
+  ReplacementGuard guard{};
+  mut ReplacementEvent current = ReplacementEvent::held(ReplacementResource(1, 1));
+  current = ReplacementEvent::held(ReplacementResource(2, 1));
+  current = ReplacementEvent::other(ReplacementResource(3, 1));
+  current = ReplacementEvent::idle;
+  current = ReplacementEvent::held(ReplacementResource(4, 1));
+  return 0;
+}

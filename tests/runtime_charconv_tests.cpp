@@ -35,7 +35,10 @@ std::string formattedDouble(double value, uint32_t format, int32_t precision,
 }
 } // namespace
 
+void testFloatParser();
+
 int main() {
+  testFloatParser();
   double value = 7;
   float narrow = 7;
   uint64_t position = 99;

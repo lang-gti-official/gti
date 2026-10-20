@@ -403,9 +403,9 @@ Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list, and a class may declare
 conversion operators to other types (section 3.9.2). Neither defines an
-implicit conversion for calls, returns, or assignment; only the declaration
-rule below selects one, declared `implicit`, for an initializer of another
-type.
+implicit conversion for calls or assignment. The initialization rule below
+selects one, declared `implicit`, for a declaration initializer or an explicitly
+declared value return type.
 
 The source-defined `std::upcast_unique<Base, Derived>` operation is an explicit
 ownership conversion, not an overload conversion. Its trusted private step is
@@ -441,8 +441,21 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Function arguments, returns, and
-assignment never use it. A class assignment from another type requires an
+contextually typed call, or a function name. Function arguments and assignment never use it.
+
+The same one-step selection initializes an explicitly declared value return
+type from a return operand. For example, `Celsius read() { return 21; }` uses
+`implicit Celsius(int)`. This includes functions, methods and explicitly typed
+lambdas; destinations containing open type parameters, including computed
+type projections, are checked during concrete generic reanalysis. The
+destination is a fresh result, while the constructor argument
+keeps its ordinary ownership checks: returning a named move-only source of a
+different type requires `std::move(source)`. Existing exact-type named return
+movement is unchanged. Reference returns do not construct temporaries, and
+borrow-carrying target exclusions remain in force. An implicit constructor
+whose parameter is exactly `nullptr_t` may initialize a return; the separate
+non-implicit nullable-declaration exception above does not apply to returns.
+No constructor/operator or numeric conversion chain is added. A class assignment from another type requires an
 exact member `operator=`, such as `std::string`'s
 `operator=(std::string_view)`.
 
@@ -1158,6 +1171,12 @@ declaration. A definition must be in the owner's namespace or an enclosing
 namespace and in the same package ownership domain. Duplicate/mismatched
 definitions and foreign-package definitions are errors (`GTI-S2120`).
 
+A `borrowed_from` parameter name is resolved on that original declaration and
+retained by parameter position. Renaming parameters in the definition does not
+change the origin; declaration indexing order cannot change contract acceptance.
+An invalid declared origin remains an error rather than falling back to inference
+from the separate body.
+
 The body has ordinary member access, including private members and an implicit
 receiver for instance methods. Pure virtual/interface instance requirements
 cannot acquire bodies. Selected declarations still require definitions before
@@ -1296,7 +1315,8 @@ SFINAE, or a general template metaprogramming facility.
 
 `union Name { fields... };` declares untagged overlapping storage. A union is
 nongeneric, complete, baseless, non-empty, and public. It contains only
-instance fields and cannot declare attributes, access sections, methods,
+instance fields and cannot declare attributes other than the explicit `[[c_abi]]`
+representation opt-in, access sections, methods,
 constructors, a destructor, static fields, or field initializers. Fields may be
 fixed-width scalars, raw pointers, integral scoped enums, concrete fixed arrays
 of admitted fields, nested valid unions, or valid `[[c_abi]]` records. A
@@ -1308,7 +1328,10 @@ Every union member read or write requires an `unsafe` block because the
 compiler does not track the active field. Ordinary mutability still applies: a
 write also requires a mutable union place and a field declared with `mut`.
 Union copies are passive byte-representation copies; unions do not acquire
-hidden lifecycle behavior. `GTI-S2066` owns declaration-shape failures, while
+hidden lifecycle behavior. `[[c_abi]] union` restricts fields to the native C
+record allowlist and admits C ABI passage and generated-header/import support;
+see [native C interoperation](native-c-interop.md#passive-native-records).
+`GTI-S2066` owns ordinary union declaration-shape failures, while
 the ordinary unsafe diagnostic owns safe member access.
 
 The declaration spellings `enum Name` and `enum class Name` have identical
@@ -1358,29 +1381,36 @@ constructing another alternative.
 
 By-value layout checks distinguish concrete generic instances when traversing
 class fields and enum alternatives. A cycle cannot be hidden by visiting the
-same generic primary with different arguments. Finite nested class payloads
+same generic primary with different arguments. Finite nested class and enum payloads
 remain valid; direct recursive layouts and structurally growing by-value
 recurrence remain ill-formed.
 
 An enum with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
-types are primitive scalars, `std::string_view`, `nullptr_t`, recursive raw
-pointers, integral scoped enums, and ordinary concrete class instances,
-including generic instances. A concrete class
-payload may require active cleanup through its destructor or owned fields; the
-enum then has lexical cleanup and folds its copy, move, and ownership policy
-from every alternative. Stored borrowed state remains ill-formed. Active
-cleanup carried by a nested payload enum, fixed array, owner primitive, or
-another non-class aggregate is also rejected with `GTI-S2067` until that
-recursive partial-state representation is defined. References, fixed arrays,
-and nested payload enums remain outside the admitted payload surface.
+types include primitive scalars, `std::string_view`, `nullptr_t`, recursive raw
+pointers, native function pointers, integral scoped enums, concrete payload
+enums, fixed arrays, `expected` result carriers, and ordinary concrete class
+instances, including generic instances. The array element or result
+alternatives must themselves be admitted field types. Ownership and cleanup
+fold from actual fields, not from whether their outer type is a class:
+`Message<Message<std::string>>`, `Message<Resource[2]>`, and
+`Message<expected<Resource, Error>>` use the same ordered field publication
+and recursive cleanup contract. A `void` success alternative in a result
+carrier contains no object. Owning indirection may break a layout cycle;
+an inline enum/class/array cycle is still ill-formed. Conditional stored
+borrows follow the separate checked-reference rules below; direct lexical
+closure payloads remain outside this owning slice.
+The temporary `unexpected(...)` error-construction adapter is not itself an
+admitted field; construct an `expected` error alternative before storing it.
+Closure fields need a concrete closure-field representation before admission;
+unsupported fields are rejected with `GTI-S2067`, not left to native emission.
 
-A class payload argument may be a fresh prvalue construction, a copy of a
+A payload argument may be a fresh prvalue construction, a copy of a
 named value, or an explicit `std::move` of a named value; the payload enters
 the alternative before any later sibling field expression evaluates, matching
-the ordinary left-to-right argument order. An enum whose alternatives carry
-class payloads folds its copyability, movability, and ownership traits from
+the ordinary left-to-right argument order. An enum folds its copyability,
+movability, assignment, and ownership traits from
 those payload types, so a move-only payload makes the enum value move-only.
 An admitted owning enum supports whole-value move construction. Move
 assignment between direct local bindings additionally requires the folded
@@ -1406,10 +1436,31 @@ direct field may be replaced from an explicit move; the old active alternative
 is dropped before the replacement obligation is published. Recursive owning
 class containment is permitted when its by-value layout is finite, including
 an alternative holding a vector of enclosing nodes. A direct enum/class
-by-value cycle remains ill-formed. This does not authorize reference payloads,
-direct non-class aggregate payloads, stored-reference classes,
+by-value cycle remains ill-formed. This owning containment rule does not itself
+authorize stored-reference classes,
 compiler-private capabilities, polymorphic bases, or native-layout
 declarations.
+
+A payload enum may contain `T&`, `mut T&`, and nested reference-bearing enum
+values. Construction retains the exact owner, access and field path for each
+active alternative, including nested guards. Earlier argument borrows remain
+protected while later field expressions evaluate. Reference-free alternatives
+have a known empty dependency set, not an invented owner. Shared dependencies
+permit whole-value copying when every ordinary payload is copyable; any
+exclusive reference path makes the enum non-copyable. Movement transports the
+dependency authority without moving the referent.
+
+Pattern selection proves the active alternative before exposing its reference
+fields. A direct reference selected from a consumed enum may retain its exact
+external owner after the enum shell ends. A function returning that reference
+must establish its declared `borrowed_from` contract from the checked selection;
+a boolean predicate does not establish a tag proof. Nested enum construction
+and complete dependency transport do not yet authorize consuming an outer
+alternative into a new *borrowed-value* pattern binding and then consuming that
+inner value. That handoff remains a structural `GTI-S2067` diagnostic until it
+has its own exact transfer/retirement proof; it must not reach an internal
+compiler error. Reference-field selection and borrowed-value extraction are
+distinct operations.
 
 Concrete generic free functions, methods, and constructors use that same
 ordered transport contract. A type argument mentioning the enum does not by
@@ -1553,10 +1604,14 @@ fresh value of `X`. A payload enum declares no constructors, so a residual
 initializes a payload-enum return type only when it has that type. A
 temporary
 or `std::move(place)` operand needs a movable `X`. A named place needs a
-copyable `X` and remains available. `X`, `value_type` and `residual_type`
-contain no stored borrows, and `value_type` and `residual_type` are not
-references. The expression has type `std::tryable<X>::value_type`, or `void`
-when that type is `void`.
+copyable `X` and remains available. A borrowed `X` must currently have one
+exact stored-dependency path. A reference `value_type` is permitted when
+`take_value`'s `[[borrowed_from(value)]]` contract relays that path's external
+owner. The expression is then a place with the declared reference access;
+consuming the operand does not terminate the returned external borrow. Other
+value types and the residual contain no stored borrows; the residual is not a
+reference. The expression otherwise has type `std::tryable<X>::value_type`,
+or `void` when that type is `void`.
 
 The immediately enclosing function or lambda has a declared return type `R`,
 which is not `void`. The residual type is `R` itself, or `R` declares exactly
@@ -1606,8 +1661,8 @@ like any member; an override has the same target and receiver.
 A conversion operator is explicit by default. Only `Target(value)` calls it,
 including the keyword forms `int(value)`, `double(value)`, `char(value)`, and
 `bool(value)`, and an alias of a numeric, raw pointer, or class target.
-`implicit operator Target()` also admits the declaration conversion of
-section 3.5. No other context converts: function arguments, returns,
+`implicit operator Target()` also admits the declaration and declared-value
+return conversions of section 3.5. No other context converts: function arguments,
 assignment, operator operands, and `auto` inference keep exact types, and brace
 construction `Target{value}` considers only constructors.
 
@@ -2136,6 +2191,24 @@ reports `index()`, `parameter_count()` and `parameters()` likewise. This is
 metadata only: invoking a method or constructor through a metaobject is a
 separate capability that this slice does not provide. Indices out of range
 are rejected like field indices (`GTI-S2111`).
+
+`std::meta::callable_return_type<F>` is a computed type projecting the exact
+declared result of a function signature, a selected GTI function item, a native
+function pointer, or a lambda type. It preserves `void` and reference results.
+In a generic declaration the query remains dependent until `F` is concrete;
+for example a source wrapper can declare
+`Box<std::meta::callable_return_type<F>> map<F>(F& mapper) &&`.
+The operand of this query is metadata, not a stored or returned callback.
+It does not select an overloaded `operator()` on a class: use the declaration
+reflection above for that purpose. Unsupported concrete operands receive
+`GTI-S2023`.
+
+The query neither invokes the callable nor changes its calling contract.
+Native invocations still need `unsafe`, and projected reference results still
+need the same origin, access and lifetime proof as an explicitly spelled
+reference. It does not provide a reference origin or authorize capture escape.
+See `examples/167-callable-result-types.gti` for an unrelated source-defined
+container using the projection.
 
 Where the frontend retains a source position, metaobjects expose it as a
 constant: `line()` on type, field, enumerator, method and constructor

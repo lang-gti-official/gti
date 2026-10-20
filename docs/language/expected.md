@@ -209,7 +209,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  T take_value(Checked<T> result) { return result.value; }
+  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 
@@ -226,6 +226,20 @@ is copied whole, and a named move-only operand needs `std::move`. A
 `void` `value_type` makes `?operand` a statement. See
 [execution](execution.md#48-recoverable-failure) for the order of
 evaluation and cleanup.
+
+`value_type` may be a checked reference when the operation's declared
+`borrowed_from` contract relays the operand's exact stored external
+dependency. For a payload enum, the checked operation body selects its active
+reference field and supplies the complete conditional input-to-result mapping.
+This keeps the success reference tied to its actual owner even
+after the wrapper is consumed. The residual may own resources such as an
+error string. Classes, structs and payload enums use ordinary checked call
+transport; the residual must remain owned. A consuming exclusive success
+cannot duplicate its input's permission, and a named non-copyable result
+requires explicit `std::move`. `has_value` is an ordinary function, not a
+compiler-recognized tag assertion. The body of `take_value` must independently
+prove its return. An input proved to have only an error alternative cannot
+manufacture a success origin from missing metadata.
 
 ## Requiring a successful result
 

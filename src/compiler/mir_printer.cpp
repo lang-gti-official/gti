@@ -274,7 +274,14 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v104 valid=" << program.valid() << '\n';
+    output << "mir-v110 valid=" << program.valid() << '\n';
+    for (const auto &storage : program.foreignStorageDeclarations()) {
+      output << "foreign-storage symbol=" << storage.symbol
+             << " external=" << std::quoted(storage.externalSymbol)
+             << " access=" << number(storage.access) << " type=";
+      type(storage.type);
+      output << '\n';
+    }
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -586,7 +593,9 @@ public:
         type(instance.parameterTypes[index]);
         output << '}';
       }
-      output << "] return-borrow=" << number(instance.returnBorrowOrigin) << ':'
+      output << "] explicit-return-borrow="
+             << instance.explicitReturnBorrowOrigin
+             << " return-borrow=" << number(instance.returnBorrowOrigin) << ':'
              << instance.returnBorrowParameter << ':'
              << number(instance.returnBorrowAccess)
              << " return-borrow-parameters=[";
@@ -599,6 +608,18 @@ public:
       borrowOriginPlace(instance.returnBorrowPlace);
       output << " return-borrow-fields=";
       borrowFields(instance.returnBorrowFields);
+      output << " complete-return-borrow=";
+      if (!instance.completeReturnBorrow) {
+        output << "absent";
+      } else {
+        output << "complete";
+        borrowFields(instance.completeReturnBorrow->dependencies);
+        output << " alternatives=[";
+        for (const auto &alternative :
+             instance.completeReturnBorrow->possibleAlternatives)
+          borrowConditions(alternative.conditions);
+        output << ']';
+      }
       output << " restores-reference=" << instance.restoresReferenceResult
              << " restored-fields=";
       restoredFields(instance.restoredBorrowFields);
@@ -799,7 +820,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v85\n";
+    output << "mir-body-v90\n";
     body(value, 0);
   }
 
@@ -1199,6 +1220,21 @@ private:
     output << "])";
   }
 
+  void
+  borrowConditions(const std::vector<BorrowDependencyCondition> &conditions) {
+    output << '[';
+    for (std::size_t index = 0; index < conditions.size(); ++index) {
+      separator(index);
+      const auto &condition = conditions[index];
+      output << "{path=[";
+      list(condition.subobject);
+      output << "];enum=";
+      type(condition.enumeration);
+      output << ";variant=" << condition.variant << '}';
+    }
+    output << ']';
+  }
+
   void borrowFields(const std::vector<BorrowedFieldOrigin> &fields) {
     output << '[';
     for (std::size_t index = 0; index < fields.size(); ++index) {
@@ -1215,7 +1251,11 @@ private:
         separator(path);
         output << field.sourceFields[path];
       }
-      output << "];access=" << number(field.access) << ')';
+      output << "];access=" << number(field.access) << ";result-conditions=";
+      borrowConditions(field.resultConditions);
+      output << ";source-conditions=";
+      borrowConditions(field.sourceConditions);
+      output << ')';
     }
     output << ']';
   }
@@ -1362,6 +1402,7 @@ private:
     } else {
       output << '-';
     }
+    output << " foreign-storage=" << value.foreignStorage;
     output << " initially-available=" << value.initiallyAvailable << '\n';
   }
 
@@ -1382,7 +1423,27 @@ private:
       separator(index);
       output << value.designatedFields[index];
     }
-    output << "] lifecycle-bound=" << value.lifecycleBound
+    output << "] conditions=";
+    borrowConditions(value.conditions);
+    output << " reference-selection=";
+    if (value.referenceSelection) {
+      const auto &selection = *value.referenceSelection;
+      output << "{value=%" << selection.value << " carrier=p"
+             << selection.carrier << " transferred-from=l"
+             << selection.transferredFrom << " fields=[";
+      for (std::size_t index = 0; index < selection.fields.size(); ++index) {
+        separator(index);
+        output << selection.fields[index];
+      }
+      output << "] conditions=";
+      borrowConditions(selection.conditions);
+      output << " reference=";
+      type(selection.reference);
+      output << '}';
+    } else {
+      output << "absent";
+    }
+    output << " lifecycle-bound=" << value.lifecycleBound
            << " additional-dependencies=[";
     for (std::size_t index = 0; index < value.additionalDependencies.size();
          ++index) {
@@ -1396,7 +1457,9 @@ private:
         separator(field);
         output << dependency.designatedFields[field];
       }
-      output << "]}";
+      output << "];conditions=";
+      borrowConditions(dependency.conditions);
+      output << '}';
     }
     output << ']' << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
@@ -1408,7 +1471,27 @@ private:
            << " source=v" << value.sourceValue << ' ';
     info(value.info);
     output << " defined=bb" << value.definitionBlock << ":i" << value.definition
-           << '\n';
+           << " dependency-set=";
+    if (!value.borrowDependencies) {
+      output << "absent";
+    } else {
+      output << "complete[";
+      for (const auto &dependency : value.borrowDependencies->dependencies) {
+        output << "p" << dependency.source << ":loan" << dependency.parent
+               << ":fields=";
+        list(dependency.designatedFields);
+        output << ":conditions=";
+        borrowConditions(dependency.conditions);
+        output << ';';
+      }
+      output << "] alternatives=[";
+      for (const auto &alternative :
+           value.borrowDependencies->possibleAlternatives) {
+        borrowConditions(alternative.conditions);
+      }
+      output << ']';
+    }
+    output << '\n';
   }
 
   void instruction(const MirInstruction &value) {
@@ -1555,6 +1638,11 @@ private:
     optional(value.enumVariant);
     output << " payload-index=";
     optional(value.payloadIndex);
+    output << " payload-extraction=";
+    if (value.payloadExtractionKind)
+      output << static_cast<unsigned>(*value.payloadExtractionKind);
+    else
+      output << '-';
     output << " intrinsic=" << name(value.intrinsic)
            << " function-pointer-function=";
     optional(value.functionPointerFunctionTarget);

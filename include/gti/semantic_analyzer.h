@@ -28,10 +28,11 @@ public:
     return std::nullopt;
   }
 
-  // A borrowed nominal value with executable cleanup must retain its external
-  // dependencies until that cleanup completes, not merely its last source use.
-  // Query concrete semantic facts so generic field substitutions participate.
-  [[nodiscard]] bool
+  // Cleanup which can use/release checked dependencies retains them through
+  // destruction. Implementations refine this conservative fallback using
+  // source destructors and recursively borrowed fields/bases; unrelated owned
+  // fields alone do not turn a view into a resource guard.
+  [[nodiscard]] virtual bool
   lifecycleBoundBorrowCarrierFor(const SemanticType &type) const {
     return type.kind == SemanticType::Class &&
            traitsFor(type).containsBorrowedState &&
@@ -124,6 +125,8 @@ public:
   traitsFor(const SemanticType &type) const override;
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] bool
+  lifecycleBoundBorrowCarrierFor(const SemanticType &type) const override;
   [[nodiscard]] std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override;
 

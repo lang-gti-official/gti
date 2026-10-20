@@ -22,7 +22,17 @@ public:
   std::string& value() { return this.text.value(); }
 };
 
+bool supports_replacement<std::movable T>(T& value) { return true; }
+
 int main() {
+  // Source optional uses ordinary enum replacement, unlike its former
+  // construction-only private slot. Copying remains unavailable.
+  {
+    mut Envelope target{};
+    Envelope source{};
+    target = std::move(source);
+    if (!supports_replacement(target) || target.payload.has_value()) { return 2; }
+  }
   {
     mut std::vector<Envelope> envelopes{std::size_t(2)};
     envelopes.resize(std::size_t(4));

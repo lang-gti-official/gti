@@ -1,0 +1,103 @@
+#include <std/optional>
+#include <std/experimental/optional>
+#include <std/string>
+#include <std/queue>
+#include <std/atomic>
+#include <std/algorithm>
+#include <std/vector>
+#include <std/io>
+
+std::atomic<int> observed{0};
+struct Observer {
+  void operator()(int& value) { observed.fetch_add(value); }
+};
+
+struct Tracked {
+  int id;
+  Tracked(int id) : id(id) {}
+  ~Tracked() { std::println(this.id); }
+};
+
+int main() {
+  mut std::optional<std::string> slot{};
+  slot.emplace("old");
+  slot.emplace("new");
+  if (slot.value().view() != "new") { return 1; }
+  {
+    mut std::string& text = slot.emplace("kept");
+    text.append(" result");
+  }
+  if (slot.value().view() != "kept result") { return 2; }
+  slot.reset();
+
+  mut std::experimental::optional<int> legacy{};
+  legacy.emplace(1);
+  legacy.emplace(2);
+  if (legacy.value() != 2) { return 3; }
+
+  mut std::queue<int> pending{};
+  pending.emplace(1);
+  pending.emplace(2);
+  {
+    mut int& added = pending.emplace(3);
+    added = 4;
+  }
+  if (pending.size() != 3 || pending.back() != 4) { return 4; }
+
+  std::vector<int> values = {1, 2};
+  std::for_each(values.begin(), values.end(), Observer());
+  std::for_each(values, Observer());
+  auto observer = std::for_each(values, Observer());
+  int extra = 4;
+  observer(extra);
+  if (observed.load() != 13) { return 5; }
+
+  std::atomic<int> counter{10};
+  counter.exchange(10);
+  counter.exchange(10, std::memory_order_relaxed());
+  counter.exchange(10, std::memory_order_acquire());
+  counter.exchange(10, std::memory_order_release());
+  counter.exchange(10, std::memory_order_acq_rel());
+  counter.exchange(10, std::memory_order_seq_cst());
+  counter.fetch_add(1);
+  counter.fetch_add(1, std::memory_order_relaxed());
+  counter.fetch_add(1, std::memory_order_acquire());
+  counter.fetch_add(1, std::memory_order_release());
+  counter.fetch_add(1, std::memory_order_acq_rel());
+  counter.fetch_add(1, std::memory_order_seq_cst());
+  counter.fetch_sub(1);
+  counter.fetch_sub(1, std::memory_order_relaxed());
+  counter.fetch_sub(1, std::memory_order_acquire());
+  counter.fetch_sub(1, std::memory_order_release());
+  counter.fetch_sub(1, std::memory_order_acq_rel());
+  counter.fetch_sub(1, std::memory_order_seq_cst());
+  counter.fetch_or(1);
+  counter.fetch_or(1, std::memory_order_relaxed());
+  counter.fetch_or(1, std::memory_order_acquire());
+  counter.fetch_or(1, std::memory_order_release());
+  counter.fetch_or(1, std::memory_order_acq_rel());
+  counter.fetch_or(1, std::memory_order_seq_cst());
+  counter.fetch_and(14);
+  counter.fetch_and(14, std::memory_order_relaxed());
+  counter.fetch_and(14, std::memory_order_acquire());
+  counter.fetch_and(14, std::memory_order_release());
+  counter.fetch_and(14, std::memory_order_acq_rel());
+  counter.fetch_and(14, std::memory_order_seq_cst());
+  counter.fetch_xor(1);
+  counter.fetch_xor(1, std::memory_order_relaxed());
+  counter.fetch_xor(1, std::memory_order_acquire());
+  counter.fetch_xor(1, std::memory_order_release());
+  counter.fetch_xor(1, std::memory_order_acq_rel());
+  counter.fetch_xor(1, std::memory_order_seq_cst());
+  if (counter.load() != 10) { return 6; }
+  int previous = counter.fetch_add(1);
+  if (previous != 10 || counter.load() != 11) { return 7; }
+
+  // Discarding an emplacement reference does not discard the stored owner.
+  // Replacement and reset each destroy exactly one live payload.
+  mut std::optional<Tracked> tracked{};
+  tracked.emplace(1);
+  tracked.emplace(2);
+  tracked.reset();
+  return 0;
+}

@@ -71,6 +71,30 @@ class NativeFixtureBuildTests(unittest.TestCase):
                                         native_sources=["provider.cpp"]), failed)
         self.assertEqual(run.call_count, 1)
 
+    def test_native_suffix_is_in_same_translation_unit_and_keeps_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "probe"
+            generated = output.with_suffix(".gti.cpp")
+            calls = []
+
+            def process(command, **options):
+                calls.append(command)
+                if "--emit-cpp" in command:
+                    generated.write_text("// generated helper\n")
+                    return subprocess.CompletedProcess(command, 0, "emit", "")
+                self.assertEqual(generated.read_text(),
+                                 "// generated helper\n\n// executing probe\n")
+                self.assertIn(str(generated), command)
+                return subprocess.CompletedProcess(command, 4, "", "probe failed")
+
+            with patch("native_fixture_build.subprocess.run", side_effect=process):
+                result = build_fixture(["gti", "fixture.gti"], output,
+                                       native_suffix="// executing probe\n",
+                                       text=True, capture_output=True)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (4, "emit", "probe failed"))
+
 
 class IteratorSanitizerToolingTests(unittest.TestCase):
     fixtures = Path(__file__).parent / "fixtures"

@@ -2,6 +2,7 @@
 #include "gti/frontend.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
@@ -14,12 +15,19 @@ int main() {
       ++failures;
     }
   };
-  const auto analyze = [](const std::string &source) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto analyze = [&](const std::string &source,
+                           bool withStandardLibrary = false) {
+    if (withStandardLibrary)
+      return lang::Frontend().analyze(
+          root / "tests" / "initialization-native-identity.gti", source,
+          {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
     return lang::Frontend().analyze("initialization-native-identity.gti",
                                     source);
   };
-  const auto rejected = [&](const std::string &source, const char *code) {
-    auto result = analyze(source);
+  const auto rejected = [&](const std::string &source, const char *code,
+                            bool withStandardLibrary = false) {
+    auto result = analyze(source, withStandardLibrary);
     const bool located =
         std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
                     [&](const auto &d) {
@@ -121,16 +129,205 @@ public:
   int read() { return this.degrees; }
 };
 )gti";
-  // Calls, returns and assignment keep exact types.
+  // Calls and assignment keep exact types.
   rejected(celsius + "void take(Celsius value) {}\n"
                      "int main() { take(21); return 0; }\n",
            "GTI-S2003");
-  rejected(celsius + "Celsius make() { return 21; }\n"
-                     "int main() { return make().read(); }\n",
-           "GTI-S2003");
+  expect(analyze(celsius + "Celsius make() { return 21; }\n"
+                           "int main() { return make().read(); }\n")
+             .canGenerateCode(),
+         "a declared value return uses one implicit constructor");
   rejected(celsius + "int main() { mut Celsius value{1}; value = 5; "
                      "return value.read(); }\n",
            "GTI-S2003");
+  // Return initialization shares exact selection, access and ownership with
+  // declarations; the destination is fresh even when its source is a place.
+  const auto returned = analyze(R"gti(
+#include <std/meta>
+struct Score {
+  int value;
+  implicit Score(int initial, int offset = 2) : value(initial + offset) {}
+  Score(Score& other) = delete;
+  Score(Score&& other) = delete;
+};
+Score score(int value) { return value; }
+T construct<T>(int value) { return value; }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+struct GenericBox<T> {
+  T value;
+  implicit GenericBox(T initial) : value(std::move(initial)) {}
+};
+GenericBox<T> boxed<T>(int value) { return value; }
+struct Factory { Score make(int value) { return value; } };
+int main() {
+  auto produce = [](int value) -> Score { return value; };
+  Score first = score(1);
+  Score second = construct<Score>(2);
+  Factory factory{};
+  Score third = factory.make(3);
+  Score fourth = produce(4);
+  auto signature = score;
+  Score fifth = reflected(signature, 5);
+  GenericBox<int> sixth = boxed<int>(6);
+  return first.value + second.value + third.value + fourth.value +
+         fifth.value + sixth.value - 31;
+}
+)gti",
+                                true);
+  expect(
+      returned.canGenerateCode(),
+      "declared function, generic, method and lambda returns construct once");
+  if (!returned.canGenerateCode())
+    for (const auto &d : returned.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  if (returned.canGenerateCode())
+    expect(!gti_test::emitCpp(returned).contents.empty(),
+           "implicit return construction must use executable MIR");
+  if (returned.canGenerateCode()) {
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto forged = returned.hir;
+      bool changed = false;
+      for (auto &function :
+           const_cast<std::vector<lang::HirFunctionInstance> &>(
+               forged.functionInstances())) {
+        if (function.body.contextualConstructions.empty())
+          continue;
+        auto &entry = function.body.contextualConstructions.front();
+        if (mutation == 0)
+          entry.constructionProof.reset();
+        else if (mutation == 1)
+          entry.source = nullptr;
+        else {
+          auto &value = *const_cast<lang::HirValue *>(
+              function.body.findValue(entry.value));
+          value.parameterTypes.front() = lang::SemanticType::Bool;
+        }
+        changed = true;
+        break;
+      }
+      expect(
+          changed &&
+              !lang::verifyHirProgramPlans(returned.semantics, forged).valid(),
+          "HIR rejects lost, substituted or mismatched contextual selection");
+    }
+  }
+  expect(analyze(R"gti(
+struct Empty { implicit Empty(nullptr_t value) {} };
+Empty empty() { return nullptr; }
+int main() { Empty value = empty(); return 0; }
+)gti")
+             .canGenerateCode(),
+         "an implicit nullptr constructor also initializes a return");
+  expect(analyze(R"gti(
+struct Constant {
+  int value;
+  implicit constexpr Constant(int input) : value(input) {}
+};
+constexpr Constant constant() { return 7; }
+static_assert(constant().value == 7);
+int main() { return 0; }
+)gti")
+             .canGenerateCode(),
+         "eligible implicit returns use the staged MIR constant profile");
+  rejected(R"gti(
+struct Explicit { Explicit(int value) {} };
+T construct<T>(int value) { return value; }
+int main() { Explicit value = construct<Explicit>(1); return 0; }
+)gti",
+           "GTI-S2003");
+  rejected(R"gti(
+#include <std/meta>
+struct Explicit { Explicit(int value) {} };
+Explicit exact(int value) { return Explicit(value); }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+int main() {
+  auto shape = exact;
+  Explicit result = reflected(shape, 1);
+  return 0;
+}
+)gti",
+           "GTI-S2003", true);
+  rejected(R"gti(
+#include <std/meta>
+struct Middle { implicit Middle(int value) {} };
+struct End { implicit End(Middle value) {} };
+End exact(Middle value) { return End(value); }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+int main() {
+  auto shape = exact;
+  End result = reflected(shape, 1);
+  return 0;
+}
+)gti",
+           "GTI-S2003", true);
+  rejected(R"gti(
+struct GenericBox<T> {
+  T value;
+  implicit GenericBox(T initial) : value(std::move(initial)) {}
+};
+GenericBox<T> boxed<T>(int value) { return value; }
+int main() { auto result = boxed<bool>(1); return 0; }
+)gti",
+           "GTI-S2003", true);
+  // Explicit constructors and the declaration-only nullptr exception do not
+  // become implicit at returns.
+  rejected("struct Plain { Plain(int value) {} };\n"
+           "Plain make() { return 1; }\nint main() { return 0; }\n",
+           "GTI-S2003");
+  rejected("struct Plain { Plain(nullptr_t value) {} };\n"
+           "Plain make() { return nullptr; }\nint main() { return 0; }\n",
+           "GTI-S2003");
+  rejected("class Hidden { implicit Hidden(int value) {} };\n"
+           "Hidden make() { return 1; }\nint main() { return 0; }\n",
+           "GTI-S2007");
+  rejected(R"gti(
+struct Middle { implicit Middle(int value) {} };
+struct End { implicit End(Middle value) {} };
+End make() { return 1; }
+int main() { return 0; }
+)gti",
+           "GTI-S2003");
+  rejected(R"gti(
+struct Twice {
+  implicit Twice(int value) {}
+  implicit Twice(int value, int extra = 2) {}
+};
+Twice make() { return 1; }
+int main() { return 0; }
+)gti",
+           "GTI-S2013");
+  rejected(R"gti(
+struct Owner {
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+struct Holder {
+  Owner value;
+  implicit Holder(Owner owner) : value(std::move(owner)) {}
+};
+Holder wrap() { Owner owner{}; return owner; }
+int main() { return 0; }
+)gti",
+           "GTI-S2018");
+  rejected(R"gti(
+struct Borrow {
+  int& value;
+  implicit Borrow(int& source) : value(source) {}
+};
+Borrow leak() { int local = 1; return local; }
+int main() { return 0; }
+)gti",
+           "GTI-S2003");
+  rejected(celsius + "Celsius& leak() { return 1; }\n"
+                     "int main() { return 0; }\n",
+           "GTI-S2017");
   // No constructor accepts the initializer: the exact-type error remains.
   rejected(celsius + "int main() { Celsius hot = \"hot\"; return 0; }\n",
            "GTI-S2003");

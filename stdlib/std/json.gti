@@ -571,11 +571,11 @@ struct member {
 /// A cursor over the range [offset, limit) of a JSON text. Methods report
 /// failures with the offset where they stopped.
 struct scanner {
-  std::string_view text;
+  std::string_view& text;
   std::size_t limit;
   std::size_t max_depth;
   mut { std::size_t offset; }
-  scanner(std::string_view text, std::size_t begin, std::size_t end, std::size_t max_depth)
+  scanner(std::string_view& text, std::size_t begin, std::size_t end, std::size_t max_depth)
       : text(text), limit(end), max_depth(max_depth), offset(begin) {}
 
   bool at_end() { return this.offset >= this.limit; }
@@ -1206,7 +1206,7 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     // An open type parameter cannot be constructed from an argument, so fill
     // the empty optional in place instead.
     mut F out = F();
-    [[discard]] out.emplace(std::move(inner));
+    out.emplace(std::move(inner));
     return std::move(out);
   } else if constexpr (is_vector<F>()) {
     mut F out = F();
@@ -1223,7 +1223,7 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
     std::vector<member> members = ?parse_members(text, start, stop, options);
     for (auto& entry : members) {
       auto value = ?decode_member(std::meta::list_first<std::meta::list_rest<std::meta::argument_list<F>>>(), text, entry.begin, entry.end, options, entry.key.view());
-      [[discard]] out.insert(std::string(entry.key.view()), std::move(value));
+      out.insert(std::string(entry.key.view()), std::move(value));
     }
     return std::move(out);
   } else if constexpr (std::meta::is_reflectable<F>()) {
@@ -1241,14 +1241,16 @@ expected<F, error> default_value<F>() requires std::default_initializable<F> {
 
 /// Produces each field of `T` from the members of one object.
 struct object_producer<T> {
-  std::string_view text;
+  std::string_view& text;
   std::size_t begin;
-  std::vector<member> members;
-  // Limits are copied: a struct holding a reference is outside what the
-  // backend emits today, and the two sizes are cheap.
+  std::vector<member>& members;
+  // Text is a checked reference: the cursor cannot outlive either the caller's
+  // view binding or its character owner. The decoded-member index is borrowed
+  // from decode_object for the same bounded construction. Neither input is
+  // copied or allocated again. Limits remain a small value snapshot.
   decode_options options;
-  object_producer(std::string_view text, std::size_t begin, std::vector<member> members, decode_options& limits)
-      : text(text), begin(begin), members(std::move(members)),
+  object_producer(std::string_view& text, std::size_t begin, std::vector<member>& members, decode_options& limits)
+      : text(text), begin(begin), members(members),
         options(decode_options(limits.max_depth, limits.max_document_bytes, limits.missing_members_defaulted)) {}
   object_producer(object_producer<T>& other) = delete;
 
@@ -1322,7 +1324,7 @@ expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, st
       ?validate_member(text, entry, options);
     }
   }
-  mut object_producer<T> producer{text, begin, std::move(members), options};
+  mut object_producer<T> producer{text, begin, members, options};
   mut auto built = std::meta::construct<T, error, object_producer<T>>(producer);
   return std::move(built);
 }
