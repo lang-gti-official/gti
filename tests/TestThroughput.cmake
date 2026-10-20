@@ -18,6 +18,9 @@ set(gti_heavy_case_suites
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    callable_return_type_runtime
+    enum_replacement_runtime
+    enum_selector_runtime
     protected_member_runtime
     out_of_class_cleanup
     implicit_receiver_owned_assignment_runtime
@@ -35,7 +38,10 @@ if(Python3_Interpreter_FOUND)
     borrowed_argument_nested_owning_argument_runtime
     conditional_cleanup_free_call_result_runtime
     conditional_checked_arm_input_runtime
+    conditional_cleanup_free_nested_join_runtime
     conditional_cleanup_free_receiver_runtime
+    conditional_moved_local_join_runtime
+    moved_local_field_read_runtime
     conditional_prepared_input_result_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_member_call_field_runtime
@@ -85,6 +91,7 @@ if(Python3_Interpreter_FOUND)
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     grouped_lambda_runtime
     lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
+    lambda_class_result_consumers_runtime
     nested_borrow_fields nested_guarded_expected_runtime
     native_c_scalar_runtime nested_raw_pointer_runtime
     nested_nominal_result_runtime operator_place_composition_runtime owned_expected_error_runtime

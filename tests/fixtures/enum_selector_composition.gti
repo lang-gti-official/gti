@@ -1,0 +1,55 @@
+#include <std/optional>
+
+namespace first { enum Event<T> { item(T value) }; }
+namespace second { enum Event<T> { empty, item(T value) }; }
+enum Counted<uint64_t N> { empty, item(int value) };
+enum Packet<T, Rest...> { item(T value) };
+enum Unused<T> { item(T value) };
+class UnusedOwner<T> {
+  Unused<T> state;
+public:
+  UnusedOwner(T value) : state(Unused<T>::item(value)) {}
+};
+
+class Owner<T> {
+  first::Event<T> state;
+public:
+  Owner(T value) : state(first::Event<T>::item(value)) {}
+  T read() {
+    switch (this.state) {
+    case first::Event<T>::item(value): return value;
+    }
+  }
+};
+class OtherOwner<T> {
+  second::Event<T> state;
+public:
+  OtherOwner(T value) : state(second::Event<T>::item(value)) {}
+};
+class Counter<uint64_t N> {
+  Counted<N> state;
+public:
+  Counter() : state(Counted<N>::item(3)) {}
+};
+class PackOwner<T, Rest...> {
+  Packet<T, Rest...> state;
+public:
+  PackOwner(T value) : state(Packet<T, Rest...>::item(value)) {}
+};
+int invoke<F>(F callback) { return callback(); }
+int main() {
+  Owner<int> integer{4};
+  Owner<bool> boolean{true};
+  Owner<c_int> native_alias{c_int(1)};
+  Owner<c_long> native_long{c_long(2)};
+  Owner<c_longlong> native_longlong{c_longlong(3)};
+  Owner<int64_t> native_fixed{int64_t(4)};
+  OtherOwner<int> other{9};
+  Counter<3> three{};
+  Counter<9> nine{};
+  PackOwner<int, bool, char> packed{7};
+  PackOwner<int> empty_pack{8};
+  auto optional = std::optional<int>(5);
+  return integer.read() == 4 && boolean.read() && optional.value() == 5
+      ? invoke([]() -> int { return 0; }) : 1;
+}

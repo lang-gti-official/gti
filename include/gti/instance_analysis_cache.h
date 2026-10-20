@@ -59,6 +59,10 @@ struct InstanceAnalysisKey {
                          const InstanceAnalysisKey &) = default;
 };
 
+struct InstanceAnalysisKeyHash {
+  std::size_t operator()(const InstanceAnalysisKey &key) const;
+};
+
 // Everything that must be identical for two snapshots to share entries: the
 // frontend/analysis configuration, every compiler-trusted unit by its exact
 // immutable parsed declarations (shared through FrontendCache), and a

@@ -343,3 +343,7 @@ for <T> concept protocol_shape<Crate<T>> {
   using measure_type = int;
   measure_type measure(Crate<T>& item) { return 0; }
 };
+
+extern "C" {
+  [[link_name("foreign_counter_native")]] mut c_int foreign_counter_highlight;
+}

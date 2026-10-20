@@ -1,0 +1,82 @@
+// Prefix `?` works on payload enums. A `std::tryable` block for an enum
+// template lets `?` take the value out of a `result<T, E>`, or return the
+// failure from the enclosing function as it is. Owning payloads such as
+// strings move out; nothing is copied.
+#include <std/panic>
+#include <std/string>
+
+enum class result<T, E> {
+  ok(T value),
+  failed(E error),
+};
+
+for <std::move_constructible T, std::move_constructible E>
+concept std::tryable<result<T, E>> {
+  using value_type = T;
+  using residual_type = result<T, E>;
+  bool has_value(result<T, E>& r) {
+    switch (r) {
+    case result<T, E>::ok:
+      return true;
+    case result<T, E>::failed:
+      return false;
+    }
+  }
+  T take_value(result<T, E> r) {
+    switch (std::move(r)) {
+    case result<T, E>::ok(value):
+      return value;
+    case result<T, E>::failed(error):
+      std::panic("take_value on a failed result");
+    }
+  }
+  result<T, E> take_residual(result<T, E> r) { return std::move(r); }
+};
+
+using text_result = result<std::string, std::string>;
+
+text_result missing(int id) {
+  mut std::string message = std::string("missing account ");
+  message.append(std::to_string(id).view());
+  return text_result::failed(std::move(message));
+}
+
+text_result owner(int id) {
+  if (id == 1) {
+    return text_result::ok(std::string("ada"));
+  }
+  return missing(id);
+}
+
+text_result credit(int id) {
+  if (id == 1) {
+    return text_result::ok(std::to_string(40));
+  }
+  return missing(id);
+}
+
+// Both lookups must succeed; `?` returns the first failure unchanged.
+text_result summary(int id) {
+  mut std::string line = ?owner(id);
+  std::string amount = ?credit(id);
+  line.append(":");
+  line.append(amount.view());
+  return text_result::ok(std::move(line));
+}
+
+void show(text_result shown) {
+  switch (std::move(shown)) {
+  case text_result::ok(line):
+    std::println(line.view());
+    return;
+  case text_result::failed(error):
+    std::println(error.view());
+    return;
+  }
+}
+
+int main() {
+  show(summary(1));
+  show(summary(3));
+  return 0;
+}

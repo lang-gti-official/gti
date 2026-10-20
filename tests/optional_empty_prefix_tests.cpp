@@ -1,20 +1,50 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
-#include <regex>
-
 void checkContainingClasses() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/constructor_nonassignable_fields.gti";
   std::ifstream stream(path);
-  const std::string source{std::istreambuf_iterator<char>(stream), {}};
-  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  const std::string source =
+      std::string{std::istreambuf_iterator<char>(stream), {}} + R"gti(
+#include <std/mutex>
+class MutexSlot {
+  std::mutex<std::string> value;
+public:
+  MutexSlot() : value(std::mutex<std::string>(std::string("value"))) {}
+};
+class MutexHolder {
+  MutexSlot slot;
+public:
+  MutexHolder() : slot(MutexSlot()) {}
+};
+class MutexOuter {
+  MutexHolder holder;
+public:
+  MutexOuter() : holder(MutexHolder()) {}
+};
+void nonassignable_control() { MutexOuter outer{}; }
+)gti";
+  auto target = lang::TargetInfo::host();
+  target.executionProfile = lang::ExecutionProfile::Concurrent;
+  target.runtimeCapabilities.threads = true;
+  const auto standardLibrary =
+      path.parent_path().parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend({.target = target})
+          .analyze(path.string(), source, {standardLibrary / "prelude.gti"}, {},
+                   {standardLibrary});
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(),
          "nonassignable constructor fields have valid MIR");
   if (!frontend.canGenerateCode())
     return;
-  expect(!gti_test::emitCppText(frontend).empty(),
+  expect(!gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target)
+              .empty(),
          "nested nonassignable and active-cleanup fields admit full emission");
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmissionMap rows(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target));
   std::size_t emptyProofs = 0;
   std::size_t publications = 0;
   for (const auto &owner : frontend.mir.classInstances()) {
@@ -71,110 +101,135 @@ void checkContainingClasses() {
       }
     }
   }
-  expect(emptyProofs >= 4 && publications >= 4,
-         "checks cover unrelated wrappers plus passive and active optional "
-         "fields");
+  // The mutex plus its three ordinary wrappers prove empty construction;
+  // the three wrapper fields exercise the fallible publication classifier.
+  expect(emptyProofs >= 4 && publications >= 3,
+         "checks cover genuine nonassignable mutex-bearing wrappers alongside "
+         "passive and active source optional fields (empty=" +
+             std::to_string(emptyProofs) +
+             ", publications=" + std::to_string(publications) + ")");
 }
 
-void checkActiveStorage() {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "fixtures/optional_lifecycle.gti";
+void checkEnumStorage(const char *fixture, bool owning) {
+  const auto path =
+      std::filesystem::path(__FILE__).parent_path() / "fixtures" / fixture;
   std::ifstream stream(path);
   const std::string source{std::istreambuf_iterator<char>(stream), {}};
   const auto frontend = analyzeWithStandardLibrary(path.string(), source);
-  expect(frontend.canGenerateCode(), "cleanup-owning optional passes frontend");
+  expect(frontend.canGenerateCode(), "source optional passes frontend");
   if (!frontend.canGenerateCode())
     return;
-  const auto cpp = gti_test::emitCppText(frontend);
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "source optional admits complete production emission");
   expect(
-      std::regex_search(
-          cpp,
-          std::regex(
-              R"(std::destroy_at\(std::addressof\((__gti_mir_p_[0-9]+)\)\);\s*::gti_internal::backend::construct_representation_at\(std::addressof\(\1\)\);\s*__gti_mir_construct_success_[0-9]+ = true;)")),
-      "sealed native empty storage uses plain placement and explicit success");
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+      std::none_of(frontend.mir.classInstances().begin(),
+                   frontend.mir.classInstances().end(),
+                   [](const auto &owner) {
+                     return owner.compilerCapability ==
+                            lang::CompilerCapabilityTypeKind::OptionalStorage;
+                   }),
+      "source optional does not instantiate private optional storage");
   std::size_t checked = 0;
+  std::size_t producers = 0;
+  const auto checkProducers = [&](const lang::MirBody &body,
+                                  lang::MirBodyAddress address) {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operation != lang::MirOperation::PayloadConstruct ||
+            instruction.info.type.kind != lang::SemanticType::Enum ||
+            instruction.operands.empty())
+          continue;
+        ++producers;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = lang::findMirBody(malformed, address);
+          for (auto &changedBlock : changed->blocks)
+            for (auto &candidate : changedBlock.instructions)
+              if (candidate.id == instruction.id) {
+                if (mutation == 0)
+                  candidate.enumOwner = 0;
+                else if (mutation == 1)
+                  candidate.enumVariant = std::size_t(-1);
+                else
+                  candidate.operands.front().type = lang::SemanticType::Unknown;
+              }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "ordinary enum construction retains exact owner, variant and "
+                 "payload type");
+        }
+      }
+  };
+  for (const auto &function : frontend.mir.functionInstances())
+    checkProducers(function.body, {lang::MirBodyKind::Function, function.id});
   for (const auto &constructor : frontend.mir.constructorInstances()) {
+    checkProducers(constructor.body,
+                   {lang::MirBodyKind::Constructor, constructor.id});
     for (const auto &block : constructor.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        const auto *target = instruction.constructorTarget
-                                 ? frontend.mir.findConstructorInstance(
-                                       *instruction.constructorTarget)
-                                 : nullptr;
-        const auto *owner =
-            target ? frontend.mir.findClassInstance(target->owner) : nullptr;
-        if (instruction.kind != lang::MirInstructionKind::Construct ||
-            !instruction.successResultDrop || owner == nullptr ||
-            owner->compilerCapability !=
-                lang::CompilerCapabilityTypeKind::OptionalStorage)
+        const auto *field =
+            instruction.destination
+                ? constructor.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !instruction.constructorInitializer || !field ||
+            field->type.kind != lang::SemanticType::Enum ||
+            instruction.operands.size() != 1)
           continue;
         ++checked;
-        expect(lang::cppMirFailureConstructorEmptyStateEligible(
-                   frontend.mir, constructor.owner) &&
-                   lang::cppMirFailureConstructorEmptyFieldsEligible(
-                       frontend.mir, constructor.owner),
-               "the selected private constructor establishes both empty "
-               "state and empty-field witnesses");
-        expect(lang::cppMirConstructedFieldInitializerBindings(frontend.mir,
-                                                               constructor)
-                   .empty(),
-               "active storage keeps its MIR lifecycle, not the passive prefix "
-               "route");
-        for (int mutation = 0; mutation != 6; ++mutation) {
+        expect(owning == !instruction.lifecycle.empty(),
+               "enum publication has cleanup exactly when its payload owns "
+               "cleanup");
+        for (int mutation = 0; mutation != (owning ? 6 : 4); ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirConstructorInstance *>(
               malformed.findConstructorInstance(constructor.id));
           auto &producerBlock = *std::find_if(
               changed->body.blocks.begin(), changed->body.blocks.end(),
               [&](const auto &candidate) { return candidate.id == block.id; });
-          if (mutation == 0) {
-            producerBlock.terminator.successLifecycle.clear();
-          } else if (mutation == 1) {
-            for (auto &candidateBlock : changed->body.blocks)
-              for (auto &candidate : candidateBlock.instructions)
-                if (candidate.kind == lang::MirInstructionKind::Initialize &&
-                    candidate.constructorInitializer != 0)
-                  candidate.lifecycle.clear();
-          } else if (mutation == 2) {
-            auto *storage = const_cast<lang::MirClassInstance *>(
-                malformed.findClassInstance(owner->id));
-            storage->compilerCapability =
-                lang::CompilerCapabilityTypeKind::None;
-          } else {
-            auto *empty = const_cast<lang::MirConstructorInstance *>(
-                malformed.findConstructorInstance(target->id));
-            if (mutation == 3)
-              empty->body.blocks.front().terminator.kind =
-                  lang::MirTerminatorKind::Unreachable;
-            else if (mutation == 4)
-              empty->body.blocks.front().terminator.value =
-                  lang::MirOperand{.kind = lang::MirOperandKind::Value,
-                                   .value = 1,
-                                   .type = lang::SemanticType::Int32};
+          auto &publication = *std::find_if(
+              producerBlock.instructions.begin(),
+              producerBlock.instructions.end(), [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
+          if (mutation == 0)
+            publication.constructorInitializer = 0;
+          else if (mutation == 1)
+            publication.operands.front().type = lang::SemanticType::Int32;
+          else if (mutation == 2)
+            publication.operands.push_back(publication.operands.front());
+          else if (mutation == 3) {
+            auto *place = const_cast<lang::MirPlace *>(
+                changed->body.findPlace(*publication.destination));
+            if (place->root == lang::MirPlaceRootKind::Symbol)
+              place->symbol = 0;
             else
-              empty->borrowOrigin = lang::BorrowOriginKind::Receiver;
-            expect(
-                !lang::cppMirFailureConstructorEmptyStateEligible(
-                    malformed, constructor.owner) &&
-                    !lang::cppMirFailureConstructorEmptyFieldsEligible(
-                        malformed, constructor.owner),
-                "optional empty-state helpers retain the selected private "
-                "constructor's void Return and nonborrowed proof (mutation " +
-                    std::to_string(mutation) + ")");
-          }
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Constructor, constructor.id}),
-                 "native empty storage requires exact "
-                 "activation/reparent/capability/return proof (mutation " +
+              place->projections.front().field = 0;
+          } else if (mutation == 4)
+            publication.lifecycle.clear();
+          else
+            publication.lifecycle.front().source = 0;
+          expect(lang::rebuildMirValueUses(changed->body),
+                 "enum publication mutation retains SSA use records");
+          const bool rejected =
+              mutation == 0
+                  ? !lang::CppMirBodyEmitter(
+                         malformed, lang::CppMirBodyEmissionMap(
+                                        buildRows(frontend, frontend.mir)))
+                         .supportsFailureBodyText(
+                             {lang::MirBodyKind::Constructor, constructor.id})
+                  : !lang::verifyMirProgram(malformed).valid();
+          expect(rejected,
+                 "enum publication rejects missing initializer, wrong type, "
+                 "extra operand, field identity and cleanup transfer drift "
+                 "(mutation " +
                      std::to_string(mutation) + ")");
         }
       }
     }
   }
-  expect(
-      checked == 1,
-      "active optional initializer exercises the native constructor boundary");
+  expect(producers != 0 && (!owning || checked != 0),
+         "source optional exercises ordinary enum production and owning field "
+         "publication");
 }
 
 void checkFieldReplacement() {
@@ -241,80 +296,11 @@ void checkFieldReplacement() {
 }
 
 int main() {
-  const auto path = std::filesystem::path(__FILE__).parent_path() /
-                    "fixtures/optional_value.gti";
-  std::ifstream stream(path);
-  const std::string source{std::istreambuf_iterator<char>(stream),
-                           std::istreambuf_iterator<char>()};
-  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
-  expect(frontend.canGenerateCode(),
-         "passive optional payload passes frontend");
-  if (!frontend.canGenerateCode())
-    return 1;
-  std::size_t checked = 0;
-  for (const auto &constructor : frontend.mir.constructorInstances()) {
-    if (constructor.body.blocks.size() < 2)
-      continue;
-    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-        frontend.mir, constructor);
-    if (bindings.empty())
-      continue;
-    expect(bindings.size() == 1 && bindings.front().valueDrop == 0 &&
-               bindings.front().fieldDrop == 0,
-           "empty passive storage prefix has no invented cleanup identities");
-    ++checked;
-    for (int mutation = 0; mutation != 6; ++mutation) {
-      auto malformed = frontend.mir;
-      auto *changed = const_cast<lang::MirConstructorInstance *>(
-          malformed.findConstructorInstance(constructor.id));
-      auto &entry = *std::find_if(
-          changed->body.blocks.begin(), changed->body.blocks.end(),
-          [&](const auto &block) { return block.id == changed->body.entry; });
-      switch (mutation) {
-      case 0:
-        std::swap(entry.instructions[0], entry.instructions[1]);
-        break;
-      case 1:
-        entry.instructions.back().operands.push_back(
-            entry.instructions[1].operands.front());
-        break;
-      case 2: {
-        auto *target =
-            malformed.findConstructorInstance(bindings.front().constructor);
-        auto *storage = const_cast<lang::MirClassInstance *>(
-            malformed.findClassInstance(target->owner));
-        storage->compilerCapability = lang::CompilerCapabilityTypeKind::None;
-        break;
-      }
-      case 3:
-        changed->initializers.front().arguments.front() += 10000;
-        break;
-      case 4:
-        entry.instructions[2].fullExpressionEnd = 0;
-        break;
-      case 5: {
-        auto *owner = const_cast<lang::MirClassInstance *>(
-            malformed.findClassInstance(changed->owner));
-        owner->declaredFields.front().requiresActiveCleanup = true;
-        break;
-      }
-      }
-      (void)lang::rebuildMirValueUses(changed->body);
-      expect(
-          lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
-              .empty(),
-          "empty prefix proof rejects ordering, extra use, capability, "
-          "initializer, boundary, and cleanup mismatches");
-    }
-  }
-  expect(checked == 1, "passive optional constructor exercises exact prefix "
-                       "before fallible body");
-  expect(!gti_test::emitCppText(frontend).empty(),
-         "passive optional payload admits complete production emission");
-  checkActiveStorage();
+  checkEnumStorage("optional_value.gti", false);
+  checkEnumStorage("optional_lifecycle.gti", true);
   checkContainingClasses();
   checkFieldReplacement();
   if (failures)
     return 1;
-  std::cout << "optional empty prefix proof tests passed\n";
+  std::cout << "optional enum publication proof tests passed\n";
 }

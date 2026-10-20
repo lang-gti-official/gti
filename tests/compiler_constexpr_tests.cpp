@@ -4691,7 +4691,7 @@ int main() { return 0; }
        "only a condition and one optional message"},
       {"static_assert(true) int recovered() { return 0; }", "Expect ';'"},
       {"extern \"C\" { static_assert(true); int ok(); }",
-       "may contain only function declarations"},
+       "may contain only function or variable declarations"},
   }};
   for (const auto &[source, expected] : malformed) {
     lang::Parser parser(lexer.scan(source, "malformed-static-assert.gti"));

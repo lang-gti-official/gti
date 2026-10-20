@@ -1,0 +1,62 @@
+#include <std/experimental/optional>
+#include <std/optional>
+#include <std/string>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+}
+
+uint64_t source_strings() {
+  adoption_count_begin();
+  mut uint64_t length = uint64_t(0);
+  for (mut int32_t i = 0; i < 32; i += 1) {
+    if (i % 4 == 0) {
+      std::experimental::optional<std::string> empty{};
+      if (empty.has_value()) return uint64_t(0);
+    } else {
+      auto value = std::experimental::optional<std::string>(
+          std::string("some sufficiently long text to force allocated string storage"));
+      length += uint64_t(value.value().size());
+    }
+  }
+  adoption_count_end();
+  return length;
+}
+
+uint64_t builtin_strings() {
+  adoption_count_begin();
+  mut uint64_t length = uint64_t(0);
+  for (mut int32_t i = 0; i < 32; i += 1) {
+    if (i % 4 == 0) {
+      std::optional<std::string> empty{};
+      if (empty.has_value()) return uint64_t(0);
+    } else {
+      auto value = std::optional<std::string>(
+          std::string("some sufficiently long text to force allocated string storage"));
+      length += uint64_t(value.value().size());
+    }
+  }
+  adoption_count_end();
+  return length;
+}
+
+int main() {
+  if (source_strings() != uint64_t(1464)) return 1;
+  uint64_t source_allocations = adoption_allocations();
+  uint64_t source_bytes = adoption_bytes();
+  if (source_allocations != uint64_t(24)) return 2;
+  if (builtin_strings() != uint64_t(1464)) return 3;
+  if (adoption_allocations() != source_allocations ||
+      adoption_bytes() != source_bytes) return 4;
+  adoption_count_begin();
+  {
+    auto source = std::experimental::optional<int>(7);
+    auto builtin = std::optional<int>(7);
+    if (source.value() != builtin.value()) return 5;
+  }
+  adoption_count_end();
+  return adoption_allocations() == uint64_t(0) ? 0 : 6;
+}

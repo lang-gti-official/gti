@@ -27,7 +27,8 @@ namespace {
 
 template <typename Symbol>
 [[nodiscard]] std::string cppProgramStorageSpelling(const Symbol &record,
-                                                    SymbolId symbol) {
+                                                    SymbolId symbol,
+                                                    bool foreign = false) {
   if (record.kind != SymbolKind::GlobalVariable || record.name.empty()) {
     return {};
   }
@@ -71,7 +72,8 @@ template <typename Symbol>
   }
 
   spelling += "::";
-  spelling += record.internalLinkage
+  spelling += foreign ? cppForeignStorageSpelling(symbol)
+              : record.internalLinkage
                   ? cppStaticStorageValueSpelling(symbol, record.name)
                   : record.name;
   return spelling;
@@ -119,7 +121,8 @@ struct TemplateSubstitution {
 
 [[nodiscard]] SemanticType
 substituteTemplateType(SemanticType type,
-                       const TemplateSubstitution &substitution) {
+                       const TemplateSubstitution &substitution,
+                       const LoweredProgram *program = nullptr) {
   if (type.kind == SemanticType::TypeParameter ||
       type.kind == SemanticType::TypePack) {
     const auto found = std::find_if(
@@ -130,7 +133,8 @@ substituteTemplateType(SemanticType type,
     }
   }
   for (SemanticType &argument : type.arguments) {
-    argument = substituteTemplateType(std::move(argument), substitution);
+    argument =
+        substituteTemplateType(std::move(argument), substitution, program);
   }
   if (type.kind == SemanticType::Class ||
       type.kind == SemanticType::FunctionSignature) {
@@ -141,10 +145,12 @@ substituteTemplateType(SemanticType type,
     type.arguments = std::move(expanded);
   }
   for (SemanticType &argument : type.lambdaEnclosingClassTypes) {
-    argument = substituteTemplateType(std::move(argument), substitution);
+    argument =
+        substituteTemplateType(std::move(argument), substitution, program);
   }
   for (SemanticType &argument : type.lambdaEnclosingFunctionTypes) {
-    argument = substituteTemplateType(std::move(argument), substitution);
+    argument =
+        substituteTemplateType(std::move(argument), substitution, program);
   }
   const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
     for (CompileTimeValue &value : values) {
@@ -175,6 +181,16 @@ substituteTemplateType(SemanticType type,
       } else if (found->second.kind == CompileTimeValue::Parameter) {
         type.arrayLengthParameterId = found->second.parameterId;
       }
+    }
+  }
+  if (program != nullptr && type.kind == SemanticType::Class &&
+      type.arguments.size() == 1 && type.valueArguments.empty()) {
+    const auto *declaration = program->findClassDeclaration(type.classId);
+    if (declaration != nullptr &&
+        declaration->computedTypeProjection ==
+            ComputedTypeProjectionKind::CallableReturn) {
+      if (const auto *result = type.arguments.front().callableReturnType())
+        return *result;
     }
   }
   return type;
@@ -345,12 +361,12 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
   }
 
   CppMirCallableTemplateSignature result{
-      .returnType =
-          substituteTemplateType(declaration.returnType, ownerSubstitution)};
+      .returnType = substituteTemplateType(declaration.returnType,
+                                           ownerSubstitution, &program)};
   result.parameterTypes.reserve(declaration.parameters.size());
   for (const LoweredParameter &parameter : declaration.parameters) {
     result.parameterTypes.push_back(
-        substituteTemplateType(parameter.type, ownerSubstitution));
+        substituteTemplateType(parameter.type, ownerSubstitution, &program));
   }
   if (!containsOnlyFunctionDependence(result.returnType,
                                       declaration.genericParameters) ||
@@ -368,15 +384,41 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
           instance.typeArguments, instance.valueArguments)) {
     return std::nullopt;
   }
-  if (substituteTemplateType(result.returnType, functionSubstitution) !=
-      instance.returnType) {
+  // Native pointer types have no GTI metadata carrier. Their C result may
+  // be T* while the logical GTI result uses raw_address<T>. Resolve only
+  // these projections from exact instance substitution, never native type
+  // deduction. Keep ordinary parameters dependent so they remain deducible.
+  const auto resolveNativeProjections = [&](const auto &self,
+                                            SemanticType type) -> SemanticType {
+    if (type.kind == SemanticType::Class && type.arguments.size() == 1 &&
+        type.valueArguments.empty()) {
+      const auto *projection = program.findClassDeclaration(type.classId);
+      if (projection && projection->computedTypeProjection ==
+                            ComputedTypeProjectionKind::CallableReturn) {
+        const auto subject = substituteTemplateType(
+            type.arguments.front(), functionSubstitution, &program);
+        if (const auto *logicalResult = subject.nativeFunctionReturnType())
+          return *logicalResult;
+      }
+    }
+    for (auto &argument : type.arguments)
+      argument = self(self, std::move(argument));
+    return type;
+  };
+  result.returnType = resolveNativeProjections(resolveNativeProjections,
+                                               std::move(result.returnType));
+  for (auto &parameter : result.parameterTypes)
+    parameter = resolveNativeProjections(resolveNativeProjections,
+                                         std::move(parameter));
+  if (substituteTemplateType(result.returnType, functionSubstitution,
+                             &program) != instance.returnType) {
     return std::nullopt;
   }
   std::vector<SemanticType> concreteParameters;
   for (const SemanticType &parameter : result.parameterTypes)
     SemanticType::appendExpandedArgument(
         concreteParameters,
-        substituteTemplateType(parameter, functionSubstitution));
+        substituteTemplateType(parameter, functionSubstitution, &program));
   if (concreteParameters != instance.parameterTypes)
     return std::nullopt;
   return result;
@@ -1971,13 +2013,14 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       {.kind = CppMirEmissionCapabilityKind::CallableDispatch,
        .spelling = "cpp_deduced_callable_v1"});
   // Payload names the variant record representation the artifact ships
-  // for payload enums: a struct wrapping std::variant of per-enumerator
-  // __gti_variant_<index> records, constructed by wrapping the variant
-  // record and read by std::get over the proven alternative. The enum
-  // row's copied variant inventory carries the exact spellings.
+  // for payload enums: a struct wrapping a tagged carrier of per-enumerator
+  // __gti_variant_<index> records. The backend union carrier preserves trivial
+  // transport for passive rows. payload_get accesses
+  // only the proven alternative. The sealed row supplies exact variants,
+  // traits and cleanup requirements; native traits never admit a GTI operation.
   builder.rows.capabilities.push_back(
       {.kind = CppMirEmissionCapabilityKind::Payload,
-       .spelling = "cpp_variant_record_v1"});
+       .spelling = "cpp_tagged_payload_record_v2"});
   // VirtualDispatch names the C++ virtual member representation: a
   // virtual or override method's emitted in-class definition carries the
   // language's own dispatch, and a virtual call spells the ordinary
@@ -2080,7 +2123,9 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       if (record->kind != SymbolKind::GlobalVariable) {
         continue;
       }
-      std::string spelling = cppProgramStorageSpelling(*record, place.symbol);
+      std::string spelling = cppProgramStorageSpelling(
+          *record, place.symbol,
+          mir.findForeignStorage(place.symbol) != nullptr);
       if (spelling.empty()) {
         continue;
       }

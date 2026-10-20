@@ -20,6 +20,22 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Bytes",
       "Align",
       "Payload",
+      "Head",
+      "Tail",
+      "payload_union",
+      "payload_variant",
+      "payload_get",
+      "mir_closed_enum_unreachable_v1",
+      "payload_equal_v",
+      "storage_",
+      "tag_",
+      "vacant",
+      "tag_type",
+      "dispatch",
+      "head",
+      "tail",
+      "tag",
+      "equal",
       "operations",
       "payload",
       "object",
@@ -56,6 +72,8 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "Value",
       "__gti_invoke",
       "__gti_mir_lambda_identity",
+      "__gti_mir_source_result",
+      "source_callable_result",
       "__gti_simd_vector",
       "__gti_simd_width",
       "__gti_simd_left",
@@ -486,6 +504,8 @@ void writeCppSupportPreamble(std::ostream &output,
             "#include <type_traits>\n"
             "#include <utility>\n"
             "#include <variant>\n";
+  if (features.payloadReferences)
+    output << "#include <functional>\n";
   const bool usesExpected = features.expected;
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
@@ -527,6 +547,251 @@ struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
 
+// Payload-enum carrier. MIR, not this native type, selects legal
+// alternatives, transfers GTI obligations and runs source cleanup. The union
+// only retires the resulting native member lifetimes. Unlike std::variant,
+// owning destruction is a direct tag branch rather than a visitor-table call.
+// Passive members retain trivial native special members and byte transport.
+template <typename... Values> union payload_union;
+template <> union payload_union<> {
+  payload_union() noexcept {}
+  ~payload_union() = default;
+};
+template <typename Head, typename... Tail>
+union payload_union<Head, Tail...> {
+  Head head;
+  payload_union<Tail...> tail;
+  payload_union() noexcept {}
+  payload_union(const payload_union &) = default;
+  payload_union(payload_union &&) = default;
+  payload_union &operator=(const payload_union &) = default;
+  payload_union &operator=(payload_union &&) = default;
+  ~payload_union() requires (std::is_trivially_destructible_v<Head> &&
+                            (std::is_trivially_destructible_v<Tail> && ...)) = default;
+  ~payload_union() noexcept {}
+
+  template <std::size_t Index, typename... Args>
+  void construct(Args &&...args) {
+    if constexpr (Index == 0) {
+      std::construct_at(std::addressof(head), std::forward<Args>(args)...);
+    } else {
+      std::construct_at(std::addressof(tail));
+      tail.template construct<Index - 1>(std::forward<Args>(args)...);
+    }
+  }
+  template <std::size_t Index> void destroy() noexcept {
+    if constexpr (Index == 0) {
+      std::destroy_at(std::addressof(head));
+    } else {
+      tail.template destroy<Index - 1>();
+      std::destroy_at(std::addressof(tail));
+    }
+  }
+  template <std::size_t Index> decltype(auto) get() & noexcept {
+    if constexpr (Index == 0) return (head);
+    else return tail.template get<Index - 1>();
+  }
+  template <std::size_t Index> decltype(auto) get() const & noexcept {
+    if constexpr (Index == 0) return (head);
+    else return tail.template get<Index - 1>();
+  }
+};
+
+template <typename T>
+inline constexpr bool payload_equal_v = requires(const T &left, const T &right) {
+  bool(left == right);
+};
+
+template <typename... Values> class payload_variant {
+  static_assert(sizeof...(Values) != 0);
+  using tag_type = std::conditional_t<(sizeof...(Values) < 256), std::uint8_t,
+      std::conditional_t<(sizeof...(Values) < 65536), std::uint16_t, std::size_t>>;
+  static constexpr tag_type vacant = static_cast<tag_type>(-1);
+  tag_type tag_ = vacant;
+  payload_union<Values...> storage_;
+
+  template <std::size_t Index = 0, typename Callable>
+  static void dispatch(std::size_t tag, Callable &&callable) {
+    if constexpr (Index < sizeof...(Values)) {
+      if (tag == Index) callable.template operator()<Index>();
+      else dispatch<Index + 1>(tag, std::forward<Callable>(callable));
+    }
+  }
+  template <std::size_t Index, typename... Args>
+  void construct(Args &&...args) {
+    static_assert(Index < sizeof...(Values));
+    // Publish only after complete construction. If native construction throws,
+    // no alternative is live; any active recursive tails contain no resource.
+    storage_.template construct<Index>(std::forward<Args>(args)...);
+    tag_ = static_cast<tag_type>(Index);
+  }
+  void destroy_active() noexcept {
+    dispatch(tag_, [this]<std::size_t Index>() {
+      storage_.template destroy<Index>();
+    });
+    tag_ = vacant;
+  }
+public:
+  payload_variant() noexcept(std::is_nothrow_default_constructible_v<
+      std::tuple_element_t<0, std::tuple<Values...>>>) { construct<0>(); }
+  template <std::size_t Index, typename... Args>
+  explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
+    construct<Index>(std::forward<Args>(args)...);
+  }
+  payload_variant(const payload_variant &)
+      requires (std::is_trivially_copy_constructible_v<Values> && ...) = default;
+  payload_variant(const payload_variant &other)
+      requires ((std::is_copy_constructible_v<Values> && ...) &&
+                !(std::is_trivially_copy_constructible_v<Values> && ...)) {
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(other.storage_.template get<Index>());
+    });
+  }
+  payload_variant(payload_variant &&)
+      requires (std::is_trivially_move_constructible_v<Values> && ...) = default;
+  payload_variant(payload_variant &&other)
+      noexcept((std::is_nothrow_move_constructible_v<Values> && ...))
+      requires ((std::is_move_constructible_v<Values> && ...) &&
+                !(std::is_trivially_move_constructible_v<Values> && ...)) {
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(std::move(other.storage_.template get<Index>()));
+    });
+  }
+  payload_variant &operator=(const payload_variant &)
+      requires ((std::is_trivially_copy_constructible_v<Values> && ...) &&
+                (std::is_trivially_copy_assignable_v<Values> && ...) &&
+                (std::is_trivially_destructible_v<Values> && ...)) = default;
+  payload_variant &operator=(const payload_variant &other)
+      requires ((std::is_copy_constructible_v<Values> && ...) &&
+                (std::is_copy_assignable_v<Values> && ...) &&
+                !((std::is_trivially_copy_constructible_v<Values> && ...) &&
+                  (std::is_trivially_copy_assignable_v<Values> && ...) &&
+                  (std::is_trivially_destructible_v<Values> && ...))) {
+    if (this == std::addressof(other)) return *this;
+    if (tag_ != other.tag_) {
+      destroy_active();
+      dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+        construct<Index>(other.storage_.template get<Index>());
+      });
+    } else {
+      dispatch(tag_, [this, &other]<std::size_t Index>() {
+        storage_.template get<Index>() = other.storage_.template get<Index>();
+      });
+    }
+    return *this;
+  }
+  // Private SSA/binding transport can copy-construct a passive representation
+  // even when its source type deliberately forbids assignment. This does not
+  // grant GTI assignment: verified source traits still govern that operation.
+  payload_variant &operator=(const payload_variant &other) noexcept
+      requires ((std::is_nothrow_copy_constructible_v<Values> && ...) &&
+                (std::is_trivially_destructible_v<Values> && ...) &&
+                !(std::is_copy_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    destroy_active();
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(other.storage_.template get<Index>());
+    });
+    return *this;
+  }
+  payload_variant &operator=(payload_variant &&)
+      requires ((std::is_trivially_move_constructible_v<Values> && ...) &&
+                (std::is_trivially_move_assignable_v<Values> && ...) &&
+                (std::is_trivially_destructible_v<Values> && ...)) = default;
+  payload_variant &operator=(payload_variant &&other)
+      noexcept((std::is_nothrow_move_constructible_v<Values> && ...) &&
+               (std::is_nothrow_move_assignable_v<Values> && ...))
+      requires ((std::is_move_constructible_v<Values> && ...) &&
+                (std::is_move_assignable_v<Values> && ...) &&
+                !((std::is_trivially_move_constructible_v<Values> && ...) &&
+                  (std::is_trivially_move_assignable_v<Values> && ...) &&
+                  (std::is_trivially_destructible_v<Values> && ...))) {
+    if (this == std::addressof(other)) return *this;
+    if (tag_ != other.tag_) {
+      destroy_active();
+      dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+        construct<Index>(std::move(other.storage_.template get<Index>()));
+      });
+    } else {
+      dispatch(tag_, [this, &other]<std::size_t Index>() {
+        storage_.template get<Index>() = std::move(other.storage_.template get<Index>());
+      });
+    }
+    return *this;
+  }
+  // GTI owning-enum replacement has already run the destination's checked
+  // source cleanup. Nonassignable payloads need only move construction here:
+  // retire the now-clean native shell and publish the new tag after construction.
+  // This overload is not a source cleanup mechanism or permission to relocate
+  // the payload bytes (for example, a mutex recreates its native mutex).
+  payload_variant &operator=(payload_variant &&other)
+      noexcept((std::is_nothrow_move_constructible_v<Values> && ...))
+      requires ((std::is_move_constructible_v<Values> && ...) &&
+                !(std::is_move_assignable_v<Values> && ...)) {
+    if (this == std::addressof(other)) return *this;
+    destroy_active();
+    dispatch(other.tag_, [this, &other]<std::size_t Index>() {
+      construct<Index>(std::move(other.storage_.template get<Index>()));
+    });
+    return *this;
+  }
+  ~payload_variant() requires (std::is_trivially_destructible_v<Values> && ...) = default;
+  ~payload_variant() noexcept { destroy_active(); }
+  // Only verified enum cleanup calls this, after its complete source cleanup
+  // recipe has drained the alternative. Retire the
+  // native shell on success and failure so a later lexical drop cannot run
+  // the same source cleanup twice. No GTI value observes the vacant interval.
+  void retire_cleaned_alternative() noexcept { destroy_active(); }
+  std::size_t index() const noexcept {
+    return std::size_t(tag_);
+  }
+  // Access is selected only by a sealed MIR alternative and dominated by its
+  // tag proof. No public GTI unchecked accessor or layout promise is created.
+  template <std::size_t Index> decltype(auto) get() & noexcept {
+    return storage_.template get<Index>();
+  }
+  template <std::size_t Index> decltype(auto) get() const & noexcept {
+    return storage_.template get<Index>();
+  }
+  friend bool operator==(const payload_variant &left, const payload_variant &right)
+      requires (payload_equal_v<Values> && ...) {
+    if (left.tag_ != right.tag_) return false;
+    bool equal = true;
+    dispatch(left.tag_, [&]<std::size_t Index>() {
+      equal = left.storage_.template get<Index>() == right.storage_.template get<Index>();
+    });
+    return equal;
+  }
+};
+
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(payload_variant<Values...> &value) noexcept {
+  return value.template get<Index>();
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(const payload_variant<Values...> &value) noexcept {
+  return value.template get<Index>();
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(payload_variant<Values...> &&value) noexcept {
+  return std::move(value.template get<Index>());
+}
+template <std::size_t Index, typename... Values>
+decltype(auto) payload_get(const payload_variant<Values...> &&value) noexcept {
+  return std::move(value.template get<Index>());
+}
+// Only the exact verified entry-boundary closed-domain proof may call this.
+// Ordinary MIR Unreachable and every source defined-failure path still abort
+// or propagate their original diagnostic; carrier shells are not this domain.
+[[noreturn]] inline void mir_closed_enum_unreachable_v1() noexcept {
+#if defined(__clang__) || defined(__GNUC__)
+  __builtin_unreachable();
+#elif defined(_MSC_VER)
+  __assume(false);
+#else
+  std::abort();
+#endif
+}
 // A union's implicit copy/move copies its object representation, rather than
 // evaluating its pointer member ([class.copy.ctor], [class.copy.assign]).
 // GTI transport and comparison therefore stay inert after a pointee expires,
@@ -901,8 +1166,15 @@ template <typename T>
 struct mir_empty_state_factory_v1;
 template <std::uint64_t Constructor>
 struct mir_failure_constructor_tag_v1;
-template <std::uint64_t Function>
-struct function_item final {};
+template <std::uint64_t Function, typename Result>
+struct function_item final { using __gti_mir_source_result = Result; };
+
+// Native callable signatures may use status/out-result channels. Preserve
+// GTI's verified logical result as metadata instead of inspecting operator().
+template <typename Callable>
+struct source_callable_result {
+  using type = typename Callable::__gti_mir_source_result;
+};
 
 template <typename T> std::false_type __gti_byte_transport_tag(T *);
 template <typename T>
@@ -1936,7 +2208,13 @@ public:
       storage_error("verified MIR lifetime slot was dropped while empty");
     }
     engaged_ = false;
-    std::destroy_at(std::launder(slot()));
+    // Retiring a trivial representation needs no destructor call. Its C++
+    // lifetime may end when construction reuses the storage or storage is
+    // released; get() still rejects the retired MIR slot immediately. Avoid
+    // imposing an unnecessary lifetime-end barrier on native optimization.
+    if constexpr (!std::is_trivially_destructible_v<T>) {
+      std::destroy_at(std::launder(slot()));
+    }
   }
 
   [[nodiscard]] bool
@@ -2028,7 +2306,13 @@ public:
   }
 
   template <typename Cleanup>
-  [[nodiscard]] bool destroy_cleanup_with_failure(
+  [[nodiscard]]
+#if defined(_MSC_VER)
+  __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+  __attribute__((always_inline))
+#endif
+  bool destroy_cleanup_with_failure(
       ::gti_failure_record_v2 *record, bool conditional, bool unwinding,
       Cleanup cleanup) {
     if (!engaged_) {

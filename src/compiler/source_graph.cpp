@@ -26,6 +26,11 @@ const std::vector<SourceDependency> &SourceGraph::dependencyEdges() const {
   return dependencies;
 }
 
+const std::vector<SourceImplementation> &
+SourceGraph::moduleImplementations() const {
+  return implementationRoots;
+}
+
 const std::vector<SourceUnitId> &SourceGraph::preludeRoots() const {
   return configuredPreludeRoots;
 }
@@ -139,7 +144,7 @@ std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
     }
   }
   for (const auto implementation : implementationRoots)
-    visit(implementation);
+    visit(implementation.implementationUnit);
   visit(entry);
   for (const SourceUnit &unit : units) {
     visit(unit.id);

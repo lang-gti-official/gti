@@ -30,6 +30,10 @@ struct FrontendWorkMetrics;
 // never changes typing, checked loans, MIR verification, or runtime semantics.
 enum class RawPointerAuditMode { Off, Warn, Strict };
 
+// Semantic type projections retained in declaration metadata when their
+// arguments are still open. They describe types, never runtime operations.
+enum class ComputedTypeProjectionKind { None, CallableReturn };
+
 // When one semantic check analyses compiler-trusted (prelude and
 // standard-library) function bodies. `Complete` analyses every body in
 // lexical order. `Deferred` analyses every trusted body after the application
@@ -598,6 +602,17 @@ struct SemanticType {
     return hasLambdaShape() ? &arguments.front() : nullptr;
   }
 
+  [[nodiscard]] const SemanticType *callableReturnType() const {
+    if (const auto *result = lambdaReturnType())
+      return result;
+    if (const auto *result = functionItemReturnType())
+      return result;
+    if (const auto *result = nativeFunctionReturnType())
+      return result;
+    return kind == FunctionSignature && !arguments.empty() ? &arguments.front()
+                                                           : nullptr;
+  }
+
   [[nodiscard]] std::span<const SemanticType> lambdaParameterTypes() const {
     return hasLambdaShape() ? std::span<const SemanticType>(arguments).subspan(
                                   1, lambdaParameterCount)
@@ -853,6 +868,18 @@ struct ExpressionInfo {
                          const ExpressionInfo &) = default;
 };
 
+// A declaration of storage owned by the native program. Its symbol is a
+// declaration identity, never a GTI initialization or cleanup obligation.
+struct ForeignStorageInfo {
+  SymbolId symbol = 0;
+  SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  std::string externalSymbol;
+
+  friend bool operator==(const ForeignStorageInfo &,
+                         const ForeignStorageInfo &) = default;
+};
+
 struct BindingInfo {
   SemanticType type = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
@@ -860,6 +887,7 @@ struct BindingInfo {
   std::optional<ConstantValue> constant;
   bool explicitlyMoved = false;
   SymbolId symbol = 0;
+  bool foreignStorage = false;
   bool staticStorage = false;
   bool internalLinkage = false;
   SemanticLoanId retainedLoan = 0;

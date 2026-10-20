@@ -2,11 +2,37 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <string>
+
+namespace lang {
+struct SemanticModelTestAccess {
+  static void record(SemanticModel &model, const Expr &expression,
+                     std::vector<SemanticLoanDependency> dependencies) {
+    model.recordBorrowDependencies(expression, std::move(dependencies));
+  }
+  static void complete(SemanticModel &model, const Expr &expression,
+                       SemanticBorrowDependencySet dependencies) {
+    model.recordBorrowDependencySet(expression, std::move(dependencies));
+  }
+  static void delta(SemanticModel &model, const SemanticModel &base) {
+    model.beginInstanceDelta(base);
+  }
+  static void rebase(SemanticModel &model, const SemanticModel &base) {
+    model.rebase(&base);
+  }
+  static void clear(SemanticModel &model) { model.clear(); }
+};
+struct MirProgramTestAccess {
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+} // namespace lang
 
 // Protocol concepts: a concept with a body declares associated types and
 // operations, and a type satisfies it only through a `for concept` block.
@@ -19,6 +45,41 @@ int main() {
       ++failures;
     }
   };
+  {
+    lang::LiteralExpr expression(std::uint64_t{0});
+    lang::SemanticModel base;
+    expect(base.findBorrowDependencySet(expression) == nullptr,
+           "unproved dependencies must be absent, not complete-empty");
+    lang::SemanticModelTestAccess::record(base, expression,
+                                          {{.place = {.root = 1}}});
+    lang::SemanticModel overlay;
+    lang::SemanticModelTestAccess::delta(overlay, base);
+    expect(
+        overlay.findBorrowDependencySet(expression) != nullptr &&
+            overlay.findBorrowDependencySet(expression)->dependencies.size() ==
+                1,
+        "an instance inherits the exact complete dependency set");
+    const lang::SemanticBorrowDependencySet emptyAlternative{
+        .possibleAlternatives = {
+            {.conditions = {{.enumeration = lang::SemanticType::enumType(1),
+                             .variant = 2}}}}};
+    lang::SemanticModelTestAccess::complete(overlay, expression,
+                                            emptyAlternative);
+    expect(
+        overlay.findBorrowDependencySet(expression) != nullptr &&
+            overlay.findBorrowDependencySet(expression)->dependencies.empty(),
+        "complete-empty overrides an inherited nonempty set");
+    lang::SemanticModel relocated;
+    lang::SemanticModelTestAccess::record(relocated, expression,
+                                          {{.place = {.root = 2}}});
+    lang::SemanticModelTestAccess::rebase(overlay, relocated);
+    expect(overlay.findBorrowDependencySet(expression) != nullptr &&
+               *overlay.findBorrowDependencySet(expression) == emptyAlternative,
+           "rebase preserves explicitly empty instance evidence");
+    lang::SemanticModelTestAccess::clear(overlay);
+    expect(overlay.findBorrowDependencySet(expression) == nullptr,
+           "clearing semantic evidence removes complete-set presence");
+  }
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze(root / "tests" / "protocol-concepts.gti",
@@ -94,6 +155,236 @@ int main() {
                            " times; expected once");
   };
 
+  const std::string conditionalContract = R"gti(
+concept selecting<T> {
+  typename element;
+  [[borrowed_from(source)]] element choose(element source, element other);
+};
+struct Marker<T> { int tag; };
+for <T> concept selecting<Marker<T>> {
+  using element = T;
+  T choose(T source, T other) { return source; }
+};
+)gti";
+  accepted(conditionalContract + R"gti(
+int main() { return selecting<Marker<int>>::choose(7, 3) - 7; }
+)gti",
+           "dependent owned protocol results need no borrowed_from annotation");
+  rejected(conditionalContract + R"gti(
+int main() {
+  int first = 7;
+  int second = 3;
+  return selecting<Marker<int&>>::choose(first, second) - 7;
+}
+)gti",
+           "GTI-S2123", "concrete reference result");
+  rejected(conditionalContract + R"gti(
+int evaluate<T>(T marker) requires selecting<T> { return 0; }
+int main() {
+  Marker<int&> marker{0};
+  return evaluate(marker);
+}
+)gti",
+           "GTI-S2029", "borrowed_from parameter contract");
+  std::string substitutedContract = conditionalContract;
+  substitutedContract.replace(substitutedContract.find("  T choose(T source"),
+                              std::string("  T choose").size(),
+                              "  [[borrowed_from(other)]] T choose");
+  rejected(substitutedContract + R"gti(
+int main() {
+  int first = 7;
+  int second = 3;
+  return selecting<Marker<int&>>::choose(first, second) - 7;
+}
+)gti",
+           "GTI-S2123", "concrete reference result");
+
+  const std::string borrowed = R"gti(
+concept observed<T> {
+  typename element;
+  [[borrowed_from(source)]] element get(T source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed<Reading> {
+  using element = int&;
+  [[borrowed_from(value)]] int& get(Reading value) {
+    return value.external;
+  }
+};
+)gti";
+  accepted(borrowed + R"gti(
+int main() {
+  int owner = 7;
+  Reading view{owner};
+  int& result = observed<Reading>::get(view);
+  return result - 7;
+}
+)gti",
+           "protocol result origins relay a by-value carrier's external owner");
+  const std::string borrowedRelay = borrowed + R"gti(
+[[borrowed_from(value)]]
+observed<T>::element relay<T>(T value) requires observed<T> {
+  return observed<T>::get(value);
+}
+int main() {
+  int owner = 7;
+  Reading view{owner};
+  int& result = relay(view);
+  return result - 7;
+}
+)gti";
+  accepted(borrowedRelay,
+           "generic protocol calls preserve the declared result origin");
+  rejected(borrowed + R"gti(
+[[borrowed_from(owner)]] int& escape(int& owner) {
+  int local = 3;
+  Reading view{local};
+  return observed<Reading>::get(view);
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "Returned reference");
+  const auto relayProof = analyze(borrowedRelay);
+  if (relayProof.canGenerateCode()) {
+    for (int corruption = 0; corruption != 5; ++corruption) {
+      auto malformed = relayProof.mir;
+      bool changed = false;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (function.returnType.kind != lang::SemanticType::Reference ||
+            function.returnBorrowOrigin != lang::BorrowOriginKind::Argument)
+          continue;
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed || instruction.kind != lang::MirInstructionKind::Call ||
+                !instruction.loan)
+              continue;
+            auto &loan = function.body.loans[*instruction.loan - 1];
+            if (loan.kind != lang::MirLoanKind::CallResult)
+              continue;
+            if (corruption == 0)
+              loan.parent = 0;
+            if (corruption == 1)
+              loan.source = 0;
+            if (corruption == 2)
+              loan.access = lang::AccessMode::Mutable;
+            if (corruption == 3)
+              loan.producedBy = 0;
+            if (corruption == 4)
+              instruction.borrowOrigin = lang::BorrowOriginKind::None;
+            changed = true;
+          }
+      }
+      expect(changed, "forwarding mutation must select the exact call chain");
+      expect(!changed || !lang::verifyMirProgram(malformed).valid(),
+             "MIR must reject substituted origin, permission or producer in "
+             "a returned-reference forwarding chain");
+    }
+  }
+  const std::string mutableAssociated = R"gti(
+concept writable<T> { typename element; };
+for concept writable<int> { using element = mut int&; };
+int main() { return 0; }
+)gti";
+  accepted(mutableAssociated,
+           "associated types preserve explicit mutable reference access");
+  accepted(R"gti(
+concept editable<T> {
+  typename element;
+  [[borrowed_from(value)]] element get(T value);
+};
+class Editing {
+public:
+  mut int& value;
+  Editing(mut int& owner) : value(owner) {}
+};
+for concept editable<Editing> {
+  using element = mut int&;
+  [[borrowed_from(value)]] mut int& get(mut Editing value) {
+    return value.value;
+  }
+};
+[[borrowed_from(value)]] editable<T>::element relay<T>(mut T value)
+    requires editable<T> {
+  return editable<T>::get(std::move(value));
+}
+int main() {
+  mut int owner = 4;
+  Editing view{owner};
+  mut int& value = relay(std::move(view));
+  value = 8;
+  return value - 8;
+}
+)gti",
+           "generic protocol return projections preserve exclusive access");
+  const auto formattedMutable = lang::Formatter().format(mutableAssociated);
+  accepted(formattedMutable,
+           "formatting preserves mutable reference associated types");
+  expect(lang::Formatter().format(formattedMutable) == formattedMutable,
+         "mutable associated type formatting is idempotent");
+  rejected(R"gti(
+concept writable<T> { typename element; };
+for concept writable<int> { using element = mut int; };
+int main() { return 0; }
+)gti",
+           "GTI-S2030", "requires a checked reference");
+  rejected(R"gti(
+concept observed<T> {
+  [[borrowed_from(missing)]] int& get(T& source);
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "must name one of its parameters");
+  rejected(R"gti(
+concept observed<T> {
+  [[borrowed_from(source)]] int& get(T& source, T& other);
+};
+struct Reading { int value; };
+for concept observed<Reading> {
+  [[borrowed_from(other)]] int& get(Reading& source, Reading& other) {
+    return other.value;
+  }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "must preserve the concept's borrowed_from");
+  rejected(R"gti(
+class Reading {
+public:
+  int& external;
+  int owned;
+  Reading(int& owner) : external(owner), owned(3) {}
+};
+[[borrowed_from(value)]] int& invalid(Reading value) {
+  return value.owned;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2085", "by-value carrier shell");
+  rejected(R"gti(
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+[[borrowed_from(first)]] int& invalid(Reading first, Reading second) {
+  return second.external;
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2085", "exact external owner dependency");
+  rejected(borrowed + R"gti(
+int& invalid() {
+  int local = 7;
+  return observed<Reading>::get(Reading(local));
+}
+int main() { return 0; }
+)gti",
+           "GTI-S2017", "return");
+
   const std::string measurable = R"gti(
 concept measurable<T> {
   typename unit_type;
@@ -131,6 +422,99 @@ for <T> concept measurable<Crate<T>> {
   }
 };
 )gti";
+
+  // A block owns its header, including when there are no generated operations.
+  for (int operations = 0; operations <= 2; ++operations) {
+    const auto members = [&](const std::string &type) {
+      std::string text;
+      if (operations > 0)
+        text += "int measure(" + type + "& item) { return 1; }\n";
+      if (operations > 1)
+        text += "bool is_empty(" + type + "& item) { return false; }\n";
+      return text;
+    };
+    const auto oneHeaderError = [&](const std::string &header,
+                                    const std::string &type,
+                                    const std::string &token,
+                                    const std::string &code) {
+      const std::string source = measurable + header + " {\n" +
+                                 "using unit_type = int;\n" + members(type) +
+                                 "};\nint main() { return 0; }\n";
+      const auto result = analyze(source);
+      const std::size_t start = source.find(token, measurable.size());
+      const auto count =
+          std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                        [&](const auto &diagnostic) {
+                          return diagnostic.primary.start == start &&
+                                 diagnostic.primary.end == start + token.size();
+                        });
+      expect(!result.canGenerateCode() && count == 1,
+             "one header diagnostic regardless of operation count: " + header);
+      expect(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [&](const auto &diagnostic) {
+                           return diagnostic.primary.start == start &&
+                                  diagnostic.code == code;
+                         }),
+             "the header retains its owning diagnostic: " + header);
+      if (count != 1)
+        dump(result);
+    };
+    oneHeaderError("for concept missing<Rope>", "Rope", "missing", "GTI-S2123");
+    oneHeaderError("for concept measurable<Rope, Rope>", "Rope", "measurable",
+                   "GTI-S2123");
+    oneHeaderError("for <unknown_constraint T> concept measurable<Crate<T>>",
+                   "Crate<T>", "unknown_constraint", "GTI-S2029");
+    oneHeaderError("for concept gti_internal::missing<Rope>", "Rope",
+                   "gti_internal", "GTI-S2058");
+
+    const std::string source = "#include \"middle.gti\"\nstruct Rope {};\n"
+                               "for concept measurable<Rope> {\n" +
+                               members("Rope") +
+                               "};\nint main() { return 0; }\n";
+    const auto entry = root / "tests" / "protocol-concepts.gti";
+    const auto conceptPath = root / "tests" / "measure.gti";
+    const auto invisible = lang::Frontend().analyze(
+        entry, source, {root / "stdlib" / "prelude.gti"},
+        {{(root / "tests" / "middle.gti").string(),
+          "#include \"measure.gti\"\n"},
+         {conceptPath.string(), "concept measurable<T> { int measure(T& item); "
+                                "bool is_empty(T& item); };\n"}},
+        {root / "stdlib"});
+    const auto diagnostic =
+        std::find_if(invisible.diagnostics.begin(), invisible.diagnostics.end(),
+                     [](const auto &item) { return item.code == "GTI-S2024"; });
+    expect(!invisible.canGenerateCode() &&
+               std::count_if(invisible.diagnostics.begin(),
+                             invisible.diagnostics.end(),
+                             [](const auto &item) {
+                               return item.code == "GTI-S2024" ||
+                                      item.code == "GTI-S2123" ||
+                                      item.code == "GTI-S2049";
+                             }) == 1,
+           "an invisible concept reports once from its block");
+    expect(diagnostic != invisible.diagnostics.end() &&
+               diagnostic->primary.start == source.find("measurable") &&
+               diagnostic->missingIncludeName == "measurable" &&
+               std::any_of(diagnostic->related.begin(),
+                           diagnostic->related.end(),
+                           [&](const auto &related) {
+                             return related.span.source == conceptPath.string();
+                           }) &&
+               std::any_of(diagnostic->hints.begin(), diagnostic->hints.end(),
+                           [](const auto &hint) {
+                             return hint.find("#include \"measure.gti\"") !=
+                                    std::string::npos;
+                           }),
+           "an invisible concept retains declaration and include help even "
+           "without operations");
+  }
+  rejected(measurable + R"gti(
+for <T> concept measurable<Crate<T>> {
+  using unit_type = int;
+  int T(Crate<T>& item) { return 1; }
+};
+)gti",
+           "GTI-S2000", "Generic parameter cannot have the same name");
 
   // Concrete use: projections reduce to the block's types and operations
   // call the block's functions.
@@ -417,6 +801,52 @@ int apply<A, B>(A& value) requires scaled<A, B> {
 int main() { return 0; }
 )gti",
            "GTI-S2005", "expects 'scaled<A, B>::factor_type'");
+  // An enum template is a pattern like a class template: its instances
+  // select the block, and a concrete instance overlaps it.
+  const std::string slot = R"gti(
+concept sized<T> {
+  typename count_type;
+  count_type count(T& value);
+};
+enum class Slot<T> {
+  empty,
+  full(T value),
+};
+for <T> concept sized<Slot<T>> {
+  using count_type = int;
+  int count(Slot<T>& value) {
+    switch (value) {
+    case Slot<T>::full:
+      return 1;
+    case Slot<T>::empty:
+      return 0;
+    }
+  }
+};
+)gti";
+  accepted(slot + R"gti(
+sized<Slot<int>>::count_type total(Slot<int>& value) {
+  return sized<Slot<int>>::count(value);
+}
+sized<T>::count_type counted<T>(T& value) requires sized<T> {
+  return sized<T>::count(value);
+}
+int main() {
+  Slot<int> full = Slot<int>::full(3);
+  Slot<bool> empty = Slot<bool>::empty;
+  return total(full) + counted(empty) - 1;
+}
+)gti",
+           "an enum-template block should serve its instances");
+  rejected(slot + R"gti(
+for concept sized<Slot<int>> {
+  using count_type = int;
+  int count(Slot<int>& value) { return 2; }
+};
+int main() { return 0; }
+)gti",
+           "GTI-S2123", "overlaps another");
+
   // A constraint a block's pattern fails names the block's own parameter.
   // The block validates its pattern; each operation restates the block's
   // application as its requirement without validating it again, so the

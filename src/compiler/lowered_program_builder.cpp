@@ -649,6 +649,8 @@ private:
             .type = instance.type,
             .sourceUnit = instance.sourceUnit,
             .qualifiedName = instance.qualifiedName,
+            .genericParameters =
+                lowerGenericParameters(primary->genericParameters),
             .underlyingType = instance.underlyingType,
             .traits = instance.traits,
             .requiresActiveCleanup = instance.requiresActiveCleanup,
@@ -748,7 +750,8 @@ private:
             .cAbiRecord = info->cAbiRecord,
             .cOpaqueHandle = info->cOpaqueHandle,
             .compilerPrivate = info->compilerPrivate,
-            .reflectPrivate = info->reflectPrivate};
+            .reflectPrivate = info->reflectPrivate,
+            .computedTypeProjection = info->computedTypeProjection};
         payload.bases.reserve(info->bases.size());
         for (std::size_t index = 0; index < info->bases.size(); ++index) {
           payload.bases.push_back({.type = info->bases[index].type,
@@ -894,6 +897,10 @@ private:
         row.semanticIdentity = info->symbol;
         row.payload = LoweredStorageDeclaration{
             .symbol = info->symbol,
+            .externalSymbol = semantics_.findForeignStorage(info->symbol)
+                                  ? semantics_.findForeignStorage(info->symbol)
+                                        ->externalSymbol
+                                  : std::string{},
             .ownerClass = ownerClass,
             .type = info->type,
             .access = info->access,
@@ -969,6 +976,9 @@ private:
       hir.executionProfile() != mir.executionProfile() ||
       semantics.programKind() != hir.programKind() ||
       hir.programKind() != mir.programKind() ||
+      semantics.foreignStorageDeclarations() !=
+          hir.foreignStorageDeclarations() ||
+      hir.foreignStorageDeclarations() != mir.foreignStorageDeclarations() ||
       hir.embeddingPlan().has_value() != mir.embeddingPlan().has_value() ||
       semantics.placeSnapshot() != hir.module().placeDomain.snapshot ||
       hir.module().placeDomain != mir.module().placeDomain ||

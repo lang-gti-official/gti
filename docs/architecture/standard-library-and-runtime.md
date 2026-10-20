@@ -574,8 +574,19 @@ GTI. Integer accumulation uses the exact-width checked arithmetic capabilities;
 negative accumulation admits the signed minimum without overflowing its
 positive magnitude. Binary32 and binary64 conversion use the bounded
 `gti_rt_parse_f32_v1`/`gti_rt_parse_f64_v1` C ABI over a non-retained counted
-input, offset, format selector, and scalar output slots. Host `from_chars`
-provides locale-independent rounding without an intermediate floating width.
+input, offset, format selector, and scalar output slots. A configure-time
+compile/link probe selects host `from_chars` when both floating overloads are
+available. Older standard libraries use pinned Abseil 20250814.1 parsing code,
+built as four private objects inside the runtime archive with a GTI-specific
+inline namespace. Both paths provide allocation-free, locale-independent
+rounding directly to the requested width in general, fixed, scientific, and
+hexadecimal formats; the fallback adapter excludes Abseil's additional decimal
+`0x` grammar. Errors preserve the caller's scalar value and report the consumed
+span. The private dependency adds no installed headers or downstream link
+requirements; its license accompanies affected packages. Configure with
+`GTI_FORCE_PORTABLE_CHARCONV=ON` to exercise this path on a modern toolchain.
+Parser regression checks cover exact boundaries, all rounding modes, consumed
+spans, counted input, allocation, and (when available) a host-parser differential.
 The `<std/string>` convenience functions own whitespace/sign/radix-prefix
 policy in GTI and return recoverable errors instead of exposing native
 exceptions or errno. No public parsing function receives compiler recognition.

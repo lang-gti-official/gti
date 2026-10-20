@@ -43,8 +43,9 @@ specializations are not introduced. The original non-generic first slice was
 implementation staging, not a permanent restriction.
 
 Payload fields accept passive values and concrete class instances, including
-generic and move-only classes whose active
-cleanup is represented per alternative. Construction transfers owning class
+generic and move-only classes, and structurally composed enums, arrays and
+result carriers whose success/error cleanup is represented per alternative.
+Construction transfers owning
 operands into the selected alternative, whole-enum move transfers that active
 alternative (including replacement assignment), and tag-only exhaustive
 matching observes move-only values without extracting them. The bounded owning
@@ -81,8 +82,9 @@ optional storage. Generic argument identity is not ownership containment;
 concrete fields and declaration-bound storage capabilities supply the owning
 facts that HIR and MIR preserve and verify.
 
-Polymorphic callable transport, direct enum lambda capture, direct fixed-array
-or owning non-class payloads, stored borrowed state, and a stable source layout
+Polymorphic callable transport, direct enum lambda capture, direct lexical
+closure payloads, arrays of owning enums and direct enum result alternatives,
+stored borrowed state, and a stable source layout
 remain outside this decision. Consuming patterns were added by the
 [2026-10-15 revision](#consuming-matches-revision-2026-10-15). The C++ backend may use `std::variant` plus a
 private disengaged representation state because all language decisions are
@@ -90,8 +92,10 @@ complete before emission; that state is not a source alternative and a future
 backend may choose a different representation.
 
 Native C interoperation remains separately opt-in through `[[c_abi]]` and the
-generated native header. A source union is not accepted in a C ABI signature in
-this decision.
+generated native header. The original non-ABI union boundary is broadened by the
+[2026-10-15 passive C ABI union revision](013-bounded-native-c-records.md#revision-passive-c-abi-unions-2026-10-15):
+explicit `[[c_abi]]` admits the checked native-record field set and C passage,
+while unannotated unions retain their original non-ABI identity.
 
 ## Consequences
 
@@ -143,3 +147,21 @@ until the end of the switch would hold a partially moved shell across user
 code. Semantics records the consuming fact, HIR gives the switch one hidden
 subject binding, and verified MIR proves the exactly-once move-out and
 transfer.
+
+## Structural Payload Composition Revision (2026-10-15)
+
+The class-only ownership boundary was staging, not a semantic requirement.
+Finite nested enums, fixed arrays of admitted fields, and existing result
+values reuse the same field order, transfer obligations, and cleanup recipes.
+The rule is structural and applies to unrelated user-defined enums and owners;
+no standard-library name selects it. A consuming match initializes each binding
+directly from its exact field and retires the drained alternative once.
+
+Semantics rejects recursive inline layout before querying recursive traits.
+MIR independently validates finite inline layout before walking drop recipes.
+The backend then executes those recipes, preserving the first defined failure
+while draining siblings; a second failure uses the existing emergency-cleanup
+contract. Nested cleanup scopes must preserve the outer failure record and
+unwinding state, rather than shadowing their names during initialization.
+Fixed arrays *inside* alternatives do not by themselves authorize the distinct
+array-of-owning-enums transport or direct lexical closure-field profiles.

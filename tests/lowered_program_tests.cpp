@@ -238,7 +238,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v19") == 0 &&
+  expect(firstText.find("lowered-program-v22") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -765,6 +765,26 @@ void testMutationRejection() {
   }
 
   lang::LoweredProgram duplicateIdentity = original;
+  lang::LoweredProgram missingSourceIdentity = original;
+  for (auto &declaration :
+       lang::LoweredProgramTestAccess::declarations(missingSourceIdentity)) {
+    if (auto *payload =
+            std::get_if<lang::LoweredClassDeclaration>(&declaration.payload)) {
+      payload->sourceUnit = 999999;
+      break;
+    }
+  }
+  const auto sourceIssues = lang::verifyLoweredProgram(missingSourceIdentity);
+  expect(std::any_of(
+             sourceIssues.begin(), sourceIssues.end(),
+             [](const auto &issue) {
+               return issue.kind == lang::LoweredProgramIssueKind::
+                                        InvalidDeclarationInventory &&
+                      issue.detail ==
+                          "lowered declaration has no logical source identity";
+             }),
+         "a declaration without a logical source identity must fail before "
+         "emission");
   auto &duplicateDeclarations =
       lang::LoweredProgramTestAccess::declarations(duplicateIdentity);
   lang::LoweredFunctionDeclaration *firstFunction = nullptr;

@@ -9,23 +9,8 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.440.5 — String view storage and stored view returns
+## 0.448.1 — Returning stored string view fields
 
-- Reject constructor initializers that store a dynamic `std::string_view` or
-  `c_string` by value without retaining its owner, including generic holders
-  and forwarded constructor arguments. Literal-backed constructor inputs remain
-  valid. The diagnostic identifies the initializer and suggests owned text or
-  an explicit checked reference instead of allowing dangling storage.
-- Preserve both the view object's lifetime and its external character owner's
-  lifetime when a field stores a checked text-view reference. JSON decoding uses
-  these checked references without copying the input or its member index.
-- Verify missing, forged, mutable and prematurely retired owner dependencies;
-  preserve exactly-once resource cleanup when a constructor also owns fields.
-- A view read through a checked text reference, such as `this.text`, keeps its
-  external owner. A method can return it, and a local copy can be taken
-  directly from a reference parameter. It cannot be passed to a constructor
-  that stores it by value. Copying it into a local binding through a reference
-  field or a relaying call reports `GTI-S2045` for now.
 - Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
   missing its escaping loan") when a method or function returns a
   `std::string_view` or `c_string` field, as in
@@ -38,6 +23,204 @@ for what minor and patch releases mean.
   destroy that object while the view is still in use.
 - A stored view may also be one branch of a function whose other branch
   returns a view tied to its receiver, in the same way a string literal can.
+- Fix two internal compiler errors with checked `std::string_view&` adapters:
+  - building one as a temporary over a local view, as in
+    `count(Cursor(text))` or `make(text).size()`;
+  - copying a view from a `std::string_view&` parameter into a local, as in
+    `std::string_view copy = input;`.
+
+## 0.448.0 — One-step declared return initialization
+
+- Explicitly declared value returns use the same single implicit constructor or
+  conversion operator as typed declarations. Calls and assignments keep exact
+  types; access, ownership, borrow checks and cleanup remain enforced, and
+  implicit conversions never chain.
+- `std::optional<T>` accepts one exact payload through `implicit optional(T)`.
+  Return `std::nullopt` or `std::string("ready")` directly from an optional-string
+  function; named move-only payloads still require `std::move`.
+
+## 0.447.0 — Callable result-type reflection
+
+- Add `std::meta::callable_return_type<F>` for exact logical results of
+  function signatures, selected function items, lambdas and native pointers.
+  Source-defined wrappers can express mapped result types without private
+  combinator implementations. Querying a type grants no invocation or borrow
+  permission and does not choose overloaded class call operators.
+- Support a staged generic callback's class result initializing its checked
+  local storage. Native pointer result metadata preserves GTI representation
+  rather than mistaking the C ABI result for the logical result.
+- This prepares source-defined `expected`; production `expected` remains
+  unchanged until the separate migration release.
+
+## 0.446.1 — Quiet internal include checks
+
+- Keep missing-include probes and proposed-fix checks out of the CLI progress
+  stream. Failed builds and checks retain their include suggestions without
+  repeated internal loading, parsing and checking output.
+
+## 0.446.0 — Optional standard-library mutation results
+
+- Apply `[[discardable]]` to emplacement, associative insertion and erasure,
+  linked-list removal counts, `for_each`, and scalar atomic fetch/exchange
+  operations. Their results remain available when needed, while ordinary
+  mutation no longer requires a redundant call-site `[[discard]]`.
+- Remove redundant discards inside the standard library. Queries, recoverable
+  errors, conditional atomic updates and ownership-transfer results remain
+  explicit. Ignoring a result preserves all normal lifetime and failure checks.
+
+## 0.444.0 — Checked reference payloads and complete borrowed results
+
+- Payload enums can store shared and exclusive references, including nested
+  enum values. Complete dependency sets preserve every possible external owner,
+  access mode, field path and active-alternative condition through ordinary
+  construction, calls, movement and return.
+- Consuming a direct reference alternative transfers the selected reference,
+  not its referent. Exclusive-reference enums are move-only. Reference-free
+  alternatives carry a known empty dependency set.
+- Source-defined borrowed-success/owned-error results support direct protocol
+  calls and `?`, with success-only result initialization and normal failure
+  cleanup. Example 165 demonstrates both class and enum result forms.
+- Invalid owner mutation and dangling escape remain source errors; independent
+  MIR verification rejects missing or substituted ownership evidence.
+- Consuming an outer alternative into a new reference-bearing value pattern
+  remains a separate structural goal; direct reference selection is supported.
+
+## 0.443.0 — Composed payload enums and borrowed protocol results
+
+- Owning payload enums can contain nested enums and supported fixed arrays,
+  with finite-layout checks and exact move/destruction behavior, including
+  partial construction and cleanup failure.
+- Native payload enums use GTI-owned tagged storage. Passive alternatives keep
+  trivial transport; tag-only observation does not load their payloads.
+- A source-defined fallible wrapper can use `borrowed_from` in its protocol
+  contract to return a shared or mutable reference through `?`, preserving the
+  exact external owner when the wrapper is consumed.
+- Checked temporary argument staging handles grouped and conditional
+  construction without losing the original borrow or lifetime obligations.
+- General reference-bearing enum payloads remain unsupported: conditional
+  loans and complete interprocedural dependency transport are still in progress.
+- Examples 164 and 165 demonstrate composition and borrowed results.
+
+## 0.442.2 — Portable floating-point parsing
+
+- Restore runtime builds on Apple SDKs and other standard libraries that lack
+  floating-point `from_chars`. A private, pinned parser supports binary32 and
+  binary64 input without requiring an additional library from installed users.
+  Counted input, decimal and hexadecimal formats, exact consumed positions,
+  allocation-free conversion, and unchanged output on error retain the existing
+  public parsing contract.
+- Avoid a native optimization barrier when retiring trivial lifetime slots,
+  preserving conditional-result loop performance without relaxing slot guards
+  or changing nontrivial cleanup.
+
+- Avoid futile missing-include searches while source has parser errors.
+  Recovery diagnostics remain available, and include suggestions resume after
+  the syntax is repaired.
+
+## 0.442.1 — Conditional and lambda class results
+
+- Fix the runtime abort `GTI runtime error: verified MIR lifetime slot was
+  constructed twice` when a loop evaluates a `?:` whose arm is another `?:`,
+  and the class result has no destructor, as in
+  `for (...) { Pod t = c ? fresh(i) : (i > 1 ? fresh(2) : Pod(i)); }` or
+  `total += (c ? fresh(i) : (i > 1 ? fresh(2) : Pod(i))).x;`. The nested
+  arm worked the first time and stopped the program the next time it ran.
+  The nested conditional may sit in either arm or both, nest further, and be
+  bound, read through a field, passed on, assigned or returned.
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a method is called on such a nested
+  conditional, as in `(c ? fresh(1) : (d ? fresh(2) : Pod(3))).read()`,
+  including in loops and with `mut` and consuming (`&&`) methods.
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when a lambda call returns a class without a
+  default constructor and the result is used other than to initialize a
+  variable: reading a field, as in `make(1).id`, passing it by value to a
+  function or constructor, as in `take(make(2))` or `Holder h{make(3)}`,
+  assigning it to an existing variable, discarding it, or using it in a
+  constructor's member initializer. This covers capturing lambdas, lambdas
+  called more than once and classes with a destructor, which is still run
+  exactly once, including when a later argument of the same call fails.
+- Fix a failed native build ("backend failed while compiling and linking the
+  executable") when such a result, of a class with a destructor, is read
+  inside an operand of `&&` or `||`, as in `skip || make(1).id == 1`.
+- Fix the same internal compiler error for a lambda that is never called
+  when its body passes a temporary that cannot be copied, or whose class has
+  a destructor, by value to a constructor, as in
+  `[](int raw) -> Ticket { return Ticket(Token(raw)); }`.
+
+- Fix the internal compiler error (`GTI-B0001`, "backend failed while
+  generating a representation") when both arms of `?:` move a local whose
+  class has no destructor, as in
+  `Pod t = c ? std::move(a) : std::move(b);`. Binding, returning, reading a
+  field of, calling a method on, assigning and passing on the result all
+  work now, in functions that can fail too, as do by-value parameters and an
+  arm that moves a local beside one that constructs, copies or calls.
+
+- Fix the internal compiler error (`GTI-B0001`, "failed to construct valid
+  MIR") when a field is read straight off a local or by-value parameter moved
+  with `std::move`, as in `return std::move(a).x;`, `(std::move(a)).x` or
+  `int v = std::move(a).x;`, including for a field of a generic class. The
+  move leaves `a` moved-from and the field is read from the moved value, which
+  is destroyed at the end of the full expression; a class with a destructor
+  runs it exactly once, also when a later part of the expression fails, inside
+  a `?:` arm or `&&`/`||` operand, or in a member initializer.
+
+## 0.442.0 — Native interoperability and compiler correctness
+
+- Declare externally owned C scalar, pointer, callback and passive record objects
+  in `extern "C"` blocks, with `mut` for mutable objects and `link_name` for a
+  different native symbol. Reads and writes require `unsafe`; inert raw addresses
+  preserve their native identity without adding GTI initialization or cleanup.
+- Import these objects through bindgen with object constness, callback aliases,
+  nested record/union layouts and renamed symbols preserved. Generated native
+  headers and editor queries cover the same declarations. Unsupported TLS,
+  volatile, address-space and array-object forms receive explicit import results.
+- Admit passive `[[c_abi]] union` layouts, nested native records and named C union
+  imports, preserving explicit unsafe member access and compiler-owned layout
+  checks.
+
+- Generated C++ identifiers remain the same when a project or its standard
+  library moves to another directory. Distinct source units retain distinct
+  nominal identities, including external files with the same basename.
+- Conformance block header errors are reported once, independently of the
+  number of operations. An indirectly included concept retains its declaration
+  location and direct-include suggestion even when the block has no operations.
+- Reject constructor initializers that store a dynamic `std::string_view` or
+  `c_string` by value without retaining its owner, including generic holders
+  and forwarded constructor arguments. Literal-backed constructor inputs remain
+  valid. The diagnostic identifies the initializer and suggests owned text or
+  an explicit checked reference instead of allowing dangling storage.
+- Preserve both the view object's lifetime and its external character owner's
+  lifetime when a field stores a checked text-view reference. JSON decoding uses
+  these checked references without copying the input or its member index.
+- Verify missing, forged, mutable and prematurely retired owner dependencies;
+  preserve exactly-once resource cleanup when a constructor also owns fields.
+- Preserve named shared references through stored adapters and nested accessor
+  calls. Emit `c_string&` with pointer-object constness consistently through
+  reference fields, retained loans and return channels.
+- Support conditional temporary receivers whose constructors accept records
+  by value, including native unions. Preserve prepared-input transfer and
+  exactly-once cleanup on successful and failing construction.
+
+## 0.441.0 — `?` on payload enums
+
+- `?` works directly on a payload enum that has a `std::tryable` block, such
+  as a `result<T, E>`-style enum. The operand may be a temporary, a named
+  enum (copied) or `std::move(name)`. Owning payloads move out exactly once,
+  and the residual is returned as the enum itself:
+  `std::string name = ?owner(id);`.
+- A conformance block's pattern may name an enum template, as it names a
+  class template: `for <T, E> concept std::tryable<result<T, E>>`.
+- An ordinary call may borrow a fresh payload-enum value for a read-only
+  reference parameter, as it already borrowed a fresh class value:
+  `observe(make_state())`, `observe(state::engaged(1))`.
+- Fix two internal compiler errors (`GTI-B0001`) when a function that can
+  fail returns an owning payload enum:
+  - the result of a call that cannot fail, such as `return pass(std::move(x));`;
+  - a freshly constructed variant while other owning locals still have to be
+    destroyed, such as `return found::present(Tracked(n));` with a live local.
+- Example 163 demonstrates it.
 
 ## 0.440.4 — Member calls on conditional values without cleanup
 
@@ -60,7 +243,6 @@ for what minor and patch releases mean.
   same way, whether the result is bound, returned, assigned, passed on, read
   through a field or used to initialize a field. A failing input ends its
   arm before the call, with the usual cleanup.
-
 
 ## 0.440.2 — Borrowed arguments before a nested call taking a class by value
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
+
+from native_fixture_build import build_fixture
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -33,25 +36,29 @@ def expect_rejected(
 
 
 def validate_representation(generated: str, mode: str) -> bool:
-    begin = generated.find("template <typename T>\nclass optional_storage {")
-    # Bound the optional class itself, not an unrelated retired prefix helper.
-    end = generated.find("\n};", begin)
-    if begin < 0 or end < 0:
-        sys.stderr.write(f"{mode}: missing optional storage representation\n")
+    declaration = re.search(r"struct optional_state__gti_enum_\w+\s*\{", generated)
+    if declaration is None:
+        sys.stderr.write(f"{mode}: missing source optional payload enum\n")
         return False
+    # Inspect the concrete enum, not support templates emitted for other types.
+    begin = declaration.end() - 1
+    depth = 1
+    end = begin + 1
+    while end < len(generated) and depth:
+        depth += (generated[end] == "{") - (generated[end] == "}")
+        end += 1
     optional = generated[begin:end]
     required = (
-        "alignas(T) std::byte storage_[sizeof(T)]",
-        "bool engaged_ = false",
-        "construct_representation_at(slot(),",
-        "std::destroy_at",
-        "optional_storage(optional_storage &&other)",
+        "struct __gti_variant_0",
+        "struct __gti_variant_1",
+        "::gti_internal::backend::payload_variant<std::monostate, "
+        "__gti_variant_0, __gti_variant_1> __gti_value;",
     )
-    forbidden = ("operator new", "unique_ptr", "std::optional<")
-    if any(item not in optional for item in required) or any(
+    forbidden = ("operator new", "unique_ptr", "std::optional<", "optional_storage")
+    if depth or any(item not in optional for item in required) or any(
         item in optional for item in forbidden
     ):
-        sys.stderr.write(f"{mode}: optional storage is not the inline checked slot\n")
+        sys.stderr.write(f"{mode}: optional does not use inline generic enum storage\n")
         return False
     return True
 
@@ -65,7 +72,7 @@ def main() -> int:
     optional_source = fixtures.parents[1] / "stdlib" / "std" / "optional.gti"
     read_line = next(
         index + 1 for index, line in enumerate(optional_source.read_text().splitlines())
-        if "return gti_internal::optional_storage_read(this.storage);" in line
+        if "gti_internal::fail_empty_owner();" in line
     )
     with tempfile.TemporaryDirectory(prefix="gti-optional-") as temporary:
         root = pathlib.Path(temporary)
@@ -81,13 +88,6 @@ def main() -> int:
             fixtures / "optional_copy_assignment_rejected.gti",
             "error[GTI-S2003]: Cannot copy assign move-only type 'std::optional<int32_t>'",
             root / "assignment-rejected",
-        ):
-            return 1
-        if not expect_rejected(
-            compiler,
-            fixtures / "optional_move_assignment_rejected.gti",
-            "error[GTI-S2003]: Move assignment is unavailable for type 'std::optional<int32_t>'",
-            root / "move-assignment-rejected",
         ):
             return 1
         if not expect_rejected(
@@ -108,7 +108,7 @@ def main() -> int:
         for fixture_name in ("optional_borrowed_payload_rejected.gti",
                              "optional_borrowed_escape_rejected.gti"):
             if not expect_rejected(compiler, fixtures / fixture_name,
-                                   "GTI-S2019", root / fixture_name):
+                                   "GTI-S2045", root / fixture_name):
                 return 1
 
         if not expect_rejected(
@@ -123,7 +123,8 @@ def main() -> int:
                 for fixture_name in ("optional_value.gti", "optional_lifecycle.gti",
                                      "optional_clone.gti", "optional_nested.gti",
                                      "optional_expected_composition.gti",
-                                     "optional_move_view_local.gti"):
+                                     "optional_move_view_local.gti",
+                                     "optional_move_assignment.gti"):
                     executable = root / f"{fixture_name}-{standard}-{optimization}"
                     built = run(
                         [
@@ -141,6 +142,43 @@ def main() -> int:
                     executed = run([str(executable)])
                     if executed.returncode != 0 or executed.stdout or executed.stderr:
                         return fail(f"run {fixture_name} {mode}", executed)
+
+                allocated = root / f"allocations-{standard}-{optimization}"
+                built = build_fixture(
+                    [str(compiler), str(fixtures / "optional_allocations.gti"),
+                     "--std", standard, f"-{optimization}"], allocated,
+                    native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
+                    standard=standard, optimization=optimization,
+                    text=True, capture_output=True, check=False, timeout=120)
+                if built.returncode != 0:
+                    return fail(f"build allocation probe {mode}", built)
+                counted = run([str(allocated)])
+                if counted.returncode or counted.stdout or counted.stderr:
+                    return fail(f"run allocation probe {mode}", counted)
+
+                for name, success, failure in (
+                    ("optional_constructor_failure", "3\n12\n3\n9\n", "3\n3\n9\n"),
+                    ("optional_reset_failure", "3\ndone\n9\n", "3\n9\n"),
+                ):
+                    source = fixtures / f"{name}.gti"
+                    line = next(index + 1 for index, text in
+                                enumerate(source.read_text().splitlines())
+                                if "12 / divisor" in text)
+                    binary = root / f"{name}-{standard}-{optimization}"
+                    built = run([str(compiler), str(source), "--std", standard,
+                                 f"-{optimization}", "-o", str(binary)])
+                    if built.returncode:
+                        return fail(f"build {name} {mode}", built)
+                    for arguments, code, stdout, stderr in (
+                        ([], 0, success, ""),
+                        (["fail"], 70, failure,
+                         f"{source.name}:{line}: runtime error[GTI-R0002]: "
+                         "division_by_zero in integer_division\n"),
+                    ):
+                        executed = run([str(binary), *arguments])
+                        if (executed.returncode, executed.stdout, executed.stderr) != (
+                                code, stdout, stderr):
+                            return fail(f"run {name} {mode} {arguments}", executed)
 
                 generated = root / f"optional-{standard}-{optimization}.cpp"
                 emission = run(
@@ -187,6 +225,7 @@ def main() -> int:
                     or executed.stderr != expected_stderr
                 ):
                     return fail(f"run wrong-state {mode}", executed)
+                print(f"source optional: {mode} passed", flush=True)
 
     return 0
 

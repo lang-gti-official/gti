@@ -11,11 +11,11 @@ import subprocess
 import sys
 
 
-def build_fixture(command, output, *, native_sources=(), native_arguments=(),
+def build_fixture(command, output, *, native_sources=(), native_arguments=(), native_suffix="",
                   standard="c++23", optimization="O0", cxx=None, **options):
     command = list(map(str, command))
     output = Path(output)
-    if not native_sources:
+    if not native_sources and not native_suffix:
         direct = [*command, "-o", str(output)]
         if native_arguments:
             direct += ["--", *map(str, native_arguments)]
@@ -26,6 +26,8 @@ def build_fixture(command, output, *, native_sources=(), native_arguments=(),
         [*command, "--emit-cpp", "-o", str(generated)], **options)
     if emitted.returncode != 0:
         return emitted
+    if native_suffix:
+        generated.write_text(generated.read_text() + "\n" + native_suffix)
 
     environment = options.get("env")
     if environment is None:
