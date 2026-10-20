@@ -1340,12 +1340,18 @@ auto SemanticVisitor::Impl::recordOwnerlessTextCall(
       continue;
     const auto &argument = call.arguments()[index];
     const auto *info = semanticModel.findExpression(*argument);
+    const auto forwarded = ownerlessTextForwardingParameter(argument);
+    const auto *caller = currentFunctionInfo();
     requestSession.ownerlessTextCallUses.push_back(
         {.caller = currentFunctionDeclaration,
          .callee = target.id,
          .parameter = index,
          .type = formal,
-         .forwardedParameter = ownerlessTextForwardingParameter(argument),
+         .forwardedParameter = forwarded,
+         .callerFormal = forwarded && caller &&
+                                 *forwarded < caller->parameterTypes.size()
+                             ? caller->parameterTypes[*forwarded]
+                             : SemanticType::Unknown,
          .argument = &argument,
          .ownerless = info &&
                       (info->type.kind == SemanticType::StringView ||
@@ -1380,6 +1386,9 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
                     *use.forwardedParameter) !=
               caller->ownerlessTextParameters.end())
         continue;
+      if (*use.forwardedParameter >= caller->parameterTypes.size() ||
+          caller->parameterTypes[*use.forwardedParameter] != use.callerFormal)
+        continue;
       FunctionInfo updated = *caller;
       updated.ownerlessTextParameters.push_back(*use.forwardedParameter);
       std::sort(updated.ownerlessTextParameters.begin(),
@@ -1399,6 +1408,10 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
       continue;
     const auto *caller = use.caller ? semanticModel.findFunction(*use.caller)
                                     : nullptr;
+    if (caller && use.forwardedParameter &&
+        (*use.forwardedParameter >= caller->parameterTypes.size() ||
+         caller->parameterTypes[*use.forwardedParameter] != use.callerFormal))
+      continue;
     if (caller && use.forwardedParameter &&
         std::find(caller->ownerlessTextParameters.begin(),
                   caller->ownerlessTextParameters.end(),
@@ -2323,6 +2336,12 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
 
     bool externalReferent = false;
     for (const auto &projection : dependency.place.projections) {
+      // A class's checked pointee accessor (an owning handle's operator*)
+      // reaches storage that class owns: the path ends at the handle, whose
+      // storage then contains the referent.
+      if (projection.kind == PlaceProjectionKind::Dereference &&
+          sourceType.kind == SemanticType::Class && !externalReferent)
+        break;
       if (projection.kind != PlaceProjectionKind::Field ||
           projection.field == 0)
         return std::nullopt;

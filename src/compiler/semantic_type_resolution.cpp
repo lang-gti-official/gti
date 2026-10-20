@@ -5017,12 +5017,18 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
         return false;
       if (ancestor->entry)
         return true;
+      // A local carrier's stored-value loan names the external referent its
+      // stored reference designates, not the carrier's own storage. A
+      // reborrow through it relays that authority; the chain must still
+      // reach caller-owned entry authority above.
       for (const auto &scope : scopes)
         for (const auto &[_, candidate] : scope)
           if (candidate.bindingKind == SemanticBindingKind::LocalVariable &&
               std::find(ancestor->carriers.begin(), ancestor->carriers.end(),
                         toolingSymbolFor(candidate)) !=
-                  ancestor->carriers.end())
+                  ancestor->carriers.end() &&
+              !(ancestor->kind == SemanticLoanKind::StoredValue &&
+                ancestor->place.root != toolingSymbolFor(candidate)))
             return false;
       current = ancestor->parent;
     }
@@ -5900,7 +5906,20 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
   if (const ExprPtr *source = storedBorrowSource(expression)) {
     return isParameterDerivedBorrow(*source, parameter, visiting);
   }
-  return false;
+  // A complete scalar result already names its external referents, such as
+  // the reference a carrier relays from that parameter's storage.
+  const auto *binding = semanticModel.findBinding(parameter);
+  const auto complete = completeBorrowDependencySet(expression);
+  return binding != nullptr && binding->symbol != 0 && complete &&
+         complete->possibleAlternatives.empty() &&
+         !complete->dependencies.empty() &&
+         std::all_of(complete->dependencies.begin(),
+                     complete->dependencies.end(), [&](const auto &dependency) {
+                       return dependency.designatedFields.empty() &&
+                              dependency.conditions.empty() &&
+                              !dependency.place.receiver &&
+                              dependency.place.root == binding->symbol;
+                     });
 }
 
 auto SemanticVisitor::Impl::isReceiverDerivedBorrow(

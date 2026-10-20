@@ -339,8 +339,19 @@ private:
         // A text field's invariant must survive every safe writer, including
         // assignments rooted in accessor loans rather than a Field projection.
         // Raw writes keep their explicit unsafe validity obligations.
+        // A local text binding, or an element of a local text array, is not
+        // field storage: it may hold dynamic text, and no reader treats it as
+        // ownerless.
+        const bool localTextStorage =
+            destination && destination->root == MirPlaceRootKind::Binding &&
+            std::all_of(destination->projections.begin(),
+                        destination->projections.end(),
+                        [](const auto &projection) {
+                          return projection.kind == MirProjectionKind::Index;
+                        });
         const bool checkedTextAssignment =
             destination && textType(destination->type) && !uncheckedWrite &&
+            !localTextStorage &&
             instruction.kind == MirInstructionKind::Assign;
         if (destination &&
             (isOwnerlessTextFieldProjection(program, context.body, *destination) ||
@@ -373,11 +384,15 @@ MirVerificationResult TextContracts::verify() {
           !textType(initializer.targetType) ||
           initializer.arguments.size() != 1)
         continue;
+      // A `nullptr` initializer of a c_string field keeps its own literal
+      // type; the literal is ownerless text by construction.
       const auto found = std::find_if(
           constructor.body.values.begin(), constructor.body.values.end(),
           [&](const auto &value) {
             return value.sourceValue == initializer.arguments.front() &&
-                   value.info.type == initializer.targetType;
+                   (value.info.type == initializer.targetType ||
+                    (initializer.targetType.kind == SemanticType::CString &&
+                     value.info.type.kind == SemanticType::NullPtr));
           });
       const auto source = found == constructor.body.values.end()
                               ? TextSources{}
@@ -479,9 +494,17 @@ MirVerificationResult TextContracts::verify() {
 bool isOwnerlessTextFieldProjection(const MirProgram &program,
                                      const MirBody &body,
                                      const MirPlace &place) {
+  // A text field, or an element of a text array reached through a field,
+  // holds only text its checked writers proved ownerless. A local array does
+  // not: it never crosses a field projection.
   if (!textType(place.type) || place.foreignStorage ||
       place.projections.empty() ||
-      place.projections.back().kind != MirProjectionKind::Field)
+      (place.projections.back().kind != MirProjectionKind::Field &&
+       place.projections.back().kind != MirProjectionKind::Index) ||
+      std::none_of(place.projections.begin(), place.projections.end(),
+                   [](const auto &projection) {
+                     return projection.kind == MirProjectionKind::Field;
+                   }))
     return false;
   std::optional<SemanticType> current;
   for (const auto &root : body.places) {

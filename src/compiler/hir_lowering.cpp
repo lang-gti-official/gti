@@ -5519,18 +5519,29 @@ private:
         value.defaultArguments.push_back(*lowered);
       }
     }
-    std::optional<std::vector<HirCallArgument>> arguments =
-        value.operands.size() == value.parameterTypes.size()
-            ? orderedConstructorArguments(value, value.operands,
-                                          value.parameterTypes, body,
-                                          argument ? 1 : 0)
-            : std::nullopt;
-    if (!arguments) {
+    if (value.operands.size() != value.parameterTypes.size()) {
       lifecycleValid = false;
       return std::nullopt;
     }
-    value.callPlan = HirCallPlan{.receiver = std::nullopt,
-                                 .arguments = std::move(*arguments)};
+    // A built-in owning handle argument keeps its unstaged transport, as the
+    // same constructor selected by explicit syntax does.
+    if (std::optional<std::vector<HirCallArgument>> arguments =
+            orderedConstructorArguments(value, value.operands,
+                                        value.parameterTypes, body,
+                                        argument ? 1 : 0)) {
+      value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                   .arguments = std::move(*arguments)};
+    } else if (std::none_of(value.parameterTypes.begin(),
+                            value.parameterTypes.end(),
+                            [](const SemanticType &parameter) {
+                              return parameter.kind ==
+                                         SemanticType::UniqueOwner ||
+                                     parameter.kind ==
+                                         SemanticType::SharedPointer;
+                            })) {
+      lifecycleValid = false;
+      return std::nullopt;
+    }
     const HirValueId id = value.id;
     body.values.push_back(std::move(value));
     if (emptyReturn != nullptr)

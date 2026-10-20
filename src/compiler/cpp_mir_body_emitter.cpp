@@ -26041,6 +26041,19 @@ lifetimeSlotPlace(const MirProgram &program,
       return true;
     }
   }
+  // A function item borrowed inside a conditional region lives in the hidden
+  // slot its stateless producer writes directly.
+  if (place.root == MirPlaceRootKind::Temporary &&
+      place.type.kind == SemanticType::FunctionItem &&
+      place.projections.empty()) {
+    const MirTemporaryMaterialization materialization =
+        findMirTemporaryMaterialization(body, place, place.sourceValue);
+    if (materialization &&
+        materialization.producer->kind == MirInstructionKind::Compute &&
+        materialization.producer->operation == MirOperation::FunctionItem &&
+        materialization.producer->destination == place.id)
+      return true;
+  }
   if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
       sharedOwnerType(program, place.type)) {
     const auto *value = body.findValue(place.value);
@@ -39469,6 +39482,23 @@ private:
         } else {
           output << "// MIR active payload place publishes at its Borrow\n";
         }
+        return;
+      }
+    }
+    // A function item borrowed inside a conditional region constructs in the
+    // hidden slot its producer writes; re-evaluation replaces the stateless
+    // value, as a trivial materialized closure does.
+    if (instruction.operation == MirOperation::FunctionItem &&
+        instruction.destination) {
+      const MirPlace *slot = facts.body.findPlace(*instruction.destination);
+      if (slot != nullptr && slot->root == MirPlaceRootKind::Temporary &&
+          slot->type.kind == SemanticType::FunctionItem &&
+          lifetimeSlotPlace(program, representations, facts.body, *slot)) {
+        output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+               << ".destroy_if_engaged();\n";
+        writeIndent();
+        output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+               << ".construct();\n";
         return;
       }
     }
