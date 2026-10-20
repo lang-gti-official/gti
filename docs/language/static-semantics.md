@@ -891,28 +891,35 @@ Consuming members cannot return any reference or tracked borrowed state.
 For an ordinary GTI function or non-operator method call, a direct fresh
 construction, GTI function call, or GTI value-operator result may initialize an
 exact read-only `T&` parameter for that invocation
-only.
+only. An explicit `std::move(local)` of a whole local or parameter may do the
+same, as an explicitly moved receiver does: the move transfers the local into a
+temporary that the enclosing full expression owns and destroys, and the local
+is moved on every later path.
 Overload selection first considers every otherwise-exact candidate that needs
 no temporary argument borrow. Only when that tier is empty does it consider
 otherwise-exact candidates whose mismatch consists solely of one or more such
 fresh values targeting read-only references; selection still requires one
 unique candidate within the active tier. The selected callable must have a
 body, use GTI linkage, and return `void`, a scalar, or an owned value without
-tracked borrowed state. Mutable references, explicit moves, native or callback
-targets, compound producers, borrowed-state values, and results that could
-retain the argument loan remain ill-formed. Transparent parentheses do not
-change eligibility.
+tracked borrowed state. Mutable references, moves of a projection, native or
+callback targets, compound producers, borrowed-state values, and results that
+could retain the argument loan remain ill-formed. Transparent parentheses do
+not change eligibility. A temporary borrowed inside a conditionally evaluated
+operand, such as the right operand of `||`, lives to the end of the enclosing
+full expression only on the path that created it.
 
-The same call-scoped read-only parameter boundary admits an exact fresh lambda
-or selected GTI function item. The selected generic parameter must still have
-a proven confined callable contract, and invocation must respect the callable's
-read-only capability. A lambda may own captures or retain checked shared
-capture dependencies: those exact origins remain live and protected through
-the call and the temporary's full-expression cleanup. No closure copy is
-introduced, and named callables continue to bind by their ordinary reference.
-This does not admit mutable temporary parameters, explicit moves of named
-callables, returned references to the temporary, or conflicting mutation of a
-capture while the call remains live.
+The same call-scoped read-only parameter boundary admits an exact fresh lambda,
+an explicitly moved lambda local, or a selected GTI function item. The selected
+generic parameter must still have a proven confined callable contract, and
+invocation must respect the callable's read-only capability. A function item
+may select a target whose contract is proven only after its body is analyzed;
+the program is then rejected unless that parameter is proven confined. A lambda
+may own captures or retain checked shared capture dependencies: those exact
+origins remain live and protected through the call and the temporary's
+full-expression cleanup. No closure copy is introduced, and named callables
+continue to bind by their ordinary reference. This does not admit mutable
+temporary parameters, returned references to the temporary, or conflicting
+mutation of a capture while the call remains live.
 
 A consuming method or call operator may be virtual or an interface requirement. An
 override must preserve its exact `&&` receiver capability, parameters, and
@@ -959,6 +966,11 @@ invocation signature. Pack elements use the existing value/read-only-reference
 binding rules; they do not acquire mutable-reference access. An open forwarding
 pack cannot distinguish overloads by its unknown arity. A unique eligible item
 may be retained symbolically, and every concrete invocation is checked again.
+Likewise, a contract forwarded to a member of a class with several
+definitions, such as `mapping<R, E>` and `mapping<void, E>`, constrains only
+the definition its concrete arguments select. When the candidate's own result
+selects another definition, that edge supplies no signature, and the selected
+member's concrete invocation is checked instead.
 
 The resulting semantic type contains the selected nominal function identity,
 exact parameter types, and exact result type. It is a zero-state read-callable

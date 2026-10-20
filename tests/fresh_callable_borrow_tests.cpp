@@ -194,8 +194,6 @@ int invoke_owned<F>(F callback, int value) { return callback(value); }
         "return mutable_invoke([](int value) -> int { return value; });",
         "auto& escaped = escape([](int value) -> int { return value; }); "
         "return escaped(1);",
-        "auto callback = [](int value) -> int { return value; }; return "
-        "invoke(std::move(callback), 1);",
         "mut int state = 1; return invoke([mut &state](int value) -> int { "
         "state += value; return state; }, 1);",
         "mut int state = 1; return invoke([&state](int value) -> int { return "
@@ -212,9 +210,26 @@ int invoke_owned<F>(F callback, int value) { return callback(value); }
                                     diagnostic.severity ==
                                         lang::DiagnosticSeverity::Error;
                            }),
-           "temporary callables cannot escape, borrow mutably, move existing "
-           "storage or alias captures");
+           "temporary callables cannot escape, borrow mutably or alias "
+           "captures");
   }
+  // An explicit move transfers a named closure into a full-expression
+  // temporary that the confined call borrows; the name is moved afterwards.
+  const auto moved = analyzeFresh(
+      prefix + "int main() { auto callback = [](int value) -> int { return "
+               "value; }; return invoke(std::move(callback), 1) - 1; }");
+  expect(moved.canGenerateCode(),
+         "an explicitly moved callable binds a confined reference parameter");
+  const auto reused = analyzeFresh(
+      prefix + "int main() { auto callback = [](int value) -> int { return "
+               "value; }; int first = invoke(std::move(callback), 1); return "
+               "invoke(callback, first); }");
+  expect(!reused.canGenerateCode() &&
+             std::any_of(reused.diagnostics.begin(), reused.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2018";
+                         }),
+         "a callable moved into a call-scoped temporary cannot be reused");
 }
 } // namespace
 

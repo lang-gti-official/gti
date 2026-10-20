@@ -155,6 +155,13 @@ records. Concrete constructor-body errors remain independently published with
 their own instantiation sites; no message-based deduplication hides distinct
 diagnostics or notes.
 
+A concrete-instance diagnostic notes its immediate instantiation site and, when
+different, the first request from non-generic code. When the diagnostic lies in
+a compiler-trusted library unit and that first request lies in other code, the
+request becomes the primary location and the library location a related note:
+an error inside prelude or standard-library internals is reported where the
+caller can act on it, including in the editor's per-document diagnostics.
+
 `GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
 new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
 the requesting source, relates the declaration and explains that runtime

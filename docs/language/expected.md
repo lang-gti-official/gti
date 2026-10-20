@@ -281,7 +281,7 @@ The message is exactly one `std::string_view`, interpreted as raw text. Receiver
 evaluation precedes message evaluation, and both happen once before selecting
 the active alternative. This means that message-producing expressions also
 execute on success. Panic snapshots the counted message before cleanup can
-invalidate its storage. No include is needed for the built-in expected member;
+invalidate its storage. No include is needed for the prelude's expected member;
 the `<std/panic>` public function and its formatted overloads are separate APIs.
 
 Owned extraction requires movable owned alternatives. A read-only reference
@@ -327,14 +327,17 @@ complete expected result. Neither combinator propagates from the enclosing
 function implicitly; prefix `?` remains available for that explicit policy.
 
 Both members consume their receiver, following the same temporary/explicit
-`std::move` rule as `transform_error`. They accept one explicitly typed lambda
-or one unambiguous, safe, non-generic namespace-scope GTI function with a body.
-Mapper inputs are exact by-value types, without conversions. Results and
-source alternatives must be movable owned values (or void successes), without
-checked borrowed state or lambda components in the mapped result. Stored
-callable classes, C function pointers, reference parameters/results, generic
-function-item selection, and fallible-borrow receivers remain outside this
-bounded surface.
+`std::move` rule as `transform_error`. The mapper is an ordinary read-callable
+generic `F&` parameter. A named lambda or function item is borrowed for the
+call without copying its environment; a fresh lambda, a namespace function
+item, or an explicitly moved closure binds as a call-scoped temporary that the
+enclosing full expression destroys. The mapped type is
+`std::meta::callable_return_type<F>`, so a callable class's `operator()` is not
+selected as a mapper. The mapper receives the moved success value through an
+ordinary exact call, without conversions. Results and source alternatives must
+be movable owned values (or void successes); a reference or other borrowed
+mapped result would make the consuming member return borrowed state and is
+rejected. Fallible-borrow receivers do not offer these members.
 
 The existing result-carrier containment boundary also applies to inferred
 combinator results: an owning payload enum cannot be a direct `expected`
@@ -382,13 +385,12 @@ the mapper exactly once. `T` may be `void`. Named receivers require explicit
 The resulting expected can be stored, returned, passed onward, mapped again,
 or propagated with the ordinary prefix `?`. There is no separate `?.` operator.
 
-The mapper accepts an explicitly typed lambda or one unambiguous, safe,
-non-generic namespace-scope GTI function with a body. Its parameter must be
-exactly the by-value `E`, without an implicit conversion. The source alternatives and `F`
-must be movable; `F` must be a non-void owned value without borrowed state or
-lambda components. Member functions, callable classes, C function pointers,
-reference parameters/results, and `expected<T&, E>` receivers are not part of
-this initial surface. No additional include is required.
+The mapper follows the same read-callable `F&` rule. It receives the moved
+`E` through an ordinary exact call, without an implicit conversion. The source
+alternatives must be movable, and the mapped error must be a non-void owned
+value without borrowed state. Callable classes are not mappers, and
+`expected<T&, E>` receivers do not offer this member. No additional include is
+required.
 
 ```gti
 expected<int, app_error> load_inline(bool fail) {

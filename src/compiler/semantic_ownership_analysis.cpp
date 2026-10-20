@@ -2580,9 +2580,19 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
               source.parent = loan->id;
         }
       }
-    } else {
-      if (!hasStableBorrowStorage(*argument))
+    } else if (!hasStableBorrowStorage(*argument)) {
+      // A relayed reference value, such as ?carrier through a checked
+      // borrowed_from contract, has no stable place of its own; its complete
+      // external dependency set is recorded on the expression itself.
+      if (!input || input->dependencies.empty() ||
+          std::any_of(input->dependencies.begin(), input->dependencies.end(),
+                      [](const auto &dependency) {
+                        return !dependency.designatedFields.empty() ||
+                               !dependency.conditions.empty();
+                      }))
         continue;
+      sources = input->dependencies;
+    } else {
       const auto actualPlace = semanticPlace(*argument);
       if (const auto selected = selectedReferenceDependencies(actualPlace)) {
         sources = *selected;

@@ -10694,7 +10694,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const MirInstruction *producer = materialization.producer;
       const MirLoan *loan = body.findLoan(*input.loan);
       const auto captureDependency =
-          place && referent.kind == SemanticType::Lambda
+          place && (referent.kind == SemanticType::Lambda ||
+                    referent.kind == SemanticType::Class)
               ? findMirTemporaryCarrierDependency(body, *place)
               : MirTemporaryCarrierDependency{};
       const bool callableConstruction =
