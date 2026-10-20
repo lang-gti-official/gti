@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.448.2 — Returning stored string view fields
+## 0.448.3 — Returning stored string view fields
 
 - Fix the internal compiler error (`GTI-B0001`, "owner-dependent return is
   missing its escaping loan") when a method or function returns a
@@ -28,6 +28,18 @@ for what minor and patch releases mean.
     `count(Cursor(text))` or `make(text).size()`;
   - copying a view from a `std::string_view&` parameter into a local, as in
     `std::string_view copy = input;`.
+
+## 0.448.2 — Payload-enum temporary arguments in short-circuit operands
+
+- Fix the internal compiler error (`GTI-B0001`) when a call borrows a new
+  payload-enum value through a read-only reference parameter in the right
+  operand of `&&` or `||`, or in one arm of `?:`. Examples are
+  `ok && held(owned::held(Tracked(1)))`, `skip || held(hold(4))` and
+  `left ? payload(make_state(2)) : 0`. An enum whose alternative owns an
+  object with a destructor destroys it once at the end of the full
+  expression when its operand ran, and never when the operand was skipped.
+  The same holds when the call, the enum's producer or the rest of the
+  expression fails.
 
 ## 0.448.1 — Temporary arguments in short-circuit operands
 
