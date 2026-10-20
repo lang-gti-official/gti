@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Switches over fixed-array elements (0.448.2)
+## Switches over fixed-array elements (0.448.4)
 
 `sum_type_pipeline` adds `testFixedArrayElementSubjects`. Observing switches
 read-borrow fixed-array elements of a passive payload enum: a runtime and a
@@ -30,7 +30,7 @@ releases the live guard once. Main `911fd4ca` stops the reported program with
 array-field and element-field switches stop the same way, and the `this.items`
 switch fails in the native compiler with an undeclared place alias.
 
-## Move-only payload enums without cleanup (0.448.2)
+## Move-only payload enums without cleanup (0.448.4)
 
 `sum_type_pipeline` adds `testCleanupFreeMoveOnlyPayloads`. A payload enum
 whose alternative holds a move-only class without a destructor is cleanup-free
@@ -7913,8 +7913,15 @@ with and without destructors, nested operators and a loop condition, and
 defined failure in the borrowing callee, a later argument, the producer, and
 after the merge with the temporary engaged or skipped, under C++20/C++23
 O0/O1/O3, no-elide and ASan/UBSan. `testHiddenSlotTemporaryArguments`
-admits class hidden slots and a linear payload-enum argument, and refuses a
-payload-enum hidden slot whose producer never writes it.
+admits class and payload-enum hidden slots, cleanup-free and owning, called
+and constructed, plus a linear payload-enum argument, and refuses a hidden
+slot whose producer was forged to never activate it.
+`short_circuit_payload_enum_argument_runtime` traces owning payload enums
+built in place and returned by calls, and cleanup-free ones read back, in
+taken and skipped `&&`/`||`/`?:` operands, nested operators and a loop
+condition; defined failure covers the borrowing callee, the producer, and
+failure after the merge with the enum engaged or skipped, in the same eight
+native modes.
 `testConstexprConditionalTemporaries`
 runs argument and receiver borrows of such slots, one destructor-bearing,
 through exactly four staged MIR executions with exact results; a wrong
@@ -8374,7 +8381,14 @@ and parameter text relays with literal/null branches, plus an unsafe raw-receive
 relay used by editor previews. It rejects missing or forged literal witnesses,
 cleared dynamic-return loans, and local-owner escapes; native C++20/C++23
 O0/O1/O3, disabled elision and ASan/UBSan exercise both alternatives without
-adding runtime lifetime state.
+adding runtime lifetime state. The stored-view return fixture covers view and
+`c_string` fields returned through `this`, an implicit field, a nested field, a
+fixed-array element, reference and by-value parameters and a concrete generic
+instance, all without an owner summary, and a stored alternative beside a
+receiver relay. It requires the specific missing-escaping-loan rejection for a
+borrowed loaded value, a dereference-ending or mistyped stored place, and a
+cleared dependent loan. A shadowing local and a local-owner escape beside a
+stored view fail in semantics.
 
 ### Operator-place composition focused gates
 
