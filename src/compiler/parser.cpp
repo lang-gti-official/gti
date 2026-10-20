@@ -1674,8 +1674,10 @@ private:
         return false;
       }
       if (depth == 0) {
+        // Signature, void, reference and raw-pointer argument patterns.
         if (kind == TokenKind::LEFT_PAREN || kind == TokenKind::VOID ||
-            kind == TokenKind::AMPERSAND) {
+            kind == TokenKind::AMPERSAND || kind == TokenKind::STAR ||
+            kind == TokenKind::CONST) {
           return true;
         }
         if (kind == TokenKind::EQUAL ||
