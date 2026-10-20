@@ -618,6 +618,17 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         resolveExpressionSymbol(arguments[index]);
     std::vector<std::pair<const CallableCandidate *, GenericSubstitution>>
         matches;
+    // The contextual requirements select among overloads. A name with one
+    // eligible item has nothing to select; its concrete instance validates
+    // the invocation, exactly as when the item is first bound to an auto
+    // local. A thread task keeps its exact owned-result contract.
+    const bool uniqueItem =
+        source && std::count_if(source->overloads.begin(),
+                                source->overloads.end(),
+                                [&](const CallableCandidate &candidate) {
+                                  return functionItemCandidateIsEligible(
+                                      candidate);
+                                }) == 1;
     if (source) {
       for (const CallableCandidate &candidate : source->overloads) {
         if (!functionItemCandidateIsEligible(candidate)) {
@@ -642,7 +653,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
           matchesContract = candidate.parameterTypes.empty() &&
                             exactMatch(exactMatch, result, candidate.returnType,
                                        substitution);
-        } else {
+        } else if (!uniqueItem) {
           for (const CallableSignatureRequirement &signature :
                contextualRequirements(target.id, index, substitution)) {
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
