@@ -24,8 +24,11 @@ def payload_enum_argument_cases(name="short_circuit_payload_enum_argument"):
     # An owning enum's payload is destroyed at the end of its full expression,
     # after the merge; one whose operand was skipped is never built. The run
     # totals sum the cleanup-free payloads read back from their slots.
-    shapes = trace(1, -1, 2, -2, 6, -6, 10, -10, 11, -11, 12, -12, 14,
-                   104, -104, 107, -107, 109, -109, 111, -111, 112, -112, 220)
+    # The quiet enums count their drops instead: only the first run builds
+    # its two, 13 + 14.
+    shapes = trace(1, -1, 2, -2, 6, -6, 10, -10, 11, -11, 12, -12, 16,
+                   104, -104, 107, -107, 109, -109, 111, -111, 112, -112, 221,
+                   27)
     borrowed = primary(line("return held(item) / divisor > 0"))
     producer = primary(line("return owned::held(Tracked(id / divisor))"))
     plain = primary(line("return value / divisor"))
