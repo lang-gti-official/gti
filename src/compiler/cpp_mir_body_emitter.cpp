@@ -61055,10 +61055,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             staged.kind == MirOperandKind::BorrowWrite) {
           // A borrowed call input stages a place the call spells directly;
           // the write form carries the mutable receiver.
-          if (staged.place == 0 || body.findPlace(staged.place) == nullptr) {
+          const MirPlace *borrowed =
+              staged.place == 0 ? nullptr : body.findPlace(staged.place);
+          if (borrowed == nullptr) {
             {
               return false;
             }
+          }
+          // A temporary produced only inside a conditional arm or a `&&`/`||`
+          // operand lives in a hidden slot. Only a recognized lifetime slot
+          // has its producer construct it in place; any other producer would
+          // define just its SSA value and leave the borrowed slot unwritten.
+          const MirInstruction *hiddenProducer =
+              borrowed->root == MirPlaceRootKind::Temporary
+                  ? findMirTemporaryMaterialization(body, *borrowed,
+                                                    borrowed->sourceValue)
+                        .producer
+                  : nullptr;
+          if (hiddenProducer != nullptr &&
+              hiddenProducer->kind != MirInstructionKind::Move &&
+              hiddenProducer->kind != MirInstructionKind::Load &&
+              !slotPlace(*borrowed)) {
+            return false;
           }
           if (!mirCallInputAbandonedByTerminal(body, instruction))
             pendingStaged.push_back(*instruction.result);
