@@ -6002,9 +6002,17 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   }
   if (simpleAssignment && targetType.kind == SemanticType::Class) {
     // The target supplies a generic callable call's result type, exactly as
-    // a declaration's type does; other values keep their own type for
-    // assignment-operator selection.
+    // a declaration's type does, including to each arm of a conditional;
+    // other values keep their own type for assignment-operator selection.
+    const Expr *assigned = expr.value().get();
+    while (const auto *group = exprAs<Grouping>(assigned))
+      assigned = group->expression().get();
+    const std::optional<SemanticType> enclosingInitializerType =
+        contextualInitializerType;
+    if (exprAs<ConditionalExpr>(assigned) != nullptr)
+      contextualInitializerType = targetType;
     valueType = analyzeExpectedCallableResult(expr.value(), targetType);
+    contextualInitializerType = enclosingInitializerType;
     if (hasExactOperatorCandidate(OverloadedOperator::Assignment, targetType,
                                   valueType)) {
       ExprPtr receiver;

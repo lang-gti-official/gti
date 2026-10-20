@@ -66,6 +66,19 @@ struct counted_holder {
       : number(item ? item.value().number : 100 + item.error()) {}
 };
 
+// By-value class arguments without an Expected: a passive value copied from
+// a named binding or freshly constructed, and a counted value moved in.
+// `plain_holder`'s constructor cannot fail; `checked_holder`'s can.
+struct plain_holder {
+  int32_t number;
+  plain_holder(item_value item) : number(item.number) {}
+};
+
+struct checked_holder {
+  int32_t number;
+  checked_holder(counted item) : number(item.number + 1) {}
+};
+
 int main(int argc, std::vector<std::string> argv) {
   bool yes = argc > 0;
   bool no = !yes;
@@ -96,5 +109,18 @@ int main(int argc, std::vector<std::string> argv) {
     total += held.number;
   }
   if (total != 112 || destroyed != 3) { return 9; }
+  item_value named_item = item_value(11);
+  mut plain_holder plain{item_value(1)};
+  plain = plain_holder(named_item);
+  if (plain.number != 11 || named_item.number != 11) { return 10; }
+  plain = plain_holder(item_value(12));
+  if (plain.number != 12) { return 11; }
+  mut checked_holder checked{counted(1)};
+  if (checked.number != 2 || destroyed != 4) { return 12; }
+  counted moved = counted(20);
+  checked = checked_holder(std::move(moved));
+  if (checked.number != 21 || destroyed != 5) { return 13; }
+  checked = checked_holder(counted(30));
+  if (checked.number != 31 || destroyed != 6) { return 14; }
   return 0;
 }
