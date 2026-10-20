@@ -1024,6 +1024,16 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (expectedDependencies)
         for (auto &dependency : expectedDependencies->dependencies)
           dependency.place.domain = body.placeDomain;
+      // A built-in owning handle argument keeps its unstaged transport, as
+      // the same constructor selected by explicit syntax does.
+      const bool unstagedOwnerHandle =
+          value != nullptr && !value->callPlan &&
+          std::any_of(value->parameterTypes.begin(),
+                      value->parameterTypes.end(),
+                      [](const SemanticType &parameter) {
+                        return parameter.kind == SemanticType::UniqueOwner ||
+                               parameter.kind == SemanticType::SharedPointer;
+                      });
       if (value == nullptr || construction == nullptr || target == nullptr ||
           owner == nullptr || !listed.insert(entry.value).second ||
           value->kind != HirValueKind::DirectInitializer ||
@@ -1056,8 +1066,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value->borrowArguments != construction->borrowArguments ||
           value->borrowFields != construction->borrowFields ||
           value->borrowDependencies != expectedDependencies ||
-          !value->callPlan || value->callPlan->receiver ||
-          value->callPlan->arguments.size() != value->operands.size()) {
+          (!unstagedOwnerHandle &&
+           (!value->callPlan || value->callPlan->receiver ||
+            value->callPlan->arguments.size() != value->operands.size()))) {
         result.errors.emplace_back(
             "contextual construction HIR value differs from its semantic "
             "construction");

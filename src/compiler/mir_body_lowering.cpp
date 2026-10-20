@@ -7669,13 +7669,19 @@ private:
         published.conditions = primary.conditions;
         published.additionalDependencies.assign(complete.begin() + 1,
                                                 complete.end());
-        if (!call.result ||
-            !output.values[*call.result - 1].borrowDependencies) {
+        if (!call.result) {
           valid = false;
           return;
         }
-        output.values[*call.result - 1].borrowDependencies->dependencies =
-            std::move(complete);
+        // The result value's transport may precede the places its call's
+        // inputs materialize; publish the same source-established set now.
+        auto &resultDependencies =
+            output.values[*call.result - 1].borrowDependencies;
+        if (!resultDependencies)
+          resultDependencies = MirBorrowDependencySet{
+              .possibleAlternatives =
+                  value.borrowDependencies->possibleAlternatives};
+        resultDependencies->dependencies = std::move(complete);
       }
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);

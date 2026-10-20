@@ -5513,6 +5513,10 @@ private:
       std::size_t parameter = 0;
       SemanticType type = SemanticType::Unknown;
       std::optional<std::size_t> forwardedParameter;
+      // The forwarded formal's type in the analysis that recorded this use.
+      // A concrete instance evaluates only uses recorded against its own
+      // signature, not those of the open body or a sibling instance.
+      SemanticType callerFormal = SemanticType::Unknown;
       const ExprPtr *argument = nullptr;
       bool ownerless = false;
       bool diagnosed = false;
