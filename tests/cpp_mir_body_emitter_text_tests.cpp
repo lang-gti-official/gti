@@ -7231,6 +7231,135 @@ int main() { return unused() + used() - 8; }
          "an invoked fused closure spells its body at the invocation");
 }
 
+// A temporary argument evaluated only inside a conditional arm or a `&&`/`||`
+// operand lives in the hidden slot that carries its conditional drop through
+// the CFG merge. Class and payload-enum producers, cleanup-free or owning,
+// construct that slot in place. A hidden slot that no recognizer constructs
+// stays refused rather than being borrowed unwritten.
+void testHiddenSlotTemporaryArguments() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-hidden-slot-temporary-arguments.gti", R"(
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+enum class state { empty, engaged(int value) };
+enum class owned { empty, held(Tracked item) };
+Tracked make(int id) { return Tracked(id); }
+owned hold(int id) { return owned::held(Tracked(id)); }
+int read(Tracked& item) { return item.id; }
+int payload(state& item) {
+  switch (item) {
+  case state::engaged(auto& value):
+    return value;
+  case state::empty:
+    return 0;
+  }
+}
+int held(owned& item) {
+  switch (item) {
+  case owned::held(auto& tracked):
+    return tracked.id;
+  case owned::empty:
+    return 0;
+  }
+}
+int classes(bool on) {
+  return (on && read(make(1)) == 1) || read(Tracked(2)) == 2 ? 1 : 0;
+}
+int linear_enum(bool on) { return payload(state::engaged(3)); }
+int branch_enum(bool on) { return on ? payload(state::engaged(4)) : 0; }
+int owning_enum(bool on) {
+  return (on && held(hold(5)) == 5) || held(owned::held(Tracked(6))) == 6
+             ? 1
+             : 0;
+}
+int main() {
+  return classes(true) + linear_enum(true) + branch_enum(true) +
+         owning_enum(true) - 9;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "hidden-slot temporary arguments verify in MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto function = [&](std::string_view name) {
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances())
+      if (instance.source != nullptr && instance.source->name().lexeme == name)
+        return frontend.mir.findFunctionInstance(instance.id);
+    return static_cast<const lang::MirFunctionInstance *>(nullptr);
+  };
+  const auto hiddenSlotStages = [](const lang::MirFunctionInstance &body) {
+    std::vector<const lang::MirInstruction *> stages;
+    for (const lang::MirBlock &block : body.body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirPlace *place =
+            instruction.kind == lang::MirInstructionKind::CallInput &&
+                    instruction.callInputKind ==
+                        lang::HirCallInputKind::ReadTemporaryBorrow &&
+                    instruction.operands.size() == 1
+                ? body.body.findPlace(instruction.operands.front().place)
+                : nullptr;
+        if (place != nullptr &&
+            place->root == lang::MirPlaceRootKind::Temporary)
+          stages.push_back(&instruction);
+      }
+    return stages;
+  };
+  const lang::MirFunctionInstance *classes = function("classes");
+  const lang::MirFunctionInstance *linear = function("linear_enum");
+  const lang::MirFunctionInstance *branch = function("branch_enum");
+  const lang::MirFunctionInstance *owning = function("owning_enum");
+  expect(classes != nullptr && linear != nullptr && branch != nullptr &&
+             owning != nullptr && hiddenSlotStages(*classes).size() == 2 &&
+             hiddenSlotStages(*linear).empty() &&
+             hiddenSlotStages(*branch).size() == 1 &&
+             hiddenSlotStages(*owning).size() == 2,
+         "class and payload-enum arguments in operands borrow hidden slots");
+  if (classes == nullptr || linear == nullptr || branch == nullptr ||
+      owning == nullptr || hiddenSlotStages(*branch).size() != 1)
+    return;
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  expect(supportsSelectedBodyText(frontend.mir, map, classes->id),
+         "class temporaries in operands are constructed in their hidden slot");
+  expect(supportsSelectedBodyText(frontend.mir, map, linear->id),
+         "a linear payload-enum argument keeps its value-rooted place");
+  expect(supportsSelectedBodyText(frontend.mir, map, branch->id),
+         "a cleanup-free payload enum is constructed in its hidden slot");
+  expect(supportsSelectedBodyText(frontend.mir, map, owning->id),
+         "owning payload enums, called or constructed, are constructed in "
+         "their hidden slots");
+
+  // Without its activation no recognizer constructs the payload enum's slot;
+  // the borrow must then be refused rather than read unwritten.
+  auto malformed = frontend.mir;
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, branch->id};
+  lang::MirBody *body = lang::findMirBody(malformed, address);
+  const lang::MirPlace *slot =
+      body == nullptr
+          ? nullptr
+          : body->findPlace(
+                hiddenSlotStages(*branch).front()->operands.front().place);
+  bool forged = false;
+  if (body != nullptr && slot != nullptr) {
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Compute &&
+            instruction.operation == lang::MirOperation::PayloadConstruct &&
+            instruction.destination == slot->id) {
+          instruction.lifecycle.clear();
+          forged = true;
+        }
+  }
+  expect(forged && !supportsSelectedBodyText(malformed, map, branch->id),
+         "a payload-enum hidden slot its producer never activates is refused "
+         "rather than borrowed unwritten");
+}
+
 constexpr NamedTest kTests[] = {
     {"testFieldInitializerExpressionVocabulary",
      testFieldInitializerExpressionVocabulary},
@@ -7333,6 +7462,7 @@ constexpr NamedTest kTests[] = {
     {"testCallableClassResultSlots", testCallableClassResultSlots},
     {"testUnconsumedFusedClosureSpellsNoBody",
      testUnconsumedFusedClosureSpellsNoBody},
+    {"testHiddenSlotTemporaryArguments", testHiddenSlotTemporaryArguments},
 };
 
 } // namespace

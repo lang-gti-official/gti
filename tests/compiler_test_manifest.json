@@ -578,6 +578,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testConditionalTemporaryArgumentBorrows",
+      "suite": "ownership"
+    },
+    {
       "name": "testRetainedBorrowedCallResults",
       "suite": "ownership"
     },
@@ -643,6 +647,10 @@
     },
     {
       "name": "testMirConstantRecords",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprConditionalTemporaries",
       "suite": "constexpr"
     },
     {

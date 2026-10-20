@@ -7190,24 +7190,91 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
   }
 }
 
+auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
+                                               const FunctionInfo &function,
+                                               SemanticType ownerType) -> bool {
+  // A dynamic view cannot be stored in a field or a fixed array, so reading
+  // that storage copies an ownerless view: like a literal, it carries no
+  // receiver or parameter dependency. Only a pure place path whose final
+  // field or element is declared as the view itself qualifies; a reference
+  // field may name a dependent view shell, and a call proves nothing here.
+  if (!expression || function.declaration == nullptr)
+    return false;
+  if (function.ownerClass != 0 && (ownerType.kind != SemanticType::Class ||
+                                   ownerType.classId != function.ownerClass))
+    ownerType = substituteType(openClassType(function.ownerClass),
+                               instanceTypeSubstitution);
+  struct Path {
+    SemanticType type = SemanticType::Unknown;
+    bool stored = false;
+  };
+  const auto referent = [](const SemanticType &type) {
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1
+               ? SemanticType(type.arguments.front())
+               : type;
+  };
+  const auto field = [&](const Path &object,
+                         const Token &name) -> std::optional<Path> {
+    const SemanticType owner = referent(object.type);
+    const auto *member = findMember(owner, name);
+    if (member == nullptr || member->symbol.variableDeclaration == nullptr ||
+        member->symbol.staticMember)
+      return std::nullopt;
+    return Path{
+        .type = substituteType(member->symbol.type, classSubstitution(owner)),
+        .stored = true};
+  };
+  const bool receiver = function.ownerClass != 0 && !function.staticMember;
+  const auto &parameters = function.bodyDeclaration()->parameters();
+  const auto path = [&](const auto &self,
+                        const Expr *current) -> std::optional<Path> {
+    if (const auto *group = exprAs<Grouping>(current))
+      return self(self, group->expression().get());
+    if (exprAs<This>(current) != nullptr)
+      return receiver ? std::optional<Path>{Path{.type = ownerType}}
+                      : std::nullopt;
+    if (const auto *variable = exprAs<Variable>(current)) {
+      // Parameters take precedence over implicit instance fields, as in
+      // predeclaredTextBorrowSource. A shadowing local cannot be seen here;
+      // body analysis still rejects a dependent value under this contract.
+      for (std::size_t index = 0;
+           index < parameters.size() && index < function.parameterTypes.size();
+           ++index)
+        if (parameters[index].name.lexeme == variable->name().lexeme)
+          return Path{.type = function.parameterTypes[index]};
+      return receiver ? field(Path{.type = ownerType}, variable->name())
+                      : std::nullopt;
+    }
+    if (const auto *member = exprAs<Get>(current)) {
+      const auto object = self(self, member->object().get());
+      return object ? field(*object, member->name()) : std::nullopt;
+    }
+    if (const auto *index = exprAs<Index>(current)) {
+      const auto object = self(self, index->object().get());
+      const SemanticType array =
+          object ? referent(object->type) : SemanticType::Unknown;
+      if (array.kind != SemanticType::Array || array.arguments.size() != 1)
+        return std::nullopt;
+      return Path{.type = SemanticType(array.arguments.front()),
+                  .stored = true};
+    }
+    return std::nullopt;
+  };
+  const auto read = path(path, expression.get());
+  return read && read->stored &&
+         (read->type.kind == SemanticType::StringView ||
+          read->type.kind == SemanticType::CString);
+}
+
 auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
-    const ExprPtr &expression, const FunctionInfo &function)
-    -> PredeclaredTextBorrowSource {
+    const ExprPtr &expression, const FunctionInfo &function,
+    const SemanticType &ownerType) -> PredeclaredTextBorrowSource {
   if (!expression) {
     return {};
   }
-  const auto ownerlessField = [&](const Token &name) {
-    if (function.ownerClass == 0 || function.staticMember)
-      return false;
-    const auto ownerType = openClassType(function.ownerClass);
-    const auto *member = findMember(ownerType, name);
-    if (!member || member->symbol.staticMember ||
-        member->symbol.bindingKind != SemanticBindingKind::Field)
-      return false;
-    const auto type = substituteSymbol(member->symbol, ownerType).type;
-    return type.kind == SemanticType::StringView ||
-           type.kind == SemanticType::CString;
-  };
+  if (storedTextViewRead(expression, function, ownerType)) {
+    return {.known = true};
+  }
   if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
     return {.known = literal->token().kind == TokenKind::STRING_LITERAL ||
                      literal->token().kind == TokenKind::NULLPTR};
@@ -7236,8 +7303,6 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
           SemanticType::classType(function.ownerClass), variable->name());
       if (member != nullptr && member->symbol.variableDeclaration != nullptr &&
           !member->symbol.staticMember) {
-        if (ownerlessField(variable->name()))
-          return {.known = true};
         // Like explicit this.field, an implicit instance field can nominate
         // the receiver for the predeclared relay contract. Parameters take
         // precedence above. This is not a resolved body-local origin: body
@@ -7251,25 +7316,21 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     return {};
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
-    return predeclaredTextBorrowSource(grouping->expression(), function);
+    return predeclaredTextBorrowSource(grouping->expression(), function,
+                                       ownerType);
   }
   if (const auto *binary = exprAs<Binary>(expression.get());
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-    return predeclaredTextBorrowSource(binary->right(), function);
+    return predeclaredTextBorrowSource(binary->right(), function, ownerType);
   }
   if (const auto *member = exprAs<Get>(expression.get())) {
-    const Expr *object = member->object().get();
-    while (const auto *group = exprAs<Grouping>(object))
-      object = group->expression().get();
-    if (exprAs<This>(object) && ownerlessField(member->name()))
-      return {.known = true};
-    return predeclaredTextBorrowSource(member->object(), function);
+    return predeclaredTextBorrowSource(member->object(), function, ownerType);
   }
   if (const auto *index = exprAs<Index>(expression.get())) {
     // Like a field, an indexed receiver can nominate the enclosing source.
     // This is only the prospective relay contract: resolved body analysis
     // must still prove the selected access and returned view depend on it.
-    return predeclaredTextBorrowSource(index->object(), function);
+    return predeclaredTextBorrowSource(index->object(), function, ownerType);
   }
   const auto *call = exprAs<Call>(expression.get());
   if (call == nullptr) {
@@ -7280,7 +7341,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     // arbitrary member call borrows its receiver. Body analysis checks the
     // selected call's actual dependency against this contract before HIR.
     // This also handles nested owning fields without recognizing a wrapper.
-    auto source = predeclaredTextBorrowSource(member->object(), function);
+    auto source =
+        predeclaredTextBorrowSource(member->object(), function, ownerType);
     if (source.origin == BorrowOriginKind::Argument) {
       if (source.parameter >= function.parameterTypes.size()) {
         return {};
@@ -7305,7 +7367,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     if ((kind == IntrinsicKind::TextViewFromAddress ||
          kind == IntrinsicKind::CStringFromAddress) &&
         call->arguments().size() == witness + 1)
-      return predeclaredTextBorrowSource(call->arguments()[witness], function);
+      return predeclaredTextBorrowSource(call->arguments()[witness], function,
+                                         ownerType);
   }
   if (!intrinsic) {
     // Follow an exact ordinary helper contract, never its public spelling.
@@ -7325,18 +7388,19 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
           summary->parameters.empty() &&
           summary->parameter < call->arguments().size())
         return predeclaredTextBorrowSource(
-            call->arguments()[summary->parameter], function);
+            call->arguments()[summary->parameter], function, ownerType);
     }
   }
   if (!intrinsic || call->arguments().size() != 1 ||
       intrinsic->record().intrinsic != IntrinsicKind::Move) {
     return {};
   }
-  return predeclaredTextBorrowSource(call->arguments().front(), function);
+  return predeclaredTextBorrowSource(call->arguments().front(), function,
+                                     ownerType);
 }
 
 auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
-    const FunctionInfo &function)
+    const FunctionInfo &function, const SemanticType &ownerType)
     -> std::optional<FunctionReturnBorrowSummary> {
   if ((function.returnType.kind != SemanticType::StringView &&
        function.returnType.kind != SemanticType::CString) ||
@@ -7373,8 +7437,9 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   bool valid = true;
   for (const ExprPtr *returned : returns) {
     const PredeclaredTextBorrowSource source =
-        returned == nullptr ? PredeclaredTextBorrowSource{}
-                            : predeclaredTextBorrowSource(*returned, function);
+        returned == nullptr
+            ? PredeclaredTextBorrowSource{}
+            : predeclaredTextBorrowSource(*returned, function, ownerType);
     if (!source.known) {
       valid = false;
       break;

@@ -2312,6 +2312,14 @@ live. This does not enable by-value dynamic views in arbitrary aggregates, and
 does not copy or allocate the input text. JSON's private scanning adapters use
 this checked-reference form.
 
+A view read through such a reference, as in `this.text`, is dynamic: it keeps
+the external text owner. It may be inspected, indexed, copied into a local,
+passed to a parameter, or returned from a method under that method's receiver
+dependency. A fresh adapter built over a local view borrows that exact view
+object as a bound adapter does. The view cannot be passed to a constructor that
+stores it by value, stored in a field, or escape the owner, including through a
+relaying call.
+
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain
 the same enclosing receiver dependency when `text` names an instance field.
@@ -2329,6 +2337,22 @@ relay may similarly return `nullptr`. These lifetime-independent alternatives
 need no escaping loan inside the function; the dynamic alternatives still
 require the declared owner. Callers conservatively retain the summarized owner
 dependency for the whole result, even when a literal/null branch executes.
+
+A `std::string_view` or `c_string` field, or a fixed-array element of either
+type, holds only an ownerless view, because a dynamic view cannot be stored
+there, including through a constructor initializer. Returning such storage,
+as in `return this.name;`, `return name;`, `return this.label.text;`,
+`return this.aliases[index];` or
+`return label.text;` through a parameter, copies that independent value. It
+does not borrow the receiver or parameter, so a method returning only stored
+views has no owner dependency and its caller may mutate, move or destroy the
+receiver while the result remains live. Concrete generic instances apply the
+same rule after substitution. A stored view may also be a lifetime-independent
+alternative beside a dependent relay, like a literal. Only a direct field or
+element read qualifies: a checked `std::string_view&` or `c_string&` reference
+field, a local copy or a call result keeps its ordinary origin rules. A
+shadowing local remains a local, and a dependent value it holds still needs an
+exact owner dependency.
 
 The receiver path may include indexing, including an overloaded subscript:
 `return records[index].text();` can relay the enclosing receiver's dependency

@@ -10682,6 +10682,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const SemanticType &referent = input.info.type.arguments.front();
       const MirPlace *place = body.findPlace(operand.place);
+      // The value-rooted place of a linear temporary, or the hidden slot of a
+      // branch-only one; the ordinary producer below excludes a join's Move.
+      // An explicitly moved local materializes its temporary the same way.
       MirTemporaryMaterialization materialization =
           place == nullptr
               ? MirTemporaryMaterialization{}
@@ -10733,10 +10736,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||
           loan->entry || loan->escapes || loan->parent != 0 ||
-          loan->producedBy != input.callSite ||
-          (place->root != MirPlaceRootKind::Value &&
-           place->root != MirPlaceRootKind::Temporary) ||
-          !place->projections.empty() || place->access != AccessMode::Mutable ||
+          loan->producedBy != input.callSite || !place->projections.empty() ||
+          place->access != AccessMode::Mutable ||
           place->sourceValue != input.hirValue || place->type != referent ||
           source->sourceValue != input.hirValue ||
           source->info.type != referent ||
@@ -11558,13 +11559,23 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                             : findMirTemporaryCarrierDependency(body, *source);
       const bool receiver =
           carrier && loan.storedDependency == carrier.loan->id;
+      // A branch-only temporary is promoted into the one hidden slot that
+      // carries its conditional drop through the CFG merge; a borrow staged
+      // inside the branch names that exact materialization.
+      // An explicitly moved local is materialized the same way, in its own
+      // hidden slot.
+      const bool hiddenSlot =
+          source != nullptr && source->root == MirPlaceRootKind::Temporary &&
+          (bool(findMirTemporaryMaterialization(body, *source,
+                                                source->sourceValue)) ||
+           bool(findMirMovedTemporaryMaterialization(body, *source,
+                                                     source->sourceValue)));
       if (loan.semanticLoan != 0 || loan.parent != 0 || loan.entry ||
           loan.escapes || (!receiver && loan.access != AccessMode::ReadOnly) ||
           loan.producedBy == 0 || !loan.carriers.empty() ||
           loan.storedField != 0 || loan.lifecycleBound || loan.twoPhase ||
           !loan.additionalSources().empty() || source == nullptr ||
-          (source->root != MirPlaceRootKind::Value &&
-           source->root != MirPlaceRootKind::Temporary) ||
+          (source->root != MirPlaceRootKind::Value && !hiddenSlot) ||
           !source->projections.empty() ||
           (source->type.kind != SemanticType::Class &&
            source->type.kind != SemanticType::Lambda &&
