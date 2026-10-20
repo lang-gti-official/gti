@@ -7600,15 +7600,24 @@ directTemporaryArgumentForValue(const MirBody &body, MirValueId valueId) {
 [[nodiscard]] DirectTemporaryBorrow
 directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
   const MirValue *value = body.findValue(valueId);
-  // Both receiver and argument proofs require an exact class temporary.
-  // Scalars cannot satisfy that contract; do not scan every call in the body
-  // to rediscover the same necessary exclusion for each scalar value.
-  if (value == nullptr || value->info.type.kind != SemanticType::Class) {
+  // Both receiver and argument proofs require an exact class or payload-enum
+  // temporary. Scalars cannot satisfy that contract; do not scan every call
+  // in the body to rediscover the same necessary exclusion for each scalar.
+  if (value == nullptr || (value->info.type.kind != SemanticType::Class &&
+                           value->info.type.kind != SemanticType::Enum)) {
     return {};
   }
   const DirectTemporaryBorrow receiver =
       directTemporaryReceiverForValue(body, valueId);
-  return receiver ? receiver : directTemporaryArgumentForValue(body, valueId);
+  const DirectTemporaryBorrow temporary =
+      receiver ? receiver : directTemporaryArgumentForValue(body, valueId);
+  // A linear payload enum is its own value-rooted SSA object. Only one that a
+  // CFG merge promoted into a hidden slot needs that slot constructed here.
+  if (value->info.type.kind == SemanticType::Enum &&
+      (!temporary || temporary.slot->root != MirPlaceRootKind::Temporary)) {
+    return {};
+  }
+  return temporary;
 }
 
 // A cleanup-free enum value has no lifetime slot: its value-rooted place,
@@ -7631,7 +7640,9 @@ directTemporaryBorrowForSlot(const MirBody &body, const MirPlace &slot) {
   // A successful directTemporaryBorrow proves these exact slot/value facts.
   // Restrict candidates before the expensive call/lifecycle proof, retaining
   // that complete proof for every potentially matching materialization.
-  if (slot.type.kind != SemanticType::Class ||
+  if ((slot.type.kind != SemanticType::Class &&
+       (slot.type.kind != SemanticType::Enum ||
+        slot.root != MirPlaceRootKind::Temporary)) ||
       slot.access != AccessMode::Mutable || slot.sourceValue == 0) {
     return {};
   }
@@ -9201,7 +9212,7 @@ payloadEnumCallResultSlot(const MirProgram &program, const MirBody &body,
       call->kind != MirInstructionKind::Call || !call->result ||
       *call->result != valueId ||
       (call->intrinsic != IntrinsicKind::None && !restoring) ||
-      call->destination || call->info.type != enumeration->type ||
+      call->info.type != enumeration->type ||
       call->info.traits != enumeration->traits ||
       (!transformedFunction && !plainFunction && !exactCallable &&
        !restoring) ||
@@ -9213,12 +9224,25 @@ payloadEnumCallResultSlot(const MirProgram &program, const MirBody &body,
       selfActivated ? call->lifecycle.back().target : *call->successResultDrop);
   const MirPlace *slot =
       drop == nullptr ? nullptr : body.findPlace(drop->place);
+  // A result produced only inside a conditional arm or a `&&`/`||` operand
+  // lives in the hidden slot that carries its conditional drop through the
+  // CFG merge. A self-activating call is retargeted there; a raising one
+  // arms that slot's obligation on its Invoke success edge.
+  const bool hiddenSlot =
+      slot != nullptr && slot->root == MirPlaceRootKind::Temporary &&
+      slot->sourceValue == call->hirValue &&
+      findMirTemporaryMaterialization(body, *slot, slot->sourceValue)
+              .producer == call;
+  const bool valueRootedSlot = slot != nullptr &&
+                               slot->root == MirPlaceRootKind::Value &&
+                               slot->value == valueId;
   if (drop == nullptr || drop->kind != MirDropObligationKind::Value ||
       drop->dropType.type != enumeration->type ||
       !drop->dropType.requiresActiveCleanup || drop->initiallyActive ||
-      slot == nullptr || slot->root != MirPlaceRootKind::Value ||
-      slot->value != valueId || !slot->projections.empty() ||
-      slot->type != enumeration->type || slot->traits != enumeration->traits ||
+      (!valueRootedSlot && !hiddenSlot) ||
+      (call->destination && (!hiddenSlot || *call->destination != slot->id)) ||
+      !slot->projections.empty() || slot->type != enumeration->type ||
+      slot->traits != enumeration->traits ||
       (!selfActivated && !invokeSuccessActivates(body, *call, drop->id))) {
     return nullptr;
   }
@@ -26085,6 +26109,14 @@ lifetimeSlotPlace(const MirProgram &program,
       owningPayloadEnumValueSlot(program, body, place.value) == &place) {
     return true;
   }
+  // A payload-enum temporary borrowed only inside a conditional arm or a
+  // `&&`/`||` operand is constructed in the hidden slot that carries its
+  // conditional drop through the CFG merge.
+  if (place.root == MirPlaceRootKind::Temporary && place.projections.empty() &&
+      place.type.kind == SemanticType::Enum &&
+      directTemporaryBorrowForSlot(body, place)) {
+    return true;
+  }
   // A nested owning aggregate's result is an array-typed element of the
   // enclosing aggregate; its value-rooted place is that element's slot.
   if (place.root == MirPlaceRootKind::Value && place.projections.empty() &&
@@ -39432,6 +39464,14 @@ private:
       }
       const MirPlace *destination =
           payloadEnumValueSlot(program, facts.body, *instruction.result);
+      if (destination == nullptr) {
+        // A branch-only payload enum borrowed by a call constructs in its
+        // hidden slot, retargeted there by the CFG merge.
+        const DirectTemporaryBorrow temporary =
+            directTemporaryBorrowForValue(facts.body, *instruction.result);
+        if (temporary.producer == &instruction)
+          destination = temporary.slot;
+      }
       if (destination != nullptr) {
         const PayloadEnumFreshReturnPublication freshReturn =
             failureForm
@@ -61613,10 +61653,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             staged.kind == MirOperandKind::BorrowWrite) {
           // A borrowed call input stages a place the call spells directly;
           // the write form carries the mutable receiver.
-          if (staged.place == 0 || body.findPlace(staged.place) == nullptr) {
+          const MirPlace *borrowed =
+              staged.place == 0 ? nullptr : body.findPlace(staged.place);
+          if (borrowed == nullptr) {
             {
               return false;
             }
+          }
+          // A temporary produced only inside a conditional arm or a `&&`/`||`
+          // operand lives in a hidden slot. Only a recognized lifetime slot
+          // has its producer construct it in place; any other producer would
+          // define just its SSA value and leave the borrowed slot unwritten.
+          const MirInstruction *hiddenProducer =
+              borrowed->root == MirPlaceRootKind::Temporary
+                  ? findMirTemporaryMaterialization(body, *borrowed,
+                                                    borrowed->sourceValue)
+                        .producer
+                  : nullptr;
+          if (hiddenProducer != nullptr &&
+              hiddenProducer->kind != MirInstructionKind::Move &&
+              hiddenProducer->kind != MirInstructionKind::Load &&
+              !slotPlace(*borrowed)) {
+            return false;
           }
           if (!mirCallInputAbandonedByTerminal(body, instruction))
             pendingStaged.push_back(*instruction.result);

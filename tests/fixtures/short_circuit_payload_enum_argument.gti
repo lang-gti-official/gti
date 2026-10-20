@@ -1,0 +1,145 @@
+#include <std/string>
+#include <std/vector>
+
+// A payload-enum temporary borrowed by a read-only reference parameter inside
+// a conditionally evaluated operand: the right operand of `&&` or `||`, or an
+// arm of `?:`. It lives in the hidden slot that carries its conditional drop
+// to the end of the enclosing full expression. An owning enum's payload is
+// destroyed exactly once when its operand ran and never when the operand was
+// skipped, on normal and defined-failure paths alike. A cleanup-free enum
+// reads back the payload it was built with.
+//
+// Tracked prints its id when constructed and the negated id when destroyed.
+// Quiet cannot fail to construct and only counts its drops. Nothing else
+// prints outside main and run.
+class Tracked {
+public:
+  int id;
+  Tracked(int value) : id(value) { std::println(this.id); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(-this.id); }
+};
+
+mut int quiet_drops = 0;
+
+class Quiet {
+public:
+  int id;
+  Quiet(int value) : id(value) {}
+  Quiet(Quiet& other) = delete;
+  Quiet(Quiet&& other) = default;
+  ~Quiet() { quiet_drops += this.id; }
+};
+
+enum class state { empty, engaged(int value) };
+enum class owned { empty, held(Tracked item) };
+enum class kept { empty, held(Quiet item) };
+
+state make_state(int value) {
+  if (value < 0) {
+    return state::empty;
+  }
+  return state::engaged(value);
+}
+
+owned hold(int id) { return owned::held(Tracked(id)); }
+
+// Cannot fail, so the CFG merge retargets this producer to the hidden slot
+// instead of arming the slot on an Invoke success edge.
+kept hold_quiet(int id) { return kept::held(Quiet(id)); }
+
+// Fails before its payload exists when divisor is zero.
+owned hold_divided(int id, int divisor) {
+  return owned::held(Tracked(id / divisor));
+}
+
+int payload(state& item) {
+  switch (item) {
+  case state::engaged(auto& value):
+    return value;
+  case state::empty:
+    return 0;
+  }
+}
+
+int held(owned& item) {
+  switch (item) {
+  case owned::held(auto& tracked):
+    return tracked.id;
+  case owned::empty:
+    return 0;
+  }
+}
+
+int kept_id(kept& item) {
+  switch (item) {
+  case kept::held(auto& quiet):
+    return quiet.id;
+  case kept::empty:
+    return 0;
+  }
+}
+
+// Fails while its argument is borrowed when divisor is zero.
+bool divided(owned& item, int divisor) { return held(item) / divisor > 0; }
+
+int quotient(int value, int divisor) { return value / divisor; }
+
+// Runs every shape once. `on` selects which operands run, and `base` keeps
+// the two runs' ids apart.
+int run(bool on, int base) {
+  bool off = !on;
+  mut int total = 0;
+  // `&&` right operands: owning enums built in place and returned by a call,
+  // and a cleanup-free enum.
+  if (on && held(owned::held(Tracked(base + 1))) == base + 1) { total += 1; }
+  if (on && held(hold(base + 2)) == base + 2) { total += 1; }
+  if (on && payload(state::engaged(base + 3)) == base + 3) { total += 1; }
+  // `||` right operands.
+  if (on || held(hold(base + 4)) > 0) { total += 1; }
+  if (off || payload(make_state(base + 5)) == base + 5) { total += 1; }
+  // `?:` arms.
+  total += on ? held(hold(base + 6)) : held(owned::held(Tracked(base + 7)));
+  total += off ? payload(make_state(base + 8)) : payload(state::empty);
+  // Nested operators.
+  bool nested = (off && held(hold(base + 9)) > 0) ||
+                (on && held(hold(base + 10)) > 0);
+  if (nested) { total += 1; }
+  // A loop condition evaluates its operand on every iteration.
+  mut int count = 0;
+  while (count < 2 && held(hold(base + 11 + count)) > 0) { count += 1; }
+  // Owning enums whose producers cannot fail.
+  if (on && kept_id(hold_quiet(base + 13)) == base + 13) { total += 1; }
+  if (off || kept_id(kept::held(Quiet(base + 14))) == base + 14) {
+    total += 1;
+  }
+  return total + count;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(run(true, 0));
+  std::println(run(false, 100));
+  // Only the first run's quiet payloads were built: 13 + 14.
+  std::println(quiet_drops);
+  // Defined failure. Scenario 1 fails the borrowing callee of an owning enum
+  // in an `&&` operand, 2 the enum's producer in a `?:` arm, 3 the right
+  // operand of an `&&` whose left operand still holds its enum, and 4 the
+  // same after that enum's operand was skipped. Cleanup destroys exactly
+  // what exists.
+  int scenario = argc - 1;
+  bool live = argc > 0;
+  Tracked outer{201};
+  bool first = live && divided(hold(202), scenario == 1 ? 0 : 1);
+  std::println("first");
+  bool second = scenario == 2 ? held(hold_divided(203, 0)) > 0
+                              : held(hold(203)) > 0;
+  std::println("second");
+  bool third = (live && held(hold(204)) > 0) &&
+               quotient(1, scenario == 3 ? 0 : 1) > 0;
+  std::println("third");
+  bool fourth = (!live && held(hold(205)) > 0) ||
+                quotient(1, scenario == 4 ? 0 : 1) > 0;
+  std::println("last");
+  return first && second && third && fourth ? 0 : 1;
+}

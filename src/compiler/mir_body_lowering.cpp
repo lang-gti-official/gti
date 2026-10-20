@@ -7307,12 +7307,38 @@ private:
             parent = found->second;
         }
       }
+      // A fresh adapter over a local dynamic text view has no binding
+      // contract. Like that contract, it borrows the exact view shell and
+      // retains the shell's own owner loan; flattening the shell onto its
+      // external text owner would lose the referent the adapter stores. A
+      // parameter's entry already names its caller-owned authority.
+      MirLoanId textShellOwner = 0;
+      if (shellContract == nullptr && kind == MirLoanKind::Stored &&
+          shellArgument != nullptr && shellReferenceInput &&
+          (shellArgument->info.type.kind == SemanticType::StringView ||
+           shellArgument->info.type.kind == SemanticType::CString) &&
+          shellArgument->info.traits.containsBorrowedState) {
+        const MirLoanId owner = loanForValue(shellArgument->id);
+        const MirLoan *ownerLoan = output.findLoan(owner);
+        const MirPlaceId shell = placeForValue(shellArgument->id);
+        const MirPlace *shellPlace = output.findPlace(shell);
+        if (ownerLoan != nullptr && ownerLoan->kind == MirLoanKind::Stored &&
+            !ownerLoan->entry && shellPlace != nullptr &&
+            shellPlace->root == MirPlaceRootKind::Binding &&
+            shellPlace->projections.empty()) {
+          origin = shell;
+          parent = 0;
+          textShellOwner = owner;
+        }
+      }
       const bool twoPhase =
           reserveBorrowResult && stableReservationOrigin(origin);
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);
       if (shellContract != nullptr) {
         recordLoanIdentity(loan, *shellContract);
+      } else if (textShellOwner != 0) {
+        output.loans[loan - 1].storedDependency = textShellOwner;
       } else if (kind == MirLoanKind::Stored && shellArgument != nullptr &&
                  (shellArgument->info.traits.containsBorrowedState ||
                   storesCarrierReference(value)) &&
@@ -14136,7 +14162,8 @@ private:
                output.returnType.kind == SemanticType::StringView ||
                output.returnType.kind == SemanticType::CString) &&
               value->info.traits.copyable) {
-            // A copied nested member has no separate local carrier binding.
+            // A copied nested member, or a text view read through a checked
+            // text reference field, has no separate local carrier binding.
             // Its caller-owned receiver/reference entry supplies the external
             // authority; the exact returned Load remains executable evidence.
             retained =

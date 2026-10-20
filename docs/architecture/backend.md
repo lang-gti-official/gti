@@ -1439,8 +1439,20 @@ is failure-capable. The emitter allocates no storage for a by-value receiver
 here.
 
 For a verified read-only temporary argument input, the body emitter uses the
-same exact value-rooted lifetime slot and passes that slot to the selected
-reference parameter. Its `CallArgument` loan is representation-erased only
+same exact materialization, the value-rooted lifetime slot or the CFG-promoted
+hidden slot of a call in a conditional arm or `&&`/`||` operand, and passes
+that slot to the selected reference parameter. The hidden slot's MIR drop
+after the merge is emitted as its conditional `destroy_if_engaged()`. A
+payload-enum temporary in such a slot, cleanup-free or owning, is constructed
+there as well. Its `PayloadConstruct`, retargeted to the slot by the merge,
+constructs the alternative in place. An owning enum returned by a call
+publishes through the slot's construction address; a call that cannot fail is
+retargeted to the slot and a raising one arms the slot's obligation on its
+`Invoke` success edge. A linear payload-enum argument keeps its value-rooted
+SSA object. A borrow of a hidden slot that no lifetime-slot recognizer
+constructs in place is refused: its producer would define only its SSA value
+and leave the borrowed slot unwritten. Its
+`CallArgument` loan is representation-erased only
 after preflight proves the matching `BorrowRead`, call input, immediate
 loan-end schedule, and full-expression drop. Failure successors use the MIR
 cleanup order. The emitter neither binds an arbitrary C++ prvalue nor infers

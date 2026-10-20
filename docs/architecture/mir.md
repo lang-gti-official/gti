@@ -133,7 +133,14 @@ frames may initialize receiver fields. After those writes, a constructor body
 or mutable method may edit a mutable field under the ordinary loan rules.
 Materialized result receivers read the exact MIR `Value` root; their passive
 storage is retired at the represented move/drop, not reconstructed as a binding
-or kept alive independently of full-expression cleanup.
+or kept alive independently of full-expression cleanup. A temporary produced
+only in a conditional arm or a `&&`/`||` operand lives instead in its
+CFG-promoted hidden `Temporary` slot. Its producer, as the shared
+materialization query resolves it, publishes the result into that slot when it
+completes, whether MIR retargeted the producer there or arms the slot's
+obligation on its `Invoke` success edge. Argument and receiver borrows of the
+slot therefore read the produced value, and the post-merge drop retires only a
+slot that its operand produced.
 Consuming method receiver preparation also designates that same materialized
 root. A move-value receiver `CallInput` does not introduce a second owning
 constant snapshot: field moves in the callee retire the caller's exact selected
@@ -1806,8 +1813,15 @@ not a requirement to invent an owner for static storage. A read-only summarized
 function may return a literal-backed text view or a null C-string alternative
 without an escaping loan. Program verification independently requires the exact
 typed string/null literal producer, with no borrowed state, input operands,
-loan, side effects or lifecycle events. Clearing a borrowed-state flag or a
-return loan does not establish that witness. All dynamic alternatives still
+loan, side effects or lifecycle events. A copied stored view is the other
+witness: semantics rejects storing a dynamic view in a field or fixed-array
+element, so one exact `Load` copying a place whose final `Field` or `Index`
+projection has the returned view type, with no borrowed state, loan,
+destination, receiver or lifecycle events, is also lifetime independent. A
+reference field ends in a dereference and never qualifies. Clearing a
+borrowed-state flag or a return loan does not establish either witness. A
+function whose returns are all stored views or literals summarizes no owner
+dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 The success loan always uses read-only access, including when the enclosing
@@ -3689,17 +3703,27 @@ it does not reclassify this carrier as a fresh owning temporary.
 
 An ordinary-call argument may use `ReadTemporaryBorrow` only when its HIR
 input names an exact fresh class/struct producer or a passive payload-enum
-construction, and its selected parameter is read-only `T&`. Lowering materializes the producer's exact mutable value-rooted
-place, emits `BorrowRead`, and attaches one `CallArgument` loan to the
-`CallInput`. The loan is active while later arguments are prepared and ends in
+construction, and its selected parameter is read-only `T&`. Lowering
+materializes the producer's exact mutable place, emits `BorrowRead`, and
+attaches one `CallArgument` loan to the `CallInput`. As for receiver inputs,
+a linear value uses its value-rooted place. A call evaluated only in a
+conditional arm or a `&&`/`||` operand borrows the one hidden temporary slot
+that carries the producer's conditional drop through the CFG merge. The merge
+retargets the producer to that slot, and the loan, which already ended inside
+the arm, names it. Both the loan rule and the input rule admit only those two
+forms through the shared materialization query.
+The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
 of both normal and failure successors for an `Invoke`. The producer's one
-full-expression drop remains independent and follows the loan end. Verification
-rejects a mutable/projected/wrong-type place, a native or declaration-only
-producer/target, borrowed state, an escaping result, producer/input reordering,
-premature or missing loan ending, and a missing or duplicate drop. The backend
-therefore consumes a complete schedule rather than relying on C++ reference
-lifetime rules.
+full-expression drop remains independent and follows the loan end; for a
+branch-only value it is the conditional drop after the merge, and failure
+edges inside the arm drop the definitely active slot. Verification rejects a
+mutable/projected/wrong-type place, a hidden slot detached from the exact
+producer identity or naming another temporary's slot, a native or
+declaration-only producer/target, borrowed state, an escaping result,
+producer/input reordering, premature or missing loan ending, and a missing,
+duplicate or unconditional post-merge drop. The backend therefore consumes a
+complete schedule rather than relying on C++ reference lifetime rules.
 
 Fresh read-only callable arguments extend that same schedule with exact
 `Closure` and `FunctionItem` producers, not an implicit owning copy. A closure
