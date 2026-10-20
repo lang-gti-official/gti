@@ -514,6 +514,10 @@
       "suite": "text"
     },
     {
+      "name": "testHiddenSlotTemporaryArguments",
+      "suite": "text"
+    },
+    {
       "name": "testForwardListEmplacementPublication",
       "suite": "lifecycle"
     },
