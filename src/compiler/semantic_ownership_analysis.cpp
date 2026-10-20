@@ -2628,6 +2628,18 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
           dependency.parent = loan->id;
           sources.push_back(std::move(dependency));
         }
+      } else if (actualPlace.root == nullptr && !actualPlace.receiver &&
+                 input && !input->dependencies.empty() &&
+                 std::all_of(input->dependencies.begin(),
+                             input->dependencies.end(),
+                             [](const auto &dependency) {
+                               return dependency.designatedFields.empty() &&
+                                      dependency.conditions.empty();
+                             })) {
+        // A relayed reference with no place of its own, such as the result
+        // of `?` through a borrowed_from contract, carries its complete
+        // external dependency set on the expression itself.
+        sources = input->dependencies;
       } else {
         auto place = loanPlace(actualPlace);
         const auto *info = semanticModel.findExpression(**argument);
