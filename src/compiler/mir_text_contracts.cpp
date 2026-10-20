@@ -128,6 +128,13 @@ private:
         (std::holds_alternative<std::string>(*instruction->literal) ||
          std::holds_alternative<std::nullptr_t>(*instruction->literal))) {
       answer.known = true;
+    } else if (instruction &&
+               instruction->kind == MirInstructionKind::Compute &&
+               instruction->operation == MirOperation::PayloadExtract &&
+               textType(instruction->info.type)) {
+      // A payload enum's text field holds only text that its construction
+      // proved ownerless, as a class's text field does.
+      answer.known = true;
     } else if (instruction && instruction->operands.size() == 1 &&
                (instruction->kind == MirInstructionKind::Load ||
                 instruction->kind == MirInstructionKind::CallInput ||
