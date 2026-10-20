@@ -13509,6 +13509,10 @@ private:
                  .type = consumed->type};
     } else if (statement.value) {
       const HirValue *sourceValue = findValue(*statement.value);
+      // A named subject is observed. An enum that owns cleanup, that cannot
+      // be copied (a cleanup-free alternative may still hold a move-only
+      // field), or that an arm binds by reference is read-borrowed in place;
+      // only a copyable passive enum is read through a copy.
       const bool payloadPlace =
           sourceValue != nullptr &&
           sourceValue->info.category == ValueCategory::Place &&
@@ -13521,9 +13525,12 @@ private:
                       });
       // A subject's place exists only once its producer has run: a reference
       // result is addressed through that call's loan, never a placeholder
-      // created before the call.
+      // created before the call. The read-borrow transports only the
+      // subject's address, so no Load performs a selected fixed-array
+      // element's bounds check. Finish that selection at its checked
+      // AddressOf before the switch observes it.
       if (payloadPlace)
-        emitPlaceDependencies(*statement.value);
+        emitPlaceDependencies(*statement.value, true);
       const MirPlaceId sourcePlace =
           payloadPlace ? placeForValue(*statement.value) : 0;
       if (payloadPlace && sourcePlace != 0) {
