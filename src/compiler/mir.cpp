@@ -691,6 +691,60 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
   return result;
 }
 
+MirTemporaryMaterialization
+findMirMovedTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                     HirValueId sourceValue) {
+  // Either the moved value roots this place directly, or a branch-only
+  // temporary was promoted into one hidden slot that the Move initializes so
+  // it remains nameable after the CFG merge.
+  const bool valueRoot = place.root == MirPlaceRootKind::Value &&
+                         place.value != 0 && place.temporary == 0;
+  const bool hiddenSlot = place.root == MirPlaceRootKind::Temporary &&
+                          place.temporary != 0 && place.value == 0;
+  if (sourceValue == 0 || place.sourceValue != sourceValue ||
+      !place.projections.empty() || (!valueRoot && !hiddenSlot)) {
+    return {};
+  }
+  MirTemporaryMaterialization result;
+  for (const MirValue &candidate : body.values) {
+    if (candidate.sourceValue != sourceValue ||
+        (valueRoot && candidate.id != place.value)) {
+      continue;
+    }
+    const MirBlock *block = body.findBlock(candidate.definitionBlock);
+    if (block == nullptr) {
+      continue;
+    }
+    const auto definition =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const MirInstruction &instruction) {
+                       return instruction.id == candidate.definition;
+                     });
+    if (definition == block->instructions.end()) {
+      continue;
+    }
+    const MirInstruction &move = *definition;
+    const MirPlace *source = move.operands.size() == 1
+                                 ? body.findPlace(move.operands.front().place)
+                                 : nullptr;
+    if (move.kind != MirInstructionKind::Move || move.result != candidate.id ||
+        move.hirValue != sourceValue || move.intrinsic != IntrinsicKind::Move ||
+        (valueRoot ? move.destination.has_value()
+                   : move.destination != place.id) ||
+        move.operands.front().kind != MirOperandKind::Move ||
+        source == nullptr || source->root != MirPlaceRootKind::Binding ||
+        !source->projections.empty() || source->type != place.type ||
+        !move.ownership || move.ownership->kind != OwnershipEventKind::Move) {
+      continue;
+    }
+    if (result) {
+      return {};
+    }
+    result = {.value = &candidate, .producer = &move};
+  }
+  return result;
+}
+
 MirTemporaryCarrierDependency
 findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   if ((place.root != MirPlaceRootKind::Value &&
@@ -10628,10 +10682,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const SemanticType &referent = input.info.type.arguments.front();
       const MirPlace *place = body.findPlace(operand.place);
-      const MirTemporaryMaterialization materialization =
+      MirTemporaryMaterialization materialization =
           place == nullptr
               ? MirTemporaryMaterialization{}
               : findMirTemporaryMaterialization(body, *place, input.hirValue);
+      if (!materialization && place != nullptr) {
+        materialization =
+            findMirMovedTemporaryMaterialization(body, *place, input.hirValue);
+      }
       const MirValue *source = materialization.value;
       const MirInstruction *producer = materialization.producer;
       const MirLoan *loan = body.findLoan(*input.loan);
@@ -10675,7 +10733,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||
           loan->entry || loan->escapes || loan->parent != 0 ||
           loan->producedBy != input.callSite ||
-          place->root != MirPlaceRootKind::Value ||
+          (place->root != MirPlaceRootKind::Value &&
+           place->root != MirPlaceRootKind::Temporary) ||
           !place->projections.empty() || place->access != AccessMode::Mutable ||
           place->sourceValue != input.hirValue || place->type != referent ||
           source->sourceValue != input.hirValue ||
@@ -10694,7 +10753,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !ordinaryCall && !payloadConstruction &&
-           !callableConstruction)) {
+           !callableConstruction &&
+           producer->kind != MirInstructionKind::Move)) {
         return false;
       }
 
@@ -11503,7 +11563,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           loan.storedField != 0 || loan.lifecycleBound || loan.twoPhase ||
           !loan.additionalSources().empty() || source == nullptr ||
           (source->root != MirPlaceRootKind::Value &&
-           (!receiver || source->root != MirPlaceRootKind::Temporary)) ||
+           source->root != MirPlaceRootKind::Temporary) ||
           !source->projections.empty() ||
           (source->type.kind != SemanticType::Class &&
            source->type.kind != SemanticType::Lambda &&
@@ -14560,10 +14620,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         if (input->callInputKind == HirCallInputKind::ReadTemporaryBorrow ||
             input->callInputKind == HirCallInputKind::MutableTemporaryBorrow) {
           const MirPlace *place = body.findPlace(input->operands.front().place);
-          const MirTemporaryMaterialization materialization =
+          MirTemporaryMaterialization materialization =
               place == nullptr ? MirTemporaryMaterialization{}
                                : findMirTemporaryMaterialization(
                                      body, *place, input->hirValue);
+          if (!materialization && place != nullptr &&
+              input->callInputRole == MirCallInputRole::Argument) {
+            materialization = findMirMovedTemporaryMaterialization(
+                body, *place, input->hirValue);
+          }
           const MirInstruction *producer = materialization.producer;
           if (producer == nullptr || !strictlyPrecedes(*producer, *input)) {
             return failure(body, owner,
