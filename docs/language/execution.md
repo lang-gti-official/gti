@@ -698,7 +698,10 @@ immutable copy of its field and drops it at the arm's end. A tag-only pattern
 observes a move-only payload without extracting it; `auto&` instead borrows a
 field from that stable enum storage for the arm, and `mut auto&` requires
 mutable storage and an exclusive loan. The whole enum remains the
-conservative conflict root while a payload loan lives.
+conservative conflict root while a payload loan lives. A subject place that
+selects a fixed-array element, such as `items[i]`, is observed in that
+element: its index is checked once, before any arm is selected, and an index
+out of range fails with `index_out_of_bounds` without running an arm.
 
 A consumed subject, a prvalue such as a call result or a construction or an
 explicit `std::move` of a place, is consumed by the switch. Its full
