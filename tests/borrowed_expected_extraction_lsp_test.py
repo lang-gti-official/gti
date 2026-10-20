@@ -77,13 +77,17 @@ def main():
             assert definition["uri"] == uri, definitions
             assert definition["range"]["start"] == lsp_position(SOURCE, SOURCE.index("demanded =")), definitions
 
+            # A consuming member of an ordinary source-defined class uses the
+            # general consuming-receiver diagnostic, anchored at the member.
             named = SOURCE.replace("std::move(carrier).expect", "carrier.expect")
             errors = change(2, named)
-            error = next((item for item in errors if item.get("code") == "GTI-S2018"), None)
+            error = next((item for item in errors if item.get("code") == "GTI-S2022"), None)
             assert error is not None and "std::move" in error["message"], errors
-            start = named.index(".expect") + 1
-            assert error["range"] == {"start": lsp_position(named, start),
-                                      "end": lsp_position(named, start + len("expect"))}, error
+            # The general consuming-receiver diagnostic anchors the call's
+            # closing parenthesis.
+            close = named.index(")", named.index(".expect"))
+            assert error["range"] == {"start": lsp_position(named, close),
+                                      "end": lsp_position(named, close + 1)}, error
 
             conflict = SOURCE.replace("int observed = alias;\n  owner = 8;",
                                       "/*😀*/ owner = 8;\n  int observed = alias;")

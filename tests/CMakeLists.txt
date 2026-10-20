@@ -951,6 +951,14 @@ add_test(NAME global_borrow_carriers_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/global_borrow_carriers.gti" --ownership-checks)
 set_tests_properties(global_borrow_carriers_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME readonly_range_over_mutable_result_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/readonly_range_over_mutable_result.gti" --ownership-checks)
+set_tests_properties(readonly_range_over_mutable_result_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME reflected_contextual_construction_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/reflected_contextual_construction.gti" --ownership-checks)
+set_tests_properties(reflected_contextual_construction_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)

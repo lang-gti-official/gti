@@ -1418,9 +1418,20 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
                   *use.forwardedParameter) !=
             caller->ownerlessTextParameters.end())
       continue;
-    if (use.argument)
+    if (use.argument) {
+      const std::size_t before = diagnostics.size();
       reportOwnerDependentTextStorage(
           *use.argument, "passed to a function requiring ownerless text input");
+      // Name the formal whose body stores or forwards the view, so the
+      // obligation can be traced to its source.
+      const auto *callee = semanticModel.findFunction(use.callee);
+      if (diagnostics.size() > before && callee && callee->declaration &&
+          use.parameter < callee->declaration->parameters().size())
+        diagnostics.back().related.push_back(
+            {tokenSpan(callee->declaration->parameters()[use.parameter].name),
+             "This parameter requires ownerless text because the function "
+             "stores or forwards it."});
+    }
     use.diagnosed = true;
   }
   for (auto &use : requestSession.ownerlessTextCallableUses) {
@@ -2511,12 +2522,11 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     const auto &mapping = summary.dependencies[index];
     if (mapping.origin == BorrowOriginKind::Global) {
       // Static storage needs no caller input: every caller's result depends
-      // on that exact place.
+      // on that exact place, in the loan-flow domain every place shares.
       if (mapping.globalRoot == 0)
         continue;
       SemanticLoanDependency dependency{
-          .place = {.domain = {.snapshot = semanticModel.placeSnapshot()},
-                    .root = mapping.globalRoot},
+          .place = {.root = mapping.globalRoot},
           .designatedFields = mapping.resultFields,
           .access = mapping.access,
           .protectsStorage = true,

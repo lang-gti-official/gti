@@ -71,23 +71,27 @@ int main() {
             wrong_mapper = source.replace("Error map(int error)", "Error map(bool error)")
             change(2, wrong_mapper)
             errors = diagnostics(2)
-            error = next((d for d in errors if d.get("code") == "GTI-S2097"), None)
+            # The mapper is an ordinary generic function-item parameter: the
+            # general function-item selection diagnostic names the candidate.
+            error = next((d for d in errors if d.get("code") == "GTI-S2090"), None)
             assert error is not None, errors
             start = wrong_mapper.rindex("map)")
             assert error["range"] == {"start": lsp_position(wrong_mapper, start),
                                       "end": lsp_position(wrong_mapper, start + 3)}, error
             assert error.get("relatedInformation"), error
             assert error.get("data", {}).get("hints"), error
-            assert "non-generic namespace function" in error["message"], error
+            assert "non-generic namespace-scope GTI function" in error["message"], error
 
             named_receiver = source.replace("std::move(source)", "source")
             change(3, named_receiver)
             errors = diagnostics(3)
-            error = next((d for d in errors if d.get("code") == "GTI-S2018"), None)
+            error = next((d for d in errors if d.get("code") == "GTI-S2022"), None)
             assert error is not None, errors
-            start = named_receiver.index("transform_error")
-            assert error["range"] == {"start": lsp_position(named_receiver, start),
-                                      "end": lsp_position(named_receiver, start + 15)}, error
+            # The general consuming-receiver diagnostic anchors the call's
+            # closing parenthesis.
+            close = named_receiver.index("transform_error(map)") + len("transform_error(map")
+            assert error["range"] == {"start": lsp_position(named_receiver, close),
+                                      "end": lsp_position(named_receiver, close + 1)}, error
             assert "std::move" in error["message"], error
 
             incomplete = source.replace("transform_error(map)", "")
@@ -118,12 +122,16 @@ int main() {
             wrong_lambda = lambda_source.replace("[](int error)", "[](bool error)")
             change(8, wrong_lambda)
             errors = diagnostics(8)
-            error = next((d for d in errors if d.get("code") == "GTI-S2097"), None)
+            # The mismatch is found inside the library's transform_error
+            # instance and reported at the requesting member call.
+            error = next((d for d in errors if d.get("code") == "GTI-S2003"), None)
             assert error is not None, errors
-            start = wrong_lambda.index("[](")
+            start = wrong_lambda.index("transform_error")
             assert error["range"] == {"start": lsp_position(wrong_lambda, start),
-                                      "end": lsp_position(wrong_lambda, start + 1)}, error
-            assert "exact by-value" in error["message"], error
+                                      "end": lsp_position(wrong_lambda, start + 15)}, error
+            assert "requires 'bool'" in error["message"], error
+            assert any("library instance" in r["message"]
+                       for r in error.get("relatedInformation", [])), error
             change(9, lambda_source)
             assert not diagnostics(9)
 
@@ -140,16 +148,20 @@ int main() {
             wrong_error = ergonomic.replace("-> expected<int, int>", "-> expected<int, bool>")
             change(11, wrong_error)
             errors = diagnostics(11)
-            error = next((d for d in errors if d.get("code") == "GTI-S2097"), None)
+            # and_then's result contract is the library's expected_result
+            # concept; a wrong error type fails that constraint.
+            error = next((d for d in errors if d.get("code") == "GTI-S2029"), None)
             assert error is not None, errors
-            start = wrong_error.rindex("[](")
+            # The constraint belongs to the and_then call's deduced mapper
+            # result; it is reported at that call's closing parenthesis.
+            start = wrong_error.index(")", wrong_error.index("return value; }"))
             assert error["range"] == {"start": lsp_position(wrong_error, start),
                                       "end": lsp_position(wrong_error, start + 1)}, error
-            assert "source error type" in error["message"], error
+            assert "expected_result" in error["message"], error
             wrong_message = ergonomic.replace('"required value"', "42")
             change(12, wrong_message)
             errors = diagnostics(12)
-            error = next((d for d in errors if d.get("code") == "GTI-S2016"), None)
+            error = next((d for d in errors if d.get("code") == "GTI-S2003"), None)
             assert error is not None, errors
             start = wrong_message.rindex("42")
             assert error["range"] == {"start": lsp_position(wrong_message, start),
@@ -163,15 +175,11 @@ expected<int, int> read() { return 7; }
 Packet map(int input) { return Packet::item(Resource()); }
 int main() { /*😀*/ [[discard]] read().transform(map); return 0; }
 """
+            # A source-defined mapping transports an owning payload enum like
+            # any other class result; the retired builtin slice restriction
+            # no longer exists.
             change(14, owning_enum)
-            errors = diagnostics(14)
-            error = next((d for d in errors if d.get("code") == "GTI-S2067"), None)
-            assert error is not None, errors
-            start = owning_enum.rindex("map)")
-            assert error["range"] == {"start": lsp_position(owning_enum, start),
-                                      "end": lsp_position(owning_enum, start + 3)}, error
-            assert "expected mapping result" in error["message"], error
-            assert "ordinary class or struct" in error["message"], error
+            assert not diagnostics(14)
             change(15, ergonomic)
             assert not diagnostics(15)
         finally:

@@ -93,7 +93,8 @@ public:
                               const SemanticType &type,
                               ConstantEvaluationFailure failure,
                               const std::string &failureDetail,
-                              const Token &location);
+                              const Token &location,
+                              const std::optional<Token> &libraryLocation = {});
 
   // A failed 'if constexpr' condition evaluation.
   void reportConstexprConditionFailure(const IfStmt &statement,

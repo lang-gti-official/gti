@@ -69,12 +69,6 @@ int main() {
       "int(saved.text.size()); }",
       "Label escape() { std::string owner = std::string(\"abc\"); "
       "return Label(owner.view()); }",
-      "void opaque(std::string_view input) { Label saved{input}; }",
-      "void generic(std::string_view input) { Box<std::string_view> "
-      "saved{input}; }",
-      "void pair(std::string_view input) { std::pair<std::string_view, "
-      "int32_t> saved{input, 1}; }",
-      "void ctext(c_string input) { CLabel saved{input}; }",
       "int main() { std::string owner = std::string(\"abc\"); CLabel "
       "saved{owner.c_string()}; return 0; }",
       "void allocated(std::string_view input) { auto saved = "
@@ -93,19 +87,53 @@ int main() {
     expect(!hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
            "invalid text storage is diagnosed before executable lowering");
   }
+  // A helper storing its text formal in a field carries an ownerless-input
+  // obligation instead: it is valid alone, and a dynamic caller is rejected.
+  for (const auto &[helper, call] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"void opaque(std::string_view input) { Label saved{input}; }",
+            "opaque(owner.view());"},
+           {"void generic(std::string_view input) { Box<std::string_view> "
+            "saved{input}; }",
+            "generic(owner.view());"},
+           {"void pair(std::string_view input) { std::pair<std::string_view, "
+            "int32_t> saved{input, 1}; }",
+            "pair(owner.view());"},
+           {"void ctext(c_string input) { CLabel saved{input}; }",
+            "ctext(owner.c_string());"}}) {
+    const auto alone = analyze(helper + " int main() { return 0; }");
+    expect(alone.canGenerateCode(),
+           "a text-storing helper carries an ownerless input obligation: " +
+               helper);
+    const auto called =
+        analyze(helper + " int main() { std::string owner = "
+                         "std::string(\"abc\"); " +
+                call + " return 0; }");
+    expect(!called.canGenerateCode() &&
+               hasDiagnosticCode(called.diagnostics, "GTI-S2045") &&
+               hasDiagnostic(called.diagnostics, "requiring ownerless text"),
+           "a dynamic caller cannot satisfy an ownerless input obligation: " +
+               helper);
+    expect(!hasDiagnosticCode(called.diagnostics, "GTI-B0001"),
+           "an unmet text obligation is diagnosed before executable lowering");
+  }
   const auto conditional = analyze(
       "struct Relay { std::string_view text; Relay(std::string_view input) "
       ": text((true ? input : \"\")) {} };");
   expect(!conditional.canGenerateCode() &&
              hasDiagnosticCode(conditional.diagnostics, "GTI-S2051"),
          "a conditional cannot erase an operand's dynamic text dependency");
+  // The obligation is diagnosed at the dynamic caller, related to the
+  // formal whose body stores the view.
   const auto diagnostic =
-      analyze("void caller(std::string_view input) { Label saved{input}; }");
+      analyze("void caller(std::string_view input) { Label saved{input}; }\n"
+              "int main() { std::string owner = std::string(\"abc\");\n"
+              "  caller(owner.view()); return 0; }");
   const auto found =
       std::find_if(diagnostic.diagnostics.begin(), diagnostic.diagnostics.end(),
                    [](const auto &entry) {
                      return entry.code == "GTI-S2045" &&
-                            entry.message.find("passed to a constructor") !=
+                            entry.message.find("requiring ownerless text") !=
                                 std::string::npos;
                    });
   expect(found != diagnostic.diagnostics.end() && !found->related.empty() &&
@@ -435,16 +463,20 @@ int main() {
          "a dynamic string_view must not escape the local string that owns "
          "its bytes");
 
+  // Retaining a view formal in global storage makes it an ownerless-input
+  // obligation of the helper; a caller passing dynamic text is rejected.
   const lang::FrontendResult storedTextView = lang::Frontend().analyze(
       "stored-string-view.gti",
       "#include <std/string>\n"
       "mut std::string_view saved = \"\";\n"
-      "void retain(std::string_view value) { saved = value; }\n",
+      "void retain(std::string_view value) { saved = value; }\n"
+      "int main() { std::string owner = std::string(\"abc\");\n"
+      "  retain(owner.view()); return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!storedTextView.canGenerateCode() &&
              hasDiagnosticCode(storedTextView.diagnostics, "GTI-S2045") &&
              hasDiagnostic(storedTextView.diagnostics,
-                           "cannot be assigned into an existing binding"),
+                           "requiring ownerless text"),
          "an opaque string_view parameter must not be retained in global "
          "storage without an expressible dependency graph");
 
@@ -560,7 +592,7 @@ int main() {
   return value == nullptr ? 1 : 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(nativeCString.canGenerateCode() && nativeCString.mirValid &&
              nativeCString.mir.valid(),
          "native C-string results without a GTI owner should remain usable "
@@ -605,7 +637,7 @@ int main() {
   return total + values[3];
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(trivialLocals.canGenerateCode() && trivialLocals.mirValid &&
              trivialLocals.mir.valid(),
          "a moved trivially dropped loop-local must leave its storage "
@@ -631,7 +663,7 @@ int main() {
   return narrow + int32_t(wide);
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(genericLocals.canGenerateCode() && genericLocals.mirValid &&
              genericLocals.mir.valid(),
          "every generic instance must rearm a moved trivially dropped "
@@ -665,7 +697,7 @@ int main() {
   return total;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(lexicalLocals.canGenerateCode() && lexicalLocals.mirValid &&
              lexicalLocals.mir.valid(),
          "a conditionally moved lexically dropped loop-local should verify "
@@ -764,7 +796,7 @@ int main() {
   return moved;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(trusted.canGenerateCode(),
          "a namespace alias should retain the trusted move declaration's "
          "intrinsic identity");
@@ -960,7 +992,7 @@ int main() {
          "public members and same-class private access should resolve");
 
   const lang::FrontendResult classFrontend = lang::Frontend().analyze(
-      "classes-and-access.gti", validSource, {standardLibraryPrelude()});
+      "classes-and-access.gti", validSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(classFrontend.canGenerateCode(),
          "access-controlled declaration defaults should retain verified MIR");
   if (!classFrontend.canGenerateCode())
@@ -1435,7 +1467,7 @@ int main() {
 
   const lang::FrontendResult validFrontend =
       lang::Frontend().analyze("constructors-and-receivers.gti", validSource,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(validFrontend.semanticValid,
          "explicit construction and mutable receiver calls should validate");
 
@@ -1594,7 +1626,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(lifecycleFrontend.canGenerateCode(),
          "copy and move policy calls should pass the complete frontend");
   std::size_t hirCopies = 0;
@@ -1804,7 +1836,7 @@ int main() {
 
   const lang::FrontendResult invalidFrontend =
       lang::Frontend().analyze("invalid-constructors-and-receivers.gti",
-                               invalidSource, {standardLibraryPrelude()});
+                               invalidSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::vector<lang::Diagnostic> &invalidSemantic =
       invalidFrontend.diagnostics;
   expect(!invalidFrontend.semanticValid,
@@ -1934,7 +1966,7 @@ int main() {
   return count.read() - 7;
 }
 )",
-                                                 {standardLibraryPrelude()});
+                                                 {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -1988,7 +2020,7 @@ int main() {
 }
 )";
   const auto contractResult = lang::Frontend().analyze(
-      "split-contracts.gti", contracts, {standardLibraryPrelude()});
+      "split-contracts.gti", contracts, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!contractResult.canGenerateCode())
     for (const auto &diagnostic : contractResult.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -2008,7 +2040,7 @@ int main() {
   return result - 7;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(secondParameter.canGenerateCode(),
          "a split borrow contract names the declaration parameter position, "
          "not a matching name in the definition");
@@ -2021,7 +2053,7 @@ int main() {
             ")]] static int& choose(int& input, int& unused); }; "
             "int& Relay::choose(int& value, int& other) { return " +
             result + "; } int main() { return 0; }",
-        {standardLibraryPrelude()});
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(invalidContract.syntaxValid && !invalidContract.semanticValid,
            "separate definitions cannot rescue an invalid borrow contract "
            "or return a different parameter from its declared origin");
@@ -2041,7 +2073,7 @@ int Cell::take() && { return this.number; }
       "split-borrow.gti",
       borrowed + "int main() { mut Cell c{}; c.set(4); auto& b = c.read(); "
                  "return b - 4; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(borrowControl.canGenerateCode(),
          "a separately defined accessor retains its receiver origin");
   for (const auto *operation :
@@ -2050,7 +2082,7 @@ int Cell::take() && { return this.number; }
         "split-borrow.gti",
         borrowed + "int main() { mut Cell c{}; auto& b = c.read(); " +
             operation + " return b; }",
-        {standardLibraryPrelude()});
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(invalidBorrow.syntaxValid && !invalidBorrow.semanticValid,
            "a separate method must not mutate or consume a receiver with a "
            "live borrowed result");
@@ -2084,7 +2116,7 @@ int Cell::take() && { return this.number; }
             "enclosing namespace"}}) {
     const auto invalid = lang::Frontend().analyze(
         "split-invalid.gti", source + "\nint main() { return 0; }",
-        {standardLibraryPrelude()});
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     const auto *diagnostic =
         findDiagnosticByCode(invalid.diagnostics, "GTI-S2120");
     expect(!invalid.canGenerateCode() && diagnostic != nullptr &&
@@ -2127,7 +2159,7 @@ interface RightFactory { static int create() { return 2; } };
 class BothFactories : public LeftFactory, public RightFactory {};
 concept Number<T> = std::numeric<T>;
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "interface statics should reuse ordinary access, default, generic, "
          "requires, constexpr and unsafe rules");
@@ -3255,7 +3287,9 @@ struct Branch {
     const std::string source =
         "struct Cell {\n  " + std::string(field) + "\n};\n";
     const auto result =
-        lang::Frontend().analyze("recursive-expected-layout.gti", source);
+        lang::Frontend().analyze("recursive-expected-layout.gti", source,
+                                 {standardLibraryPrelude()}, {},
+                                 {standardLibraryRoot()});
     const auto *diagnostic =
         findDiagnosticByCode(result.diagnostics, "GTI-S2082");
     const auto start = source.find("expected");
@@ -3308,7 +3342,7 @@ int main() {
          "generic classes, functions, and applications should parse");
 
   const lang::FrontendResult validFrontend = lang::Frontend().analyze(
-      "named-generics.gti", source, {standardLibraryPrelude()});
+      "named-generics.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!validFrontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : validFrontend.diagnostics) {
       std::cerr << "Unexpected generic diagnostic: "
@@ -3811,7 +3845,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(valid.canGenerateCode(),
          "integer literals should work with composed numeric, signed, and "
          "floating constraints, on either side and with grouping/signs");
@@ -3844,7 +3878,7 @@ int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }
 )";
   const auto outOfRange =
       lang::Frontend().analyze("numeric-literal-range.gti", outOfRangeSource,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!outOfRange.canGenerateCode() &&
              countDiagnosticCode(outOfRange.diagnostics, "GTI-S2004") == 1,
          "numeric instances must reject negative literals for unsigned "
@@ -3873,7 +3907,7 @@ int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }
   };
   for (const auto &source : rejectedSources) {
     const auto invalid = lang::Frontend().analyze(
-        "numeric-literal-boundaries.gti", source, {standardLibraryPrelude()});
+        "numeric-literal-boundaries.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                std::any_of(invalid.diagnostics.begin(),
                            invalid.diagnostics.end(),
@@ -3958,7 +3992,7 @@ int main() {
 )";
 
   lang::FrontendResult valid = lang::Frontend().analyze(
-      "constrained-generics.gti", source, {standardLibraryPrelude()});
+      "constrained-generics.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected constrained generic diagnostic: "
@@ -4101,7 +4135,7 @@ int main() {
   return 1;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!capabilities.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : capabilities.diagnostics) {
       std::cerr << "Unexpected exact capability diagnostic: "
@@ -4276,7 +4310,7 @@ int use() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode(),
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");
@@ -4339,7 +4373,7 @@ int main() {
   return 0;
 }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!outOfRangeContextualLiteral.canGenerateCode() &&
              countDiagnosticCode(outOfRangeContextualLiteral.diagnostics,
                                  "GTI-S2004") == 2 &&
@@ -4357,7 +4391,7 @@ bool mixed_value<std::integral T>(T value, int other) {
   return value == other;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!mixedGenericOperands.canGenerateCode() &&
              hasDiagnostic(mixedGenericOperands.diagnostics,
                            "Equality operands have incompatible types"),
@@ -4369,7 +4403,7 @@ bool mixed_value<std::integral T>(T value, int other) {
 T select<std::numeric T>(T value) { return value; }
 T select<std::integral T>(T value) { return value; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!duplicate.canGenerateCode() &&
              hasDiagnostic(duplicate.diagnostics,
                            "Duplicate overload signature for 'select'"),
@@ -4414,7 +4448,7 @@ int main() {
   return 1;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const auto &diagnostic : valid.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -4451,7 +4485,7 @@ int main() {
 )";
   const auto invalid =
       lang::Frontend().analyze("move-construction-rejected.gti", invalidSource,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
              hasDiagnostic(invalid.diagnostics, "std::move_constructible") &&
@@ -4491,7 +4525,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -4805,7 +4839,7 @@ int main() {
 )";
   const lang::FrontendResult interfaceFailure = lang::Frontend().analyze(
       "invalid-capability-interface.gti", interfaceFailureSource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const lang::Diagnostic *interfaceDiagnostic =
       findDiagnosticByCode(interfaceFailure.diagnostics, "GTI-S2059");
   expect(!interfaceFailure.canGenerateCode() &&
@@ -4828,7 +4862,7 @@ int main() {
 )";
   const lang::FrontendResult policyFailure =
       lang::Frontend().analyze("invalid-capability-policy.gti",
-                               policyFailureSource, {standardLibraryPrelude()});
+                               policyFailureSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!policyFailure.canGenerateCode() &&
              countDiagnosticCode(policyFailure.diagnostics, "GTI-S2059") == 4 &&
              hasDiagnostic(policyFailure.diagnostics,
@@ -4882,7 +4916,7 @@ int main() {
 }
 )";
     const auto result = lang::Frontend().analyze(
-        "constraint-provenance.gti", source, {standardLibraryPrelude()});
+        "constraint-provenance.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     const auto *diagnostic =
         findDiagnosticByCode(result.diagnostics, "GTI-S2029");
     const auto argument = source.find("target);", source.find("int main"));
@@ -4908,7 +4942,7 @@ struct Item { int snapshot() { return 7; } };
 int main() { Item value{}; return library::read(value, value); }
 )";
   const auto valid = lang::Frontend().analyze(
-      "constraint-provenance-valid.gti", accepted, {standardLibraryPrelude()});
+      "constraint-provenance-valid.gti", accepted, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
          "contract diagnostic provenance must not change valid member "
          "selection or introduce backend policy");
@@ -4920,7 +4954,7 @@ int read<T>(T value) requires impossible<T> { return 0; }
 int main() { return read(true); }
 )";
   const auto closedFailure = lang::Frontend().analyze(
-      "closed-constraint-provenance.gti", closed, {standardLibraryPrelude()});
+      "closed-constraint-provenance.gti", closed, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto *closedDiagnostic =
       findDiagnosticByCode(closedFailure.diagnostics, "GTI-S2029");
   expect(
@@ -4939,7 +4973,7 @@ struct Item {};
 int main() { Item value{}; return read(value, value); }
 )";
   const auto sharedFailure = lang::Frontend().analyze(
-      "shared-constraint-provenance.gti", shared, {standardLibraryPrelude()});
+      "shared-constraint-provenance.gti", shared, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto *sharedDiagnostic =
       findDiagnosticByCode(sharedFailure.diagnostics, "GTI-S2029");
   expect(sharedDiagnostic != nullptr &&
@@ -4956,7 +4990,7 @@ struct Item {};
 int read<T>(Holder<T>& value) requires snapshots<T> { return 0; }
 int main() { Holder<Item> value{}; return read(value); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(hasDiagnostic(nestedArgument.diagnostics,
                        "Argument 1 has type 'Holder<Item>'") &&
              hasDiagnostic(nestedArgument.diagnostics,
@@ -4976,7 +5010,7 @@ int main() { Item value{}; return read(value); }
 )";
   const auto disjunction =
       lang::Frontend().analyze("disjunction-constraint-provenance.gti",
-                               alternatives, {standardLibraryPrelude()});
+                               alternatives, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!disjunction.canGenerateCode() &&
              hasDiagnostic(disjunction.diagnostics, "any alternative") &&
              hasRelatedDiagnostic(disjunction.diagnostics,
@@ -4999,7 +5033,7 @@ int main() { Item value{}; return read(value); }
 )";
   const auto overloadFailure =
       lang::Frontend().analyze("overload-constraint-provenance.gti", overloads,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!overloadFailure.canGenerateCode() &&
              hasDiagnosticCode(overloadFailure.diagnostics, "GTI-S2012") &&
              hasRelatedDiagnostic(overloadFailure.diagnostics,
@@ -5013,7 +5047,7 @@ int main() { Item value{}; return read(value); }
   const auto selected = lang::Frontend().analyze(
       "overload-constraint-valid.gti",
       overloads + "\nint read(Item& value) { return 0; }\n",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(selected.canGenerateCode(),
          "constraint failures on rejected overloads must not leak diagnostics "
          "when another exact candidate is viable");
@@ -5048,7 +5082,7 @@ int main() {
 }
 )";
   const auto valid = lang::Frontend().analyze("member-requirements.gti", source,
-                                              {standardLibraryPrelude()});
+                                              {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const auto &diagnostic : valid.diagnostics) {
     std::cerr << "Member requirement diagnostic: " << diagnostic.message
               << '\n';
@@ -5061,7 +5095,7 @@ int main() {
          "member requirements must format idempotently");
   const auto reformatted =
       lang::Frontend().analyze("member-requirements-formatted.gti", formatted,
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(reformatted.canGenerateCode(),
          "formatting member requirements must preserve parsing and semantics");
   if (valid.canGenerateCode()) {
@@ -5088,7 +5122,7 @@ int main() {
             definition +
             "\nT read<T>(T& x) requires snapshots<T> { return x.snapshot(); }\n"
             "int main() { Item item{}; auto copy = read(item); return 0; }",
-        {standardLibraryPrelude()});
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                hasDiagnostic(invalid.diagnostics, "satisfy concept"),
            "missing, mismatched, mutable, consuming, static and inaccessible "
@@ -5120,7 +5154,7 @@ T relay<std::copyable T>(T value) {
 }
 int main() { return relay(7) - 7; }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const auto &diagnostic : dependentReceiver.diagnostics) {
     std::cerr << "Dependent member requirement diagnostic: "
               << diagnostic.message << '\n';
@@ -5143,7 +5177,7 @@ T relay<std::copyable T>(T value) {
 }
 int main() { return relay(7) - 7; }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!closedResult.canGenerateCode() &&
              hasDiagnostic(closedResult.diagnostics, "satisfy concept"),
          "a dependent receiver whose member result differs from the open "
@@ -5154,7 +5188,7 @@ int main() { return relay(7) - 7; }
       "Item result{}; return result; "
       "} }; int main() { static_assert(!(requires(Item& x) "
       "{ { x.snapshot() } -> Item; })); return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(unsafeMember.canGenerateCode(),
          "safe member requirements must reject unsafe method declarations");
   const auto bounded =
@@ -5176,7 +5210,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(bounded.canGenerateCode(),
          "recursive constraints must fail closed, and exact reference results "
          "must not satisfy owned member requirements");
@@ -5186,7 +5220,7 @@ concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
 concept maybe_snapshot<T> = snapshots<T> || std::copy_constructible<T>;
 T invalid<T>(T& x) requires maybe_snapshot<T> { return x.snapshot(); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !disjunction.canGenerateCode(),
       "a disjunction must not grant a member absent from another alternative");
@@ -5198,21 +5232,21 @@ concept writes<T> = requires(T& x) { { x.write() } -> T; };
 T write<T>(T& x) requires writes<T> { return x.write(); }
 T invalid<T>(T& x) requires reads<T> { return write(x); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!wrongName.canGenerateCode(),
          "structural implication must preserve the required member name");
 
   const auto malformed = lang::Frontend().analyze(
       "member-requirement-malformed.gti",
       "concept bad<T> = requires(T& x) { { other.clone() } -> T; };",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!malformed.canGenerateCode() &&
              hasDiagnostic(malformed.diagnostics, "declared receiver"),
          "requirement syntax must reject an undeclared synthetic receiver");
   const auto consumingQuery = lang::Frontend().analyze(
       "member-requirement-consuming-query.gti",
       "concept bad<T> = requires(T&& x) { { x.clone() } -> T; };",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!consumingQuery.canGenerateCode() &&
              hasDiagnostic(consumingQuery.diagnostics, "must be a reference"),
          "member queries must not silently treat consuming references as "
@@ -5225,7 +5259,7 @@ T snapshot<T>(T& x)
 }
 int main() { int value = 1; return snapshot(value); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!directFailure.canGenerateCode() &&
              hasDiagnosticCode(directFailure.diagnostics, "GTI-S2029") &&
              hasDiagnostic(directFailure.diagnostics,
@@ -5506,7 +5540,7 @@ int main() {
 }
 )";
   lang::FrontendResult valid = lang::Frontend().analyze(
-      "source-concepts.gti", source, {standardLibraryPrelude()});
+      "source-concepts.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected source concept diagnostic: "
@@ -5576,7 +5610,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!concreteFailure.canGenerateCode() &&
              hasDiagnostic(concreteFailure.diagnostics,
                            "does not satisfy concept "
@@ -5597,7 +5631,7 @@ concept leaked<T> = gti_internal::numeric_capability<T>;
 T direct<gti_internal::numeric_capability T>(T value) { return value; }
 int main() { return 0; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2049") &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2058") &&
@@ -5640,7 +5674,7 @@ concept signed_value<T> = std::signed_numeric<T>;
       "namespace cap = capabilities;\n"
       "T use<cap::signed_value T>(T value) { return value; }\n"
       "int main() { return use(1) - 1; }\n",
-      {standardLibraryPrelude()}, {{canonical(conceptsUnit), conceptsSource}});
+      {standardLibraryPrelude()}, {{canonical(conceptsUnit), conceptsSource}}, {standardLibraryRoot()});
   expect(visible.canGenerateCode(),
          "directly included concepts should resolve through namespace aliases");
 
@@ -5651,7 +5685,7 @@ concept signed_value<T> = std::signed_numeric<T>;
       "int main() { return use(1) - 1; }\n",
       {standardLibraryPrelude()},
       {{canonical(wrapperUnit), "#include \"concepts.gti\"\n"},
-       {canonical(conceptsUnit), conceptsSource}});
+       {canonical(conceptsUnit), conceptsSource}}, {standardLibraryRoot()});
   expect(!hidden.canGenerateCode() &&
              hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
              hasDiagnosticHint(hidden.diagnostics, "#include \"concepts.gti\""),
@@ -5724,7 +5758,7 @@ int main() {
 }
 )";
   const lang::FrontendResult valid = lang::Frontend().analyze(
-      "requires-disjunction.gti", source, {standardLibraryPrelude()});
+      "requires-disjunction.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected requires disjunction diagnostic: "
@@ -5851,7 +5885,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto failure = std::find_if(
       rejected.diagnostics.begin(), rejected.diagnostics.end(),
       [](const lang::Diagnostic &diagnostic) {
@@ -5871,7 +5905,7 @@ concept floating_or_closed<T> =
 T require_floating<floating_or_closed T>(T value) { return value; }
 int main() { return require_floating(1); }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!emptyIntersection.canGenerateCode() &&
              hasDiagnostic(emptyIntersection.diagnostics,
                            "any alternative in concept "
@@ -5891,7 +5925,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!rejectedTrailing.canGenerateCode() &&
              hasDiagnostic(rejectedTrailing.diagnostics,
                            "any alternative in the requires clause") &&
@@ -5906,7 +5940,7 @@ concept scalar<T> = std::integral<T> || std::floating_point<T>;
 T invalid_remainder<scalar T>(T value) { return value % value; }
 int main() { return 0; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!unsoundBody.canGenerateCode(),
          "a generic body must not use a capability supplied by only one "
          "disjunction branch");
@@ -6270,7 +6304,7 @@ int main() {
   return box.doubled(2) - 4;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(constrainedGenericClass.canGenerateCode(),
          "an ordinary non-generic method of a generic class should be able "
          "to use an atomic trailing requirement as its symbolic proof");
@@ -6293,7 +6327,7 @@ int main() {
   return 1;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !rejectedGenericClass.canGenerateCode() &&
           hasDiagnosticCode(rejectedGenericClass.diagnostics, "GTI-S2029") &&
@@ -6317,7 +6351,7 @@ public:
   }
 };
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!rejectedConstrainedOperator.canGenerateCode() &&
              hasDiagnosticCode(rejectedConstrainedOperator.diagnostics,
                                "GTI-S2049") &&
@@ -6346,7 +6380,7 @@ public:
   T inherited() requires std::numeric<T> override { return T(0); }
 };
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!rejectedPolymorphicRequirements.canGenerateCode() &&
              countDiagnosticCode(rejectedPolymorphicRequirements.diagnostics,
                                  "GTI-S2049") >= 4 &&
@@ -7364,7 +7398,7 @@ public:
 T construct<T, Args...>(Args... args) { return T(args...); }
 int main() { Item item = construct<Item>(Item(7)); return item.value() - 7; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(trivial.canGenerateCode() && !gti_test::emitCppText(trivial).empty(),
          "cleanup-free pack movement must not require an active result drop");
 
@@ -8218,7 +8252,7 @@ public:
       "dependent_underflow<1>()); }\n";
   const lang::FrontendResult invalidDefaults = lang::Frontend().analyze(
       "invalid-generic-defaults.gti", invalidDefaultsSource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto invalidExpression = std::find_if(
       invalidDefaults.diagnostics.begin(), invalidDefaults.diagnostics.end(),
       [](const lang::Diagnostic &diagnostic) {
@@ -8715,7 +8749,7 @@ int main() {
 )";
 
   lang::FrontendResult valid = lang::Frontend().analyze(
-      "variadic-generics.gti", source, {standardLibraryPrelude()});
+      "variadic-generics.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected variadic diagnostic: " << diagnostic.message
@@ -10161,7 +10195,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2048") &&
              hasDiagnostic(invalid.diagnostics,
@@ -10252,10 +10286,10 @@ public:
 using IntBox = Box<int>;
 using TraitValue = Traits::value_type;
 using BoxValue = IntBox::value_type;
-using Completion = expected<void, int>;
+using Completion = Box<bool>;
 using Result = int;
 
-Completion complete() { return; }
+Completion complete() { return Completion(true); }
 
 Result main() {
   LaterSize count = Size(3);
@@ -10266,7 +10300,7 @@ Result main() {
   TraitValue trait_value = traits.identity(input);
   Completion completion = complete();
   if (count == 3 and box.get() == 2 and trait_value == 4 and
-      completion) { return 0; }
+      completion.get()) { return 0; }
   return 1;
 }
 )";
@@ -10294,7 +10328,9 @@ Result main() {
                  std::string::npos &&
              generated.find("static_cast<std::uint64_t>(3)") !=
                  std::string::npos &&
-             generated.find("struct unexpect_t {") != std::string::npos &&
+             generated.find("using Completion = "
+                            "::__gti_program::Box<bool>;") !=
+                 std::string::npos &&
              generated.find("int main()") != std::string::npos,
          "the C++ backend should emit canonical, declaration-order-independent "
          "aliases");
@@ -10343,7 +10379,7 @@ int main() {
   return box.copy(7) - 7;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(constrainedAlias.canGenerateCode(),
          "a generic class alias should preserve the owner's capabilities and "
          "substitute its concrete target in an instantiated member body");
@@ -11428,7 +11464,7 @@ int main() {
   return owned.get() + scalar.get() + boxed.get() + zero.get() - 4;
 }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "generic applications over move-only and scalar payloads should "
          "verify");
@@ -11503,7 +11539,7 @@ int main() {
   return empty.get() - 1;
 }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!defaulted.canGenerateCode() &&
              hasDiagnostic(defaulted.diagnostics, "std::default_initializable"),
          "construction rejects the default constructor box<Tracked>'s "
@@ -11999,7 +12035,7 @@ int identity(int value) { return value; }
     const auto result =
         lang::Frontend().analyze("function-contract-" + name + ".gti",
                                  prefix + body + "\nint main() { return 0; }",
-                                 {standardLibraryPrelude()});
+                                 {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     if (!result.canGenerateCode()) {
       for (const auto &diagnostic : result.diagnostics) {
         std::cerr << name << " [" << diagnostic.code
@@ -12039,7 +12075,7 @@ int identity(int value) { return value; }
     const auto result =
         lang::Frontend().analyze("function-contract-rejected-" + name + ".gti",
                                  prefix + body + "\nint main() { return 0; }",
-                                 {standardLibraryPrelude()});
+                                 {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!result.canGenerateCode() &&
                hasDiagnosticCode(result.diagnostics, "GTI-S2099"),
            "function contract diagnostic must reject " + name);
@@ -12048,7 +12084,7 @@ int identity(int value) { return value; }
   const std::string returned = "[[noreturn]] void run() { return; }";
   const auto trackedEntry = lang::Frontend().analyze(
       "tracked-entry.gti", "[[track_caller]] int main() { return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!trackedEntry.canGenerateCode() &&
              hasDiagnosticCode(trackedEntry.diagnostics, "GTI-S2099") &&
              hasDiagnostic(trackedEntry.diagnostics, "hosted entry point"),
@@ -12056,14 +12092,14 @@ int identity(int value) { return value; }
   const auto invalidBody = lang::Frontend().analyze(
       "invalid-terminal-body.gti",
       "[[noreturn]] void run() { missing(); }\nint main() { return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidBody.canGenerateCode() &&
              !hasDiagnosticCode(invalidBody.diagnostics, "GTI-S2099"),
          "an invalid terminal body must retain its original error without a "
          "speculative flow cascade");
   const auto invalid = lang::Frontend().analyze(
       "function-contract-span.gti", returned + "\nint main() { return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const auto *diagnostic =
       findDiagnosticByCode(invalid.diagnostics, "GTI-S2099");
   expect(diagnostic != nullptr &&
@@ -12081,7 +12117,7 @@ extern "C" { void accept(Callback callback); }
 [[track_caller]] void callback() {}
 int main() { unsafe { accept(callback); } return 0; }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!native.canGenerateCode() &&
              hasDiagnosticCode(native.diagnostics, "GTI-S2099") &&
              hasDiagnostic(native.diagnostics, "native callback"),
@@ -12108,7 +12144,7 @@ struct Holder<F> {
 Holder<F> retain<F>(F value) { return Holder<F>(value); }
 int main() { auto holder = retain(callback); return holder.invoke(1); }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(customOwned.canGenerateCode(),
          "unrelated source-defined owning wrappers retain exact function "
          "identity too");
@@ -12119,7 +12155,7 @@ void invoke() { unsafe { halt(); } }
 int main() { return 0; }
 )";
   const auto unsafeContract = lang::Frontend().analyze(
-      "unsafe-function-contract.gti", unsafeSource, {standardLibraryPrelude()});
+      "unsafe-function-contract.gti", unsafeSource, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(unsafeContract.canGenerateCode(),
          "terminal and caller-tracked contracts can precede an unsafe "
          "namespace function attribute");
@@ -12137,7 +12173,7 @@ int main() { return 0; }
       const auto roundTrip = lang::Frontend().analyze(
           "unsafe-function-contract-signature.gti",
           hover->signature + " { while (true) {} }\nint main() { return 0; }\n",
-          {standardLibraryPrelude()});
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
       expect(roundTrip.canGenerateCode(),
              "a copied contract-bearing query signature must parse and "
              "retain valid semantics");
@@ -12175,7 +12211,7 @@ int main() { return 0; }
                       error->fixes.front().replacement);
       const auto fixed = lang::Frontend().analyze(
           "repaired-contract.gti", repaired + "int main() { return 0; }\n",
-          {standardLibraryPrelude()});
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
       expect(fixed.canGenerateCode(),
              "the supplied missing-bracket fix restores the complete "
              "declaration without changing its function contract");
@@ -12228,7 +12264,7 @@ class Packed<closable T...> { int value = 0; };
 )";
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze("structural-class-contract.gti", source,
-                                    {standardLibraryPrelude()});
+                                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   };
   const auto valid = analyze(declarations + R"(
 int main() {

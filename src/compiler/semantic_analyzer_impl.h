@@ -1642,6 +1642,9 @@ private:
     ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
     Token location;
     std::string detail;
+    // A failure inside a compiler-trusted library body is anchored at the
+    // user's evaluation site; this keeps the library location for a note.
+    std::optional<Token> libraryLocation;
 
     [[nodiscard]] explicit operator bool() const { return value.has_value(); }
   };
@@ -5055,7 +5058,8 @@ private:
   [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
   rawProducedFields(const Expr &expression,
                     const std::vector<RawResultField> *fields = nullptr,
-                    const RawInvocation *invocation = nullptr);
+                    const RawInvocation *invocation = nullptr,
+                    const ResolvedConstructionInfo *contextual = nullptr);
   [[nodiscard]] std::shared_ptr<RawResultQuery>
   rawResultQuery(const Call &call, const ResolvedCallInfo &resolved);
   [[nodiscard]] std::shared_ptr<RawResultQuery>

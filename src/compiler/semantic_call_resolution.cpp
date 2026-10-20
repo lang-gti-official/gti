@@ -4759,9 +4759,11 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     if (production) {
       transientReceiver = true;
       receiverPlace = std::move(production->place);
-      if (temporaryReceiver) {
-        // Mutability of the materialized carrier shell does not upgrade a
-        // stored shared dependency into exclusive access to its owner.
+      if (temporaryReceiver ||
+          function.receiverMutability == ReceiverMutability::Consuming) {
+        // Neither mutating a materialized carrier shell nor consuming a
+        // fresh carrier upgrades a stored shared dependency into exclusive
+        // access to its owner.
         callReceiverAccess = production->access;
       } else if (production->access == AccessMode::Mutable) {
         callReceiverAccess = AccessMode::Mutable;

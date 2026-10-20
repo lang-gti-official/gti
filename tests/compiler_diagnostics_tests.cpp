@@ -2238,7 +2238,7 @@ int main() {
 }
 )";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "language-queries.gti", source, {standardLibraryPrelude()});
+      "language-queries.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.semanticValid,
          "language-query fixture should pass semantic analysis");
 

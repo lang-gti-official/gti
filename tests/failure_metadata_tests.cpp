@@ -142,6 +142,34 @@ bool hasVerificationError(const lang::MirVerificationResult &result,
                      });
 }
 
+// expected<T, E> is the prelude's ordinary source class.
+bool isExpected(const lang::FrontendResult &frontend,
+                const lang::SemanticType &type) {
+  const auto *info = type.kind == lang::SemanticType::Class
+                         ? frontend.semantics.findClassType(type.classId)
+                         : nullptr;
+  return info != nullptr && info->declaration != nullptr &&
+         info->declaration->name().lexeme == "expected";
+}
+
+// A source member call of `expected` such as value() or operator bool.
+bool callsExpectedMember(const lang::FrontendResult &frontend,
+                         const lang::MirBody &body,
+                         const lang::MirInstruction &instruction,
+                         std::string_view member) {
+  const lang::HirFunctionInstance *target =
+      instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.functionTarget
+          ? frontend.hir.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  const lang::MirValue *receiver =
+      instruction.receiver ? body.findValue(instruction.receiver->value)
+                           : nullptr;
+  return target != nullptr && target->source != nullptr &&
+         target->source->name().lexeme == member && receiver != nullptr &&
+         isExpected(frontend, receiver->info.type);
+}
+
 lang::MirInstruction *functionInstruction(lang::MirProgram &program,
                                           lang::HirFunctionInstanceId function,
                                           lang::MirOperation operation) {
@@ -387,13 +415,16 @@ int main() { auto result = wrap(true); return borrowed(true); }
     std::size_t prepared = 0;
     for (const auto &block : body->blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.intrinsic == lang::IntrinsicKind::ExpectedValue) {
+        // value() is a source accessor: its inactive-value detector runs in
+        // the callee, so the checked place producer propagates that failure.
+        if (callsExpectedMember(frontend, *body, instruction, "value")) {
           ++checked;
-          expect(!instruction.localFailureSites.empty() &&
+          expect(instruction.definedFailure.propagation ==
+                         lang::FailurePropagationKind::DirectCall &&
                      block.terminator.kind == lang::MirTerminatorKind::Invoke &&
                      block.terminator.invokeInstruction == instruction.id,
-                 "checked place producer must retain its own detector/Invoke");
+                 "checked place producer must retain its own propagation and "
+                 "Invoke");
           auto forged = frontend.mir;
           auto *changed = functionBody(forged, *id);
           auto &terminator = changed->blocks[block.id - 1].terminator;
@@ -404,7 +435,10 @@ int main() { auto result = wrap(true); return borrowed(true); }
           expect(!lang::verifyMirProgram(forged).valid(),
                  "removing the original checked place Invoke must fail MIR");
         }
+        // Receivers of the carrier's own member calls are not the checked
+        // place's argument preparation.
         if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument &&
             (instruction.callInputKind == lang::HirCallInputKind::CopyValue ||
              instruction.callInputKind == lang::HirCallInputKind::ReadBorrow)) {
           ++prepared;
@@ -952,7 +986,7 @@ int main() { return caller(1); }
       for (const lang::MirBlock &block : nestedExpectedCondition->blocks) {
         for (const lang::MirInstruction &instruction : block.instructions) {
           if (instruction.kind == lang::MirInstructionKind::Call &&
-              instruction.info.type.kind == lang::SemanticType::Expected &&
+              isExpected(frontend, instruction.info.type) &&
               instruction.definedFailure.propagation ==
                   lang::FailurePropagationKind::DirectCall) {
             nestedExpectedCall = &instruction;
@@ -975,18 +1009,31 @@ int main() { return caller(1); }
                                   : nestedExpectedCondition->findBlock(
                                         producer->terminator.target);
           if (normal != nullptr) {
+            // The contextual conversion is expected's source operator bool,
+            // whose receiver borrows the materialized call result.
             const auto conversion = std::find_if(
                 normal->instructions.begin(), normal->instructions.end(),
                 [&](const lang::MirInstruction &instruction) {
-                  return instruction.kind ==
-                             lang::MirInstructionKind::Compute &&
-                         instruction.operation ==
-                             lang::MirOperation::ExpectedHasValue &&
-                         instruction.operands.size() == 1 &&
-                         instruction.operands.front().kind ==
-                             lang::MirOperandKind::Value &&
-                         instruction.operands.front().value ==
-                             *nestedExpectedCall->result;
+                  if (!callsExpectedMember(frontend, *nestedExpectedCondition,
+                                           instruction, "__gti_operator_bool"))
+                    return false;
+                  const auto input = std::find_if(
+                      normal->instructions.begin(), normal->instructions.end(),
+                      [&](const lang::MirInstruction &candidate) {
+                        return candidate.kind ==
+                                   lang::MirInstructionKind::CallInput &&
+                               candidate.result ==
+                                   instruction.receiver->value &&
+                               candidate.operands.size() == 1;
+                      });
+                  const lang::MirPlace *receiver =
+                      input == normal->instructions.end()
+                          ? nullptr
+                          : nestedExpectedCondition->findPlace(
+                                input->operands.front().place);
+                  return receiver != nullptr &&
+                         receiver->root == lang::MirPlaceRootKind::Value &&
+                         receiver->value == *nestedExpectedCall->result;
                 });
             if (conversion != normal->instructions.end()) {
               nestedExpectedHasValue = &*conversion;
@@ -1005,12 +1052,24 @@ int main() { return caller(1); }
             ? nullptr
             : nestedExpectedCondition->findBlock(
                   nestedExpectedRecord->parameterBlock);
+    // The borrowed temporary has a Value obligation, but a passive result's
+    // cleanup recipe is empty.
+    const lang::MirDropObligation *nestedExpectedDrop =
+        nestedExpectedCondition == nullptr || nestedExpectedCall == nullptr ||
+                !nestedExpectedCall->successResultDrop
+            ? nullptr
+            : nestedExpectedCondition->findDropObligation(
+                  *nestedExpectedCall->successResultDrop);
     expect(nestedExpectedCall != nullptr && nestedExpectedRecord != nullptr &&
                nestedExpectedProducer != nullptr &&
                nestedExpectedFailure != nullptr &&
                nestedExpectedHasValue != nullptr &&
                nestedExpectedCall->lifecycle.empty() &&
-               !nestedExpectedCall->successResultDrop &&
+               nestedExpectedDrop != nullptr &&
+               nestedExpectedDrop->kind == lang::MirDropObligationKind::Value &&
+               !nestedExpectedDrop->dropType.destructor &&
+               nestedExpectedDrop->dropType.aggregate.empty() &&
+               !nestedExpectedDrop->dropType.requiresActiveCleanup &&
                nestedExpectedProducer->terminator.kind ==
                    lang::MirTerminatorKind::Invoke &&
                nestedExpectedProducer->terminator.invokeInstruction ==
@@ -1111,8 +1170,7 @@ int main() { return caller(1); }
         if (producer.instructions.empty() ||
             producer.instructions.back().kind !=
                 lang::MirInstructionKind::Call ||
-            producer.instructions.back().info.type.kind !=
-                lang::SemanticType::Expected) {
+            !isExpected(frontend, producer.instructions.back().info.type)) {
           continue;
         }
         producer.terminator = {.kind = lang::MirTerminatorKind::Goto,
@@ -2698,24 +2756,36 @@ int main() {
     expect(diagnostic != rejected.diagnostics.end(),
            "scalar allocation needs its owning semantic diagnostic");
     if (diagnostic != rejected.diagnostics.end()) {
+      // A library-internal error is reported at the application request
+      // (docs/architecture/diagnostics.md); the exact stdlib span remains a
+      // related note.
       const auto *source = rejected.sources.find(diagnostic->primary.source);
-      expect(diagnostic->phase == lang::DiagnosticPhase::Semantics &&
-                 diagnostic->severity == lang::DiagnosticSeverity::Error &&
-                 diagnostic->fixes.empty() && source != nullptr &&
-                 std::filesystem::path(diagnostic->primary.source).filename() ==
-                     "memory.gti" &&
-                 source->substr(diagnostic->primary.start,
-                                diagnostic->primary.end -
-                                    diagnostic->primary.start) == ")" &&
-                 std::any_of(diagnostic->related.begin(),
-                             diagnostic->related.end(),
-                             [&](const auto &related) {
-                               return std::filesystem::weakly_canonical(
-                                          related.span.source) ==
-                                      std::filesystem::weakly_canonical(path);
-                             }),
-             "invalid generic allocation must retain exact stdlib span and "
-             "application instantiation");
+      const auto library = std::find_if(
+          diagnostic->related.begin(), diagnostic->related.end(),
+          [](const auto &related) {
+            return related.message == "Reported inside this library instance.";
+          });
+      const auto *librarySource =
+          library == diagnostic->related.end()
+              ? nullptr
+              : rejected.sources.find(library->span.source);
+      expect(
+          diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+              diagnostic->severity == lang::DiagnosticSeverity::Error &&
+              diagnostic->fixes.empty() && source != nullptr &&
+              std::filesystem::weakly_canonical(diagnostic->primary.source) ==
+                  std::filesystem::weakly_canonical(path) &&
+              source->substr(diagnostic->primary.start,
+                             diagnostic->primary.end -
+                                 diagnostic->primary.start) == "make_unique" &&
+              librarySource != nullptr &&
+              std::filesystem::path(library->span.source).filename() ==
+                  "memory.gti" &&
+              librarySource->substr(library->span.start,
+                                    library->span.end - library->span.start) ==
+                  ")",
+          "invalid generic allocation must retain exact stdlib span and "
+          "application instantiation");
     }
   }
 }

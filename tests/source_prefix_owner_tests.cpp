@@ -133,10 +133,23 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
         << "forwarded expected result did not retain unpublished cleanup\n";
     return 1;
   }
+  // expected<T, E> is the prelude's ordinary source class; select the
+  // fixture's own forwarded result rather than a library body's.
+  const auto isExpected = [&](const lang::SemanticType &type) {
+    const auto *info = type.kind == lang::SemanticType::Class
+                           ? forwarded.semantics.findClassType(type.classId)
+                           : nullptr;
+    return info != nullptr && info->declaration != nullptr &&
+           info->declaration->name().lexeme == "expected";
+  };
   auto forgedReturn = forwarded.mir;
   bool changedReturn = false;
   for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
            forgedReturn.functionInstances())) {
+    const auto *source = forwarded.hir.findFunctionInstance(function.id);
+    if (source == nullptr ||
+        source->sourceUnit != forwarded.sourceGraph.entryUnit())
+      continue;
     for (auto &block : function.body.blocks) {
       for (auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Drop ||
@@ -146,7 +159,7 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
             instruction.lifecycle.front().source);
         if (drop != nullptr &&
             drop->kind == lang::MirDropObligationKind::ReturnResult &&
-            drop->dropType.type.kind == lang::SemanticType::Expected &&
+            isExpected(drop->dropType.type) &&
             instruction.definedFailure.propagation ==
                 lang::FailurePropagationKind::Destructor) {
           instruction.definedFailure.propagation =

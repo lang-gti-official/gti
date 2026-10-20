@@ -1259,6 +1259,10 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                  " would call the deleted copy constructor of '" +
                  typeSpelling(parameter) + "'.",
              "GTI-S2018");
+      if (typeTraits(parameter).movable)
+        diagnostics.back().hints.emplace_back(
+            "Pass the argument with std::move(...) when this call should "
+            "transfer ownership.");
       return;
     }
     std::string copyDescription =
@@ -2145,13 +2149,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
               {tokenSpan(rejected.constructor->declaration->name()),
                "Exact-type candidate: " +
                    constructorSignatureSpelling(*rejected.constructor)});
+          const std::string transfer =
+              "Pass the argument with std::move(...) when this call should "
+              "transfer ownership.";
           if (diagnostics.back().code == "GTI-S2018" &&
               diagnostics.back().message.find("std::move") ==
                   std::string::npos &&
-              typeTraits(rejected.parameterTypes[index]).movable) {
-            diagnostics.back().hints.emplace_back(
-                "Pass the argument with std::move(...) when this call "
-                "should transfer ownership.");
+              typeTraits(rejected.parameterTypes[index]).movable &&
+              std::find(diagnostics.back().hints.begin(),
+                        diagnostics.back().hints.end(),
+                        transfer) == diagnostics.back().hints.end()) {
+            diagnostics.back().hints.emplace_back(transfer);
           }
         }
         currentType = constructedType;

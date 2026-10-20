@@ -28,8 +28,11 @@ int main() { auto result = relay(); return result ? 1 : 0; }
     built = subprocess.run([compiler, str(path), "--emit-cpp", "--color=never",
                             "-o", str(root / "rejected.cpp")],
                            capture_output=True, text=True, timeout=30)
-    assert built.returncode == 65 and "GTI-S2003" in built.stderr, built
-    assert "Cannot copy error payload" in built.stderr and "GTI-B0001" not in built.stderr, built
+    # unexpected(e) is an ordinary source function: copying a move-only payload
+    # into its by-value parameter is the general deleted-copy error.
+    assert built.returncode == 65 and "GTI-S2018" in built.stderr, built
+    assert "would call the deleted copy constructor of 'Error'" in built.stderr, built
+    assert "GTI-B0001" not in built.stderr, built
     assert not (root / "rejected.cpp").exists()
     uri = path.as_uri()
     session = LspSession(server)
@@ -48,11 +51,16 @@ int main() { auto result = relay(); return result ? 1 : 0; }
                 and message["params"].get("version") == version)["params"]["diagnostics"]
 
         errors = publication(1)
-        error = next(d for d in errors if d.get("code") == "GTI-S2003")
-        offset = source.index("error());")
-        assert error["range"]["start"] == lsp_position(source, offset), error
-        assert error["range"]["end"] == lsp_position(source, offset + 5), error
-        assert "move the carrier" in error["message"].lower(), error
+        error = next(d for d in errors if d.get("code") == "GTI-S2018")
+        argument = source.index("carrier.error()")
+        close = source.index(");", argument)
+        start = error["range"]["start"]
+        end = error["range"]["end"]
+        assert start["line"] == lsp_position(source, argument)["line"], error
+        assert lsp_position(source, argument)["character"] <= start["character"], error
+        assert end["character"] <= lsp_position(source, close)["character"], error
+        assert "deleted copy constructor of 'Error'" in error["message"], error
+        assert any("std::move" in hint for hint in error["data"]["hints"]), error
         assert not error.get("data", {}).get("fixes"), error
         fixed = source.replace("unexpected(carrier.error())", "unexpected(std::move(carrier).error())")
         session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {

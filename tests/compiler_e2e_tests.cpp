@@ -209,7 +209,7 @@ int main() { [[discard]] flow(true); }
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "mir-foundation.gti", source, {standardLibraryPrelude()});
+      "mir-foundation.gti", source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected MIR diagnostic: " << diagnostic.message << '\n';
@@ -846,7 +846,7 @@ int main() {
   return total + observe_borrowed(BorrowedValue(observed)) - 10;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected class-value call diagnostic: "
@@ -1088,7 +1088,7 @@ int main() {
   return changed - 7;
 }
 )",
-                               {standardLibraryPrelude()});
+                               {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected ordered-constructor diagnostic: "

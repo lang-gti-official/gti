@@ -75,11 +75,19 @@ int main() {
 }
 
 void checkRejections() {
-  const std::vector<std::string> sources = {
-      R"(int main() {
+  // expected<T, E> is now an ordinary source class, so it is an admitted
+  // shared-owner pointee rather than a rejected compiler carrier.
+  const auto result = analyze(R"(int main() {
            std::shared_ptr<expected<int, int>> empty{};
            return int(empty.use_count());
          })",
+                              lang::FrontendPhase::Mir);
+  if (!result.canGenerateCode()) {
+    dump(result);
+  }
+  require(result.canGenerateCode(),
+          "a source result class is an ordinary shared-owner pointee");
+  const std::vector<std::string> sources = {
       R"(int main() {
            auto owner = std::make_shared<int>(7);
            auto copied = owner;

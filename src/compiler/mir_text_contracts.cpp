@@ -74,6 +74,12 @@ private:
         return {};
       if (isOwnerlessTextFieldProjection(program, context.body, *place))
         return {.known = true};
+      // Static storage of text holds only ownerless text: semantics admits
+      // only ownerless initializers and stores, and every MIR assignment to it
+      // is a checked text write.
+      if (place->root == MirPlaceRootKind::Symbol && place->capture == 0 &&
+          !place->foreignStorage && place->projections.empty())
+        return {.known = true};
       if (place->root == MirPlaceRootKind::Temporary &&
           place->projections.empty())
         return temporarySources(context, *place, active);

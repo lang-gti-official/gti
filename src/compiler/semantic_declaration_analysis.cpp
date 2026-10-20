@@ -5130,6 +5130,23 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayout(
     if (!cycle && !exhausted) {
       continue;
     }
+    // One recursive layout is reported once: an instance whose field reaches
+    // a type already reported, such as a wrapper instantiated with the
+    // recursive type, is part of that same cycle.
+    const bool reported =
+        !exhausted &&
+        std::any_of(requestSession.invalidOrdinaryLayouts.begin(),
+                    requestSession.invalidOrdinaryLayouts.end(),
+                    [&](const SemanticType &invalid) {
+                      std::vector<SemanticType> visitingInvalid{ownerType};
+                      std::vector<SemanticType> visitingInvalidEnums;
+                      bool exhaustedInvalid = false;
+                      return invalid != ownerType &&
+                             byValueTypeReachesClass(fieldType, invalid,
+                                                     visitingInvalid,
+                                                     visitingInvalidEnums,
+                                                     exhaustedInvalid);
+                    });
     requestSession.invalidOrdinaryLayouts.push_back(ownerType);
     if (exhausted) {
       diagnostics.push_back(
@@ -5140,6 +5157,8 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayout(
     }
     if (!catalog.sealed)
       recursiveLayoutFields.insert(field.declaration);
+    if (reported)
+      continue;
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2082", DiagnosticPhase::Semantics,
                        field.declaration->type().name.last(),

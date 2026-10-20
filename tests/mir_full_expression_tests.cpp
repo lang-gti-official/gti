@@ -106,8 +106,8 @@ int main() { Derived b = Derived("other"); return 0; }
     std::cerr << "fixture must exercise a dynamically borrowed base argument\n";
     return 1;
   }
-  auto frontend =
-      lang::Frontend().analyze("/tmp/gti-full-expression-loop.gti", R"(
+  auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-full-expression-loop.gti", R"(
 enum class item_error { unavailable };
 class Item {
 public:
@@ -141,7 +141,8 @@ expected<void, item_error> collect() {
   return;
 }
 int main() { auto result = collect(); return result.has_value() ? 0 : 1; }
-)");
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   if (!frontend.mirValid || !lang::verifyMirProgram(frontend.mir).valid()) {
     std::cerr
         << "nested loop argument propagation must have valid boundaries\n";
@@ -211,17 +212,29 @@ int main() { auto result = collect(); return result.has_value() ? 0 : 1; }
     return 1;
   }
 
+  // expected<T, E> is the prelude's ordinary source class.
+  const auto isExpected = [&](const lang::SemanticType &type) {
+    const auto *info = type.kind == lang::SemanticType::Class
+                           ? frontend.semantics.findClassType(type.classId)
+                           : nullptr;
+    return info != nullptr && info->declaration != nullptr &&
+           info->declaration->name().lexeme == "expected";
+  };
   auto missingInvoke = frontend.mir;
   bool removedInvoke = false;
   for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
            missingInvoke.functionInstances())) {
+    const auto *source = frontend.hir.findFunctionInstance(function.id);
+    if (source == nullptr ||
+        source->sourceUnit != frontend.sourceGraph.entryUnit())
+      continue;
     for (auto &block : function.body.blocks) {
       if (block.terminator.kind != lang::MirTerminatorKind::Invoke ||
           block.instructions.empty())
         continue;
       const auto &call = block.instructions.back();
       if (call.kind != lang::MirInstructionKind::Call ||
-          call.info.type.kind != lang::SemanticType::Expected ||
+          !isExpected(call.info.type) ||
           call.info.type.arguments.front().kind != lang::SemanticType::Class ||
           call.successResultDrop || call.successResultDestination)
         continue;

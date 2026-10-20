@@ -815,6 +815,105 @@ int main() { auto value = borrow_global(true); return occupied(value) ? 0 : 1; }
       }
     }
   }
+  {
+    // Two calls through one reference formal each name its referent by
+    // their own place. A moved carrier's set may name either of those equal
+    // paths, but never a structurally different source.
+    const auto result = analyze(R"gti(
+enum lookup_state<T> { found(T payload), missing };
+class lookup<T> {
+  mut lookup_state<T> state;
+public:
+  implicit lookup(T value) : state(lookup_state<T>::found(std::move(value))) {}
+};
+class lookup<T&> {
+  mut lookup_state<T&> state;
+public:
+  implicit lookup(T& value) : state(lookup_state<T&>::found(value)) {}
+  T take_or(T fallback) && {
+    switch (this.state) {
+    case lookup_state<T&>::found(auto& value): return value;
+    case lookup_state<T&>::missing: return fallback;
+    }
+  }
+};
+lookup<int&> find(int& owner) { return owner; }
+int twice(int& owner) {
+  auto first = find(owner);
+  auto second = find(owner);
+  int moved = std::move(second).take_or(0);
+  return std::move(first).take_or(0) + moved;
+}
+int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
+)gti");
+    expect(result.canGenerateCode(),
+           "equal dependency paths through distinct places are one source");
+    if (result.canGenerateCode()) {
+      const auto id = functionId(result, "twice");
+      const auto *function = result.mir.findFunctionInstance(id);
+      std::size_t substituted = 0;
+      for (const auto &value : function->body.values) {
+        if (!value.borrowDependencies ||
+            value.borrowDependencies->dependencies.empty())
+          continue;
+        const auto *source = function->body.findPlace(
+            value.borrowDependencies->dependencies.front().source);
+        if (!source || source->root != lang::MirPlaceRootKind::Binding ||
+            source->projections.empty())
+          continue;
+        const auto root = std::find_if(
+            function->body.places.begin(), function->body.places.end(),
+            [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Binding &&
+                     place.binding == source->binding &&
+                     place.projections.empty();
+            });
+        if (root == function->body.places.end())
+          continue;
+        auto malformed = result.mir;
+        auto &changed = lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        changed.body.values[value.id - 1]
+            .borrowDependencies->dependencies.front()
+            .source = root->id;
+        ++substituted;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a dependency cannot substitute a structurally different "
+               "source");
+      }
+      expect(substituted != 0,
+             "two-carrier fixture exercises dependency source identity");
+    }
+  }
+  {
+    // A readonly element may iterate a range whose hidden family shares a
+    // call's mutable loan, but a forged mutable element is still rejected.
+    std::ifstream input(root /
+                        "tests/fixtures/readonly_range_over_mutable_result.gti");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto result = analyze(source);
+    expect(result.canGenerateCode(),
+           "readonly elements iterate mutable reference call results");
+    std::size_t forged = 0;
+    if (result.canGenerateCode())
+      for (const char *name : {"sum", "count"}) {
+        const auto id = functionId(result, name);
+        const auto *function = result.mir.findFunctionInstance(id);
+        if (!function)
+          continue;
+        for (const auto &range : function->body.rangeIterations) {
+          if (range.elementAccess != lang::AccessMode::ReadOnly)
+            continue;
+          auto malformed = result.mir;
+          lang::MirProgramTestAccess::functions(malformed)[id - 1]
+              .body.rangeIterations[range.id - 1]
+              .elementAccess = lang::AccessMode::Mutable;
+          ++forged;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "a mutable element needs its own mutable range authority");
+        }
+      }
+    expect(forged == 2, "both readonly range shapes are forged");
+  }
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
   const std::string forwarding = "Token forward() { return leaf(); }\n";

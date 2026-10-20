@@ -505,6 +505,12 @@ void checkDirectProjectedReturnOrigins() {
       if (!executedAddress)
         continue;
       for (unsigned mutation = 0; mutation != 3; ++mutation) {
+        // A binding place's symbol names its source binding, which is formal
+        // root evidence only where a returned reference publishes the
+        // address; a carrier's dependency is proved by binding identity.
+        if (mutation == 2 &&
+            function.returnType.kind != lang::SemanticType::Reference)
+          continue;
         auto malformed = frontend.mir;
         auto &body = const_cast<lang::MirFunctionInstance *>(
                          malformed.findFunctionInstance(function.id))

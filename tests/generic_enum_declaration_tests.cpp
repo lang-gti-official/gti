@@ -7,6 +7,7 @@
 #include "gti/semantic_analyzer.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -24,6 +25,16 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+// `expected` and `unexpected` are source declarations of the prelude, which
+// includes standard-library modules.
+lang::FrontendResult analyzeWithPrelude(const std::string &name,
+                                        const std::string &source) {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  return lang::Frontend().analyze(
+      name, source, {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
 }
 
 void testDeclarationSyntax() {
@@ -418,7 +429,9 @@ int main() { return keep([]() -> int { return 1; }); }
                          }),
          "direct lexical closure payloads retain their semantic boundary "
          "until closure fields have a concrete representation");
-  const auto errorAdapter = lang::Frontend().analyze("adapter-payload.gti", R"(
+  // unexpected(e) now returns the ordinary class unexpected_value<E>, which a
+  // generic payload stores like any other class value.
+  const auto errorAdapter = analyzeWithPrelude("adapter-payload.gti", R"(
 enum Event<T> { empty, item(T value) };
 int keep<T>(T error) {
   auto value = Event<T>::empty;
@@ -426,14 +439,12 @@ int keep<T>(T error) {
 }
 int main() { return keep(unexpected(1)); }
 )");
-  expect(!errorAdapter.canGenerateCode() &&
-             std::any_of(errorAdapter.diagnostics.begin(),
-                         errorAdapter.diagnostics.end(),
-                         [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2067";
-                         }),
-         "temporary error adapters must become result alternatives before "
-         "they are stored as payload fields");
+  expect(errorAdapter.canGenerateCode(),
+         "an error adapter is an ordinary class that a generic payload owner "
+         "accepts");
+  if (!errorAdapter.canGenerateCode())
+    for (const auto &diagnostic : errorAdapter.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   for (const auto source :
        {"enum Event<T> { empty, item(T value) }; "
         "int main() { auto value = Event<Event<int>>::item("
@@ -446,7 +457,7 @@ int main() { return keep(unexpected(1)); }
         "result = 7; auto value = Event<expected<int, Error>>::item(result); "
         "return 0; }"}) {
     const auto result =
-        lang::Frontend().analyze("composed-enum-payloads.gti", source);
+        analyzeWithPrelude("composed-enum-payloads.gti", source);
     expect(result.canGenerateCode(),
            "finite nested enums, arrays and result values use structural "
            "payload composition");

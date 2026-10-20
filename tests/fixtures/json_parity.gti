@@ -195,7 +195,7 @@ int main() {
   }
 
   // Errors carry a JSON Pointer path and a one-based line and column.
-  mut auto deep = ej::decode<nested>("{\n  \"label\": \"l\",\n  \"points\": [{\"x\": 1, \"y\": 2}, {\"x\": \"no\", \"y\": 4}]\n}");
+  auto deep = ej::decode<nested>("{\n  \"label\": \"l\",\n  \"points\": [{\"x\": 1, \"y\": 2}, {\"x\": \"no\", \"y\": 4}]\n}");
   if (deep) {
     return 21;
   }

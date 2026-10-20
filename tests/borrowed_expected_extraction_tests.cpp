@@ -25,6 +25,37 @@ lang::FrontendResult analyze(std::string source) {
                                   {library / "prelude.gti"}, {}, {library});
 }
 
+// The prelude's result class, recognized by its declared identity.
+bool isExpectedClass(const lang::FrontendResult &result,
+                     const lang::SemanticType &type) {
+  if (type.kind != lang::SemanticType::Class)
+    return false;
+  const auto *info = result.semantics.findClassType(type.classId);
+  return info && info->qualifiedName == "expected";
+}
+
+// A staged receiver names its carrier through its call input: the slot it
+// materializes, or the place it reads or moves.
+lang::MirPlaceId carrierStorage(const lang::MirBody &body,
+                                lang::MirOperand operand) {
+  for (unsigned depth = 0; depth != 4 && operand.place == 0; ++depth) {
+    const auto *value = body.findValue(operand.value);
+    const auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+    const lang::MirInstruction *producer = nullptr;
+    if (block)
+      for (const auto &instruction : block->instructions)
+        if (instruction.id == value->definition)
+          producer = &instruction;
+    if (!producer || producer->operands.size() != 1)
+      return 0;
+    if (producer->kind == lang::MirInstructionKind::CallInput &&
+        producer->destination)
+      return *producer->destination;
+    operand = producer->operands.front();
+  }
+  return operand.place;
+}
+
 const std::string declarations = R"(
 class Resource {
   mut int value;
@@ -156,8 +187,8 @@ int main() {
   unsigned propagationPlans = 0;
   for (const auto &function : result.hir.functionInstances()) {
     for (const auto &value : function.body.values) {
-      if (value.kind != lang::HirValueKind::ExpectedPropagation ||
-          !value.expectedPropagation ||
+      if (value.kind != lang::HirValueKind::Propagation ||
+          !value.propagation ||
           value.info.category != lang::ValueCategory::Place)
         continue;
       ++propagationPlans;
@@ -167,30 +198,32 @@ int main() {
             malformed.findFunctionInstance(function.id));
         auto *propagation =
             const_cast<lang::HirValue *>(changed->body.findValue(value.id));
-        auto *extraction = const_cast<lang::HirValue *>(changed->body.findValue(
-            propagation->expectedPropagation->successExtraction));
+        const auto plan = *propagation->propagation;
+        auto *test =
+            const_cast<lang::HirValue *>(changed->body.findValue(plan.test));
+        auto *output =
+            const_cast<lang::HirValue *>(changed->body.findValue(plan.output));
+        const auto *residual = changed->body.findValue(plan.residual);
         if (mutation == 0)
-          propagation->expectedPropagation.reset();
+          propagation->propagation.reset();
         if (mutation == 1)
           propagation->info.category = lang::ValueCategory::Value;
         if (mutation == 2)
-          propagation->info.access = lang::AccessMode::Mutable;
+          propagation->propagation->consumesOperand = !plan.consumesOperand;
         if (mutation == 3)
-          propagation->expectedPropagation->successValue =
-              propagation->expectedPropagation->errorValue;
+          propagation->propagation->output = plan.residual;
         if (mutation == 4)
-          propagation->expectedPropagation->moves =
-              !propagation->expectedPropagation->moves;
+          output->borrowOrigin = lang::BorrowOriginKind::None;
         if (mutation == 5)
-          extraction->borrowOrigin = lang::BorrowOriginKind::None;
+          output->borrowAccess = lang::AccessMode::Mutable;
         if (mutation == 6)
-          extraction->borrowAccess = lang::AccessMode::Mutable;
+          output->info.type = lang::SemanticType::Bool;
         if (mutation == 7)
-          extraction->receiver = 0;
+          test->info.type = lang::SemanticType::Int32;
         if (mutation == 8)
-          extraction->info.type = lang::SemanticType::Bool;
+          output->functionTarget = residual->functionTarget;
         if (mutation == 9)
-          extraction->info.access = lang::AccessMode::Mutable;
+          propagation->info.type = lang::SemanticType::Bool;
         if (lang::verifyHirProgramPlans(result.semantics, malformed).valid()) {
           std::cerr << "Accepted borrowed propagation HIR mutation " << mutation
                     << " in function " << function.id << '\n';
@@ -207,9 +240,10 @@ int main() {
   for (const auto &function : result.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != lang::IntrinsicKind::ExpectedValue ||
+        // Extraction is an ordinary member call of the prelude class.
+        if (instruction.kind != lang::MirInstructionKind::Call ||
             !instruction.loan || !instruction.receiver ||
-            instruction.receiver->type.kind != lang::SemanticType::Expected ||
+            !isExpectedClass(result, instruction.receiver->type) ||
             instruction.receiver->type.arguments.size() != 2 ||
             instruction.receiver->type.arguments.front().kind !=
                 lang::SemanticType::Reference)
@@ -233,11 +267,12 @@ int main() {
           if (mutation == 1)
             loan->access = lang::AccessMode::Mutable;
           if (mutation == 2) {
-            check(extraction->receiver->place != 0 &&
-                      extraction->receiver->place != loan->source,
+            const auto carrier =
+                carrierStorage(changed->body, *extraction->receiver);
+            check(carrier != 0 && carrier != loan->source,
                   "loan-source mutation targets carrier storage, not its "
                   "referent");
-            loan->source = extraction->receiver->place;
+            loan->source = carrier;
           }
           if (mutation == 3)
             extraction->receiver.reset();
@@ -339,8 +374,10 @@ expected<int, bool> run(Resource& owner) {
   Resource& alias = ?lookup(owner, false); return alias.read();
 })",
          "propagation error types stay exact");
-  reject("void run(expected<Resource&, int> source) {}",
-         "carrier parameters remain unsupported");
+  // The result is an ordinary class, so a borrowed one may be a parameter.
+  check(analyze(declarations + "void run(expected<Resource&, int> source) {}")
+            .canGenerateCode(),
+        "borrowed result parameters are ordinary class values");
   reject(R"(
 int run() {
   auto callback = [](Resource& owner) -> expected<Resource&, int> {

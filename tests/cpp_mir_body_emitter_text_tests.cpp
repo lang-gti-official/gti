@@ -2,6 +2,68 @@
 
 namespace {
 
+// expected<T, E> is the prelude's ordinary source class.
+bool isExpectedClass(const lang::FrontendResult &frontend,
+                     const lang::SemanticType &type) {
+  const auto *info = type.kind == lang::SemanticType::Class
+                         ? frontend.semantics.findClassType(type.classId)
+                         : nullptr;
+  return info != nullptr && info->declaration != nullptr &&
+         info->declaration->name().lexeme == "expected";
+}
+
+const lang::MirFunctionInstance *
+namedFunction(const lang::FrontendResult &frontend, std::string_view name) {
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    const auto *source = frontend.hir.findFunctionInstance(function.id);
+    if (source != nullptr && source->source != nullptr &&
+        source->sourceUnit == frontend.sourceGraph.entryUnit() &&
+        source->source->name().lexeme == name)
+      return &function;
+  }
+  return nullptr;
+}
+
+// The selected native form of one function body.
+std::string selectedBodyText(const lang::FrontendResult &frontend,
+                             const lang::MirFunctionInstance &function) {
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, function.id};
+  return function.mayRaiseDefinedFailure
+             ? emitter.emitFailureBodyText(address, "selected", 1).text
+             : emitter.emitBodyText(address, "selected", 1).text;
+}
+
+// Each prepared expected argument of a body is published into its slot,
+// moved into its consumer, and retired after that consumer.
+std::size_t stagedExpectedArguments(const lang::FrontendResult &frontend,
+                                    const lang::MirBody &body,
+                                    const std::string &text,
+                                    std::string_view message) {
+  std::size_t staged = 0;
+  for (const lang::MirBlock &block : body.blocks)
+    for (const lang::MirInstruction &input : block.instructions) {
+      if (input.kind != lang::MirInstructionKind::CallInput ||
+          !input.destination || !input.preparedParameterDrop ||
+          !isExpectedClass(frontend, input.info.type))
+        continue;
+      ++staged;
+      const std::string slot =
+          "__gti_mir_p_" + std::to_string(*input.destination);
+      const auto published = text.find(slot + ".construction_address()");
+      const auto moved =
+          published == std::string::npos
+              ? std::string::npos
+              : text.find("std::move(" + slot + ".get())", published);
+      expect(moved != std::string::npos &&
+                 text.find(slot + ".destroy();", moved) != std::string::npos,
+             message);
+    }
+  return staged;
+}
+
 void testFieldInitializerExpressionVocabulary() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-body-field-initializer-expressions.gti", R"(
@@ -102,9 +164,10 @@ int main() {
             published.push_back(place->projections.front().field);
           continue;
         }
-        // A passive payload default publishes through its selected initializer
-        // result, not a separate Initialize/place. Pin the typed root and exact
-        // adjacent full-expression endpoint that authorize that publication.
+        // A passive payload default is published by the field Initialize that
+        // immediately consumes its selected initializer result. Pin the typed
+        // root, that exact Initialize and the adjacent full-expression
+        // endpoint that authorize the publication.
         if (instruction.operation != lang::MirOperation::PayloadConstruct ||
             !instruction.result)
           continue;
@@ -125,19 +188,29 @@ int main() {
                 return candidate.constructorInitializer == ordinal + 1 &&
                        candidate.roots == initializer.arguments;
               });
+          const auto *publication = position + 2 < block.instructions.size()
+                                        ? &block.instructions[position + 1]
+                                        : nullptr;
+          const auto *field =
+              publication != nullptr && publication->destination
+                  ? constructor.body.findPlace(*publication->destination)
+                  : nullptr;
           const bool exactPublication =
               value != nullptr && value->definition == instruction.id &&
               value->info == instruction.info &&
               full != constructor.body.fullExpressions.end() &&
-              position + 1 < block.instructions.size() &&
-              block.instructions[position + 1].kind ==
+              publication != nullptr &&
+              publication->kind == lang::MirInstructionKind::Initialize &&
+              publication->operands.size() == 1 &&
+              publication->operands.front().value == *instruction.result &&
+              field != nullptr && field->projections.size() == 1 &&
+              field->projections.front().field == initializer.field &&
+              block.instructions[position + 2].kind ==
                   lang::MirInstructionKind::Lifecycle &&
-              block.instructions[position + 1].fullExpressionEnd == full->id;
+              block.instructions[position + 2].fullExpressionEnd == full->id;
           expect(exactPublication,
                  "passive payload publication retains its selected typed "
                  "initializer and full-expression endpoint");
-          if (exactPublication)
-            published.push_back(initializer.field);
         }
       }
     std::vector<lang::SymbolId> expectedFields;
@@ -178,28 +251,23 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("std::int32_t converted;") !=
-                 std::string::npos &&
-             artifact.contents.find("payload_t empty;") != std::string::npos &&
-             artifact.contents.find("(*this).converted") != std::string::npos &&
-             artifact.contents.find("mir_checked_convert_v1<std::int8_t>") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "::new (static_cast<void *>(std::addressof((*this).empty))) "
-                 "::__gti_program::payload_t{std::in_place_index<2>};") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "::new (static_cast<void *>(std::addressof((*this).valued))) "
-                 "::__gti_program::payload_t{std::in_place_index<1>, "
-                 "__gti_mir_v_") != std::string::npos &&
-             artifact.contents.find(
-                 "std::destroy_at(std::addressof((*this).empty));") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "std::destroy_at(std::addressof((*this).valued));") !=
-                 std::string::npos,
-         "production emission executes conversion and payload publication in "
-         "constructor MIR without duplicate in-class defaults");
+  expect(
+      artifact.contents.find("std::int32_t converted;") != std::string::npos &&
+          artifact.contents.find("payload_t empty;") != std::string::npos &&
+          artifact.contents.find("(*this).converted") != std::string::npos &&
+          artifact.contents.find("mir_checked_convert_v1<std::int8_t>") !=
+              std::string::npos &&
+          // A trivially move-assignable passive payload field is published
+          // by assignment into its already-constructed storage.
+          artifact.contents.find(
+              "(*this).empty = ::__gti_program::payload_t{"
+              "std::in_place_index<2>}; // direct passive payload field "
+              "publication") != std::string::npos &&
+          artifact.contents.find("(*this).valued = ::__gti_program::payload_t{"
+                                 "std::in_place_index<1>, __gti_mir_v_") !=
+              std::string::npos,
+      "production emission executes conversion and payload publication in "
+      "constructor MIR without duplicate in-class defaults");
 
   const auto mutableOwner = [](lang::MirProgram &program,
                                lang::HirClassInstanceId owner) {
@@ -2247,9 +2315,32 @@ int32_t main() {
     return;
   }
 
+  // value_or() and value() are source members of expected: each observer
+  // borrows its receiver through one staged read-borrow CallInput.
   const lang::MirFunctionInstance *entry = nullptr;
   const lang::MirInstruction *valueOr = nullptr;
   const lang::MirInstruction *voidExtraction = nullptr;
+  const auto member = [&](const lang::MirInstruction &instruction,
+                          std::string_view name) {
+    const lang::HirFunctionInstance *target =
+        instruction.kind == lang::MirInstructionKind::Call &&
+                instruction.functionTarget
+            ? frontend.hir.findFunctionInstance(*instruction.functionTarget)
+            : nullptr;
+    return target != nullptr && target->source != nullptr &&
+           target->source->name().lexeme == name;
+  };
+  const auto stagedReceiver = [](const lang::MirBody &body,
+                                 const lang::MirInstruction &call) {
+    const lang::MirOperand *staged = nullptr;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &input : block.instructions)
+        if (call.receiver &&
+            input.kind == lang::MirInstructionKind::CallInput &&
+            input.result == call.receiver->value && input.operands.size() == 1)
+          staged = &input.operands.front();
+    return staged;
+  };
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
     if (function.entryKind == lang::ProgramEntryKind::None) {
@@ -2258,27 +2349,35 @@ int32_t main() {
     entry = &function;
     for (const lang::MirBlock &block : function.body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
-        if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.intrinsic == lang::IntrinsicKind::ExpectedValueOr) {
+        if (member(instruction, "value_or")) {
           valueOr = &instruction;
         }
-        if (instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.intrinsic == lang::IntrinsicKind::ExpectedValue &&
+        if (member(instruction, "value") &&
             instruction.info.type == lang::SemanticType::Void) {
           voidExtraction = &instruction;
         }
       }
     }
   }
-  expect(entry != nullptr && valueOr != nullptr && valueOr->receiver &&
-             voidExtraction != nullptr && voidExtraction->receiver &&
+  const lang::MirOperand *valueOrReceiver =
+      entry == nullptr || valueOr == nullptr
+          ? nullptr
+          : stagedReceiver(entry->body, *valueOr);
+  const lang::MirOperand *voidReceiver =
+      entry == nullptr || voidExtraction == nullptr
+          ? nullptr
+          : stagedReceiver(entry->body, *voidExtraction);
+  expect(entry != nullptr && valueOr != nullptr && valueOrReceiver &&
+             voidExtraction != nullptr && voidReceiver &&
              !voidExtraction->result &&
-             valueOr->receiver->kind == lang::MirOperandKind::BorrowRead &&
-             valueOr->receiver->place != 0,
+             valueOrReceiver->kind == lang::MirOperandKind::BorrowRead &&
+             valueOrReceiver->place != 0 &&
+             voidReceiver->kind == lang::MirOperandKind::BorrowRead &&
+             voidReceiver->place != 0,
          "Expected observers should retain their exact read-borrowed receiver "
          "and void value() should remain resultless");
-  if (entry == nullptr || valueOr == nullptr || !valueOr->receiver ||
-      voidExtraction == nullptr || !voidExtraction->receiver) {
+  if (entry == nullptr || valueOr == nullptr || valueOrReceiver == nullptr ||
+      voidExtraction == nullptr || voidReceiver == nullptr) {
     return;
   }
 
@@ -2297,15 +2396,27 @@ int32_t main() {
 
   const lang::CppMirBodyEmissionText text =
       emitter.emitFailureBodyText(address, "expected-value-or-test-v0", 1);
-  const std::string receiver =
-      "__gti_mir_p_" + std::to_string(valueOr->receiver->place) + ".value_or(";
-  const std::string voidReceiver =
-      "::gti_internal::backend::mir_expected_void_value_v1(__gti_mir_p_" +
-      std::to_string(voidExtraction->receiver->place) + ");";
-  expect(text.text.find(receiver) != std::string::npos &&
-             text.text.find(voidReceiver) != std::string::npos,
-         "Expected observers should read their live places without an SSA "
-         "copy or a fabricated void result");
+  // Each observer calls its member directly on the live binding; void
+  // value() publishes only its failure status.
+  const auto line = [&](std::string_view needle) {
+    const auto at = text.text.find(needle);
+    if (at == std::string::npos)
+      return std::string();
+    const auto begin = text.text.rfind('\n', at);
+    const auto end = text.text.find('\n', at);
+    return text.text.substr(begin == std::string::npos ? 0 : begin + 1,
+                            end - (begin == std::string::npos ? 0 : begin + 1));
+  };
+  const std::string valueOrLine = line("_value_or(");
+  const std::string voidLine = line("_value__gti_mir_failure(");
+  expect(
+      valueOrLine.find("__gti_mir_p_" + std::to_string(valueOrReceiver->place) +
+                       ".get().") != std::string::npos &&
+          voidLine.find("__gti_mir_p_" + std::to_string(voidReceiver->place) +
+                        ".get().") != std::string::npos &&
+          voidLine.find("__gti_mir_v_") == std::string::npos,
+      "Expected observers should read their live places without an SSA "
+      "copy or a fabricated void result");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -3360,15 +3471,15 @@ int main() {
          "before entering the success block");
 }
 
-// A cleanup-free Expected<Class, E> call result consumed by one by-value
-// parameter has neither a MIR drop nor a value-rooted place. It shares the
-// cleanup-free class result's representation-only slot. A non-placement
-// Expected keeps its ordinary SSA local, and a cleanup-owning payload keeps
-// MIR's value-rooted transfer slot. (Regression: the passive shape raised
-// GTI-B0001 unless its payload was an indirectly transported C ABI record.)
+// An Expected<Class, E> call result consumed by one by-value parameter is an
+// ordinary class result: cleanup-free, scalar-payload and cleanup-owning
+// results alike are staged in their prepared-parameter slot, which the
+// producer publishes into, the call moves from, and the call retires.
+// (Regression: the passive shape raised GTI-B0001 unless its payload was an
+// indirectly transported C ABI record.)
 void testCleanupFreeExpectedClassArgumentSlot() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-argument.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-expected-class-argument.gti", R"(
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
@@ -3423,62 +3534,30 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string passiveSlot =
-      "::gti_internal::backend::mir_lifetime_slot<::gti_internal::backend::"
-      "expected<::__gti_"
-      "program::pair_value, std::int32_t>, true> __gti_mir_v_";
-  const std::size_t declared = text.find(passiveSlot);
-  expect(declared != std::string::npos,
-         "a cleanup-free Expected<Class, E> argument should declare one "
-         "representation-only slot");
-  if (declared == std::string::npos) {
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  expect(entry != nullptr, "the Expected class argument fixture has main");
+  if (entry == nullptr) {
     return;
   }
-  const std::size_t idStart = declared + passiveSlot.size();
-  const std::string slot =
-      "__gti_mir_v_" + text.substr(idStart, text.find(';', idStart) - idStart);
-  // A checked producer publishes through the slot's construction address; a
-  // failure-free one constructs the slot from its returned wrapper.
-  expect((text.find(slot + ".construction_address()") != std::string::npos ||
-          text.find(slot + ".construct_from(") != std::string::npos) &&
-             text.find("read_pair__gti_mir_failure(std::move(" + slot +
-                       ".get())") != std::string::npos &&
-             text.find(slot + ".destroy();") != std::string::npos,
-         "the producer should publish into the slot on success, the call "
-         "should move its wrapper, and the slot should retire afterwards");
-  expect(
-      text.find(
-          "mir_lifetime_slot<::gti_internal::backend::expected<std::int32_t, "
-          "::__gti_program::code_value>") == std::string::npos &&
-          text.find("::gti_internal::backend::expected<std::int32_t, "
-                    "::__gti_program::code_"
-                    "value> __gti_mir_v_") != std::string::npos,
-      "a non-placement Expected argument should keep its ordinary SSA "
-      "local");
-  expect(text.find("mir_lifetime_slot<::gti_internal::backend::expected<::__"
-                   "gti_program::tracked, "
-                   "std::int32_t>, true> __gti_mir_v_") == std::string::npos &&
-             text.find("read_tracked__gti_mir_failure(__gti_mir_p_") !=
-                 std::string::npos,
-         "a cleanup-owning Expected argument should keep MIR's value-rooted "
-         "transfer slot");
+  const std::string text = selectedBodyText(frontend, *entry);
+  expect(stagedExpectedArguments(
+             frontend, entry->body, text,
+             "the producer should publish into the slot on success, the call "
+             "should move its wrapper, and the slot should retire "
+             "afterwards") == 3,
+         "cleanup-free, scalar-payload and cleanup-owning Expected arguments "
+         "are each staged once");
 }
 
-// The same cleanup-free Expected<Class, E> result may initialize one by-value
-// parameter of an exact ordinary constructor. Both the failure-form
-// construction and a constructor body's plain form move the staged wrapper,
-// and the moved-from representation is retired right after the construction.
-// A cleanup-owning payload keeps MIR's value-rooted transfer slot.
+// The same Expected<Class, E> result may initialize one by-value parameter of
+// an exact ordinary constructor. expected is an ordinary class: the failure-
+// form construction and a constructor body's plain form both take the staged
+// argument out of its prepared-parameter slot, which retires it at once, for
+// a cleanup-free payload and a cleanup-owning payload alike.
 // (Regression: a constructor consumer raised GTI-B0001.)
 void testCleanupFreeExpectedClassConstructorArgumentSlot() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-constructor-argument.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-expected-class-constructor-argument.gti", R"(
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
@@ -3537,73 +3616,63 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string passiveSlot = "::gti_internal::backend::mir_lifetime_slot<:"
-                                  ":gti_internal::backend::expected<::__gti_"
-                                  "program::pair_value, std::int32_t>, true> ";
-  // Counts constructions that spell `marker` on a line naming `construction`.
-  // Each must move one declared slot and retire it on the next line.
-  const auto retiredConstructions = [&](std::string_view construction,
-                                        std::string_view marker) {
-    std::size_t count = 0;
-    for (std::size_t at = text.find(marker); at != std::string::npos;
-         at = text.find(marker, at + marker.size())) {
-      const std::size_t lineStart = text.rfind('\n', at) + 1;
-      const std::size_t lineEnd = text.find('\n', at);
-      const std::size_t idStart = at + marker.size();
-      const std::size_t idEnd = text.find(".get())", idStart);
-      if (lineEnd == std::string::npos || idEnd == std::string::npos ||
-          idEnd > lineEnd)
-        return std::size_t{0};
-      if (std::string_view(text)
-              .substr(lineStart, lineEnd - lineStart)
-              .find(construction) == std::string_view::npos)
-        continue;
-      const std::string slot =
-          "__gti_mir_v_" + text.substr(idStart, idEnd - idStart);
-      const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
-      if (text.find(passiveSlot + slot + ";") == std::string::npos ||
-          text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
-        return std::size_t{0};
-      ++count;
-    }
-    return count;
+  // Counts this body's prepared expected arguments that a construction takes
+  // out of their staged slot.
+  const auto takenArguments = [&](const lang::MirBody &body,
+                                  const std::string &text) {
+    std::size_t taken = 0;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &input : block.instructions)
+        if (input.kind == lang::MirInstructionKind::CallInput &&
+            input.destination && input.preparedParameterDrop &&
+            isExpectedClass(frontend, input.info.type) &&
+            text.find("std::move(__gti_mir_p_" +
+                      std::to_string(*input.destination) + ".take())") !=
+                std::string::npos)
+          ++taken;
+    return taken;
   };
-  expect(retiredConstructions("::__gti_program::pair_holder(",
-                              ">{}, std::move(__gti_mir_v_") == 2,
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  const lang::MirConstructorInstance *nested = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *source = frontend.hir.findConstructorInstance(constructor.id);
+    for (const auto &owner : frontend.hir.classInstances())
+      if (source != nullptr && owner.id == source->owner &&
+          owner.source != nullptr && owner.source->name().lexeme == "outer")
+        nested = &constructor;
+  }
+  expect(entry != nullptr && nested != nullptr,
+         "the constructor argument fixture has main and outer's constructor");
+  if (entry == nullptr || nested == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress nestedAddress{lang::MirBodyKind::Constructor,
+                                           nested->id};
+  const std::string failureForm =
+      emitter.emitFailureBodyText(nestedAddress, "selected", 1).text;
+  const std::string plainForm =
+      emitter.emitBodyText(nestedAddress, "selected", 1).text;
+  expect(takenArguments(entry->body, selectedBodyText(frontend, *entry)) == 2 &&
+             takenArguments(nested->body, failureForm) == 1,
          "the entry and the constructor body's failure form should each move "
          "a staged wrapper into the raising constructor and retire it "
          "afterwards");
-  expect(retiredConstructions("__gti_mir_p_",
-                              ".construct(std::move(__gti_mir_v_") == 1,
+  expect(takenArguments(nested->body, plainForm) == 1,
          "the constructor body's plain form should construct its binding from "
          "the staged wrapper and retire it afterwards");
-  const std::size_t owned =
-      text.find("::__gti_program::tracked_holder(::gti_internal::backend::"
-                "mir_failure_constructor_tag_v1<");
-  expect(text.find("mir_lifetime_slot<::gti_internal::backend::expected<::__"
-                   "gti_program::tracked, "
-                   "std::int32_t>, true> __gti_mir_v_") == std::string::npos &&
-             owned != std::string::npos &&
-             text.find(">{}, __gti_mir_p_", owned) == text.find(">{}, ", owned),
-         "a cleanup-owning Expected constructor argument should keep MIR's "
-         "value-rooted transfer slot");
 }
 
-// A named cleanup-free Expected<Class, E> binding copied into one by-value
-// function or constructor parameter constructs MIR's Load copy in its own
-// representation-only slot. The consumer moves the copy's wrapper, never the
-// binding, and the moved-from representation is retired after the call or
-// construction. A non-placement Expected keeps its ordinary SSA local.
+// A named Expected<Class, E> binding copied into one by-value function or
+// constructor parameter constructs MIR's copy in its own prepared-parameter
+// slot. The consumer moves the copy, never the binding, and the copy's slot
+// retires after the call or construction; expected is an ordinary class, so
+// a scalar-payload copy is staged the same way.
 // (Regression: the copied binding raised GTI-B0001 in the caller.)
 void testCleanupFreeExpectedClassCopiedArgumentSlot() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-copied-argument.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-expected-class-copied-argument.gti", R"(
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
@@ -3651,76 +3720,63 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string passiveSlot = "::gti_internal::backend::mir_lifetime_slot<:"
-                                  ":gti_internal::backend::expected<::__gti_"
-                                  "program::pair_value, std::int32_t>, true> ";
-  // Counts consumers that spell `marker` on a line naming `consumer`. Each
-  // must move one declared slot that its copy constructed from a binding,
-  // and retire that slot after the consumer.
-  const auto copiedSlots = [&](std::string_view consumer,
-                               std::string_view marker) {
-    std::size_t count = 0;
-    for (std::size_t at = text.find(marker); at != std::string::npos;
-         at = text.find(marker, at + marker.size())) {
-      const std::size_t lineStart = text.rfind('\n', at) + 1;
-      const std::size_t lineEnd = text.find('\n', at);
-      const std::size_t idStart = at + marker.size();
-      const std::size_t idEnd = text.find(".get())", idStart);
-      if (lineEnd == std::string::npos || idEnd == std::string::npos ||
-          idEnd > lineEnd)
-        return std::size_t{0};
-      if (std::string_view(text)
-              .substr(lineStart, lineEnd - lineStart)
-              .find(consumer) == std::string_view::npos)
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  expect(entry != nullptr, "the copied-argument fixture has main");
+  if (entry == nullptr) {
+    return;
+  }
+  const std::string text = selectedBodyText(frontend, *entry);
+  std::size_t copies = 0;
+  for (const lang::MirBlock &block : entry->body.blocks)
+    for (const lang::MirInstruction &input : block.instructions) {
+      if (input.kind != lang::MirInstructionKind::CallInput ||
+          input.callInputKind != lang::HirCallInputKind::CopyValue ||
+          !input.destination || !input.preparedParameterDrop ||
+          input.operands.size() != 1 ||
+          !isExpectedClass(frontend, input.info.type))
         continue;
+      const lang::MirPlace *source =
+          entry->body.findPlace(input.operands.front().place);
+      const lang::MirPlace *binding = nullptr;
+      for (const lang::MirPlace &place : entry->body.places)
+        if (source != nullptr && binding == nullptr &&
+            place.root == lang::MirPlaceRootKind::Binding &&
+            place.binding == source->binding && place.projections.empty())
+          binding = &place;
+      if (binding == nullptr)
+        continue;
+      ++copies;
       const std::string slot =
-          "__gti_mir_v_" + text.substr(idStart, idEnd - idStart);
-      const std::size_t copied = text.rfind(slot + ".construct(", at);
-      if (text.find(passiveSlot + slot + ";") == std::string::npos ||
-          copied == std::string::npos ||
-          text.compare(copied + slot.size() + 11, 12, "__gti_mir_p_") != 0 ||
-          text.find(slot + ".destroy();", lineEnd) == std::string::npos)
-        return std::size_t{0};
-      ++count;
+          "__gti_mir_p_" + std::to_string(*input.destination);
+      const std::string owner = "__gti_mir_p_" + std::to_string(binding->id);
+      const auto copied = text.find(slot + ".construct(" + owner + ".get());");
+      const auto moved = copied == std::string::npos
+                             ? std::string::npos
+                             : text.find("std::move(" + slot + ".", copied);
+      expect(moved != std::string::npos &&
+                 (text.compare(moved + 10 + slot.size(), 8, ".take())") == 0 ||
+                  text.find(slot + ".destroy();", moved) != std::string::npos),
+             "the consumer should move the copy staged from the named binding "
+             "and retire its slot afterwards");
+      expect(text.find("std::move(" + owner + ".get())") == std::string::npos &&
+                 text.find("std::move(" + owner + ".take())") ==
+                     std::string::npos,
+             "a copied binding should never be moved into the parameter");
     }
-    return count;
-  };
-  expect(copiedSlots("read_pair__gti_mir_failure(",
-                     "read_pair__gti_mir_failure(std::move(__gti_mir_v_") == 1,
-         "the call should move the copy staged from the named binding and "
-         "retire its slot afterwards");
-  expect(copiedSlots("::__gti_program::pair_holder(",
-                     ">{}, std::move(__gti_mir_v_") == 1,
-         "the construction should move the copy staged from the named "
-         "binding and retire its slot afterwards");
-  expect(text.find("read_pair__gti_mir_failure(std::move(__gti_mir_p_") ==
-             std::string::npos,
-         "a copied binding should never be moved into the parameter");
-  expect(
-      text.find(
-          "mir_lifetime_slot<::gti_internal::backend::expected<std::int32_t, "
-          "::__gti_program::code_value>") == std::string::npos &&
-          text.find("read_scalar__gti_mir_failure(__gti_mir_v_") !=
-              std::string::npos,
-      "a non-placement Expected copied argument should keep its ordinary "
-      "SSA local");
+  expect(copies == 3,
+         "the call, the construction and the scalar-payload call each copy "
+         "their named binding");
 }
 
-// A cleanup-free Expected<Class, E> call result that replaces a whole mutable
-// binding is staged in the same representation-only slot. After MIR's
-// inactive replacement cleanup, the Assign move-assigns the staged wrapper
-// into the binding and retires the moved-from representation. A
-// non-placement Expected keeps its ordinary SSA local. (Regression for issue
-// #224: the replacing call result raised GTI-B0001 in the caller.)
+// An Expected<Class, E> call result that replaces a whole mutable binding is
+// staged in its call result slot. A cleanup-free binding needs no replacement
+// cleanup, so the Assign move-assigns the staged value into the binding and
+// retires the moved-from slot right after it; expected is an ordinary class,
+// so a scalar-payload replacement is staged the same way. (Regression for
+// issue #224: the replacing call result raised GTI-B0001 in the caller.)
 void testCleanupFreeExpectedClassAssignmentSlot() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-assignment.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-expected-class-assignment.gti", R"(
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
@@ -3754,53 +3810,43 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string marker = ", std::move(__gti_mir_v_";
-  const std::size_t assigned =
-      text.find("::gti_internal::backend::assign_representation(__gti_mir_p_");
-  const std::size_t moved =
-      assigned == std::string::npos ? assigned : text.find(marker, assigned);
-  const std::size_t lineEnd =
-      assigned == std::string::npos ? assigned : text.find('\n', assigned);
-  expect(moved != std::string::npos && moved < lineEnd,
-         "the Assign should move a staged wrapper into the binding");
-  if (moved == std::string::npos || moved >= lineEnd) {
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  expect(entry != nullptr, "the Expected class assignment fixture has main");
+  if (entry == nullptr) {
     return;
   }
-  const std::size_t idStart = moved + marker.size();
-  const std::string slot =
-      "__gti_mir_v_" +
-      text.substr(idStart, text.find(".get()", idStart) - idStart);
-  const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
-  // A checked producer publishes through the slot's construction address; a
-  // failure-free one constructs the slot from its returned wrapper.
-  const std::size_t addressed = text.find(slot + ".construction_address()");
-  const std::size_t published = addressed != std::string::npos
-                                    ? addressed
-                                    : text.find(slot + ".construct_from(");
-  const std::size_t cleanup =
-      text.rfind("__gti_mir_replacement_success_", assigned);
-  expect(text.find("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
-                   "backend::expected<"
-                   "::__gti_program::pair_value, std::int32_t>, true> " +
-                   slot + ";") != std::string::npos &&
-             published != std::string::npos && published < assigned &&
-             cleanup != std::string::npos && cleanup > published &&
-             text.compare(next, slot.size() + 11, slot + ".destroy();") == 0,
-         "the producer should publish into the slot, the inactive replacement "
-         "cleanup should precede the Assign, and the slot should retire right "
-         "after it");
-  expect(
-      text.find(
-          "mir_lifetime_slot<::gti_internal::backend::expected<std::int32_t, "
-          "::__gti_program::code_value>") == std::string::npos,
-      "a non-placement Expected replacing a binding should keep its "
-      "ordinary SSA local");
+  const std::string text = selectedBodyText(frontend, *entry);
+  std::size_t replacements = 0;
+  for (const lang::MirBlock &block : entry->body.blocks)
+    for (const lang::MirInstruction &assign : block.instructions) {
+      if (assign.kind != lang::MirInstructionKind::Assign ||
+          !assign.destination || assign.operands.size() != 1 ||
+          !isExpectedClass(frontend, assign.info.type))
+        continue;
+      ++replacements;
+      const std::string slot =
+          "__gti_mir_v_" + std::to_string(assign.operands.front().value);
+      const std::string assignment =
+          "::gti_internal::backend::assign_representation(__gti_mir_p_" +
+          std::to_string(*assign.destination) + ".get(), std::move(" + slot +
+          ".get()));";
+      const auto published = text.find(slot + ".construction_address()");
+      const auto assigned = text.find(assignment);
+      const auto next =
+          assigned == std::string::npos
+              ? std::string::npos
+              : text.find_first_not_of(' ', text.find('\n', assigned) + 1);
+      expect(text.find(", true> " + slot + ";") != std::string::npos &&
+                 published != std::string::npos &&
+                 assigned != std::string::npos && published < assigned &&
+                 text.compare(next, slot.size() + 11, slot + ".destroy();") ==
+                     0,
+             "the producer should publish into the slot, the Assign should "
+             "move it into the binding, and the slot should retire right "
+             "after it");
+    }
+  expect(replacements == 2,
+         "the class-payload and scalar-payload replacements are both staged");
 }
 
 // Moving a cleanup-free Expected<Class, E> binding into a new binding
@@ -3835,50 +3881,66 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string marker =
-      "// GTI MIR moved cleanup-free Expected initializes p";
-  const std::size_t initialized = text.find(marker);
-  expect(initialized != std::string::npos,
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  const lang::MirInstruction *move = nullptr;
+  const lang::MirInstruction *initialize = nullptr;
+  if (entry != nullptr)
+    for (const lang::MirBlock &block : entry->body.blocks)
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index)
+        if (block.instructions[index].kind == lang::MirInstructionKind::Move &&
+            isExpectedClass(frontend, block.instructions[index].info.type) &&
+            block.instructions[index + 1].kind ==
+                lang::MirInstructionKind::Initialize &&
+            block.instructions[index + 1].destination) {
+          move = &block.instructions[index];
+          initialize = &block.instructions[index + 1];
+        }
+  expect(move != nullptr && initialize != nullptr && move->operands.size() == 1,
          "the moved binding's Initialize should only activate its drop");
-  if (initialized == std::string::npos) {
+  if (move == nullptr || initialize == nullptr || move->operands.size() != 1) {
     return;
   }
-  const std::size_t idStart = initialized + marker.size();
+  const std::string text = selectedBodyText(frontend, *entry);
   const std::string destination =
-      "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
-  const std::size_t declared =
-      text.find("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
-                "backend::expected<"
-                "::__gti_program::point, std::int32_t>> " +
-                destination + ";");
-  const std::size_t constructed = text.rfind(
-      destination + ".construct(std::move(__gti_mir_p_", initialized);
-  expect(declared != std::string::npos && constructed != std::string::npos &&
-             declared < constructed &&
+      "__gti_mir_p_" + std::to_string(*initialize->destination);
+  const std::string marker = "// GTI MIR reparent into p" +
+                             std::to_string(*initialize->destination) + "\n";
+  const std::size_t initialized = text.find(marker);
+  const std::size_t slotEnd = text.find("> " + destination + ";");
+  const std::size_t slotStart = slotEnd == std::string::npos
+                                    ? slotEnd
+                                    : text.rfind("mir_lifetime_slot<", slotEnd);
+  const std::size_t constructed =
+      initialized == std::string::npos
+          ? initialized
+          : text.rfind(destination + ".construct(std::move(__gti_mir_p_" +
+                           std::to_string(move->operands.front().place) +
+                           ".get()));",
+                       initialized);
+  expect(initialized != std::string::npos && slotStart != std::string::npos &&
+             constructed != std::string::npos && slotEnd < constructed &&
              text.find('\n', constructed) == text.rfind('\n', initialized),
          "the Move should construct the new binding's lifetime slot from the "
          "moved source immediately before its Initialize");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::point, "
-                   "std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  if (slotStart == std::string::npos) {
+    return;
+  }
+  const std::string type =
+      text.substr(slotStart + 18, slotEnd - (slotStart + 18));
+  expect(text.find(type + " __gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
 
 // Copying a cleanup-free Expected<Class, E> binding into a new binding
-// copy-constructs the new binding's lifetime slot from the source at the
-// Load; the adjacent Initialize only activates the binding's drop. The success
-// payload has no default constructor, so no value-initialized Expected local
-// may exist. (Regression: the copy was outside the C++ text vocabulary and
-// reported GTI-B0001.)
+// copy-constructs the new binding's lifetime slot from the source when the
+// Load publishes at its consuming Initialize; nothing else initializes the
+// binding. The success payload has no default constructor, so no
+// value-initialized Expected local may exist. (Regression: the copy was
+// outside the C++ text vocabulary and reported GTI-B0001.)
 void testCleanupFreeExpectedClassCopySlot() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-copy.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-expected-class-copy.gti", R"(
 struct point {
   mut int32_t x;
   mut int32_t y;
@@ -3900,48 +3962,69 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string marker = "// GTI MIR copied Expected initializes p";
-  const std::size_t initialized = text.find(marker);
-  expect(initialized != std::string::npos,
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  const lang::MirInstruction *load = nullptr;
+  const lang::MirInstruction *initialize = nullptr;
+  if (entry != nullptr)
+    for (const lang::MirBlock &block : entry->body.blocks)
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index)
+        if (block.instructions[index].kind == lang::MirInstructionKind::Load &&
+            isExpectedClass(frontend, block.instructions[index].info.type) &&
+            block.instructions[index + 1].kind ==
+                lang::MirInstructionKind::Initialize &&
+            block.instructions[index + 1].destination) {
+          load = &block.instructions[index];
+          initialize = &block.instructions[index + 1];
+        }
+  expect(load != nullptr && initialize != nullptr &&
+             load->operands.size() == 1 && load->result,
          "the copied binding's Initialize should only activate its drop");
-  if (initialized == std::string::npos) {
+  if (load == nullptr || initialize == nullptr || load->operands.size() != 1 ||
+      !load->result) {
     return;
   }
-  const std::size_t idStart = initialized + marker.size();
+  const std::string text = selectedBodyText(frontend, *entry);
   const std::string destination =
-      "__gti_mir_p_" + text.substr(idStart, text.find('\n', idStart) - idStart);
-  const std::size_t declared =
-      text.find("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
-                "backend::expected<"
-                "::__gti_program::point, std::int32_t>> " +
-                destination + ";");
-  const std::size_t constructed =
-      text.rfind(destination + ".construct(__gti_mir_p_", initialized);
-  expect(declared != std::string::npos && constructed != std::string::npos &&
-             declared < constructed &&
-             text.find('\n', constructed) == text.rfind('\n', initialized),
+      "__gti_mir_p_" + std::to_string(*initialize->destination);
+  const std::string marker = "// class copy load " +
+                             std::to_string(*load->result) +
+                             " publishes at its consuming initialize\n";
+  const std::size_t published = text.find(marker);
+  const std::size_t next =
+      published == std::string::npos
+          ? published
+          : text.find_first_not_of(' ', published + marker.size());
+  const std::string copy = destination + ".construct(__gti_mir_p_" +
+                           std::to_string(load->operands.front().place) +
+                           ".get());";
+  const std::size_t slotEnd = text.find("> " + destination + ";");
+  const std::size_t slotStart = slotEnd == std::string::npos
+                                    ? slotEnd
+                                    : text.rfind("mir_lifetime_slot<", slotEnd);
+  expect(next != std::string::npos && slotStart != std::string::npos &&
+             slotEnd < published && text.compare(next, copy.size(), copy) == 0,
          "the Load should copy-construct the new binding's lifetime slot "
          "from the source immediately before its Initialize");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::point, "
-                   "std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  if (slotStart == std::string::npos) {
+    return;
+  }
+  const std::string type =
+      text.substr(slotStart + 18, slotEnd - (slotStart + 18));
+  expect(text.find(type + " __gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
 
-// Every other source replacing a whole Expected<Class, E> binding spells the
-// native wrapper's own assignment after MIR's replacement cleanup, with no
-// value-initialized Expected local. A cleanup-free copy, move, Unexpected and
-// payload construction follow a passive cleanup; an owning call result moves
-// out of its value-rooted slot after the active cleanup, and that slot's
-// Drop retires only the moved-from representation. (Regression for issue
-// #225: copies, Unexpected values and payloads raised GTI-B0001, a move
-// assigned to the lifetime slot itself, and owning results raised GTI-B0001.)
+// Every other source replacing a whole Expected<Class, E> binding is an
+// ordinary class replacement or a source operator= call, with no
+// value-initialized Expected local. A cleanup-free copy and move assign the
+// binding directly; an Unexpected and a payload each call expected's
+// operator= on the binding with their staged argument and retire it; an
+// owning call result moves out of its slot after the active replacement
+// cleanup, and that slot retires only the moved-from representation.
+// (Regression for issue #225: copies, Unexpected values and payloads raised
+// GTI-B0001, a move assigned to the lifetime slot itself, and owning results
+// raised GTI-B0001.)
 void testExpectedClassReplacementSources() {
   for (const std::string_view name :
        {"expected_pointer_boundary", "expected_owned_payload_replacement",
@@ -3963,11 +4046,20 @@ void testExpectedClassReplacementSources() {
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
         for (const auto &call : block.instructions) {
+          // value()/error() are source accessors of expected.
+          const auto *target =
+              call.kind == lang::MirInstructionKind::Call && call.functionTarget
+                  ? frontend.hir.findFunctionInstance(*call.functionTarget)
+                  : nullptr;
+          const auto *receiver =
+              call.receiver ? function.body.findValue(call.receiver->value)
+                            : nullptr;
           const bool extraction =
-              name != "getter_owned_field_replacement" &&
-              call.kind == lang::MirInstructionKind::Call &&
-              (call.intrinsic == lang::IntrinsicKind::ExpectedValue ||
-               call.intrinsic == lang::IntrinsicKind::ExpectedError);
+              name != "getter_owned_field_replacement" && target != nullptr &&
+              target->source != nullptr && receiver != nullptr &&
+              isExpectedClass(frontend, receiver->info.type) &&
+              (target->source->name().lexeme == "value" ||
+               target->source->name().lexeme == "error");
           const bool construction =
               name == "getter_owned_field_replacement" &&
               call.kind == lang::MirInstructionKind::Construct;
@@ -4078,12 +4170,12 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  expect(entry != nullptr, "the replacement fixture has main");
+  if (entry == nullptr) {
+    return;
+  }
+  const std::string text = selectedBodyText(frontend, *entry);
   std::vector<std::string> lines;
   for (std::size_t start = 0; start < text.size();) {
     const std::size_t end = std::min(text.find('\n', start), text.size());
@@ -4099,7 +4191,8 @@ int main() {
            line.compare(line.size() - suffix.size(), suffix.size(), suffix) ==
                0;
   };
-  // Each assignment must directly follow its replacement cleanup.
+  // An owning replacement directly follows its active replacement cleanup;
+  // a cleanup-free one has none to run.
   const auto afterCleanup = [&](std::size_t index) {
     return index > 0 &&
            starts(lines[index - 1], "__gti_mir_replacement_success_");
@@ -4111,61 +4204,66 @@ int main() {
   std::size_t payloads = 0;
   for (std::size_t index = 0; index < lines.size(); ++index) {
     const std::string &line = lines[index];
-    if (!starts(line, "__gti_mir_p_") && !starts(line, "::gti_internal"))
+    if (!starts(line, "__gti_mir_p_"))
       continue;
     if (line.find(".get() = __gti_mir_p_") != std::string::npos &&
-        ends(line, ".get();") && afterCleanup(index))
+        ends(line, ".get();") && !afterCleanup(index))
       ++copies;
     const std::size_t moved = line.find(".get() = std::move(__gti_mir_p_");
-    if (moved != std::string::npos && ends(line, ".get());") &&
-        afterCleanup(index)) {
+    if (moved != std::string::npos && ends(line, ".get());")) {
       const std::size_t idStart = moved + 19;
       const std::string slot =
           line.substr(idStart, line.find(".get())", idStart) - idStart);
-      if (index + 1 < lines.size() && lines[index + 1] == slot + ".destroy();")
+      if (afterCleanup(index) && index + 1 < lines.size() &&
+          lines[index + 1] == slot + ".destroy();")
         ++owningMoves;
-      else
+      else if (!afterCleanup(index))
         ++moves;
     }
-    if (starts(line, "::gti_internal::backend::assign_representation(__gti_"
-                     "mir_p_") &&
-        line.find(".get(), ::gti_internal::backend::unexpected(") !=
-            std::string::npos &&
-        afterCleanup(index))
-      ++unexpecteds;
-    if (line.find(".get() = ::__gti_program::pair_value(") !=
-            std::string::npos &&
-        afterCleanup(index))
-      ++payloads;
+    // expected's source operator= consumes its staged argument.
+    const std::string assignment = "_expected::operator=(std::move(";
+    const std::size_t assigned = line.find(assignment);
+    if (assigned != std::string::npos && ends(line, ".get()));")) {
+      const std::size_t idStart = assigned + assignment.size();
+      const std::string slot =
+          line.substr(idStart, line.find(".get())", idStart) - idStart);
+      if (index + 1 >= lines.size() || lines[index + 1] != slot + ".destroy();")
+        continue;
+      const std::size_t produced = text.find(slot + ".construction_address()");
+      const std::size_t producer =
+          produced == std::string::npos ? produced : text.rfind('\n', produced);
+      if (producer != std::string::npos &&
+          text.substr(producer, produced - producer)
+                  .find("_unexpected__gti_mir_failure(") != std::string::npos)
+        ++unexpecteds;
+      else if (text.find(slot + ".construct(") != std::string::npos)
+        ++payloads;
+    }
   }
   expect(copies == 1 && moves == 1 && unexpecteds == 1 && payloads == 1,
-         "a cleanup-free copy, move, Unexpected and payload should each "
-         "assign the binding's wrapper directly after its replacement "
-         "cleanup");
+         "a cleanup-free copy and move should assign the binding directly, "
+         "and an Unexpected and a payload should each replace it through "
+         "expected's operator= and retire their staged argument");
   expect(owningMoves == 1 &&
              text.find("__gti_mir_unique_cleanup_failure") != std::string::npos,
          "an owning call result should move out of its slot after the active "
          "replacement cleanup and retire the moved-from slot");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::pair_"
-                   "value, std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(text.find("_expected __gti_mir_v_") == std::string::npos,
          "no replacement source should declare a value-initialized Expected "
          "local");
 }
 
-// An owning Expected<Class, E> binding replaced by a move, an Unexpected or a
-// payload keeps MIR's active replacement cleanup and retires each staged
-// shell exactly once: a moved binding and a converted payload each stage in
-// their value-rooted slot, and the converted payload, which MIR transfers out
-// at the Assign, has its shell ended there. An Unexpected wrapping a fresh
-// cleanup-free class error constructs inline when it initializes or replaces
-// a binding behind a passive pair. Behind an owning binding's active cleanup,
-// the error is constructed in its slot at its own position and moved in at
-// the Assign. (Regression for issue #227: these raised GTI-B0001, the payload
-// conversion while constructing MIR.)
+// An owning Expected<Class, E> binding replaced by a move keeps MIR's active
+// replacement cleanup and retires the moved binding's staged shell exactly
+// once. A payload or an Unexpected replaces a binding through expected's
+// source operator=, which takes the staged payload or the unexpected() result
+// and retires it. A fresh class error is constructed in its own slot, moved
+// into unexpected() and retired there, whether the result initializes or
+// replaces a binding. (Regression for issue #227: these raised GTI-B0001, the
+// payload conversion while constructing MIR.)
 void testShortCircuitExpectedPayloadFieldView() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-short-circuit-expected-payload.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-short-circuit-expected-payload.gti", R"(
 class counted {
 public:
   int32_t number;
@@ -4187,30 +4285,37 @@ int main() { return check(false) ? 0 : 1; }
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  // The checked extraction moves the payload out of the expected result's
-  // conditional temporary into its own, and the field is read there.
-  const std::string extraction =
-      "::gti_internal::backend::mir_expected_value_move_v1(__gti_mir_p_";
-  const std::size_t extracted = text.find(extraction);
-  const std::size_t target =
-      extracted == std::string::npos
-          ? std::string::npos
-          : text.find(".get(), &__gti_mir_p_", extracted);
-  const std::size_t nameStart = target == std::string::npos
+  const lang::MirFunctionInstance *checker = namedFunction(frontend, "check");
+  expect(checker != nullptr, "the short-circuit fixture has its checker");
+  if (checker == nullptr) {
+    return;
+  }
+  const std::string text = selectedBodyText(frontend, *checker);
+  // The consuming value() accessor moves the payload out of the expected
+  // result's conditional temporary into its own, and the field is read
+  // there.
+  const std::size_t extracted = text.find("_value__gti_mir_failure(");
+  const std::size_t lineStart =
+      extracted == std::string::npos ? extracted : text.rfind('\n', extracted);
+  const std::size_t lineEnd =
+      extracted == std::string::npos ? extracted : text.find('\n', extracted);
+  const std::size_t target = extracted == std::string::npos
+                                 ? std::string::npos
+                                 : text.find(", __gti_mir_p_", extracted);
+  const std::size_t nameStart = target == std::string::npos || target > lineEnd
                                     ? std::string::npos
-                                    : target + std::string(".get(), &").size();
+                                    : target + 2;
   const std::string payload =
       nameStart == std::string::npos
           ? std::string()
-          : text.substr(nameStart, text.find(')', nameStart) - nameStart);
-  expect(!payload.empty() && text.find(" = " + payload + ".get().number;",
-                                       extracted) != std::string::npos,
+          : text.substr(nameStart,
+                        text.find(".construction_address()", nameStart) -
+                            nameStart);
+  expect(!payload.empty() &&
+             text.substr(lineStart, extracted - lineStart)
+                     .find("std::move(__gti_mir_p_") != std::string::npos &&
+             text.find(" = " + payload + ".get().number;", extracted) !=
+                 std::string::npos,
          "the payload should move into its conditional temporary and its "
          "field should be read from that temporary");
   expect(text.find("::__gti_program::counted __gti_mir_v_") ==
@@ -4269,12 +4374,12 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
+  const lang::MirFunctionInstance *entry = namedFunction(frontend, "main");
+  expect(entry != nullptr, "the owning replacement fixture has main");
+  if (entry == nullptr) {
+    return;
+  }
+  const std::string text = selectedBodyText(frontend, *entry);
   std::vector<std::string> lines;
   for (std::size_t start = 0; start < text.size();) {
     const std::size_t end = std::min(text.find('\n', start), text.size());
@@ -4286,62 +4391,79 @@ int main() {
     return line.find(part) != std::string::npos;
   };
   std::size_t movedShells = 0;
-  std::size_t transferredShells = 0;
+  std::size_t transferredPayloads = 0;
+  std::size_t unexpectedReplacements = 0;
   for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
     const std::string &line = lines[index];
     const std::size_t moved = line.find(".get() = std::move(__gti_mir_p_");
-    if (moved == std::string::npos || !contains(line, ".get());"))
-      continue;
-    const std::size_t idStart = moved + 19;
-    const std::string slot =
-        line.substr(idStart, line.find(".get())", idStart) - idStart);
-    if (lines[index + 1] ==
-        slot + ".destroy(); // end transferred-out payload shell")
-      ++transferredShells;
-    else if (lines[index + 1] == slot + ".destroy();" &&
-             text.find(slot + ".construct(std::move(__gti_mir_p_") !=
-                 std::string::npos)
-      ++movedShells;
+    if (moved != std::string::npos && contains(line, ".get());")) {
+      const std::size_t idStart = moved + 19;
+      const std::string slot =
+          line.substr(idStart, line.find(".get())", idStart) - idStart);
+      if (lines[index + 1] == slot + ".destroy();" &&
+          text.find(slot + ".construct(std::move(__gti_mir_p_") !=
+              std::string::npos &&
+          index > 0 &&
+          contains(lines[index - 1], "__gti_mir_replacement_success_"))
+        ++movedShells;
+    }
+    // expected's source operator= takes a staged payload directly.
+    if (contains(line, "_expected::operator=(__gti_mir_p_") &&
+        contains(line, ".take());"))
+      ++transferredPayloads;
+    // ... or consumes an unexpected() result staged in its own slot.
+    const std::string assignment = "_expected::operator=(std::move(";
+    const std::size_t assigned = line.find(assignment);
+    if (assigned != std::string::npos) {
+      const std::size_t idStart = assigned + assignment.size();
+      const std::string slot =
+          line.substr(idStart, line.find(".get())", idStart) - idStart);
+      const std::size_t produced = text.find(slot + ".construction_address()");
+      const std::size_t producer =
+          produced == std::string::npos ? produced : text.rfind('\n', produced);
+      if (lines[index + 1] == slot + ".destroy();" &&
+          producer != std::string::npos &&
+          text.substr(producer, produced - producer)
+                  .find("_unexpected__gti_mir_failure(") != std::string::npos)
+        ++unexpectedReplacements;
+    }
   }
   expect(movedShells == 1,
          "an owning move should stage in its slot, move into the binding and "
          "retire the moved-from shell");
-  expect(transferredShells == 1,
+  expect(transferredPayloads == 1,
          "an owning payload should move into the binding and end its "
          "transferred-out shell at the Assign");
-  expect(
-      text.find(".get(), ::gti_internal::backend::unexpected(__gti_mir_v_") !=
-          std::string::npos,
-      "an owning binding should accept an inline Unexpected replacement");
-  expect(text.find(".construct(::gti_internal::backend::unexpected(::__gti_"
-                   "program::code_value(") != std::string::npos &&
-             text.find(".get(), "
-                       "::gti_internal::backend::unexpected(::__gti_program::"
-                       "code_value(") != std::string::npos,
-         "an Unexpected wrapping a fresh class error should construct inline "
-         "at a binding initializer and replacement");
+  expect(unexpectedReplacements == 3,
+         "an owning binding should accept an inline Unexpected replacement");
+  // A fresh class error is constructed in its slot, moved into unexpected()
+  // and retired right after that call.
   std::size_t stagedErrors = 0;
   for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
-    const std::string marker =
-        ".get(), ::gti_internal::backend::unexpected(std::move(__gti_mir_v_";
+    const std::string marker = "_unexpected__gti_mir_failure(std::move(";
     const std::size_t staged = lines[index].find(marker);
-    if (staged == std::string::npos ||
-        !contains(lines[index], "assign_representation("))
+    if (staged == std::string::npos)
       continue;
-    const std::size_t idStart = staged + marker.size() - 12;
+    const std::size_t idStart = staged + marker.size();
     const std::string slot = lines[index].substr(
         idStart, lines[index].find(".get())", idStart) - idStart);
-    if (lines[index + 1] == slot + ".destroy();" &&
-        text.find(slot + ".construct(") != std::string::npos)
-      ++stagedErrors;
+    bool constructed = false;
+    for (std::size_t before = index; before > 0 && !constructed; --before)
+      constructed = lines[before - 1].compare(0, slot.size() + 11,
+                                              slot + ".construct(") == 0;
+    bool retired = false;
+    for (std::size_t after = index + 1;
+         after < lines.size() && !retired &&
+         !contains(lines[after], "_unexpected__gti_mir_failure(");
+         ++after)
+      retired = lines[after] == slot + ".destroy();";
+    stagedErrors += constructed && retired;
   }
-  expect(stagedErrors == 1,
+  expect(stagedErrors == 3,
          "a fresh class error replacing an owning binding should be "
          "constructed in its slot at its MIR position, moved into the "
          "Unexpected at the Assign and retired there");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::tracked,"
-                   " std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(text.find("_expected __gti_mir_v_") == std::string::npos,
          "no owning replacement should declare a value-initialized Expected "
          "local");
 }
@@ -4375,7 +4497,10 @@ int main() { auto result = Make(1); return result ? 0 : 1; }
   lang::MirBodyAddress address{};
   lang::MirInstructionId producer = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
-    if (function.returnType.kind != lang::SemanticType::Expected)
+    const auto *source = frontend.hir.findFunctionInstance(function.id);
+    if (source == nullptr ||
+        source->sourceUnit != frontend.sourceGraph.entryUnit() ||
+        !isExpectedClass(frontend, function.returnType))
       continue;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
@@ -5462,17 +5587,16 @@ int main() {
              std::to_string(activating));
 }
 
-// A construction consuming a cleanup-free Expected<Class, E> argument may
-// publish its own result through its consuming Return or into a constructor
-// field. The success class has no default constructor: a failure-free
-// producer constructs the staged slot, the construction moves its wrapper and
-// the slot retires right after. A cleanup-owning payload keeps MIR's
-// value-rooted transfer slot. (Regression: the former gti-lang-official issue
-// #6 emitted a default-constructed ::gti_internal::backend::expected<Item, E>
-// local.)
+// A construction consuming an Expected<Class, E> argument may publish its own
+// result through its consuming Return or into a constructor field. The
+// success class has no default constructor: the producer publishes the
+// argument into its prepared-parameter slot and the construction takes it
+// from there, retiring the slot, for a cleanup-owning payload as well.
+// (Regression: the former gti-lang-official issue #6 emitted a
+// default-constructed ::gti_internal::backend::expected<Item, E> local.)
 void testExpectedClassArgumentReturnedConstruction() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-class-returned-construction.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-expected-class-returned-construction.gti", R"(
 struct item_value {
   int32_t number;
   item_value(int32_t number) : number(number) {}
@@ -5523,80 +5647,89 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string slotType = "::gti_internal::backend::mir_lifetime_slot<::"
-                               "gti_internal::backend::expected<::__gti_"
-                               "program::item_value, std::int32_t>, true> ";
-  // Counts item_holder constructions publishing at `destination` that move a
-  // slot the producer constructed and retire it on the next line.
-  const auto publishedConstructions = [&](std::string_view destination) {
-    const std::string_view marker = ">{}, std::move(__gti_mir_v_";
-    std::size_t count = 0;
-    for (std::size_t at = text.find(marker); at != std::string::npos;
-         at = text.find(marker, at + marker.size())) {
-      const std::size_t lineStart = text.rfind('\n', at) + 1;
-      const std::size_t lineEnd = text.find('\n', at);
-      const std::size_t idStart = at + marker.size();
-      const std::size_t idEnd = text.find(".get())", idStart);
-      if (lineEnd == std::string::npos || idEnd == std::string::npos ||
-          idEnd > lineEnd)
-        return std::size_t{0};
-      const std::string_view line =
-          std::string_view(text).substr(lineStart, lineEnd - lineStart);
-      if (line.find("::__gti_program::item_holder(") ==
-              std::string_view::npos ||
-          line.find(destination) == std::string_view::npos)
-        continue;
-      const std::string slot =
-          "__gti_mir_v_" + text.substr(idStart, idEnd - idStart);
-      const std::size_t next = text.find_first_not_of(' ', lineEnd + 1);
-      if (text.find(slotType + slot + ";") == std::string::npos ||
-          text.find(slot + ".construct_from([&]() { return ::__gti_program::"
-                           "__gti_fn_") == std::string::npos ||
-          text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
-        return std::size_t{0};
-      ++count;
-    }
-    return count;
+  // Counts constructions on a line naming `construction` and `destination`
+  // that take one of this body's staged prepared expected arguments.
+  const auto takenInto = [&](const lang::MirBody &body, const std::string &text,
+                             std::string_view construction,
+                             std::string_view destination) {
+    std::size_t taken = 0;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &input : block.instructions) {
+        if (input.kind != lang::MirInstructionKind::CallInput ||
+            !input.destination || !input.preparedParameterDrop ||
+            !isExpectedClass(frontend, input.info.type))
+          continue;
+        const auto at =
+            text.find("std::move(__gti_mir_p_" +
+                      std::to_string(*input.destination) + ".take())");
+        if (at == std::string::npos)
+          continue;
+        const auto lineStart = text.rfind('\n', at) + 1;
+        const std::string_view line = std::string_view(text).substr(
+            lineStart, text.find('\n', at) - lineStart);
+        taken += line.find(construction) != std::string_view::npos &&
+                 line.find(destination) != std::string_view::npos;
+      }
+    return taken;
   };
-  expect(publishedConstructions("(__gti_mir_out_result)) ") == 1,
+  const lang::MirFunctionInstance *holdItem =
+      namedFunction(frontend, "hold_item");
+  const lang::MirFunctionInstance *holdTracked =
+      namedFunction(frontend, "hold_tracked");
+  const lang::MirConstructorInstance *owner = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *source = frontend.hir.findConstructorInstance(constructor.id);
+    for (const auto &instance : frontend.hir.classInstances())
+      if (source != nullptr && instance.id == source->owner &&
+          instance.source != nullptr &&
+          instance.source->name().lexeme == "item_owner")
+        owner = &constructor;
+  }
+  expect(holdItem != nullptr && holdTracked != nullptr && owner != nullptr,
+         "the returned construction fixture has both returns and the owner "
+         "constructor");
+  if (holdItem == nullptr || holdTracked == nullptr || owner == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress ownerAddress{lang::MirBodyKind::Constructor,
+                                          owner->id};
+  const std::string itemText = selectedBodyText(frontend, *holdItem);
+  const std::string trackedText = selectedBodyText(frontend, *holdTracked);
+  const std::string ownerText =
+      owner->mayRaiseDefinedFailure
+          ? emitter.emitFailureBodyText(ownerAddress, "selected", 1).text
+          : emitter.emitBodyText(ownerAddress, "selected", 1).text;
+  expect(takenInto(holdItem->body, itemText, "::__gti_program::item_holder(",
+                   "(__gti_mir_out_result)) ") == 1,
          "a returned construction should publish into the transformed result "
          "from the staged wrapper and retire it afterwards");
-  expect(publishedConstructions("std::addressof(") == 1,
+  expect(takenInto(owner->body, ownerText, "::__gti_program::item_holder(",
+                   "std::addressof(") == 1,
          "a member-initializer construction should publish into its field "
          "from the staged wrapper and retire it afterwards");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::item_"
-                   "value, std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(itemText.find("_expected __gti_mir_v_") == std::string::npos &&
+             ownerText.find("_expected __gti_mir_v_") == std::string::npos,
          "no Expected without a default-constructible payload should "
          "value-initialize an ordinary local");
-  const std::size_t owned =
-      text.find("::__gti_program::tracked_holder(::gti_internal::backend::"
-                "mir_failure_constructor_tag_v1<");
-  expect(owned != std::string::npos &&
-             text.find(">{}, __gti_mir_p_", owned) ==
-                 text.find(">{}, ", owned) &&
-             text.find(".take()", owned) < text.find('\n', owned),
+  expect(takenInto(holdTracked->body, trackedText,
+                   "::__gti_program::tracked_holder(",
+                   "(__gti_mir_out_result)) ") == 1,
          "a returned construction consuming a cleanup-owning Expected should "
-         "take it from MIR's value-rooted transfer slot");
+         "take it from its staged slot");
 }
 
-// A cleanup-free Expected<Class, E> call temporary read once by its state test
-// or a checked value() or error() lives in representation-only storage: the
-// producer constructs the slot, the observer reads the wrapper there, and the
-// representation retires right after that read. A class payload moves into
-// its own field-read slot. An owning temporary is read in place from MIR's
-// value-rooted slot, which MIR's own Drop retires. (Regression: these
+// An Expected<Class, E> call temporary read once by its state test or a
+// checked value() or error() is an ordinary class temporary in MIR's
+// value-rooted slot, cleanup-free or owning: the producer constructs the slot,
+// the observer reads it there, and MIR's own Drop retires it after that read.
+// A class payload moves into its own field-read slot. (Regression: these
 // value-initialized ::gti_internal::backend::expected<Item, E> or reported
 // GTI-B0001.)
 void testExpectedTemporaryObservationSlot() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-temporary-observation.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-expected-temporary-observation.gti", R"(
 struct item_value {
   int32_t number;
   item_value(int32_t number) : number(number) {}
@@ -5632,64 +5765,64 @@ int main() { return observe(true) + observe(false) - 13; }
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string slotType =
-      "::gti_internal::backend::mir_lifetime_slot<::gti_internal::backend::"
-      "expected<::__gti_"
-      "program::item_value, std::int32_t>, true> __gti_mir_v_";
-  // Each observed slot is constructed by its producer, read once through
-  // get() on the next line, and retired on the line after that read.
+  const lang::MirFunctionInstance *observe = namedFunction(frontend, "observe");
+  expect(observe != nullptr, "the observation fixture has its observer");
+  if (observe == nullptr) {
+    return;
+  }
+  const std::string text = selectedBodyText(frontend, *observe);
+  // Each observed temporary is constructed by its producer in its
+  // value-rooted slot, read there, and retired by MIR's Drop after the read.
   std::size_t observed = 0;
-  std::string payloadSlot;
-  for (std::size_t at = text.find(slotType); at != std::string::npos;
-       at = text.find(slotType, at + slotType.size())) {
-    const std::size_t idStart = at + slotType.size();
-    const std::string slot =
-        "__gti_mir_v_" +
-        text.substr(idStart, text.find(';', idStart) - idStart);
-    const std::size_t produced = text.find(
-        slot + ".construct_from([&]() { return ::__gti_program::__gti_fn_");
-    const std::size_t read = produced == std::string::npos
-                                 ? std::string::npos
-                                 : text.find(slot + ".get()", produced);
-    const std::size_t lineEnd =
-        read == std::string::npos ? std::string::npos : text.find('\n', read);
-    const std::size_t next = lineEnd == std::string::npos
-                                 ? std::string::npos
-                                 : text.find_first_not_of(' ', lineEnd + 1);
-    if (next == std::string::npos ||
-        text.compare(next, slot.size() + 11, slot + ".destroy();") != 0)
+  std::size_t owning = 0;
+  for (const lang::MirPlace &place : observe->body.places) {
+    if (place.root != lang::MirPlaceRootKind::Value ||
+        !place.projections.empty() || !isExpectedClass(frontend, place.type))
       continue;
-    ++observed;
-    const std::string move = "mir_expected_value_move_v1(" + slot + ".get(), &";
-    const std::size_t moved = text.rfind(move, lineEnd);
-    if (moved != std::string::npos && moved > produced)
-      payloadSlot =
-          text.substr(moved + move.size(), text.find(')', moved + move.size()) -
-                                               moved - move.size());
+    const std::string slot = "__gti_mir_p_" + std::to_string(place.id);
+    const auto produced = text.find(slot + ".construction_address()");
+    const auto read = produced == std::string::npos
+                          ? std::string::npos
+                          : text.find(slot + ".get()", produced);
+    if (read == std::string::npos ||
+        text.find(slot + ".destroy();", read) == std::string::npos)
+      continue;
+    if (place.type.arguments.front().kind == lang::SemanticType::Class &&
+        frontend.semantics.findClassType(place.type.arguments.front().classId)
+                ->declaration->name()
+                .lexeme == "tracked")
+      ++owning;
+    else
+      ++observed;
   }
   expect(observed == 3,
          "the state test, the value() extraction and the error() extraction "
          "should each read one constructed slot and retire it: " +
              std::to_string(observed) + " observed");
-  expect(!payloadSlot.empty() &&
-             text.find("mir_lifetime_slot<::__gti_program::item_value, true> " +
-                       payloadSlot + ";") != std::string::npos &&
-             text.find(payloadSlot + ".get().number") != std::string::npos,
+  bool payloadSlot = false;
+  for (const lang::MirBlock &block : observe->body.blocks)
+    for (const lang::MirInstruction &call : block.instructions) {
+      const auto *target =
+          call.kind == lang::MirInstructionKind::Call && call.functionTarget &&
+                  call.result
+              ? frontend.hir.findFunctionInstance(*call.functionTarget)
+              : nullptr;
+      if (target == nullptr || target->source == nullptr ||
+          target->source->name().lexeme != "value" ||
+          call.info.type.kind != lang::SemanticType::Class)
+        continue;
+      const std::string slot = "__gti_mir_v_" + std::to_string(*call.result);
+      payloadSlot =
+          text.find("mir_lifetime_slot<::__gti_program::item_value, true> " +
+                    slot + ";") != std::string::npos &&
+          text.find(slot + ".construction_address()") != std::string::npos &&
+          text.find(slot + ".get().number") != std::string::npos;
+    }
+  expect(payloadSlot,
          "value() should move the payload into its own field-read slot");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::item_"
-                   "value, std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(text.find("_expected __gti_mir_v_") == std::string::npos,
          "no observed Expected should value-initialize an ordinary local");
-  expect(text.find("mir_expected_error_v1(__gti_mir_p_") != std::string::npos &&
-             text.find("mir_lifetime_slot<::gti_internal::backend::expected<::_"
-                       "_gti_program::"
-                       "tracked, std::int32_t>, true>") == std::string::npos,
+  expect(owning == 1,
          "an owning temporary should be read in place from MIR's value-rooted "
          "slot");
 }
@@ -5702,7 +5835,7 @@ int main() { return observe(true) + observe(false) - 13; }
 // (Regression: these reported GTI-B0001.)
 void testOwningTemporaryFieldView() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-owning-temporary-field-view.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-owning-temporary-field-view.gti", R"(
 struct inner_value {
   int32_t code;
   inner_value(int32_t code) : code(code) {}
@@ -5733,12 +5866,12 @@ int main() { return read() - 14; }
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
+  const lang::MirFunctionInstance *reader = namedFunction(frontend, "read");
+  expect(reader != nullptr, "the field view fixture has its reader");
+  if (reader == nullptr) {
+    return;
+  }
+  const std::string text = selectedBodyText(frontend, *reader);
   // Each view reads one declared owning slot that a normal-path Drop retires.
   const std::string read = ".get().inner.code;";
   std::size_t views = 0;
@@ -5752,9 +5885,11 @@ int main() { return read() - 14; }
         text.find(slot + ".destroy();\n") == std::string::npos)
       continue;
     ++views;
-    if (text.find("mir_expected_value_move_v1(__gti_mir_p_") <
-            text.find(slot + read) &&
-        text.find(", &" + slot + ");") != std::string::npos)
+    // The consuming value() accessor constructs its payload in this slot.
+    const std::size_t accessor = text.find("_value__gti_mir_failure(");
+    if (accessor < text.find(slot + read) &&
+        text.find(slot + ".construction_address()", accessor) <
+            text.find(slot + read))
       moved = slot;
   }
   expect(views == 2,
@@ -5775,8 +5910,8 @@ int main() { return read() - 14; }
 // construction consumes a staged Expected argument too. A failure-free
 // construction keeps the fused assignment. (Regression: GTI-B0001.)
 void testRaisingConstructionAssignmentSlot() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-raising-construction-assignment.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-raising-construction-assignment.gti", R"(
 struct item_value {
   int32_t number;
   item_value(int32_t number) : number(number) {}
@@ -5852,11 +5987,26 @@ int main() {
   expect(assignedThroughSlot("sum_holder"),
          "a raising construction should publish into its assignment slot "
          "before the binding moves it in");
-  expect(assignedThroughSlot("item_holder") &&
-             text.find("item_holder(::gti_internal::backend::mir_failure_"
-                       "constructor_tag_v1<") != std::string::npos &&
-             text.find("end moved-from argument representation") !=
-                 std::string::npos,
+  // The staged expected argument is taken out of its prepared-parameter
+  // slot, ending that representation, by the construction into the
+  // assignment slot.
+  bool takenIntoSlot = false;
+  const std::string staged = ".construction_address())) ::__gti_program::"
+                             "item_holder(::gti_internal::backend::mir_"
+                             "failure_constructor_tag_v1<";
+  for (std::size_t at = text.find(staged); at != std::string::npos;
+       at = text.find(staged, at + staged.size())) {
+    const std::size_t lineStart = text.rfind('\n', at) + 1;
+    const std::string_view line = std::string_view(text).substr(
+        lineStart, text.find('\n', at) - lineStart);
+    takenIntoSlot =
+        takenIntoSlot ||
+        (line.find("::new (static_cast<void *>(__gti_mir_v_") !=
+             std::string_view::npos &&
+         line.find("std::move(__gti_mir_p_") != std::string_view::npos &&
+         line.find(".take()), ") != std::string_view::npos);
+  }
+  expect(assignedThroughSlot("item_holder") && takenIntoSlot,
          "a raising construction consuming a staged Expected argument should "
          "use the same assignment slot");
   expect(text.find("mir_lifetime_slot<::__gti_program::plain_holder, true>") ==
@@ -5867,13 +6017,13 @@ int main() {
 
 // A cleanup-free Expected<Class, E> call result initializing a constructor
 // field is staged and moved into the field's storage after its empty
-// representation ends. Two such temporaries joined by a conditional publish
-// into the join's own storage, which each publication first retires, and the
-// grouped join reads that storage directly. Neither value-initializes the
-// Expected. (Regression: both reported GTI-B0001.)
+// representation ends. Two such temporaries joined by a conditional both
+// publish into the join's one hidden temporary slot, the grouped join reads
+// that storage directly, and MIR's Drop retires it after the read. Neither
+// value-initializes the Expected. (Regression: both reported GTI-B0001.)
 void testExpectedFieldAndJoinPublication() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-expected-field-and-join.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-expected-field-and-join.gti", R"(
 struct item_value {
   int32_t number;
   item_value(int32_t number) : number(number) {}
@@ -5903,36 +6053,56 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string rearm =
-      ".destroy_if_engaged(); // retire the previous join representation\n";
-  std::size_t publications = 0;
-  std::string join;
-  for (std::size_t at = text.find(rearm); at != std::string::npos;
-       at = text.find(rearm, at + rearm.size())) {
-    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
-    const std::string slot = text.substr(slotStart, at - slotStart);
-    const std::size_t next = text.find_first_not_of(' ', at + rearm.size());
-    const std::string publish =
-        slot + ".construct_from([&]() { return ::__gti_program::__gti_fn_";
-    if (text.compare(next, publish.size(), publish) != 0)
-      continue;
-    ++publications;
-    join = slot;
+  const lang::MirFunctionInstance *observe = namedFunction(frontend, "observe");
+  const lang::MirConstructorInstance *box = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *source = frontend.hir.findConstructorInstance(constructor.id);
+    for (const auto &owner : frontend.hir.classInstances())
+      if (source != nullptr && owner.id == source->owner &&
+          owner.source != nullptr && owner.source->name().lexeme == "box")
+        box = &constructor;
   }
-  expect(publications == 2 && !join.empty() &&
-             text.find("mir_lifetime_slot<::gti_internal::backend::expected<::_"
-                       "_gti_program::item_"
-                       "value, std::int32_t>, true> " +
-                       join + ";") != std::string::npos &&
-             text.find(join + ".get().has_value();") != std::string::npos,
-         "both join arms should publish into the join's storage after "
-         "retiring it, and the grouped join should read that storage");
+  expect(observe != nullptr && box != nullptr,
+         "the field and join fixture has its observer and box constructor");
+  if (observe == nullptr || box == nullptr) {
+    return;
+  }
+  const std::string joinText = selectedBodyText(frontend, *observe);
+  // The conditional join is one hidden temporary slot both arms publish into.
+  bool joined = false;
+  for (const lang::MirPlace &place : observe->body.places) {
+    if (place.root != lang::MirPlaceRootKind::Temporary ||
+        !place.projections.empty() || !isExpectedClass(frontend, place.type))
+      continue;
+    const std::string slot = "__gti_mir_p_" + std::to_string(place.id);
+    const auto first = joinText.find(slot + ".construction_address()");
+    const auto second =
+        first == std::string::npos
+            ? first
+            : joinText.find(slot + ".construction_address()", first + 1);
+    const auto read = second == std::string::npos
+                          ? second
+                          : joinText.find(slot + ".get().", second);
+    const auto lineEnd =
+        read == std::string::npos ? read : joinText.find('\n', read);
+    joined =
+        joined ||
+        (lineEnd != std::string::npos &&
+         joinText.substr(read, lineEnd - read).find("_has_value()") !=
+             std::string::npos &&
+         joinText.find(slot + ".destroy();", lineEnd) != std::string::npos);
+  }
+  expect(joined,
+         "both join arms should publish into the join's storage, and the "
+         "grouped join should read that storage");
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress boxAddress{lang::MirBodyKind::Constructor,
+                                        box->id};
+  const std::string text =
+      box->mayRaiseDefinedFailure
+          ? emitter.emitFailureBodyText(boxAddress, "selected", 1).text
+          : emitter.emitBodyText(boxAddress, "selected", 1).text;
   const std::string field =
       "::gti_internal::backend::construct_representation_at(std::addressof("
       "__gti_mir_p_";
@@ -5947,20 +6117,22 @@ int main() {
       slotStart == std::string::npos
           ? std::string()
           : text.substr(slotStart, text.find(".get()", slotStart) - slotStart);
+  // A checked producer publishes through the slot's construction address; a
+  // failure-free one constructs the slot from its returned wrapper.
   expect(!slot.empty() &&
-             text.find(slot + ".construct_from([&]() { return ::__gti_program::"
-                              "__gti_fn_") != std::string::npos &&
+             (text.find(slot + ".construction_address()") < constructed ||
+              text.find(slot + ".construct_from([&]() { return ::__gti_"
+                               "program::__gti_fn_") < constructed) &&
              text.find(slot + ".destroy();", moved) != std::string::npos,
          "the field initializer should move a staged result into the field");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::item_"
-                   "value, std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(text.find("_expected __gti_mir_v_") == std::string::npos &&
+             joinText.find("_expected __gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
 
 void testOwnedArgumentMemberInitializer() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-owned-argument-member-initializer.gti", R"(
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-owned-argument-member-initializer.gti", R"(
 class counted {
 public:
   int32_t number;
@@ -5995,8 +6167,9 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  // The member's constructor takes the owning result's own value obligation
-  // directly; that handoff is not a transfer into `this`.
+  // The member's constructor takes the owning result through its prepared
+  // parameter, which the result's own value obligation was reparented into;
+  // that handoff is not a transfer into `this`.
   bool routed = false;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     const lang::MirBody &body = constructor.body;
@@ -6007,12 +6180,13 @@ int main() {
         for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
           const lang::MirDropObligation *source =
               body.findDropObligation(event.source);
-          routed = routed ||
-                   (event.kind == lang::MirLifecycleEventKind::TransferOut &&
-                    source != nullptr &&
-                    source->kind == lang::MirDropObligationKind::Value &&
-                    lang::mirBodyRoutesFailureEdges(body) &&
-                    !body.failureRecords.empty());
+          routed =
+              routed ||
+              (event.kind == lang::MirLifecycleEventKind::TransferOut &&
+               source != nullptr &&
+               source->kind == lang::MirDropObligationKind::PreparedParameter &&
+               lang::mirBodyRoutesFailureEdges(body) &&
+               !body.failureRecords.empty());
         }
       }
     }
@@ -6034,39 +6208,36 @@ int main() {
   const std::size_t slotStart =
       constructed == std::string::npos
           ? std::string::npos
-          : text.find("{}, __gti_mir_p_", constructed);
+          : text.find("{}, std::move(__gti_mir_p_", constructed);
   const std::size_t slotEnd = slotStart >= lineEnd
                                   ? std::string::npos
-                                  : text.find(".take(), &__gti_mir_construct_"
+                                  : text.find(".take()), &__gti_mir_construct_"
                                               "success_",
                                               slotStart);
   const std::string slot =
-      slotEnd >= lineEnd ? std::string()
-                         : text.substr(slotStart + 4, slotEnd - slotStart - 4);
+      slotEnd >= lineEnd
+          ? std::string()
+          : text.substr(slotStart + 14, slotEnd - slotStart - 14);
+  // The owned result's slot is its prepared-parameter slot; a checked
+  // producer publishes into it through its construction address.
   const std::size_t declared =
-      slot.empty()
-          ? std::string::npos
-          : text.rfind(
-                "::gti_internal::backend::mir_lifetime_slot<"
-                "::gti_internal::backend::expected<::__gti_program::counted, "
-                "std::int32_t>> " +
-                    slot + ";",
-                constructed);
+      slot.empty() ? std::string::npos
+                   : text.rfind("_expected> " + slot + ";", constructed);
   expect(declared != std::string::npos &&
-             text.find(slot + ".construct_from([&]() { return ::__gti_"
-                              "program::__gti_fn_",
-                       declared) < constructed,
+             (text.find(slot + ".construction_address()", declared) <
+                  constructed ||
+              text.find(slot + ".construct_from([&]() { return ::__gti_"
+                               "program::__gti_fn_",
+                        declared) < constructed),
          "the member should be constructed in place from the owned result's "
          "slot, taken once after its producer published it");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::counted,"
-                   " std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(text.find("_expected __gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
 
 void testOwningExpectedFieldPublication() {
   const lang::FrontendResult frontend =
-      analyze("cpp-mir-owning-expected-field.gti", R"(
+      analyzeWithStandardLibrary("cpp-mir-owning-expected-field.gti", R"(
 class counted {
 public:
   int32_t number;
@@ -6099,45 +6270,63 @@ int main() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::string &text = artifact.contents;
-  const std::string retire =
-      ".destroy(); // end transferred Expected field representation\n";
-  std::size_t publications = 0;
-  bool checkedProducer = false;
-  for (std::size_t at = text.find(retire); at != std::string::npos;
-       at = text.find(retire, at + retire.size())) {
-    const std::size_t slotStart = text.rfind("__gti_mir_p_", at);
-    const std::string slot = text.substr(slotStart, at - slotStart);
-    const std::size_t declared =
-        text.rfind("::gti_internal::backend::mir_lifetime_slot<::gti_internal::"
-                   "backend::expected<"
-                   "::__gti_program::counted, std::int32_t>> " +
-                       slot + ";",
-                   at);
-    const std::size_t moved =
-        text.rfind("::gti_internal::backend::construct_representation_at(std::"
-                   "addressof(",
-                   at);
-    if (declared == std::string::npos || moved == std::string::npos ||
-        text.find(", std::move(" + slot + ".get()));", moved) > at ||
-        text.rfind("std::destroy_at(std::addressof(", moved) < declared)
-      continue;
-    ++publications;
-    checkedProducer = checkedProducer ||
-                      text.find(slot + ".mark_constructed();", declared) < at;
+  const lang::MirConstructorInstance *box = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *source = frontend.hir.findConstructorInstance(constructor.id);
+    for (const auto &owner : frontend.hir.classInstances())
+      if (source != nullptr && owner.id == source->owner &&
+          owner.source != nullptr && owner.source->name().lexeme == "box")
+        box = &constructor;
   }
-  expect(publications >= 2 && checkedProducer,
-         "each owning Expected field should be constructed in place from its "
-         "result's lifetime slot, including after a checked producer, and "
-         "the slot should retire without a semantic drop");
-  expect(text.find("::gti_internal::backend::expected<::__gti_program::counted,"
-                   " std::int32_t> "
-                   "__gti_mir_v_") == std::string::npos,
+  expect(box != nullptr, "the owning Expected field fixture has its box");
+  if (box == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const lang::MirBodyAddress address{lang::MirBodyKind::Constructor, box->id};
+  const std::string text =
+      box->mayRaiseDefinedFailure
+          ? emitter.emitFailureBodyText(address, "selected", 1).text
+          : emitter.emitBodyText(address, "selected", 1).text;
+  // Each field Initialize reparents its result's value obligation into the
+  // field's rollback: the field is move-published from the result's
+  // lifetime slot, which then retires without a semantic drop.
+  std::size_t publications = 0;
+  std::size_t checkedProducers = 0;
+  for (const lang::MirBlock &block : box->body.blocks)
+    for (const lang::MirInstruction &initialize : block.instructions) {
+      if (initialize.kind != lang::MirInstructionKind::Initialize ||
+          !initialize.destination || initialize.lifecycle.size() != 1 ||
+          initialize.lifecycle.front().kind !=
+              lang::MirLifecycleEventKind::Reparent ||
+          !isExpectedClass(frontend, initialize.info.type))
+        continue;
+      const auto *result =
+          box->body.findDropObligation(initialize.lifecycle.front().source);
+      if (result == nullptr)
+        continue;
+      const std::string slot = "__gti_mir_p_" + std::to_string(result->place);
+      const std::string field =
+          "__gti_mir_p_" + std::to_string(*initialize.destination);
+      const std::string publish = field + " = std::move(" + slot + ".get());";
+      const auto published = text.find(publish);
+      const auto next =
+          published == std::string::npos
+              ? published
+              : text.find_first_not_of(' ', text.find('\n', published) + 1);
+      if (published == std::string::npos ||
+          text.compare(next, slot.size() + 11, slot + ".destroy();") != 0 ||
+          text.find("_expected> " + slot + ";") == std::string::npos)
+        continue;
+      ++publications;
+      checkedProducers += text.find(slot + ".mark_constructed();") < published;
+    }
+  expect(publications == 2 && checkedProducers == 2,
+         "each owning Expected field should be published from its result's "
+         "lifetime slot, including after a checked producer, and the slot "
+         "should retire without a semantic drop");
+  expect(text.find("_expected __gti_mir_v_") == std::string::npos,
          "no Expected should value-initialize an ordinary local");
 }
 

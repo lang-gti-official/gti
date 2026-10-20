@@ -1080,8 +1080,8 @@ int main() {
   expect(endedLoan.canGenerateCode(),
          "raw provenance must reuse nonlexical loan endpoints");
 
-  const auto moved = auditFrontend().analyze(
-      "raw-moved.gti", R"(
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto moved = auditFrontend().analyze("raw-moved.gti", R"(
 struct Owner {
   int value = 1;
   Owner() {}
@@ -1097,8 +1097,8 @@ int main() {
   }
 }
 )",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+                                             {root / "stdlib/prelude.gti"}, {},
+                                             {root / "stdlib"});
   expect(!moved.canGenerateCode() && hasMessage(moved, "owner that was moved"),
          "raw pointer copies must not erase known moved-owner state");
   if (!hasMessage(moved, "owner that was moved"))
@@ -1500,8 +1500,8 @@ int main() {
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
-  const auto replaced = auditFrontend().analyze(
-      "raw-replaced.gti", R"(
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto replaced = auditFrontend().analyze("raw-replaced.gti", R"(
 struct Owner { int value = 1; };
 int main() {
   mut Owner original{};
@@ -1510,8 +1510,8 @@ int main() {
   original = Owner();
   unsafe { return *pointer; }
 })",
-      {std::filesystem::path(__FILE__).parent_path().parent_path() /
-       "stdlib/prelude.gti"});
+                                                {root / "stdlib/prelude.gti"},
+                                                {}, {root / "stdlib"});
   expect(
       !replaced.canGenerateCode() &&
           hasMessage(replaced, "lifetime was replaced"),

@@ -14291,6 +14291,55 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
   return {};
 }
 
+// Distinct place ids with one root, path, type and access name the same
+// storage, so a dependency through either is the same dependency.
+[[nodiscard]] bool equalCompleteBorrowSetsInBody(const MirBody &body,
+                                                 const CompleteBorrowFact &left,
+                                                 const CompleteBorrowFact &right) {
+  if (equalCompleteBorrowSets(left, right))
+    return true;
+  if (!left || !right ||
+      left->dependencies.size() != right->dependencies.size() ||
+      !equalCompleteBorrowSets(
+          MirBorrowDependencySet{.possibleAlternatives =
+                                     left->possibleAlternatives},
+          MirBorrowDependencySet{.possibleAlternatives =
+                                     right->possibleAlternatives}))
+    return false;
+  const auto samePlace = [&](MirPlaceId a, MirPlaceId b) {
+    if (a == b)
+      return true;
+    const auto *first = body.findPlace(a);
+    const auto *second = body.findPlace(b);
+    return first && second && first->root == second->root &&
+           first->binding == second->binding &&
+           first->symbol == second->symbol &&
+           first->capture == second->capture &&
+           first->temporary == second->temporary &&
+           first->value == second->value && first->loan == second->loan &&
+           first->projections == second->projections &&
+           first->type == second->type && first->access == second->access;
+  };
+  std::vector<bool> matched(right->dependencies.size(), false);
+  for (const auto &dependency : left->dependencies) {
+    bool found = false;
+    for (std::size_t index = 0; index < right->dependencies.size(); ++index) {
+      const auto &candidate = right->dependencies[index];
+      if (matched[index] || candidate.parent != dependency.parent ||
+          candidate.designatedFields != dependency.designatedFields ||
+          candidate.access != dependency.access ||
+          candidate.conditions != dependency.conditions ||
+          !samePlace(candidate.source, dependency.source))
+        continue;
+      matched[index] = found = true;
+      break;
+    }
+    if (!found)
+      return false;
+  }
+  return true;
+}
+
 [[nodiscard]] MirVerificationResult verifyBorrowDependencySetTransport(
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const CompleteBorrowCallSummaryLookup &callSummary,
@@ -14308,8 +14357,8 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
     return selected;
   for (const auto &value : body.values) {
     if (!value.borrowDependencies ||
-        equalCompleteBorrowSets(value.borrowDependencies,
-                                flow.values[value.id - 1]))
+        equalCompleteBorrowSetsInBody(body, value.borrowDependencies,
+                                      flow.values[value.id - 1]))
       continue;
     return verificationFailure(
         body, owner,
