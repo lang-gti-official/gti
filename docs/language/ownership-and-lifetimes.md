@@ -1779,8 +1779,9 @@ guard to share one exact field prefix; selecting the field removes that prefix
 from the whole set, never just the convenient subset. That field holds the
 payload enum itself: a field whose type is another conditionally borrowed
 class, such as a `Holder` storing an `expected<int&, E>`, is not yet supported
-(`GTI-S2045`), and neither is an enum payload whose type is a class that stores
-references (`GTI-S2067`). A reference selected from a conditional carrier is
+(`GTI-S2045`), and neither is an enum payload whose type is such a class
+(`GTI-S2067`); classes with unconditional reference fields remain valid
+payloads. A reference selected from a conditional carrier is
 relayed only from a named local, parameter or temporary carrier, not through a
 field, element or dereference of another value (`GTI-S2045`). A free function
 whose carrier result could borrow from more than one eligible parameter is

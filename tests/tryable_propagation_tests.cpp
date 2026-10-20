@@ -475,7 +475,7 @@ Status named() {
 }
 int main() { return 0; }
 )gti",
-           "GTI-S2086", "std::move(name)");
+           "GTI-S2086", "std::move(held)");
   rejected(types + R"gti(
 int scalar() {
   int value = ?make(1, 0);
