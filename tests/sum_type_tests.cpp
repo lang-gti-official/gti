@@ -2,6 +2,8 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 
@@ -11,6 +13,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1690,6 +1693,207 @@ int main() {
          "concrete generic instances consume owning and passive payloads");
 }
 
+// A payload enum whose alternative holds a move-only class without a
+// destructor needs no cleanup but cannot be copied. A switch observing a
+// named place read-borrows it, MIR verification rejects any copy of it, and
+// the C++ backend moves the plain local that carries a by-value argument.
+void testCleanupFreeMoveOnlyPayloads() {
+  const auto program =
+      analyzeWithPrelude("cleanup-free-move-only-payload.gti", R"(
+struct token {
+  int32_t id;
+  token(int32_t raw) : id(raw) {}
+  token(token& other) = delete;
+  token(token&& other) = default;
+};
+enum class choice {
+  none,
+  some(token item),
+};
+token pick(choice value) {
+  switch (std::move(value)) {
+  case choice::some(item):
+    return item;
+  case choice::none:
+    return token(0);
+  }
+}
+int32_t tag(choice value) {
+  switch (value) {
+  case choice::some:
+    return 1;
+  case choice::none:
+    return 0;
+  }
+}
+int main() {
+  choice named = choice::some(token(2));
+  switch (named) {
+  case choice::some:
+    break;
+  case choice::none:
+    return 1;
+  }
+  return pick(std::move(named)).id + tag(choice::none) - 2;
+}
+)");
+  if (!program.canGenerateCode()) {
+    printDiagnostics(program);
+  }
+  const lang::MirPayloadEnum *enumeration =
+      program.mir.payloadEnums().size() == 1
+          ? &program.mir.payloadEnums().front()
+          : nullptr;
+  expect(program.canGenerateCode() &&
+             lang::verifyMirProgram(program.mir).valid() &&
+             enumeration != nullptr && !enumeration->requiresActiveCleanup &&
+             enumeration->traits.drop == lang::DropKind::Trivial &&
+             !enumeration->traits.copyable && enumeration->traits.movable,
+         "a payload enum over a move-only class without a destructor is "
+         "cleanup-free and move-only through verified MIR");
+  if (!program.canGenerateCode() || enumeration == nullptr)
+    return;
+
+  const auto isChoice = [&](const lang::SemanticType &type) {
+    return type == enumeration->type;
+  };
+  std::size_t borrowedSubjects = 0;
+  bool copied = false;
+  for (const auto &function : program.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions)
+        for (const auto &operand : instruction.operands)
+          copied = copied || (operand.kind == lang::MirOperandKind::Copy &&
+                              isChoice(operand.type));
+      const auto &terminator = block.terminator;
+      if (terminator.kind == lang::MirTerminatorKind::Switch &&
+          terminator.value && isChoice(terminator.value->type)) {
+        copied = copied ||
+                 terminator.value->kind != lang::MirOperandKind::BorrowRead;
+        borrowedSubjects +=
+            terminator.value->kind == lang::MirOperandKind::BorrowRead;
+      }
+    }
+  }
+  expect(!copied && borrowedSubjects == 3,
+         "observing switches over a named local and a parameter, and the "
+         "consuming switch's hidden owner, read-borrow their places; nothing "
+         "copies the move-only enum");
+
+  // Restoring a copy of the move-only enum must fail verification. Only the
+  // observing switches are forged: a consuming switch's hidden owner also
+  // feeds its arms' extractions, which other proofs guard.
+  const auto rejectsCopy = [&](auto mutate) {
+    lang::MirProgram forged = program.mir;
+    bool changed = false;
+    for (const auto &function : forged.functionInstances()) {
+      auto &body = const_cast<lang::MirBody &>(function.body);
+      const bool consuming = std::any_of(
+          body.blocks.begin(), body.blocks.end(), [](const auto &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [](const lang::MirInstruction &instruction) {
+                  return instruction.operation ==
+                             lang::MirOperation::PayloadExtract &&
+                         !instruction.operands.empty() &&
+                         instruction.operands.front().kind ==
+                             lang::MirOperandKind::Move;
+                });
+          });
+      for (auto &block : body.blocks)
+        changed = changed || (!consuming && mutate(body, block));
+    }
+    // Carry the effect summaries the copying schedule derives, so only the
+    // copy itself can be what verification rejects.
+    const lang::MirProgramEffectSummaries derived =
+        lang::deriveMirProgramEffectSummaries(forged);
+    for (std::size_t index = 0; index < derived.functions.size(); ++index)
+      const_cast<lang::MirFunctionInstance &>(forged.functionInstances()[index])
+          .effectSummary = derived.functions[index];
+    const lang::MirVerificationResult verified = lang::verifyMirProgram(forged);
+    return changed &&
+           std::any_of(verified.errors.begin(), verified.errors.end(),
+                       [](const lang::MirVerificationError &error) {
+                         return error.message.find(
+                                    "move-only payload enum is copied") !=
+                                std::string::npos;
+                       });
+  };
+  const auto observedSubject = [&](const lang::MirBlock &block) {
+    const auto &terminator = block.terminator;
+    return terminator.kind == lang::MirTerminatorKind::Switch &&
+           terminator.value && isChoice(terminator.value->type) &&
+           terminator.value->kind == lang::MirOperandKind::BorrowRead;
+  };
+  // The schedule MIR produced before observing switches borrowed a
+  // non-copyable enum: a Load copying the place, under the subject's read
+  // event, and a switch over the copy.
+  expect(rejectsCopy([&](lang::MirBody &body, lang::MirBlock &block) {
+           if (!observedSubject(block))
+             return false;
+           const auto read = std::find_if(
+               block.instructions.rbegin(), block.instructions.rend(),
+               [](const lang::MirInstruction &instruction) {
+                 return instruction.ownership && instruction.hirValue != 0;
+               });
+           if (read == block.instructions.rend())
+             return false;
+           lang::MirInstructionId next = 0;
+           for (const auto &candidate : body.blocks)
+             for (const auto &instruction : candidate.instructions)
+               next = std::max(next, instruction.id);
+           lang::MirInstruction load;
+           load.id = next + 1;
+           load.kind = lang::MirInstructionKind::Load;
+           load.hirValue = read->hirValue;
+           load.ownership = read->ownership;
+           load.info = {.type = enumeration->type,
+                        .category = lang::ValueCategory::Place,
+                        .traits = enumeration->traits};
+           lang::MirValue copy;
+           copy.id = body.values.size() + 1;
+           copy.sourceValue = read->hirValue;
+           copy.info = load.info;
+           copy.definitionBlock = block.id;
+           copy.definition = load.id;
+           load.result = copy.id;
+           load.operands = {{.kind = lang::MirOperandKind::Copy,
+                             .place = block.terminator.value->place,
+                             .type = enumeration->type}};
+           block.terminator.value =
+               lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                                .value = copy.id,
+                                .type = enumeration->type};
+           block.instructions.insert(std::prev(read.base()), load);
+           body.values.push_back(copy);
+           return lang::rebuildMirValueUses(body);
+         }),
+         "an observing switch cannot copy the move-only enum it reads");
+  expect(rejectsCopy([&](lang::MirBody &, lang::MirBlock &block) {
+           if (!observedSubject(block))
+             return false;
+           block.terminator.value->kind = lang::MirOperandKind::Copy;
+           return true;
+         }),
+         "a switch terminator cannot copy the move-only enum it observes");
+
+  const std::string text = gti_test::emitCpp(program).contents;
+  const std::size_t observer =
+      text.find("_tag(::__gti_program::choice __gti_mir_arg_0) {");
+  const std::size_t observerEnd =
+      observer == std::string::npos ? observer : text.find("\n  }\n", observer);
+  const std::string observerBody =
+      observerEnd == std::string::npos
+          ? std::string{}
+          : text.substr(observer, observerEnd - observer);
+  expect(text.find("_pick(std::move(__gti_mir_v_") != std::string::npos &&
+             text.find("_tag(std::move(__gti_mir_v_") != std::string::npos &&
+             observerBody.find("switch (__gti_mir_p_") != std::string::npos &&
+             observerBody.find("switch (__gti_mir_v_") == std::string::npos,
+         "by-value arguments move their staged move-only locals, and an "
+         "observing switch reads its parameter in place");
+}
+
 } // namespace
 
 int main() {
@@ -1701,6 +1905,7 @@ int main() {
   testOrdinaryEnumsAndFormatting();
   testBorrowedPayloadPatterns();
   testConsumingPayloadPatterns();
+  testCleanupFreeMoveOnlyPayloads();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

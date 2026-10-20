@@ -334,6 +334,22 @@ lifetime without GTI cleanup; its moved-from fields are already disarmed. MIR's
 operand kind and lifecycle event select both spellings; the backend does not
 infer consumption from the subject's representation.
 
+A cleanup-free value whose folded traits forbid copying, such as a payload enum
+whose alternative holds a move-only class without a destructor, has no lifetime
+slot: it lives in a plain local. When MIR records exactly one executable use of
+that SSA value, the use consumes it, and the backend spells the local as an
+rvalue there. The use may be a by-value call stage, the invocation operand that
+receives the stage, an aggregate element, a store, a join argument or a
+failure-form result publication. A plain `return` of a local of the result type
+keeps the plain spelling, which C++ already moves and may elide. With more than
+one use the local keeps its plain spelling, which the native compiler rejects
+rather than copying. The rule comes from MIR's value traits and use list, not
+from the representation, and copyable passive values keep their copy spelling.
+An observing switch over an element of a fixed array of such an enum
+read-borrows an index place, and the backend has no spelling for that borrow
+yet. Like a borrowed binding on an element of any passive payload enum, it
+stops with `GTI-B0001`.
+
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;
 local declaration planning and operand emission use the same view predicate.

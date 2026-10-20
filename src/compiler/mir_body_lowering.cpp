@@ -13322,6 +13322,10 @@ private:
     } else if (statement.value) {
       const HirValue *sourceValue = findValue(*statement.value);
       const MirPlaceId sourcePlace = placeForValue(*statement.value);
+      // A named subject is observed. An enum that owns cleanup, that cannot
+      // be copied (a cleanup-free alternative may still hold a move-only
+      // field), or that an arm binds by reference is read-borrowed in place;
+      // only a copyable passive enum is read through a copy.
       if (sourceValue != nullptr && sourcePlace != 0 &&
           sourceValue->info.category == ValueCategory::Place &&
           sourceValue->info.type.kind == SemanticType::Enum &&
