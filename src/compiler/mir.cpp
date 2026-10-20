@@ -5414,6 +5414,12 @@ joinLifecycleState(const MirLifecycleState &left,
 
   std::unordered_map<MirLoanId, std::vector<MirDropObligationId>> carrierDrops;
   std::unordered_set<MirDropObligationId> receiverCarrierDrops;
+  std::unordered_map<MirLoanId, MirCallInputRole> callInputRoles;
+  for (const MirBlock &block : body.blocks)
+    for (const MirInstruction &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.loan && instruction.callInputRole)
+        callInputRoles.emplace(*instruction.loan, *instruction.callInputRole);
   for (const MirDropObligation &drop : body.dropObligations) {
     const MirPlace *place = body.findPlace(drop.place);
     const auto carrier = place == nullptr
@@ -5421,19 +5427,30 @@ joinLifecycleState(const MirLifecycleState &left,
                              : findMirTemporaryCarrierDependency(body, *place);
     if (!carrier || carrier.drop->id != drop.id)
       continue;
-    const bool receiver = std::any_of(
-        body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
-          return (loan.kind == MirLoanKind::CallArgument ||
-                  loan.kind == MirLoanKind::CallResult) &&
-                 loan.source == place->id &&
-                 loan.storedDependency == carrier.loan->id;
-        });
+    bool borrowed = false;
+    bool receiver = false;
+    for (const MirLoan &loan : body.loans) {
+      if ((loan.kind != MirLoanKind::CallArgument &&
+           loan.kind != MirLoanKind::CallResult) ||
+          loan.source != place->id ||
+          loan.storedDependency != carrier.loan->id)
+        continue;
+      borrowed = true;
+      const auto role = callInputRoles.find(loan.id);
+      receiver |= loan.kind == MirLoanKind::CallResult ||
+                  role == callInputRoles.end() ||
+                  role->second != MirCallInputRole::Argument;
+    }
     // A returned/stored carrier may publish its dependency before the later
     // ownership transfer. An ephemeral receiver or a result borrowing its
-    // physical storage keeps this exact shell until its value cleanup.
-    if (!receiver)
+    // physical storage keeps this exact shell until its value cleanup. A
+    // shell borrowed only for one call's argument (prefix `?`'s test) may be
+    // consumed after that loan ends, as loan flow requires of every move; its
+    // complete stored dependency still outlives the obligation.
+    if (!borrowed)
       continue;
-    receiverCarrierDrops.insert(drop.id);
+    if (receiver)
+      receiverCarrierDrops.insert(drop.id);
     for (const MirLoan &loan : body.loans) {
       if (mirLoanRetainsDependency(body, carrier.loan->id, loan.id))
         carrierDrops[loan.id].push_back(drop.id);

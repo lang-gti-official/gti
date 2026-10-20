@@ -12795,6 +12795,29 @@ completeBorrowSourcePath(const MirProgram &program,
       }
       if (!argument)
         continue;
+      // A reference extracted from a copy of a carrier binding reborrows the
+      // permission that binding still retains: semantics records its exact
+      // Stored group as the result's parent.
+      const MirLoan *retainedGroup = nullptr;
+      if (!referenceInput &&
+          target.returnType.kind == SemanticType::Reference &&
+          argument->kind == MirOperandKind::Value && argument->value &&
+          argument->value <= definitions.size())
+        if (const auto *stage = definitions[argument->value - 1];
+            stage && stage->kind == MirInstructionKind::CallInput &&
+            stage->result == argument->value &&
+            stage->callSite == instruction.callSite &&
+            stage->operands.size() == 1 &&
+            stage->operands.front().kind == MirOperandKind::Copy)
+          if (const auto *copied =
+                  body.findPlace(stage->operands.front().place);
+              copied && copied->root == MirPlaceRootKind::Binding &&
+              copied->projections.empty())
+            if (const auto loans = bindingLoans.find(copied->binding);
+                loans != bindingLoans.end() && loans->second.size() == 1)
+              if (const auto *group = body.findLoan(loans->second.front());
+                  group && group->kind == MirLoanKind::Stored)
+                retainedGroup = group;
       Fact input;
       if (!referenceInput) {
         input = fromOperand(state, *argument);
@@ -12880,6 +12903,7 @@ completeBorrowSourcePath(const MirProgram &program,
         continue;
       bool complete = true;
       for (auto dependency : sources) {
+        const MirLoanDependency original = dependency;
         if (!body.findPlace(dependency.source) ||
             (mapping.access == AccessMode::Mutable &&
              dependency.access != AccessMode::Mutable) ||
@@ -12927,6 +12951,22 @@ completeBorrowSourcePath(const MirProgram &program,
           if (const auto *group = body.findLoan(dependency.parent);
               group && group->entry && group->kind == MirLoanKind::Stored)
             dependency.parent = 0;
+        if (retainedGroup) {
+          const auto retains = [&](const MirLoanDependency &candidate) {
+            return candidate.source == original.source &&
+                   candidate.designatedFields == original.designatedFields &&
+                   candidate.access == original.access &&
+                   candidate.conditions == original.conditions;
+          };
+          if (retains({.source = retainedGroup->source,
+                       .designatedFields = retainedGroup->designatedFields,
+                       .access = retainedGroup->access,
+                       .conditions = retainedGroup->conditions}) ||
+              std::any_of(retainedGroup->additionalDependencies.begin(),
+                          retainedGroup->additionalDependencies.end(),
+                          retains))
+            dependency.parent = retainedGroup->id;
+        }
         if (std::find(supplying[index].begin(), supplying[index].end(),
                       dependency) == supplying[index].end())
           supplying[index].push_back(std::move(dependency));
@@ -13601,8 +13641,17 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
                    mapping) == function.returnBorrowFields.end()))
       return false;
   }
+  // Caller storage reached without crossing a stored reference, and holding
+  // no stored reference itself, may contain the referent anywhere inside it;
+  // an external referent is exact.
   const auto source = completeBorrowSourcePath(program, function, mapping);
-  return source && source->referent == result->reference.arguments.front() &&
+  const auto contained =
+      source && !source->externalPrefix
+          ? findStoredCarrierReferenceInventory(program, source->referent)
+          : std::nullopt;
+  return source &&
+         (source->referent == result->reference.arguments.front() ||
+          (contained && contained->empty())) &&
          (mapping.access == AccessMode::ReadOnly ||
           source->access == AccessMode::Mutable) &&
          source->conditions == mapping.sourceConditions;
