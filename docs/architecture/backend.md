@@ -345,10 +345,19 @@ keeps the plain spelling, which C++ already moves and may elide. With more than
 one use the local keeps its plain spelling, which the native compiler rejects
 rather than copying. The rule comes from MIR's value traits and use list, not
 from the representation, and copyable passive values keep their copy spelling.
-An observing switch over an element of a fixed array of such an enum
-read-borrows an index place, and the backend has no spelling for that borrow
-yet. Like a borrowed binding on an element of any passive payload enum, it
-stops with `GTI-B0001`.
+
+An observing switch whose subject is an enum held by a fixed-array element
+read-borrows that element in place. The element may belong to a local, a
+global or an array field, possibly through nested arrays, or the enum may be a
+field of an element at a constant index. MIR first finishes the element's
+checked selection at an `AddressOf` whose `Invoke` reports the bound, and
+program verification requires the check of every index in the subject place
+to dominate the switch. The backend spells the discriminant, every borrowed
+payload binding and every copied payload field over that one element
+subscription, without copying the enum or checking the index again. Admission
+and the text step accept these places through one shared predicate. A field
+of an element at a runtime index, as in `records[i].state`, has no element
+spelling for any read yet, so such a switch still stops with `GTI-B0001`.
 
 Ordinary field chains projected from a checked class-payload extraction share
 that extraction's address. Admission checks every typed field projection;

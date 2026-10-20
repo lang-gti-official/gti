@@ -13338,7 +13338,10 @@ private:
         // Matching observes the discriminant of a place; it does not copy
         // the complete enum merely because its payload happens to be passive.
         // Arm bindings still perform their independently selected copy/borrow.
-        emitPlaceDependencies(*statement.value);
+        // The read-borrow transports only the subject's address, so no Load
+        // performs a selected fixed-array element's bounds check. Finish that
+        // selection at its checked AddressOf before the switch observes it.
+        emitPlaceDependencies(*statement.value, true);
         subject = {.kind = MirOperandKind::BorrowRead,
                    .place = sourcePlace,
                    .type = sourceValue->info.type};

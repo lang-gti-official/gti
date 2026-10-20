@@ -1,5 +1,35 @@
 # Compiler Verification
 
+## Switches over fixed-array elements (0.440.6)
+
+`sum_type_pipeline` adds `testFixedArrayElementSubjects`. Observing switches
+read-borrow fixed-array elements of a passive payload enum: a runtime and a
+constant index into a local, an element of `this.items`, nested arrays, a
+global array, an enum field of a constant-index element, and a `mut auto&`
+update that a second switch reads back. For every `Index` in each subject
+place, the test finds the checked `AddressOf` over that place prefix, with its
+single `IndexOutOfBounds/FixedArray` origin and failure site, whose `Invoke`
+success edge dominates the switch: nine checks for eight switches. All ten
+payload extractions, borrowed and copied, share their switch's subject
+operand. Two program-verifier mutations turn a check's `Invoke` into a `Goto`,
+for a single index and for the outer index of the nested selection. With the
+new switch-subject rule disabled both forgeries verify; with it both fail with
+"switch subject reads a fixed-array element before its checked selection".
+Reverting subject lowering to its unchecked place dependencies makes MIR
+construction fail under the same rule. Removing the emitter's shared element
+predicate makes C++ emission fail with the reported "scalar-CFG operand is
+not a proven value". The emitted C++ calls `mir_checked_array_bound_v1`, then
+switches on and reads payload fields from the element subscription.
+
+`borrowed_payload_pattern_runtime` adds the `borrowed_payload_element` fixture
+with the same shapes and checks their values in each of its native modes. Run
+with an argument, the fixture indexes past the end of an array: it reports
+`GTI-R0007` at that switch before any arm runs, exits with status 70 and
+releases the live guard once. Main `911fd4ca` stops the reported program with
+`GTI-B0001`. With the installed 0.439.5 toolchain the local, nested, global,
+array-field and element-field switches stop the same way, and the `this.items`
+switch fails in the native compiler with an undeclared place alias.
+
 ## Move-only payload enums without cleanup (0.440.5)
 
 `sum_type_pipeline` adds `testCleanupFreeMoveOnlyPayloads`. A payload enum
@@ -42,11 +72,10 @@ same-name module probes under `probe-i04-bad-module-mapping` reported a status
 change only because the harness's output file name exceeded 255 bytes; rerun
 by hand, both compilers emit identical text for them.
 
-Two shapes remain outside this slice. An observing switch over an element of
-a fixed array of such an enum stops with `GTI-B0001`, as a borrowed binding on
-an element of any passive payload enum already does on main. Success
-extraction from `expected<T, E>` for such a `T` is still a native error for
-`?` and `GTI-B0001` for `std::move(r).value()`.
+One shape remains outside this slice: success extraction from
+`expected<T, E>` for such a `T` is still a native error for `?` and
+`GTI-B0001` for `std::move(r).value()`. Observing switches over fixed-array
+elements of such an enum are covered by the fixed-array element section.
 
 ## Callable-result projection prerequisites (0.447.0)
 
