@@ -1421,7 +1421,10 @@ For a verified read-only temporary argument input, the body emitter uses the
 same exact materialization, the value-rooted lifetime slot or the CFG-promoted
 hidden slot of a call in a conditional arm or `&&`/`||` operand, and passes
 that slot to the selected reference parameter. The hidden slot's MIR drop
-after the merge is emitted as its conditional `destroy_if_engaged()`. Its
+after the merge is emitted as its conditional `destroy_if_engaged()`. A
+borrow of a hidden slot that no lifetime-slot recognizer constructs in place,
+such as a payload-enum temporary's, is refused: its producer would define only
+its SSA value and leave the borrowed slot unwritten. Its
 `CallArgument` loan is representation-erased only
 after preflight proves the matching `BorrowRead`, call input, immediate
 loan-end schedule, and full-expression drop. Failure successors use the MIR

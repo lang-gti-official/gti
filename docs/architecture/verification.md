@@ -7834,7 +7834,10 @@ unnumber it, and make the post-merge drop unconditional.
 with and without destructors, nested operators and a loop condition, and
 defined failure in the borrowing callee, a later argument, the producer, and
 after the merge with the temporary engaged or skipped, under C++20/C++23
-O0/O1/O3, no-elide and ASan/UBSan. `testConstexprConditionalTemporaries`
+O0/O1/O3, no-elide and ASan/UBSan. `testHiddenSlotTemporaryArguments`
+admits class hidden slots and a linear payload-enum argument, and refuses a
+payload-enum hidden slot whose producer never writes it.
+`testConstexprConditionalTemporaries`
 runs argument and receiver borrows of such slots, one destructor-bearing,
 through exactly four staged MIR executions with exact results; a wrong
 assertion fails as `GTI-S2079`, not as an unsupported read. The LSP smoke gate
