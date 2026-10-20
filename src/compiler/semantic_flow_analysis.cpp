@@ -10640,6 +10640,11 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
     case IntrinsicKind::EnumUnderlyingValue:
     case IntrinsicKind::ObjectSize:
     case IntrinsicKind::ObjectAlignment:
+    // A terminal failure never returns, so it cannot access a raw pointee.
+    case IntrinsicKind::Panic:
+    case IntrinsicKind::FailEmptyOwner:
+    case IntrinsicKind::FailInactiveValue:
+    case IntrinsicKind::FailInactiveError:
       return;
     case IntrinsicKind::RestoringSwap:
     case IntrinsicKind::RestoringExchange:
