@@ -755,11 +755,15 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   receiver. Mutable-reference parameters of the selected constructor count as
   uses just as ordinary function parameters do, including when the constructor
   stores that reference in a carrier. Read-only constructor parameters do not
-  suppress the warning. It does not inspect compiler-trusted standard-library
-  implementation locals or infer warnings for generated/range/reference
-  bindings. It carries group `unused-mut`, the LSP `Unnecessary` tag, and one
-  preferred fix that removes exactly the `mut` token without consuming nearby
-  comments or whitespace.
+  suppress the warning. An explicit `std::move` of a field or constant-index
+  element place and a reflected `get_mut` access require a writable owning
+  binding (`GTI-S2018` and `GTI-S2112`), so each counts as a use of that
+  binding even when the access only reads; moving a whole binding needs no
+  `mut` and does not count. It does not inspect compiler-trusted
+  standard-library implementation locals or infer warnings for
+  generated/range/reference bindings. It carries group `unused-mut`, the LSP
+  `Unnecessary` tag, and one preferred fix that removes exactly the `mut` token
+  without consuming nearby comments or whitespace.
   Mutable operator receiver selection records the same source use as method
   selection, including overloaded dereference stores. Symbolic pack folds
   record fixed mutable-reference prefix arguments, and deferred callable calls
