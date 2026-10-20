@@ -7132,6 +7132,21 @@ private:
         value.borrowArgument < value.parameterTypes.size() &&
         value.parameterTypes[value.borrowArgument] == value.info.type;
     std::vector<MirLoanId> movedArgumentLoans;
+    // A copied borrow carrier shares its stored group with its source. Moving
+    // one copy transfers only that carrier: the group remains active while
+    // another binding still carries it, and its own endpoint retires it.
+    std::unordered_map<MirLoanId, HirBindingId> sharedMovedCarriers;
+    const auto recordMovedCarrier = [&](HirBindingId moved, MirLoanId loan) {
+      if (std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
+                    loan) != movedArgumentLoans.end())
+        return;
+      movedArgumentLoans.push_back(loan);
+      if (std::any_of(bindingLoans.begin(), bindingLoans.end(),
+                      [&](const auto &entry) {
+                        return entry.first != moved && entry.second == loan;
+                      }))
+        sharedMovedCarriers.emplace(loan, moved);
+    };
     for (std::size_t index = 0;
          !construction && !value.constructorTarget &&
          (!value.borrowFields.empty() || exactCarrierRelay ||
@@ -7148,10 +7163,8 @@ private:
       const auto *loan = found == bindingLoans.end()
                              ? nullptr
                              : output.findLoan(found->second);
-      if (moved != 0 && loan != nullptr && loan->kind == MirLoanKind::Stored &&
-          std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
-                    loan->id) == movedArgumentLoans.end())
-        movedArgumentLoans.push_back(loan->id);
+      if (moved != 0 && loan != nullptr && loan->kind == MirLoanKind::Stored)
+        recordMovedCarrier(moved, loan->id);
     }
     // A consuming method transfers its receiver by value just like an owned
     // formal. Its external references can survive, but the returned capability
@@ -7167,10 +7180,8 @@ private:
         const auto *loan = found == bindingLoans.end()
                                ? nullptr
                                : output.findLoan(found->second);
-        if (moved && loan && loan->kind == MirLoanKind::Stored &&
-            std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
-                      loan->id) == movedArgumentLoans.end())
-          movedArgumentLoans.push_back(loan->id);
+        if (moved && loan && loan->kind == MirLoanKind::Stored)
+          recordMovedCarrier(moved, loan->id);
       }
     }
     call.borrowOrigin = value.borrowOrigin;
@@ -7621,6 +7632,12 @@ private:
     // A returned carrier publishes its own checked dependency set; it is not
     // a child reborrow of the now-consumed caller shell.
     for (const auto loan : movedArgumentLoans) {
+      if (const auto shared = sharedMovedCarriers.find(loan);
+          shared != sharedMovedCarriers.end()) {
+        bindingLoans.erase(shared->second);
+        sharedTransferredGroups.insert(loan);
+        continue;
+      }
       const auto *previous = output.findLoan(loan);
       const auto *published = output.findLoan(publishedLoan);
       const auto resultIdentity = retainedInitializerLoans.find(value.id);
@@ -10620,7 +10637,9 @@ private:
             oldParent != semanticLoans.end() &&
             std::find(transferred->second.begin(), transferred->second.end(),
                       oldParent->second) != transferred->second.end() &&
-            published != nullptr && !loanIsActive(scopes, oldParent->second) &&
+            published != nullptr &&
+            (!loanIsActive(scopes, oldParent->second) ||
+             sharedTransferredGroups.contains(oldParent->second)) &&
             retainableCallResultChain(existing, published->parent, valueId,
                                       desired->access)) {
           // This expression's checked consuming call published the exact
@@ -14381,6 +14400,9 @@ private:
   std::unordered_set<HirBindingId> referenceAccessorBindings;
   std::unordered_map<MirLoanId, std::vector<MirLoanId>>
       callResultTransferredFrom;
+  // Stored groups a consuming call transferred from one carrier while another
+  // binding still carries them, so they stay active past the call.
+  std::unordered_set<MirLoanId> sharedTransferredGroups;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
   std::unordered_map<MirLoanId, HirStatementId> callTransferredLoanEndpoints;
