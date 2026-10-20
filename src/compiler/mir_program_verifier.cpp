@@ -2059,17 +2059,26 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             argumentInput->operands.empty()
                 ? nullptr
                 : body.findPlace(argumentInput->operands.front().place);
-        const MirTemporaryMaterialization materialization =
+        MirTemporaryMaterialization materialization =
             argumentPlace == nullptr
                 ? MirTemporaryMaterialization{}
                 : findMirTemporaryMaterialization(body, *argumentPlace,
                                                   argumentInput->hirValue);
+        if (!materialization && argumentPlace != nullptr) {
+          materialization = findMirMovedTemporaryMaterialization(
+              body, *argumentPlace, argumentInput->hirValue);
+        }
         const MirInstruction *producer = materialization.producer;
         const MirLoan *loan =
             argumentInput->loan ? body.findLoan(*argumentInput->loan) : nullptr;
         bool exactProducer = false;
-        if (producer != nullptr &&
-            producer->kind == MirInstructionKind::Construct) {
+        if (producer != nullptr && argumentPlace != nullptr &&
+            producer->kind == MirInstructionKind::Move) {
+          // The explicitly moved binding's value now lives in this exact
+          // temporary; its type is the borrowed referent.
+          exactProducer = producer->info.type == argumentPlace->type;
+        } else if (producer != nullptr &&
+                   producer->kind == MirInstructionKind::Construct) {
           const MirConstructorInstance *target =
               producer->constructorTarget ? program.findConstructorInstance(
                                                 *producer->constructorTarget)

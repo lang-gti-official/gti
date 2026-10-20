@@ -1187,6 +1187,12 @@ struct MirTemporaryMaterialization {
 findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                                 HirValueId sourceValue);
 
+// An explicit move of a whole binding publishes its value into one exact
+// value-rooted temporary, whose obligation the enclosing full expression owns.
+[[nodiscard]] MirTemporaryMaterialization
+findMirMovedTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                     HirValueId sourceValue);
+
 // An uncarried borrowed class temporary keeps its exact producer's Stored
 // owner dependency until its full-expression value obligation is retired.
 // This derives lifetime authority from existing identities, not a second

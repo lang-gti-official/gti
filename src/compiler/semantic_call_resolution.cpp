@@ -3423,6 +3423,49 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
       argumentDiagnostics.emplace_back(std::move(diagnostic));
     }
   }
+  // A fresh function item borrowed for one call may be matched before the
+  // target's contract is final, as a lambda is; the target must then prove
+  // the parameter confined.
+  for (const auto &[call, resolved] : semanticModel.calls) {
+    if (call == nullptr || resolved.ephemeralBorrowArguments.empty() ||
+        !finalizesCall(call)) {
+      continue;
+    }
+    const FunctionInfo *target = semanticModel.findFunction(resolved.function);
+    for (const std::size_t index : resolved.ephemeralBorrowArguments) {
+      if (index >= call->arguments().size()) {
+        continue;
+      }
+      const ExpressionInfo *info =
+          semanticModel.findExpression(*call->arguments()[index]);
+      if (info == nullptr || info->type.kind != SemanticType::FunctionItem) {
+        continue;
+      }
+      const CallableParameterContract *contract =
+          target == nullptr ? nullptr
+                            : callableParameterContract(target->id, index);
+      if (contract != nullptr &&
+          contract->boundary == CallableBoundary::Confined) {
+        continue;
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2046", DiagnosticPhase::Semantics,
+          expressionToken(call->arguments()[index]),
+          "Function item argument " + std::to_string(index + 1) +
+              " cannot be borrowed for the call because the selected target "
+              "parameter is not proven confined.");
+      if (target != nullptr && target->declaration != nullptr &&
+          index < target->bodyDeclaration()->parameters().size()) {
+        diagnostic.related.push_back(
+            {tokenSpan(target->bodyDeclaration()->parameters()[index].name),
+             "Selected generic parameter declared here."});
+      }
+      diagnostic.hints.emplace_back(
+          "Pass the function to a generic reference parameter that it only "
+          "invokes or forwards to another confined parameter.");
+      argumentDiagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
 
   std::sort(argumentDiagnostics.begin(), argumentDiagnostics.end(),
             [](const Diagnostic &left, const Diagnostic &right) {

@@ -611,7 +611,6 @@ void invalidSignatures() {
       "using A = void(); A make() {}",
       "using A = void(); using Bad = A*;",
       "using A = void(); using Bad = A[2];",
-      "using A = void(); using Bad = expected<A, int>;",
       "using A = void(); void use(A& value) {}",
   };
   for (const auto &source : cases) {
@@ -626,6 +625,16 @@ void invalidSignatures() {
                !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
            "invalid signature use must fail in semantics: " + source);
   }
+  // The prelude's expected is an ordinary generic class: storing a signature
+  // as its success alternative fails at that payload, as for any user class.
+  const auto signatureExpected = analyzeTrustedPreludeFixture(
+      "signature-expected.gti",
+      "using A = void(); int main() { expected<A, int> bad = unexpected(1); "
+      "return 0; }");
+  expect(!signatureExpected.canGenerateCode() &&
+             hasDiagnosticCode(signatureExpected.diagnostics, "GTI-S2067") &&
+             !hasDiagnosticCode(signatureExpected.diagnostics, "GTI-B0001"),
+         "a signature cannot become an expected payload");
   // Instantiating an ordinary generic value constructor with a signature
   // must fail too; the existing construction diagnostic owns T{}.
   const auto genericStorage = lang::Frontend().analyze(

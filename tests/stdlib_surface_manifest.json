@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "fc99bb50e67173cb13edefcd7259fc0deafa6a65563fa5e1d834cbd4d90387c6",
+    "stdlib/prelude.gti": "57f7b72c4e557682378669170cc554cea88798ca41ded270eaa8ffdb54e88726",
     "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
     "stdlib/std/atomic.gti": "c78f9f7632b8ea3a3d757b1027a570a0581071bf270e7041bf2f57f1b67abfa6",

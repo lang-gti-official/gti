@@ -477,6 +477,21 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
     return true;
   };
 
+  // Disjoint definitions of one class name form a family; concrete
+  // arguments select one definition, whose members are its own.
+  const auto selectsOtherClassDefinition = [&](const SemanticType &owner,
+                                               ClassId declared) {
+    if (owner.kind != SemanticType::Class || owner.classId == 0 ||
+        owner.classId > classes.size() || declared == 0 ||
+        declared > classes.size() || owner.classId == declared)
+      return false;
+    const auto family = [&](ClassId id) {
+      const ClassId primary = classInfo(id).definitionFamilyPrimary;
+      return primary == 0 ? id : primary;
+    };
+    return family(owner.classId) == family(declared);
+  };
+
   // A forwarding wrapper has the same invocation constraints as its checked
   // callee, expressed in the wrapper's substitution. Preserve the selected
   // call identities: looking up a helper by spelling would make overload
@@ -550,8 +565,15 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         if (call == nullptr || call->function != edge.function ||
             callee == nullptr)
           return false;
-        GenericSubstitution next = classSubstitution(
-            substituteType(call->dispatchOwner, substitution));
+        const SemanticType owner =
+            substituteType(call->dispatchOwner, substitution);
+        // A member selected in one class definition belongs to that
+        // definition. When the substituted owner selects another definition
+        // of the same name, the call reaches a different member whose
+        // requirements this edge does not record.
+        if (selectsOtherClassDefinition(owner, callee->ownerClass))
+          return false;
+        GenericSubstitution next = classSubstitution(owner);
         std::size_t typeIndex = 0;
         std::size_t valueIndex = 0;
         for (const auto &generic : callee->genericParameters) {
@@ -618,17 +640,6 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         resolveExpressionSymbol(arguments[index]);
     std::vector<std::pair<const CallableCandidate *, GenericSubstitution>>
         matches;
-    // The contextual requirements select among overloads. A name with one
-    // eligible item has nothing to select; its concrete instance validates
-    // the invocation, exactly as when the item is first bound to an auto
-    // local. A thread task keeps its exact owned-result contract.
-    const bool uniqueItem =
-        source && std::count_if(source->overloads.begin(),
-                                source->overloads.end(),
-                                [&](const CallableCandidate &candidate) {
-                                  return functionItemCandidateIsEligible(
-                                      candidate);
-                                }) == 1;
     if (source) {
       for (const CallableCandidate &candidate : source->overloads) {
         if (!functionItemCandidateIsEligible(candidate)) {
@@ -653,7 +664,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
           matchesContract = candidate.parameterTypes.empty() &&
                             exactMatch(exactMatch, result, candidate.returnType,
                                        substitution);
-        } else if (!uniqueItem) {
+        } else {
           for (const CallableSignatureRequirement &signature :
                contextualRequirements(target.id, index, substitution)) {
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
@@ -1090,6 +1101,24 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
                                     candidate.parameterTypes) == argument;
                        });
   }
+  // An explicit move transfers a whole local into a temporary owned by the
+  // enclosing full expression, exactly as a moved receiver is; the call
+  // borrows that temporary.
+  if (const ExprPtr *moved = explicitMoveSource(expression)) {
+    const Expr *source = moved->get();
+    while (const auto *grouping = exprAs<Grouping>(source))
+      source = grouping->expression().get();
+    const ExpressionInfo *info = semanticModel.findExpression(*expression);
+    const ClassInfo *record = argument.kind == SemanticType::Class
+                                  ? classInfo(argument)
+                                  : nullptr;
+    return exprAs<Variable>(source) != nullptr && info != nullptr &&
+           info->category == ValueCategory::Value && info->type == argument &&
+           info->traits.movable && !info->traits.containsBorrowedState &&
+           (argument.kind == SemanticType::Lambda || payloadEnumType(argument) ||
+            (record != nullptr && (record->kind == ClassKind::Class ||
+                                   record->kind == ClassKind::Struct)));
+  }
   const FreshTemporaryValueAssessment assessment =
       freshTemporaryValue(expression);
   return assessment.eligible && assessment.type == argument;
@@ -1110,10 +1139,11 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
   const auto *itemContract = argument.kind == SemanticType::FunctionItem
                                  ? callableParameterContract(function.id, index)
                                  : nullptr;
+  // A fresh item binds for the call as a lambda does: a contract that is
+  // not yet final is provisional, and finalization proves it confined.
   if ((!deferred || argument.kind == SemanticType::FunctionItem) &&
-      (argument.kind != SemanticType::FunctionItem ||
-       (itemContract &&
-        itemContract->boundary == CallableBoundary::Confined)) &&
+      (argument.kind != SemanticType::FunctionItem || itemContract == nullptr ||
+       itemContract->boundary == CallableBoundary::Confined) &&
       ephemeralTemporaryArgumentMatches(function, parameter, argument,
                                         expression)) {
     return CallArgumentMatchKind::EphemeralReadBorrow;

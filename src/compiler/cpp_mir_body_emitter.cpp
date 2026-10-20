@@ -6995,12 +6995,21 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
       borrowedValueStage
           ? (valueDrop == nullptr ? nullptr : body.findPlace(valueDrop->place))
           : body.findPlace(stage.operands.front().place);
-  const MirTemporaryMaterialization materialization =
+  MirTemporaryMaterialization materialization =
       slot == nullptr
           ? MirTemporaryMaterialization{}
           : findMirTemporaryMaterialization(body, *slot, stage.hirValue);
+  if (!materialization && slot != nullptr &&
+      stage.callInputRole == MirCallInputRole::Argument &&
+      stage.callInputKind == HirCallInputKind::ReadTemporaryBorrow) {
+    materialization =
+        findMirMovedTemporaryMaterialization(body, *slot, stage.hirValue);
+  }
   const MirValue *value = materialization.value;
   const MirInstruction *producer = materialization.producer;
+  // An explicitly moved binding constructs the temporary from its storage.
+  const bool movedBinding =
+      producer != nullptr && producer->kind == MirInstructionKind::Move;
   const bool ordinaryConstruction =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
       ((producer->constructorKind == ConstructorKind::Ordinary &&
@@ -7054,7 +7063,7 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
       (borrowedValueStage && value->id != stage.operands.front().value) ||
       (!ordinaryConstruction && !functionCall && !generatedDefault &&
        !expectedExtraction && !joinedTemporary && !payloadConstruction &&
-       !callableConstruction) ||
+       !callableConstruction && !movedBinding) ||
       value->sourceValue != stage.hirValue || value->info.type != sourceType ||
       !producer->result || *producer->result != value->id ||
       producer->hirValue != stage.hirValue ||
@@ -12331,7 +12340,9 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
                            : nullptr;
   const MirValue *result =
       closure.result ? body.findValue(*closure.result) : nullptr;
-  if (lambda == nullptr || result == nullptr ||
+  // A closure materialized into storage is an object, not a value chain
+  // whose literal can be spelled at its consumers.
+  if (lambda == nullptr || result == nullptr || closure.destination ||
       closure.operands.size() != lambda->captureSymbols.size() ||
       closure.operands.size() != lambda->captureModes.size() ||
       closure.operands.size() != lambda->captureTypes.size()) {
@@ -12925,10 +12936,18 @@ materializedClosure(const MirProgram &program, const MirBody &body,
       closure.result ? lambdaValueDestination(body, *closure.result)
                      : LambdaValueDestination{};
   const MirPlace *destination = publication.slot;
+  // A branch-only owning temporary is materialized directly in its hidden
+  // full-expression slot, so the producer names that same slot.
+  const bool hiddenSlot =
+      destination != nullptr &&
+      publication.publication == LambdaValuePublication::Direct &&
+      destination->root == MirPlaceRootKind::Temporary &&
+      closure.destination && *closure.destination == destination->id;
   if (closure.kind != MirInstructionKind::Compute ||
       closure.operation != MirOperation::Closure || lambda == nullptr ||
       result == nullptr || result->info.type != lambda->type ||
-      destination == nullptr || closure.destination || closure.receiver ||
+      destination == nullptr || (closure.destination && !hiddenSlot) ||
+      closure.receiver ||
       closure.literal || !closure.localFailureSites.empty() ||
       !closure.definedFailure.empty() ||
       closure.operands.size() != lambda->captureSymbols.size() ||
@@ -25921,6 +25940,29 @@ lifetimeSlotPlace(const MirProgram &program,
     if (definition != nullptr &&
         definition->operation == MirOperation::Closure &&
         materializedClosure(program, body, *definition).destination == &place) {
+      return true;
+    }
+    // An explicitly moved closure borrowed for one call owns this slot.
+    if (definition != nullptr &&
+        definition->kind == MirInstructionKind::Move &&
+        directTemporaryArgumentForValue(body, place.value).slot == &place) {
+      return true;
+    }
+  }
+  if (place.root == MirPlaceRootKind::Temporary &&
+      place.type.kind == SemanticType::Lambda && place.projections.empty()) {
+    const MirTemporaryMaterialization materialization =
+        findMirTemporaryMaterialization(body, place, place.sourceValue);
+    if (materialization &&
+        materialization.producer->operation == MirOperation::Closure &&
+        materializedClosure(program, body, *materialization.producer)
+                .destination == &place) {
+      return true;
+    }
+    const MirTemporaryMaterialization moved =
+        findMirMovedTemporaryMaterialization(body, place, place.sourceValue);
+    if (moved &&
+        directTemporaryArgumentForValue(body, moved.value->id).slot == &place) {
       return true;
     }
   }
@@ -43212,6 +43254,19 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result) {
+      // A moved binding borrowed for one call lives in its exact temporary
+      // slot until the enclosing full expression retires it.
+      if (const DirectTemporaryBorrow temporary =
+              directTemporaryArgumentForValue(facts.body, *instruction.result);
+          temporary.producer == &instruction) {
+        writeIndent();
+        output << "__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body, *temporary.slot)
+               << ".construct(std::move(";
+        emitMoveSource(facts, instruction);
+        output << "));\n";
+        return;
+      }
       if (const auto *destination = fixedArrayValueDestinationSlot(
               program, facts.body, instruction)) {
         writeIndent();
@@ -58001,6 +58056,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (place.root == MirPlaceRootKind::Temporary &&
+        place.projections.empty() &&
+        place.type.kind == SemanticType::Lambda) {
+      // A fresh closure borrowed in a branch-only region keeps its hidden
+      // full-expression slot; its type is spelled from its verified factory.
+      if (!slotPlace(place) ||
+          (!typeRow(place.type) &&
+           !materializedClosureForType(program_, body, place.type))) {
+        return false;
+      }
+      continue;
+    }
     if (copyStageForTemporary(body, place) != nullptr) {
       // The by-value argument staging temporary never materializes: the
       // consuming call spells the source place and C++ performs the copy
@@ -58564,7 +58631,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            definition->kind == MirInstructionKind::Move && stage != nullptr &&
            stage->result &&
            materializedConstructorArgumentStage(body, *stage->result) == stage);
+      // An explicitly moved closure publishes into its borrowed temporary.
+      const bool movedTemporaryArgument =
+          definition != nullptr &&
+          definition->kind == MirInstructionKind::Move &&
+          directTemporaryArgumentForValue(body, value.id).producer ==
+              definition;
       if (closureChainDefinition(body, value.id) == nullptr &&
+          !movedTemporaryArgument &&
           constructedLambdaDestination(program_, body, value.id) == nullptr &&
           materializedCallableReceiverPlace(program_, body, value.id) ==
               nullptr &&
