@@ -2603,7 +2603,24 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         if (!loan || loan->kind != SemanticLoanKind::Reference ||
             !loan->designatedFields.empty() || !loan->conditions.empty())
           continue;
-        sources.push_back({.place = loan->place,
+        // A field of the reference's referent is a sub-place of the same
+        // loan's storage; keep the argument's own field path.
+        auto place = loan->place;
+        const auto projected = loanPlace(actualPlace);
+        if (projected.valid() && projected.domain == place.domain &&
+            projected.root == place.root &&
+            projected.receiver == place.receiver &&
+            projected.projections.size() > place.projections.size() &&
+            std::equal(place.projections.begin(), place.projections.end(),
+                       projected.projections.begin()) &&
+            std::all_of(projected.projections.begin() +
+                            place.projections.size(),
+                        projected.projections.end(), [](const auto &item) {
+                          return item.kind == PlaceProjectionKind::Field &&
+                                 item.field != 0;
+                        }))
+          place = projected;
+        sources.push_back({.place = std::move(place),
                            .access = loan->access,
                            .protectsStorage = loan->protectsStorage,
                            .parent = loan->id});

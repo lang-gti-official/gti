@@ -290,11 +290,12 @@ private:
       for (const auto &instruction : block.instructions) {
         const std::set<std::size_t> *required = nullptr;
         if (instruction.kind == MirInstructionKind::Call &&
-            instruction.functionTarget &&
+            instruction.functionTarget && *instruction.functionTarget != 0 &&
             *instruction.functionTarget <= requirements.size())
           required = &requirements[*instruction.functionTarget - 1];
         if (instruction.kind == MirInstructionKind::Construct &&
             instruction.constructorTarget &&
+            *instruction.constructorTarget != 0 &&
             *instruction.constructorTarget <= constructorRequirements.size())
           required =
               &constructorRequirements[*instruction.constructorTarget - 1];
@@ -351,7 +352,7 @@ private:
                  "text storage write lacks one exact source operand");
         }
         if (diagnose && instruction.operation == MirOperation::FunctionItem &&
-            instruction.functionTarget &&
+            instruction.functionTarget && *instruction.functionTarget != 0 &&
             *instruction.functionTarget <= requirements.size() &&
             !requirements[*instruction.functionTarget - 1].empty())
           fail(context, owner, &instruction,
