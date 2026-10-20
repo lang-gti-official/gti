@@ -1,0 +1,139 @@
+#include <std/string>
+#include <std/vector>
+
+// Observing switches over fixed-array elements read the element in place. The
+// index is checked before the switch; the discriminant, borrowed payload
+// bindings and copied payload fields then read that element. The shapes are a
+// local array at a runtime and a constant index, nested arrays, an array field
+// read through `this`, a global array, an enum field of a constant-index
+// element, and an update through `mut auto&` that a second switch reads back.
+// With an argument the program indexes past the end of an array: the check
+// fails before any arm runs and the live guard is released once.
+class guard {
+  int32_t id;
+
+public:
+  guard(int32_t value) : id(value) { std::println(value); }
+  ~guard() { std::println(0 - this.id); }
+};
+
+struct token {
+  mut int32_t id;
+  token(int32_t raw) : id(raw) {}
+};
+
+enum class choice {
+  none,
+  some(token item),
+  pair(int32_t left, int32_t right),
+};
+
+struct record {
+  choice state;
+  record(choice value) : state(value) {}
+};
+
+class shelf {
+  choice[2] items;
+
+public:
+  shelf() : items({choice::none, choice::some(token(3))}) {}
+  int32_t at(int32_t index) {
+    switch (this.items[index]) {
+    case choice::some(auto& item):
+      return item.id;
+    default:
+      return 0;
+    }
+  }
+};
+
+choice[2] table = {choice::none, choice::some(token(5))};
+
+int32_t pick(int32_t index) {
+  choice[3] row = {choice::none, choice::some(token(4)), choice::pair(5, 6)};
+  switch (row[index]) {
+  case choice::some(auto& item):
+    return item.id;
+  case choice::pair(left, auto& right):
+    return left * 10 + right;
+  case choice::none:
+    return 0;
+  }
+}
+
+int32_t constant() {
+  choice[2] items = {choice::none, choice::some(token(4))};
+  switch (items[1]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+
+int32_t nested(int32_t row, int32_t column) {
+  choice[2][2] grid = {{choice::none, choice::some(token(7))},
+                       {choice::pair(1, 2), choice::none}};
+  switch (grid[row][column]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+
+int32_t global(int32_t index) {
+  switch (table[index]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+
+int32_t field() {
+  record[2] records = {record(choice::none), record(choice::some(token(8)))};
+  switch (records[1].state) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+
+int32_t update(int32_t index) {
+  mut choice[2] items = {choice::none, choice::some(token(9))};
+  switch (items[index]) {
+  case choice::some(mut auto& item):
+    item.id = item.id + 1;
+    break;
+  default:
+    break;
+  }
+  switch (items[index]) {
+  case choice::some(auto& item):
+    return item.id;
+  default:
+    return 0;
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 1) {
+    guard kept = guard(70);
+    std::println(pick(argc + 1));
+    return 0;
+  }
+  shelf books{};
+  std::println(pick(argc));
+  std::println(pick(argc + 1));
+  std::println(pick(argc - 1));
+  std::println(constant());
+  std::println(nested(argc - 1, argc));
+  std::println(global(argc));
+  std::println(field());
+  std::println(update(argc));
+  std::println(books.at(argc));
+  return 0;
+}

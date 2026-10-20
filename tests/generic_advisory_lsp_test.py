@@ -70,6 +70,23 @@ def main():
             reversed_instances = reversed_instances.replace("adjust<0>(1) + adjust<1>(1)",
                                                             "adjust<1>(1) + adjust<0>(1)")
             assert change(reversed_instances, 6) == []
+
+            # Moving an element requires its binding's mut; moving the whole
+            # binding does not, so only that mut keeps the removal advice.
+            source = ('struct Record { mut int value = 4; };\n'
+                      'T first<T>(T left, T right) { mut T values[2] = {left, right};'
+                      ' return std::move(values[0]); }\n'
+                      'int main() { /* 😀 */ mut Record whole = Record();'
+                      ' Record moved = std::move(whole);\n'
+                      '  return first(moved, Record()).value; }\n')
+            diagnostics = change(source, 7)
+            offset = source.index("mut Record whole")
+            assert [(warning["code"], warning["range"]) for warning in diagnostics] == [
+                ("GTI-S2096", {"start": lsp_position(source, offset),
+                               "end": lsp_position(source, offset + 3)})], diagnostics
+            fixes = actions(diagnostics[0], 4)
+            assert len(fixes) == 1, fixes
+            assert change(source[:offset] + source[offset + 3:], 8) == []
         finally:
             session.close()
 

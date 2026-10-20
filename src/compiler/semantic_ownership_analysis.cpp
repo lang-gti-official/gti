@@ -11154,6 +11154,9 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
       currentType = SemanticType::Unknown;
       return;
     }
+    // A projected transfer depends on the writable owning binding required
+    // above, so it is a mutable use of that binding for GTI-S2096.
+    recordMutableBindingUse(toolingSymbolFor(*place.root));
     if (!typeTraits(valueType).movable) {
       report(expressionToken(argument),
              "std::move requires a movable value, but type '" +
