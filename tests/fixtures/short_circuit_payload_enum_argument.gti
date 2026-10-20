@@ -10,7 +10,8 @@
 // reads back the payload it was built with.
 //
 // Tracked prints its id when constructed and the negated id when destroyed.
-// Nothing else prints outside main and run.
+// Quiet cannot fail to construct and only counts its drops. Nothing else
+// prints outside main and run.
 class Tracked {
 public:
   int id;
@@ -20,8 +21,20 @@ public:
   ~Tracked() { std::println(-this.id); }
 };
 
+mut int quiet_drops = 0;
+
+class Quiet {
+public:
+  int id;
+  Quiet(int value) : id(value) {}
+  Quiet(Quiet& other) = delete;
+  Quiet(Quiet&& other) = default;
+  ~Quiet() { quiet_drops += this.id; }
+};
+
 enum class state { empty, engaged(int value) };
 enum class owned { empty, held(Tracked item) };
+enum class kept { empty, held(Quiet item) };
 
 state make_state(int value) {
   if (value < 0) {
@@ -31,6 +44,10 @@ state make_state(int value) {
 }
 
 owned hold(int id) { return owned::held(Tracked(id)); }
+
+// Cannot fail, so the CFG merge retargets this producer to the hidden slot
+// instead of arming the slot on an Invoke success edge.
+kept hold_quiet(int id) { return kept::held(Quiet(id)); }
 
 // Fails before its payload exists when divisor is zero.
 owned hold_divided(int id, int divisor) {
@@ -51,6 +68,15 @@ int held(owned& item) {
   case owned::held(auto& tracked):
     return tracked.id;
   case owned::empty:
+    return 0;
+  }
+}
+
+int kept_id(kept& item) {
+  switch (item) {
+  case kept::held(auto& quiet):
+    return quiet.id;
+  case kept::empty:
     return 0;
   }
 }
@@ -83,12 +109,19 @@ int run(bool on, int base) {
   // A loop condition evaluates its operand on every iteration.
   mut int count = 0;
   while (count < 2 && held(hold(base + 11 + count)) > 0) { count += 1; }
+  // Owning enums whose producers cannot fail.
+  if (on && kept_id(hold_quiet(base + 13)) == base + 13) { total += 1; }
+  if (off || kept_id(kept::held(Quiet(base + 14))) == base + 14) {
+    total += 1;
+  }
   return total + count;
 }
 
 int main(int argc, std::vector<std::string> argv) {
   std::println(run(true, 0));
   std::println(run(false, 100));
+  // Only the first run's quiet payloads were built: 13 + 14.
+  std::println(quiet_drops);
   // Defined failure. Scenario 1 fails the borrowing callee of an owning enum
   // in an `&&` operand, 2 the enum's producer in a `?:` arm, 3 the right
   // operand of an `&&` whose left operand still holds its enum, and 4 the
