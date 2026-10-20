@@ -11,7 +11,7 @@ than `std::expected`. Its owned, void and read-only-reference profiles store
 private payload enums; `unexpected(error)` is an ordinary global factory for
 the error constructor argument. Construction, observers, mapping and propagation
 use general class, enum and protocol rules, not native C++ `std::expected`.
-No include is necessary; `<std/expected>` is a compatibility header.
+Like a built-in type, it is available in every program without an include.
 
 Results also compose in `constexpr` functions when both alternatives are
 supported passive constant values (`T` may be `void`). The same construction,

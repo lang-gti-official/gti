@@ -303,9 +303,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     if (!textSignature && function.ownerlessTextParameters.empty())
       continue;
     const auto &proof = function.ownerlessTextContractProof;
+    // HIR publishes a concrete instance's parameters with packs expanded, so
+    // a semantic signature that still groups a concrete pack is compared in
+    // that form. Required indices name source formals ahead of the pack,
+    // which expansion leaves in place.
+    std::vector<SemanticType> proofParameters;
+    if (proof) {
+      for (SemanticType parameter : proof->parameters())
+        SemanticType::appendExpandedArgument(proofParameters,
+                                             std::move(parameter));
+    }
     if (!proof || proof->source() != function.source ||
         proof->function() != function.declaration ||
-        proof->parameters() != function.parameterTypes ||
+        proofParameters != function.parameterTypes ||
         proof->required() != function.ownerlessTextParameters ||
         proof->snapshot() != program.analysisSeal().programSnapshot)
       result.errors.emplace_back(

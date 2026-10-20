@@ -36,6 +36,7 @@ private:
   std::vector<std::set<std::size_t>> requirements;
   std::vector<std::set<std::size_t>> constructorRequirements;
   std::unordered_set<HirFunctionInstanceId> activeReturns;
+  std::set<std::size_t> activeTemporaries;
 
   const MirInstruction *definition(const MirBody &body, MirValueId id) const {
     const auto *value = body.findValue(id);
@@ -73,6 +74,9 @@ private:
         return {};
       if (isOwnerlessTextFieldProjection(program, context.body, *place))
         return {.known = true};
+      if (place->root == MirPlaceRootKind::Temporary &&
+          place->projections.empty())
+        return temporarySources(context, *place, active);
       if (place->root != MirPlaceRootKind::Binding ||
           !place->projections.empty() ||
           !active.emplace(false, place->binding).second)
@@ -164,8 +168,98 @@ private:
         answer.known = answer.known && sawReturn;
         activeReturns.erase(target->id);
       }
+    } else if (!instruction) {
+      answer = joinSources(context, operand.value, active);
     }
     active.erase({true, operand.value});
+    return answer;
+  }
+
+  // A conditional's result: each branch initializes the same temporary before
+  // the read. It is known when every initializing operand is; any other write,
+  // or a mutable borrow of the temporary, leaves it unknown.
+  TextSources temporarySources(const TextBody &context, const MirPlace &place,
+                               std::set<std::pair<bool, std::size_t>> &active) {
+    if (!activeTemporaries.insert(place.temporary).second)
+      return {};
+    const auto same = [&](const MirPlace *candidate) {
+      return candidate && candidate->root == MirPlaceRootKind::Temporary &&
+             candidate->temporary == place.temporary;
+    };
+    TextSources answer{.known = true};
+    bool initialized = false;
+    for (const auto &block : context.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *destination =
+            instruction.destination
+                ? context.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (same(destination)) {
+          if (instruction.kind != MirInstructionKind::Initialize ||
+              !destination->projections.empty() ||
+              instruction.operands.size() != 1) {
+            answer.known = false;
+          } else {
+            initialized = true;
+            const auto source =
+                sources(context, instruction.operands.front(), active);
+            answer.known = answer.known && source.known;
+            answer.parameters.insert(source.parameters.begin(),
+                                     source.parameters.end());
+          }
+        }
+        for (const auto &input : instruction.operands)
+          if (input.kind == MirOperandKind::BorrowWrite &&
+              same(context.body.findPlace(input.place)))
+            answer.known = false;
+      }
+    activeTemporaries.erase(place.temporary);
+    answer.known = answer.known && initialized;
+    return answer;
+  }
+
+  // A block parameter joins its incoming edge arguments: it is known when
+  // every incoming argument is, and depends on each one's parameters.
+  TextSources joinSources(const TextBody &context, MirValueId id,
+                          std::set<std::pair<bool, std::size_t>> &active) {
+    const auto *value = context.body.findValue(id);
+    const auto *block =
+        value && value->definition == 0
+            ? context.body.findBlock(value->definitionBlock)
+            : nullptr;
+    if (!block)
+      return {};
+    const auto parameter = std::find_if(
+        block->parameters.begin(), block->parameters.end(),
+        [&](const MirBlockParameter &candidate) { return candidate.value == id; });
+    if (parameter == block->parameters.end())
+      return {};
+    const auto index =
+        static_cast<std::size_t>(parameter - block->parameters.begin());
+    TextSources answer{.known = true};
+    bool incoming = false;
+    const auto edge = [&](MirBlockId target,
+                          const std::vector<MirOperand> &arguments) {
+      if (target != block->id)
+        return;
+      incoming = true;
+      if (index >= arguments.size()) {
+        answer.known = false;
+        return;
+      }
+      const auto source = sources(context, arguments[index], active);
+      answer.known = answer.known && source.known;
+      answer.parameters.insert(source.parameters.begin(),
+                               source.parameters.end());
+    };
+    for (const auto &predecessor : context.body.blocks) {
+      edge(predecessor.terminator.target, predecessor.terminator.targetArguments);
+      edge(predecessor.terminator.elseTarget,
+           predecessor.terminator.elseArguments);
+      for (const auto &target : predecessor.terminator.switchTargets)
+        edge(target.target, target.arguments);
+    }
+    answer.known = answer.known && incoming;
     return answer;
   }
 
