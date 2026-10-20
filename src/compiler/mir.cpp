@@ -10655,11 +10655,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->constructorKind == ConstructorKind::Ordinary &&
           producer->constructorTarget && !producer->functionTarget &&
           !producer->lambdaTarget && producer->intrinsic == IntrinsicKind::None;
+      // A consuming method records its receiver capability as a callable
+      // invocation; with an exact function target it is still an ordinary
+      // call whose result is a fresh value.
       const bool ordinaryCall =
           producer != nullptr && producer->kind == MirInstructionKind::Call &&
           producer->functionTarget && !producer->constructorTarget &&
           !producer->lambdaTarget && !producer->bodyTarget &&
-          !producer->callableInvocation &&
           producer->intrinsic == IntrinsicKind::None;
       const bool payloadConstruction =
           producer != nullptr && referent.kind == SemanticType::Enum &&

@@ -2413,7 +2413,6 @@ independentlyStaticTextBinding(const MirProgram &program,
   if (source.root != MirPlaceRootKind::Binding ||
       (!source.projections.empty() && !referenceAlias) ||
       source.initiallyAvailable ||
-      (!referenceAlias && source.traits.containsBorrowedState) ||
       (source.type.kind != SemanticType::StringView &&
        source.type.kind != SemanticType::CString) ||
       !visited.insert(source.binding).second)
@@ -2442,6 +2441,22 @@ independentlyStaticTextBinding(const MirProgram &program,
       }
     }
   }
+  // A payload enum's text field holds only text that its construction
+  // proved ownerless, so a binding initialized once from that payload is
+  // static whatever its erased borrowed-state trait says.
+  if (!referenceAlias && initialization != nullptr &&
+      initialization->operands.size() == 1 &&
+      initialization->operands.front().kind == MirOperandKind::Value) {
+    const auto *extraction =
+        definitionFor(body, initialization->operands.front().value);
+    if (extraction != nullptr &&
+        extraction->kind == MirInstructionKind::Compute &&
+        extraction->operation == MirOperation::PayloadExtract &&
+        extraction->info.type == source.type)
+      return true;
+  }
+  if (!referenceAlias && source.traits.containsBorrowedState)
+    return false;
   if (referenceAlias) {
     const auto *destination = initialization && initialization->destination
                                   ? body.findPlace(*initialization->destination)
@@ -4197,8 +4212,20 @@ independentlyStaticTextBinding(const MirProgram &program,
       // list and thereby erase shell identity or mix permissions.
       if (shellResult) {
         const auto *source = body.findPlace(loan->source);
+        // A view stored in a class or payload-enum field holds only text that
+        // every writer proved ownerless, so a reference to it through the
+        // receiver carries no external dependency.
+        const bool ownerlessTextField =
+            source != nullptr &&
+            (instruction.info.type.kind == SemanticType::StringView ||
+             instruction.info.type.kind == SemanticType::CString) &&
+            instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+            (source->type.kind == SemanticType::Class ||
+             source->type.kind == SemanticType::Enum) &&
+            findStoredCarrierReferences(program, source->type).empty();
         const bool independentText =
-            source && independentlyStaticTextBinding(program, body, *source);
+            source && (independentlyStaticTextBinding(program, body, *source) ||
+                       ownerlessTextField);
         if ((loan->storedDependency == 0 && !independentText) ||
             !loan->additionalSources().empty() ||
             !instruction.borrowArguments.empty())
@@ -5296,8 +5323,15 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         expected = dependency;
       }
     }
+    // A text payload borrowed in place holds only text that its payload
+    // enum's construction proved ownerless.
+    const bool ownerlessTextPayload =
+        dependencySource != source &&
+        (source->type.kind == SemanticType::StringView ||
+         source->type.kind == SemanticType::CString);
     if (expected == 0 && loan.storedDependency == 0 &&
-        independentlyStaticTextBinding(program, body, *source))
+        (independentlyStaticTextBinding(program, body, *source) ||
+         ownerlessTextPayload))
       continue;
     if (expected == 0 || loan.storedDependency != expected)
       return verificationFailure(

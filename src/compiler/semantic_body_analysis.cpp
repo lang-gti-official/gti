@@ -6001,7 +6001,10 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     }
   }
   if (simpleAssignment && targetType.kind == SemanticType::Class) {
-    valueType = analyze(expr.value());
+    // The target supplies a generic callable call's result type, exactly as
+    // a declaration's type does; other values keep their own type for
+    // assignment-operator selection.
+    valueType = analyzeExpectedCallableResult(expr.value(), targetType);
     if (hasExactOperatorCandidate(OverloadedOperator::Assignment, targetType,
                                   valueType)) {
       ExprPtr receiver;
