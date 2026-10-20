@@ -5,6 +5,11 @@
 
 enum parse_error { missing };
 
+// The mapper's exact signature remains visible through ordinary source helper
+// forwarding; the unrelated overload is not selected by C++ code generation.
+int describe_error(parse_error error) { return 7; }
+bool describe_error(bool value) { return value; }
+
 constexpr expected<int, parse_error> parse(bool present) {
   if (!present) return unexpected(parse_error::missing);
   return 42;
@@ -44,6 +49,8 @@ int main() {
     return std::string("missing input");
   });
   if (described.has_value() || described.error() != "missing input") return 2;
+  auto numbered = read(false).transform_error(describe_error);
+  if (numbered.has_value() || numbered.error() != 7) return 4;
   int owner = 7;
   int& observed = lookup(owner, true).expect("owner required");
   // The reference retains owner, not the temporary result shell. A local

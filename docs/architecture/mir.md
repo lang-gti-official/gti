@@ -88,7 +88,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v111`, `mir-body-v91`).
+instruction, body, and caller-assignment facts (`mir-v112`, `mir-body-v91`).
 
 Caller-token consumers are panic and the identity-bound inactive-result
 failure operations used by source result classes. This does not change
@@ -338,7 +338,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v111`/`mir-body-v91`,
+The combined deterministic serialization is currently `mir-v112`/`mir-body-v91`,
 with `lowered-program-v22` declaration metadata. Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
@@ -570,7 +570,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v111`/`lowered-program-v22`, preserving
+The combined serialization is `mir-v112`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,

@@ -255,36 +255,40 @@ const int byte_copy_probe = [] {
   mir_lifetime_slot<NativeAddressRecord, true> temporary;
   temporary.construct(source);
   check(temporary.get());
-  expected_result<NativeAddressRecord, int> success{source};
+  // Source-defined result classes use the ordinary payload-enum carrier.
+  // Byte-bearing fields retain the same transport contract independently of
+  // any public library name or obsolete private result representation.
+  using NativeField = byte_field<NativeAddressRecord>;
+  using Result = payload_variant<std::monostate, NativeField, NativeField>;
+  Result success{std::in_place_index<1>, source};
   auto success_copy = success;
   auto success_move = std::move(success_copy);
   success = success_move;
-  check(success.value());
-  check(success_move.value());
-  expected_result<NativeAddressRecord, NativeAddressRecord> alternatives{source};
-  expected_result<NativeAddressRecord, NativeAddressRecord> error{
-      make_unexpected_result(source)};
-  alternatives.swap(error);
-  if (alternatives.has_value() || !error.has_value()) std::abort();
-  check(alternatives.error());
-  check(error.value());
+  check(payload_get<1>(success).get());
+  check(payload_get<1>(success_move).get());
+  Result alternatives{std::in_place_index<1>, source};
+  Result error{std::in_place_index<2>, source};
+  std::swap(alternatives, error);
+  if (alternatives.index() != 2 || error.index() != 1) std::abort();
+  check(payload_get<2>(alternatives).get());
+  check(payload_get<1>(error).get());
   alternatives = error;
-  check(alternatives.value());
-  error = make_unexpected_result(source);
-  check(error.error());
-  expected_result<void, NativeAddressRecord> void_success;
-  expected_result<void, NativeAddressRecord> void_error{
-      make_unexpected_result(source)};
+  check(payload_get<1>(alternatives).get());
+  error = Result{std::in_place_index<2>, source};
+  check(payload_get<2>(error).get());
+  using VoidResult = payload_variant<std::monostate, std::monostate, NativeField>;
+  VoidResult void_success{std::in_place_index<1>};
+  VoidResult void_error{std::in_place_index<2>, source};
   void_success = void_error;
-  if (void_success.has_value()) std::abort();
-  check(void_success.error());
+  if (void_success.index() != 2) std::abort();
+  check(payload_get<2>(void_success).get());
   int live = 3;
-  borrowed_expected<int, NativeAddressRecord> borrowed(live);
-  borrowed_expected<int, NativeAddressRecord> failed_borrow{
-      make_unexpected_result(source)};
+  using BorrowedResult = payload_variant<std::monostate, int*, NativeField>;
+  BorrowedResult borrowed{std::in_place_index<1>, &live};
+  BorrowedResult failed_borrow{std::in_place_index<2>, source};
   borrowed = failed_borrow;
-  if (borrowed.has_value()) std::abort();
-  check(borrowed.error());
+  if (borrowed.index() != 2) std::abort();
+  check(payload_get<2>(borrowed).get());
   byte_field<std::array<NativeAddressRecord, 2>> field{fixed};
   auto field_copy = field;
   field = std::move(field_copy);
@@ -623,7 +627,9 @@ int main(int argc, char **argv) {
         {"retired-drop", "slot.construct(7); slot.destroy(); slot.destroy();",
          "verified MIR lifetime slot was dropped while empty"},
         {"live-reuse", "slot.construct(7); slot.construct(8);",
-         "verified MIR lifetime slot was constructed twice"}}) {
+         "verified MIR lifetime slot was constructed twice"},
+        {"live-escape", "slot.construct(7);",
+         "verified MIR lifetime slot escaped without Drop"}}) {
     const auto artifact =
         emitArtifact(std::string(name), "int main() { return 0; }");
     if (artifact.empty())
@@ -637,6 +643,48 @@ int main(int argc, char **argv) {
     expect(run.built && run.exitStatus != 0 &&
                run.stderrText.find(fragment) != std::string::npos,
            "retirement must preserve the slot guard: " + std::string(name));
+  }
+
+  // Representation-only scope retirement still runs its destructor. A
+  // semantic slot instead retires only through its explicit Drop operation.
+  for (const bool emergency : {false, true}) {
+    const std::string name = emergency ? "slot-emergency" : "slot-retirement";
+    const auto artifact = emitArtifact(name, "int main() { return 0; }");
+    if (artifact.empty())
+      continue;
+    if (emergency) {
+      // Supply the private handoff state to the generated helper in this
+      // native probe; managed-worker runtime tests establish its real producer.
+      std::string text = readFile(artifact);
+      const std::string original =
+          "inline bool mir_cleanup_emergency_abandonment() noexcept {\n"
+          "  return false;\n}";
+      const auto position = text.find(original);
+      expect(position != std::string::npos,
+             "native slot probe finds the single-thread emergency provider");
+      if (position == std::string::npos)
+        continue;
+      text.replace(position, original.size(),
+                   "inline bool mir_cleanup_emergency_abandonment() noexcept { "
+                   "return true; }");
+      std::ofstream(artifact) << text;
+    }
+    std::ofstream(artifact, std::ios::app)
+        << "\nnamespace { int retired = 0; struct SlotTracked { "
+           "~SlotTracked() { ++retired; } }; const int slot_probe = [] { "
+           "{ ::gti_internal::backend::mir_lifetime_slot<SlotTracked, true> "
+           "slot; slot.construct(); } "
+           "{ ::gti_internal::backend::mir_lifetime_slot<SlotTracked> slot; "
+           "slot.construct(); "
+        << (emergency ? "" : "slot.destroy(); ")
+        << "} if (retired != " << (emergency ? 0 : 2)
+        << ") std::abort(); return 0; }(); }\n";
+    for (const std::string standard : {"c++20", "c++23"}) {
+      const auto run = buildAndRun(compiler, artifact, directory,
+                                   name + standard, standard, "-O3", "");
+      expect(run.built && run.exitStatus == 0,
+             "slot outlining preserves retirement/emergency behavior: " + name);
+    }
   }
 
   // Every misuse scenario trips exactly the surface that reaches it first:

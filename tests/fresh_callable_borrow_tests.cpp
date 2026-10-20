@@ -30,9 +30,70 @@ void positiveAndProofs() {
     return;
   std::size_t plain = 0;
   std::size_t borrowed = 0;
+  std::size_t transferred = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &stage : block.instructions) {
+        if (stage.kind == lang::MirInstructionKind::CallInput &&
+            stage.callInputRole == lang::MirCallInputRole::Argument &&
+            stage.callInputKind == lang::HirCallInputKind::MoveValue &&
+            stage.info.type.kind == lang::SemanticType::Lambda &&
+            stage.info.traits.containsBorrowedState) {
+          ++transferred;
+          const auto *value =
+              function.body.findValue(stage.operands.front().value);
+          const auto *producerBlock =
+              value ? function.body.findBlock(value->definitionBlock) : nullptr;
+          const lang::MirInstruction *producer = nullptr;
+          if (producerBlock)
+            for (const auto &candidate : producerBlock->instructions)
+              if (candidate.id == value->definition)
+                producer = &candidate;
+          expect(producer && producer->loan,
+                 "fresh transferred closure retains its exact capture group");
+          if (!producer || !producer->loan)
+            continue;
+          for (int mutation = 0; mutation != 7; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *target = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &loan = target->body.loans[*producer->loan - 1];
+            for (auto &changedBlock : target->body.blocks) {
+              for (auto &instruction : changedBlock.instructions) {
+                if (instruction.id == producer->id && mutation == 0)
+                  instruction.loan.reset();
+                if (instruction.id == stage.id && mutation == 1)
+                  ++instruction.callSite;
+              }
+            }
+            if (mutation == 2)
+              ++loan.producedBy;
+            if (mutation == 3)
+              loan.designatedFields.clear();
+            if (mutation == 4)
+              loan.access = lang::AccessMode::Mutable;
+            if (mutation == 5)
+              loan.escapes = true;
+            if (mutation == 6) {
+              auto &instructions =
+                  target->body.blocks[block.id - 1].instructions;
+              auto position =
+                  std::find_if(instructions.begin(), instructions.end(),
+                               [&](const auto &instruction) {
+                                 return instruction.id == stage.id;
+                               });
+              lang::MirInstruction end;
+              end.id = target->body.instructionCount() + 1;
+              end.kind = lang::MirInstructionKind::EndBorrow;
+              end.loan = loan.id;
+              instructions.insert(position, std::move(end));
+            }
+            (void)lang::rebuildMirValueUses(target->body);
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "fresh transferred capture rejects missing, substituted, "
+                   "expired or escaped dependency proofs");
+          }
+        }
         if (stage.kind != lang::MirInstructionKind::CallInput ||
             stage.callInputRole != lang::MirCallInputRole::Argument ||
             stage.callInputKind !=
@@ -114,6 +175,8 @@ void positiveAndProofs() {
   expect(plain >= 5 && borrowed >= 2,
          "lambda, function item, multi-capture and retained-view cases have "
          "explicit call loans");
+  expect(transferred == 2,
+         "free and consuming-member calls stage exact borrowing closures");
 }
 
 void negativeBoundaries() {
@@ -124,6 +187,7 @@ F& escape<F>(F& callback) { return callback; }
 int change(mut int& value) { value += 1; return value; }
 int increment(int value) { return value + 1; }
 int unproven<F>(F& callback) { return 0; }
+int invoke_owned<F>(F callback, int value) { return callback(value); }
 )gti";
   for (const std::string body :
        {"return unproven(increment);",
@@ -135,6 +199,9 @@ int unproven<F>(F& callback) { return 0; }
         "mut int state = 1; return invoke([mut &state](int value) -> int { "
         "state += value; return state; }, 1);",
         "mut int state = 1; return invoke([&state](int value) -> int { return "
+        "state + value; }, change(state));",
+        "mut int state = 1; return invoke_owned([&state](int value) -> int { "
+        "return "
         "state + value; }, change(state));"}) {
     const auto result = analyzeFresh(prefix + "int main() { " + body + " }");
     expect(!result.canGenerateCode() &&

@@ -1941,6 +1941,14 @@ private:
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
 
+  [[nodiscard]] std::optional<std::size_t>
+  ownerlessTextForwardingParameter(const ExprPtr &expression) const;
+  [[nodiscard]] bool
+  requireOwnerlessTextParameter(const ExprPtr &expression);
+  void recordOwnerlessTextCall(const Call &call,
+                              const CallableCandidate &target);
+  void finalizeOwnerlessTextContracts();
+
   [[nodiscard]] std::vector<
       std::pair<std::size_t, const ConstructorInitializer *>>
   ownerlessTextConstructorInputs(
@@ -5490,6 +5498,21 @@ private:
   // They do not introduce another owner: every binding refers into this one
   // object, and resetRequestState() is its only public-entry reset operation.
   struct RequestSessionState {
+    struct OwnerlessTextCallUse {
+      const FunctionDecl *caller = nullptr;
+      FunctionId callee = 0;
+      std::size_t parameter = 0;
+      SemanticType type = SemanticType::Unknown;
+      std::optional<std::size_t> forwardedParameter;
+      const ExprPtr *argument = nullptr;
+      bool ownerless = false;
+      bool diagnosed = false;
+    };
+    struct OwnerlessTextCallableUse {
+      FunctionId target = 0;
+      Token location;
+      bool diagnosed = false;
+    };
     struct MutableLocalCandidate {
       SymbolId symbol = 0;
       Token keyword;
@@ -5505,6 +5528,8 @@ private:
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticModel semanticModel;
     SemanticCatalog catalog;
+    std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
+    std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
     std::unordered_map<const Expr *, const ParameterDefault *>

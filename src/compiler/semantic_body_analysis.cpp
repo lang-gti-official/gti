@@ -172,6 +172,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   const auto finalizationStart = std::chrono::steady_clock::now();
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
+  finalizeOwnerlessTextContracts();
   discoverOwnedCallableValueParameters();
   validateOnceCallableForwardings();
   validateOwnedCallableArguments();
@@ -473,6 +474,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->bodyDeclaration()->accept(*this);
   validateDefaultArgumentCycles();
+  finalizeOwnerlessTextContracts();
   finalizeRawBorrowContracts();
   semanticModel.finalizeCallableArguments();
   finishInstanceContext(*function);
@@ -4218,6 +4220,7 @@ auto SemanticVisitor::Impl::finalizeLateDemand(
   validateDefaultArgumentCycles();
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
+  finalizeOwnerlessTextContracts();
   discoverOwnedCallableValueParameters();
   validateOnceCallableForwardings();
   validateOwnedCallableArguments();
@@ -6029,7 +6032,8 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
-      isOwnerDependentTextExpression(expr.value())) {
+      isOwnerDependentTextExpression(expr.value()) &&
+      !requireOwnerlessTextParameter(expr.value())) {
     reportOwnerDependentTextStorage(expr.value(),
                                     "assigned into an existing binding");
   }
@@ -8192,6 +8196,14 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
   if (preferReadOnlyRhsProjection) {
     --preferReadOnlySubscriptReceiverDepth;
   }
+  if (simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
+      (valueTarget.kind == SemanticType::StringView ||
+       valueTarget.kind == SemanticType::CString) &&
+      isOwnerDependentTextExpression(expr.value()) &&
+      !requireOwnerlessTextParameter(expr.value())) {
+    reportOwnerDependentTextStorage(expr.value(),
+                                    "assigned through a checked reference");
+  }
   if (!mutableTarget) {
     report(expr.dereference(),
            ownerType.kind == SemanticType::RawPointer
@@ -8264,6 +8276,14 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  if (simpleAssignment &&
+      (targetType.kind == SemanticType::StringView ||
+       targetType.kind == SemanticType::CString) &&
+      isOwnerDependentTextExpression(expr.value()) &&
+      !requireOwnerlessTextParameter(expr.value())) {
+    reportOwnerDependentTextStorage(expr.value(),
+                                    "assigned through a checked reference");
+  }
   if (targetType == SemanticType::Unknown) {
     currentType = SemanticType::Unknown;
     return;
@@ -8718,6 +8738,14 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
   const bool valueAssignable =
       !simpleAssignment ||
       isOwnershipAssignment(elementType, valueType, expr.value(), targetPlace);
+  if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
+      (elementType.kind == SemanticType::StringView ||
+       elementType.kind == SemanticType::CString) &&
+      isOwnerDependentTextExpression(expr.value()) &&
+      !requireOwnerlessTextParameter(expr.value())) {
+    reportOwnerDependentTextStorage(expr.value(),
+                                    "assigned through a checked index");
+  }
   if (simpleAssignment && !valueAssignable) {
     report(expressionToken(expr.value()),
            "Cannot assign a value of type '" + typeSpelling(valueType) +
@@ -10266,7 +10294,8 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
-      isOwnerDependentTextExpression(expr.value())) {
+      isOwnerDependentTextExpression(expr.value()) &&
+      !requireOwnerlessTextParameter(expr.value())) {
     reportOwnerDependentTextStorage(expr.value(), "stored in a field");
   }
   const bool directSelfMove =

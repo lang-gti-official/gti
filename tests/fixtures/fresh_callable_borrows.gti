@@ -7,6 +7,9 @@ int invoke<F>(F& callback, int argument) {
 int forward<F>(F& callback, int argument) {
   return invoke(callback, argument);
 }
+int invoke_owned<F>(F callback, int argument) {
+  return callback(argument);
+}
 int increment(int value) { return value + 1; }
 bool increment(bool value) { return !value; }
 class Reading {
@@ -22,6 +25,9 @@ public:
   int invoke<F>(F& callback) && {
     int result = callback(this.value);
     return result;
+  }
+  int consume<F>(F callback) && {
+    return callback(this.value);
   }
 };
 int main() {
@@ -42,5 +48,13 @@ int main() {
   }, 2);
   if (five != 42) return 3;
   int six = Client(41).invoke([](int value) -> int { return value + 1; });
-  return six == 42 ? 0 : 4;
+  if (six != 42) return 4;
+  int seven = invoke_owned([&offset, &base](int value) -> int {
+    return value + offset + base;
+  }, 1);
+  if (seven != 42) return 5;
+  int eight = Client(41).consume([&offset](int value) -> int {
+    return value + offset;
+  });
+  return eight == 42 ? 0 : 6;
 }

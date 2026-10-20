@@ -71,6 +71,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "UnsignedResult",
       "Value",
       "__gti_invoke",
+      "__gti_small_source_inline",
       "__gti_mir_lambda_identity",
       "__gti_mir_source_result",
       "source_callable_result",
@@ -91,6 +92,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mir_failure_cleanup_scope_v1",
       "mir_incoming_failure_cleanup_v1",
       "mir_check_incoming_cleanup_failure_v1",
+      "mir_missing_drop_v1",
       "mir_terminate_cleanup_failure_v2",
       "primary",
       "secondary",
@@ -540,6 +542,12 @@ void writeCppSupportPreamble(std::ostream &output,
   }
   writeCppBackendMacroIsolation(output);
   output << R"(
+
+#if defined(__OPTIMIZE__) && (defined(__GNUC__) || defined(__clang__))
+#define __gti_small_source_inline inline __attribute__((__always_inline__))
+#else
+#define __gti_small_source_inline inline
+#endif
 
 // The lifetime-slot template only transports this ABI record by pointer, so
 // the lowered translation unit needs the type name but not the definition.
@@ -2121,6 +2129,19 @@ template <typename T>
   return success;
 }
 
+// An engaged semantic slot reaching native scope exit is either a verified
+// cleanup-emergency handoff or a missing MIR Drop. Preserve both checks, but
+// keep this exceptional path out of ordinary source wrapper inlining cost.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+inline void mir_missing_drop_v1() noexcept {
+  if (!mir_cleanup_emergency_abandonment())
+    storage_error("verified MIR lifetime slot escaped without Drop");
+}
+
 // A verified MIR body owns the lifetime of values stored here. Unlike a
 // normal C++ local or std::optional, this guard deliberately refuses to clean
 // up an engaged value from its destructor: every successful construction must
@@ -2139,16 +2160,14 @@ public:
     // A verified cleanup-emergency edge explicitly stopped source cleanup.
     // The private worker handoff only retires native stack frames; neither
     // representation policy may manufacture an omitted GTI Drop here.
-    if (mir_cleanup_emergency_abandonment()) {
-      return;
-    }
     if constexpr (DestroyRepresentationAtScopeExit) {
+      if (mir_cleanup_emergency_abandonment()) return;
       // Some GTI values need a non-trivial C++ representation even though MIR
       // assigns no semantic Drop here, or has already transferred the value.
       // End only that backend representation lifetime.
       destroy();
     } else {
-      storage_error("verified MIR lifetime slot escaped without Drop");
+      mir_missing_drop_v1();
     }
   }
 

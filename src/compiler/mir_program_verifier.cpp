@@ -6,6 +6,7 @@
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_text_contracts.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
@@ -2011,6 +2012,41 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             instruction.operands[index].kind == MirOperandKind::Value
                 ? definitionFor(body, instruction.operands[index].value)
                 : nullptr;
+        if (argumentInput &&
+            argumentInput->kind == MirInstructionKind::CallInput &&
+            argumentInput->callInputKind == HirCallInputKind::MoveValue &&
+            argumentInput->info.type.kind == SemanticType::Lambda &&
+            argumentInput->info.traits.containsBorrowedState) {
+          const auto contract =
+              functionTarget
+                  ? std::find_if(functionTarget->callableParameters.begin(),
+                                 functionTarget->callableParameters.end(),
+                                 [&](const auto &candidate) {
+                                   return candidate.parameterIndex == index;
+                                 })
+                  : std::vector<MirCallableParameter>::const_iterator{};
+          // This is a synchronous transfer of a fresh environment, not an
+          // escaping owned callback. Its capture group is independently checked
+          // at construction and remains live through the exact confined call.
+          if (!functionTarget ||
+              functionTarget->definitionKind != MirDefinitionKind::Source ||
+              functionTarget->linkage != LanguageLinkage::Gti ||
+              index >= functionTarget->parameterTypes.size() ||
+              functionTarget->parameterTypes[index] !=
+                  argumentInput->info.type ||
+              contract == functionTarget->callableParameters.end() ||
+              contract->boundary != CallableBoundary::Confined ||
+              contract->ownedTransport ||
+              functionTarget->returnType.kind == SemanticType::Reference ||
+              functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
+              instruction.info.traits.containsBorrowedState) {
+            return verificationFailure(
+                body, owner,
+                "fresh borrowing callable transfer requires its exact confined "
+                "source parameter and non-borrowing result contract",
+                block.id, instruction.id);
+          }
+        }
         if (argumentInput == nullptr ||
             argumentInput->kind != MirInstructionKind::CallInput ||
             argumentInput->callInputKind !=
@@ -2363,8 +2399,14 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner);
 
 [[nodiscard]] bool
-independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
+independentlyStaticTextBinding(const MirProgram &program,
+                               const MirBody &body, const MirPlace &source,
                                std::unordered_set<HirBindingId> &visited) {
+  // verifyMirProgramBorrowContracts first proves every text publication and
+  // safe write. A by-value field therefore needs its physical shell loan but
+  // cannot have an unrepresented external text-owner dependency.
+  if (mir_detail::isOwnerlessTextFieldProjection(program, body, source))
+    return true;
   const bool referenceAlias =
       source.projections.size() == 1 &&
       source.projections.front().kind == MirProjectionKind::Dereference;
@@ -2425,10 +2467,10 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
     // an unrelated address cannot borrow the literal's static authority.
     auto addressVisited = visited;
     const auto *address = body.findPlace(input.place);
-    return independentlyStaticTextBinding(body, *origin, visited) &&
+    return independentlyStaticTextBinding(program, body, *origin, visited) &&
            (input.place == 0 ||
             (address && address->type == source.type &&
-             independentlyStaticTextBinding(body, *address, addressVisited)));
+             independentlyStaticTextBinding(program, body, *address, addressVisited)));
   }
   const auto *literal =
       initialization && initialization->operands.size() == 1 &&
@@ -2445,7 +2487,7 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
       literal->localFailureSites.empty()) {
     const auto *copied = body.findPlace(literal->operands.front().place);
     return copied && copied->type == source.type &&
-           independentlyStaticTextBinding(body, *copied, visited);
+           independentlyStaticTextBinding(program, body, *copied, visited);
   }
   return literal && literal->kind == MirInstructionKind::Compute &&
          literal->operation == MirOperation::Literal && literal->literal &&
@@ -2462,10 +2504,11 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
            std::holds_alternative<std::nullptr_t>(*literal->literal)));
 }
 
-[[nodiscard]] bool independentlyStaticTextBinding(const MirBody &body,
+[[nodiscard]] bool independentlyStaticTextBinding(const MirProgram &program,
+                                                  const MirBody &body,
                                                   const MirPlace &source) {
   std::unordered_set<HirBindingId> visited;
-  return independentlyStaticTextBinding(body, source, visited);
+  return independentlyStaticTextBinding(program, body, source, visited);
 }
 
 [[nodiscard]] bool isPotentiallyBorrowedCarrier(const MirProgram &program,
@@ -4155,7 +4198,7 @@ independentlyStaticTextBinding(const MirBody &body, const MirPlace &source,
       if (shellResult) {
         const auto *source = body.findPlace(loan->source);
         const bool independentText =
-            source && independentlyStaticTextBinding(body, *source);
+            source && independentlyStaticTextBinding(program, body, *source);
         if ((loan->storedDependency == 0 && !independentText) ||
             !loan->additionalSources().empty() ||
             !instruction.borrowArguments.empty())
@@ -5254,7 +5297,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
       }
     }
     if (expected == 0 && loan.storedDependency == 0 &&
-        independentlyStaticTextBinding(body, *source))
+        independentlyStaticTextBinding(program, body, *source))
       continue;
     if (expected == 0 || loan.storedDependency != expected)
       return verificationFailure(
@@ -6730,7 +6773,11 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
         &noNormalResultProof,
     const std::function<bool(const MirFunctionInstance &, MirBlockId)>
         &emptyReturn) {
-  MirVerificationResult result;
+  // Establish the storage invariant before allowing a text-field shell to
+  // omit an external dependency. No caller-supplied flag grants this fact.
+  MirVerificationResult result = mir_detail::verifyOwnerlessTextContracts(program);
+  if (!result.valid())
+    return result;
   appendVerification(result,
                      verifyMirCallableMetadata(program, program.module(), 0,
                                                nullptr, completeReturnProof));

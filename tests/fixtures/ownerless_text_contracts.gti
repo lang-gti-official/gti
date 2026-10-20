@@ -1,0 +1,32 @@
+#include "ownerless_text_contracts_helper.gti"
+
+// Deliberately precede the callee definition: requirement discovery must not
+// depend on source declaration order or on which literal caller is visited.
+StaticLabel<T> forward_label<T>(T input) {
+  return final_label(std::move(input));
+}
+
+StaticLabel<T> final_label<T>(T input) {
+  return imported_label(std::move(input));
+}
+
+StaticLabel<std::string_view> never_called(std::string_view input) {
+  return imported_label(input);
+}
+
+expected<int, std::string_view> text_result(bool fail) {
+  if (fail) { return unexpected("missing"); }
+  return 7;
+}
+
+int main() {
+  auto label = forward_label("literal");
+  std::string_view extracted = std::move(label).take();
+  if (extracted != "literal") { return 1; }
+  auto integer = forward_label(42);
+  if (std::move(integer).take() != 42) { return 2; }
+  auto error = text_result(true);
+  if (error.error() != "missing") { return 3; }
+  auto value = text_result(false);
+  return value.value() == 7 ? 0 : 4;
+}

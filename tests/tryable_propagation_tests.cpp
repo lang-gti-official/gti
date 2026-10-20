@@ -512,14 +512,30 @@ Status unconstrained<T>(T result) {
 int main() { return 0; }
 )gti",
            "GTI-S2086", "requires 'requires std::tryable<T>'");
-  rejected(types + R"gti(
+  accepted(
+      types + R"gti(
 constexpr Status constant() {
   int value = ?make(1, 0);
   return Status(value);
 }
 int main() { return 0; }
 )gti",
-           "GTI-S2086", "constexpr function");
+      "a constexpr declaration does not prohibit ordinary tryable propagation");
+  std::ifstream constantInput(root / "tests" / "fixtures" /
+                              "constexpr_tryable.gti");
+  const std::string constantSource{
+      std::istreambuf_iterator<char>(constantInput), {}};
+  expect(!constantSource.empty(), "constexpr tryable fixture exists");
+  accepted(constantSource, "verified MIR evaluates success and residual "
+                           "protocol paths at compile time");
+  auto runtimeProtocol = constantSource;
+  const auto observer = runtimeProtocol.find("constexpr bool has_value");
+  expect(observer != std::string::npos,
+         "constexpr protocol observer is explicit");
+  if (observer != std::string::npos) {
+    runtimeProtocol.erase(observer, std::string("constexpr ").size());
+    rejected(runtimeProtocol, "GTI-S2057", "");
+  }
   const std::string enumProtocol = types + R"gti(
 enum class Parse {
   ok(int value),
@@ -1070,7 +1086,8 @@ Status coded() {
 int main() { return 0; }
 )gti",
            "GTI-S2086", "class, struct or payload-enum operand");
-  // Built-in expected keeps its own rule.
+  // Global source expected uses the same residual-construction rule as any
+  // other tryable. Status accepts Rejected, not unexpected_value<int>.
   rejected(types + R"gti(
 expected<int, int> load() { return 1; }
 Status mixed() {
@@ -1079,7 +1096,7 @@ Status mixed() {
 }
 int main() { return 0; }
 )gti",
-           "GTI-S2086", "returning 'expected<U, E>'");
+           "GTI-S2086", "implicit constructor");
 
   if (failures != 0) {
     std::cerr << failures << " tryable propagation checks failed\n";

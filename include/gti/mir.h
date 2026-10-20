@@ -1400,6 +1400,7 @@ struct MirFunctionInstance {
   std::optional<HirClassInstanceId> owner;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ownerlessTextParameters;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;

@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v111 valid=" << program.valid() << '\n';
+    output << "mir-v112 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -592,6 +592,12 @@ public:
                << ",type=";
         type(instance.parameterTypes[index]);
         output << '}';
+      }
+      output << "] ownerless-text-parameters=[";
+      for (std::size_t index = 0;
+           index < instance.ownerlessTextParameters.size(); ++index) {
+        separator(index);
+        output << instance.ownerlessTextParameters[index];
       }
       output << "] explicit-return-borrow="
              << instance.explicitReturnBorrowOrigin

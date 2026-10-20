@@ -34,7 +34,7 @@ int main() {
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
   std::size_t checked = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
-    if (function.returnType.kind != lang::SemanticType::Expected ||
+    if (function.returnType.kind != lang::SemanticType::Class ||
         function.callableParameters.empty())
       continue;
     const auto pending = std::find_if(
@@ -60,7 +60,7 @@ int main() {
                                        function.id};
     expect(lang::CppMirBodyEmitter(frontend.mir, rows)
                .supportsFailureBodyText(address),
-           "expected payload supports cleanup-only Invoke success chain");
+           "source result supports cleanup-only Invoke success chain");
     const auto text = lang::CppMirBodyEmitter(frontend.mir, rows)
                           .emitFailureBodyText(address, "test", 0);
     expect(text.emitted(), "pending payload emits complete status body");

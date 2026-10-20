@@ -632,6 +632,7 @@ private:
          .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
+         .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -2072,6 +2073,10 @@ private:
     const FunctionInfo *concrete =
         model->findFunction(*declaration->declaration);
     if (concrete != nullptr) {
+      output.program.functions[index].ownerlessTextParameters =
+          concrete->ownerlessTextParameters;
+      output.program.functions[index].ownerlessTextContractProof =
+          model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =
           concrete->returnBorrowOrigin;
       output.program.functions[index].explicitReturnBorrowOrigin =
@@ -4025,7 +4030,10 @@ private:
                  input->info.type != parameter ||
                  (input->info.traits.containsBorrowedState &&
                   parameter.kind != SemanticType::Class &&
-                  parameter.kind != SemanticType::Enum)) {
+                  parameter.kind != SemanticType::Enum &&
+                  !(parameter.kind == SemanticType::Lambda &&
+                    input->kind == HirValueKind::Lambda &&
+                    !input->captureBorrowDependencies.empty()))) {
         return std::nullopt;
       } else if (input->info.category == ValueCategory::Place &&
                  input->info.traits.copyable) {
