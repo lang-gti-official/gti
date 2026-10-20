@@ -13348,6 +13348,10 @@ private:
     } else if (statement.value) {
       const HirValue *sourceValue = findValue(*statement.value);
       const MirPlaceId sourcePlace = placeForValue(*statement.value);
+      // A named subject is observed. An enum that owns cleanup, that cannot
+      // be copied (a cleanup-free alternative may still hold a move-only
+      // field), or that an arm binds by reference is read-borrowed in place;
+      // only a copyable passive enum is read through a copy.
       if (sourceValue != nullptr && sourcePlace != 0 &&
           sourceValue->info.category == ValueCategory::Place &&
           sourceValue->info.type.kind == SemanticType::Enum &&
@@ -13360,7 +13364,10 @@ private:
         // Matching observes the discriminant of a place; it does not copy
         // the complete enum merely because its payload happens to be passive.
         // Arm bindings still perform their independently selected copy/borrow.
-        emitPlaceDependencies(*statement.value);
+        // The read-borrow transports only the subject's address, so no Load
+        // performs a selected fixed-array element's bounds check. Finish that
+        // selection at its checked AddressOf before the switch observes it.
+        emitPlaceDependencies(*statement.value, true);
         subject = {.kind = MirOperandKind::BorrowRead,
                    .place = sourcePlace,
                    .type = sourceValue->info.type};
