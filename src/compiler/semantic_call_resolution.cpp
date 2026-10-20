@@ -7374,10 +7374,14 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         complete ? instantiateCompleteCallBorrow(call, resolved, *complete,
                                                  &noNormalResult)
                  : std::nullopt;
+    // The exact instance's complete contract names the result's fields
+    // whether or not this call's inputs instantiate its dependency set.
+    const bool contractFields =
+        complete && (function.returnType.kind == SemanticType::Class ||
+                     (function.returnType.kind == SemanticType::Reference &&
+                      function.dispatchOwner.kind == SemanticType::Class));
     if (instantiated) {
-      if (function.returnType.kind == SemanticType::Class ||
-          (function.returnType.kind == SemanticType::Reference &&
-           function.dispatchOwner.kind == SemanticType::Class))
+      if (contractFields)
         resolved.borrowFields = complete->dependencies;
       semanticModel.record(call, resolved);
       semanticModel.recordBorrowDependencySet(call, *instantiated);
@@ -7391,8 +7395,13 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       resolved.borrowFields = complete->dependencies;
       semanticModel.record(call, resolved);
       semanticModel.clearBorrowDependencySet(call);
-    } else
+    } else {
+      if (contractFields) {
+        resolved.borrowFields = complete->dependencies;
+        semanticModel.record(call, resolved);
+      }
       semanticModel.clearBorrowDependencySet(call);
+    }
   }
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
