@@ -2097,11 +2097,23 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               producer->functionTarget
                   ? program.findFunctionInstance(*producer->functionTarget)
                   : nullptr;
+          // A fresh borrowed carrier keeps its external dependency in the
+          // call's own Stored result loan, which the argument loan retains.
+          const MirLoan *published =
+              producer->loan ? body.findLoan(*producer->loan) : nullptr;
+          const bool retainedCarrier =
+              loan != nullptr && loan->storedDependency != 0 &&
+              published != nullptr && published->id == loan->storedDependency &&
+              published->kind == MirLoanKind::Stored && !published->entry &&
+              !published->escapes &&
+              published->producedBy == producer->hirValue;
           exactProducer = target != nullptr && argumentPlace != nullptr &&
                           target->definitionKind == MirDefinitionKind::Source &&
                           target->linkage == LanguageLinkage::Gti &&
                           target->returnType == argumentPlace->type &&
-                          target->returnBorrowOrigin == BorrowOriginKind::None;
+                          (target->returnBorrowOrigin ==
+                               BorrowOriginKind::None ||
+                           retainedCarrier);
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct &&
@@ -2616,8 +2628,29 @@ independentlyStaticTextBinding(const MirProgram &program,
       }
     };
     dereference();
+    // A payload alternative's field is projected like a class field; the
+    // place's variant guard is a dependency condition, not part of its path.
+    const auto payloadFieldType =
+        [&](const SemanticType &owner,
+            SymbolId field) -> std::optional<SemanticType> {
+      const auto *enumeration = program.findPayloadEnum(owner);
+      if (enumeration == nullptr)
+        return std::nullopt;
+      std::optional<SemanticType> result;
+      for (const auto &variant : enumeration->variants)
+        for (std::size_t index = 0; index < variant.payloadSymbols.size();
+             ++index)
+          if (variant.payloadSymbols[index] == field) {
+            if (result || index >= variant.payloadTypes.size())
+              return std::nullopt;
+            result = variant.payloadTypes[index];
+          }
+      return result;
+    };
     for (const auto field : fields) {
-      const auto member = mirFieldProjectionType(program, expected.type, field);
+      auto member = mirFieldProjectionType(program, expected.type, field);
+      if (!member)
+        member = payloadFieldType(expected.type, field);
       if (!member)
         return 0;
       expected.type = *member;
@@ -2884,10 +2917,19 @@ independentlyStaticTextBinding(const MirProgram &program,
           instruction.operands.size() == 1) {
         const auto &operand = instruction.operands.front();
         const auto *place = body.findPlace(operand.place);
+        // A fresh carrier borrowed for one call is a materialized temporary
+        // with no ownership key; the temporary-argument contract above binds
+        // it to its exact producer and retained Stored group instead.
+        const bool temporaryCarrier =
+            instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow &&
+            operand.kind == MirOperandKind::BorrowRead && place != nullptr &&
+            place->projections.empty() &&
+            (place->root == MirPlaceRootKind::Value ||
+             place->root == MirPlaceRootKind::Temporary);
         if ((operand.kind == MirOperandKind::BorrowRead ||
              operand.kind == MirOperandKind::BorrowWrite) &&
             place != nullptr && place->type.kind == SemanticType::Class &&
-            place->traits.containsBorrowedState &&
+            place->traits.containsBorrowedState && !temporaryCarrier &&
             (!instruction.ownership || !place->key ||
              *place->key != instruction.ownership->place)) {
           return verificationFailure(body, owner,
@@ -12758,6 +12800,13 @@ completeBorrowSourcePath(const MirProgram &program,
         dependency.designatedFields = mapping.resultFields;
         dependency.conditions = mapping.resultConditions;
         dependency.access = mapping.access;
+        // A carrier consumed by value hands its entry group's caller-owned
+        // referent to the result as parentless local authority, as a
+        // transferred group does; the entry authority outlives the body.
+        if (!referenceInput && dependency.parent != 0)
+          if (const auto *group = body.findLoan(dependency.parent);
+              group && group->entry && group->kind == MirLoanKind::Stored)
+            dependency.parent = 0;
         if (std::find(supplying[index].begin(), supplying[index].end(),
                       dependency) == supplying[index].end())
           supplying[index].push_back(std::move(dependency));

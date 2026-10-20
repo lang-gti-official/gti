@@ -4569,6 +4569,19 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         if (parent != 0) {
           MirLoanId selectedAlias = 0;
           const auto operandFromParent = [&](const MirOperand &operand) {
+            // A shared reference that a call published from the declared
+            // parent carries that parent's authority; reading through it
+            // reborrows the same referent under the parent.
+            const auto sharedPublishedChild = [&](MirLoanId childId) {
+              const auto *child = body.findLoan(childId);
+              return child != nullptr &&
+                     child->kind == MirLoanKind::CallResult &&
+                     child->parent == parent &&
+                     child->access == AccessMode::ReadOnly &&
+                     body.loans[loan - 1].access == AccessMode::ReadOnly &&
+                     active[child->id - 1] == MirLoanFlowState::Active &&
+                     active[parent - 1] == MirLoanFlowState::Active;
+            };
             const auto mappedAliasDependency = [&](MirLoanId aliasId) {
               const auto *alias = body.findLoan(aliasId);
               const auto &dependency = body.loans[parent - 1];
@@ -4847,7 +4860,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             }
             if (resolved->kind == MirOperandKind::Loan) {
               return resolved->loan == parent ||
-                     mappedAliasDependency(resolved->loan);
+                     mappedAliasDependency(resolved->loan) ||
+                     sharedPublishedChild(resolved->loan);
             }
             if (resolved->place == 0) {
               return false;
@@ -4866,6 +4880,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
             const MirCanonicalPlace operandPlace =
                 canonicalPlace(body, resolved->place, bindingLoans, active);
             if (operandPlace.throughLoan == parent)
+              return true;
+            if (sharedPublishedChild(operandPlace.throughLoan))
               return true;
             // A reference-field projection of an incoming carrier (including
             // `this`) has a concrete place rather than a Loan operand. Its
@@ -4917,8 +4933,19 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                         place->projections.empty()
                     ? bindingLoans.find(place->binding)
                     : bindingLoans.end();
+            // A fresh carrier moved out of its materialized temporary hands
+            // over that temporary's own Stored group.
+            const auto *movedTemporary =
+                movedCarrier ? body.findPlace(resolved->place) : nullptr;
+            const auto temporaryCarrier =
+                movedTemporary &&
+                        (movedTemporary->root == MirPlaceRootKind::Value ||
+                         movedTemporary->root == MirPlaceRootKind::Temporary)
+                    ? findMirTemporaryCarrierDependency(body, *movedTemporary)
+                    : MirTemporaryCarrierDependency{};
             const bool exactAncestry =
                 inheritedParent(operandPlace.throughLoan) ||
+                (temporaryCarrier && inheritedParent(temporaryCarrier.loan->id)) ||
                 (binding != bindingLoans.end() &&
                  std::count_if(binding->second.begin(), binding->second.end(),
                                [&](MirLoanId id) {
@@ -4972,6 +4999,14 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                     (result.access == AccessMode::Mutable &&
                      group.access != AccessMode::Mutable))
                   return false;
+                // Read-only authority may be shared: the consumed group can
+                // end later in its full expression, as other shared loans of
+                // the referent may overlap the published reference.
+                if (result.access == AccessMode::ReadOnly &&
+                    group.access == AccessMode::ReadOnly) {
+                  selectedAlias = transferred;
+                  return true;
+                }
                 const MirBlock *continuation = &block;
                 auto next = std::find_if(
                     block.instructions.begin(), block.instructions.end(),
@@ -5004,6 +5039,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               // group before any access. Only that consumed alias may overlap
               // the newly published external reference during the handoff.
               if (transfersAtPublication(operandPlace.throughLoan) ||
+                  (temporaryCarrier &&
+                   transfersAtPublication(temporaryCarrier.loan->id)) ||
                   (binding != bindingLoans.end() &&
                    std::any_of(binding->second.begin(), binding->second.end(),
                                transfersAtPublication)))

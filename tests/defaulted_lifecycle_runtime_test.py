@@ -51,7 +51,7 @@ def validate_emission(generated: str, mode: str) -> bool:
     # native '= default'. Trivial copy/move/destruction stay structural.
     for name in ("StructuralValue", "StructuralPair", "StructuralBase", "StructuralDerived"):
         constructor = re.compile(
-            rf"^  {name}::{name}\([^\n]*\n"
+            rf"^  (?:__gti_small_source_inline )?{name}::{name}\([^\n]*\n"
             r"    // GTI verified-MIR body: scalar-cfg-(?:constructor-failure-)?v1 constructor-instance \d+",
             re.MULTILINE,
         )
