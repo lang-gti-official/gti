@@ -2330,6 +2330,21 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
           sourceType = SemanticType(sourceType.arguments.front());
         }
       }
+      // Global or static storage outlives every caller: the result depends
+      // on that exact static place, as a legacy Global origin does.
+      if (normalized.origin == BorrowOriginKind::None)
+        if (const auto *global =
+                semanticModel.database().findSymbol(dependency.place.root);
+            global != nullptr &&
+            (global->kind == SymbolKind::GlobalVariable ||
+             (global->kind == SymbolKind::Field && global->staticMember))) {
+          normalized.origin = BorrowOriginKind::Global;
+          normalized.globalRoot = dependency.place.root;
+          sourceType = global->type;
+          physicalCallerStorage = true;
+          sourceAccess = global->mutableBinding ? AccessMode::Mutable
+                                                : AccessMode::ReadOnly;
+        }
       if (normalized.origin == BorrowOriginKind::None)
         return std::nullopt;
     }
@@ -2494,6 +2509,25 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
   };
   for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
     const auto &mapping = summary.dependencies[index];
+    if (mapping.origin == BorrowOriginKind::Global) {
+      // Static storage needs no caller input: every caller's result depends
+      // on that exact place.
+      if (mapping.globalRoot == 0)
+        continue;
+      SemanticLoanDependency dependency{
+          .place = {.domain = {.snapshot = semanticModel.placeSnapshot()},
+                    .root = mapping.globalRoot},
+          .designatedFields = mapping.resultFields,
+          .access = mapping.access,
+          .protectsStorage = true,
+          .conditions = mapping.resultConditions};
+      for (const auto field : mapping.sourceFields)
+        dependency.place.projections.push_back(
+            {.kind = PlaceProjectionKind::Field, .field = field});
+      supplying[index].push_back(std::move(dependency));
+      availability[index] = Availability::Available;
+      continue;
+    }
     const ExprPtr *argument = nullptr;
     SemanticType formal = SemanticType::Unknown;
     bool physical = false;
@@ -2952,6 +2986,28 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
   if (updated.returnType.kind == SemanticType::Class ||
       (updated.returnType.kind == SemanticType::Reference && updated.ownerClass))
     updated.returnBorrowFields = summary.dependencies;
+  // A result that depends only on one static place has no caller input to
+  // summarize; its declaration borrows that exact global place.
+  if (updated.returnBorrowOrigin == BorrowOriginKind::None &&
+      !summary.dependencies.empty() &&
+      std::all_of(summary.dependencies.begin(), summary.dependencies.end(),
+                  [&](const BorrowedFieldOrigin &mapping) {
+                    return mapping.origin == BorrowOriginKind::Global &&
+                           mapping.globalRoot ==
+                               summary.dependencies.front().globalRoot &&
+                           mapping.sourceFields ==
+                               summary.dependencies.front().sourceFields;
+                  })) {
+    const auto &global = summary.dependencies.front();
+    BorrowOriginPlace place{.root = global.globalRoot};
+    for (const auto field : global.sourceFields)
+      place.projections.push_back(
+          {.kind = PlaceProjectionKind::Field, .field = field});
+    updated.returnBorrowOrigin = BorrowOriginKind::Global;
+    updated.returnBorrowParameter = 0;
+    updated.returnBorrowAccess = global.access;
+    updated.returnBorrowPlace = std::move(place);
+  }
   updated.completeReturnBorrow = std::move(summary);
   semanticModel.record(*updated.declaration, std::move(updated));
 }
@@ -7636,8 +7692,17 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   // Reference bindings are published by the checked Reference/reborrow path
   // below. Aggregate field designations describe a value's stored layout;
   // they cannot be copied onto a reference loan to the external referent.
+  // Moving a named carrier transfers its exact group; the checked path below
+  // continues the source's loan in the destination rather than publishing a
+  // second group whose source endpoint would retire the shared storage.
+  const auto movedCarrier = expression ? retainedLoanSource(expression)
+                                       : std::optional<RetainedLoanSource>{};
+  const bool namedCarrierTransfer =
+      movedCarrier && movedCarrier->transfer &&
+      movedCarrier->carrier != nullptr && movedCarrier->loan != 0 &&
+      loanFlow.records.contains(movedCarrier->loan);
   if (expression && carrier->type.kind != SemanticType::Reference &&
-      !isFallibleBorrowType(carrier->type)) {
+      !isFallibleBorrowType(carrier->type) && !namedCarrierTransfer) {
     const auto *contextual =
         semanticModel.findContextualConstruction(*expression);
     const auto *complete =

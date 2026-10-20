@@ -3388,6 +3388,14 @@ private:
           if (place.root != MirPlaceRootKind::Value &&
               place.root != MirPlaceRootKind::Temporary)
             consider(place.id, place.access);
+      // A complete dependency on global or static storage names that exact
+      // program storage, which this body need not have mentioned itself.
+      if (selected == 0 && !dependency.place.receiver)
+        if (const MirPlaceId global = globalStoragePlace(
+                {.root = dependency.place.root,
+                 .projections = dependency.place.projections},
+                dependency.place.domain))
+          consider(global, output.places[global - 1].access);
     }
     if (selected == 0 || ambiguous)
       return std::nullopt;
@@ -3427,6 +3435,11 @@ private:
       for (const auto &dependency : source->borrowDependencies->dependencies) {
         const auto lowered = lowerCompleteBorrowDependency(dependency);
         if (!lowered) {
+          // A borrowing call's result is appended before its inputs name
+          // their places; its loan publication attaches this same set.
+          if ((source->functionTarget || source->constructorTarget) &&
+              source->borrowOrigin != BorrowOriginKind::None)
+            return id;
           valid = false;
           return id;
         }
@@ -3771,11 +3784,61 @@ private:
     return place;
   }
 
+  // The exact storage place of a global or static symbol along a field path,
+  // typed by that storage itself rather than by a value borrowing it.
+  [[nodiscard]] MirPlaceId globalStoragePlace(const BorrowOriginPlace &origin,
+                                              const PlaceDomain &domain) {
+    const auto &steps = program.programInitializationPlan().steps;
+    const auto step =
+        std::find_if(steps.begin(), steps.end(), [&](const auto &candidate) {
+          return candidate.symbol == origin.root;
+        });
+    if (!origin.valid() || step == steps.end())
+      return 0;
+    const auto &bindings = program.module().bindings;
+    const auto global =
+        std::find_if(bindings.begin(), bindings.end(),
+                     [&](const HirBinding &binding) {
+                       return binding.id == step->binding;
+                     });
+    std::vector<SymbolId> fields;
+    for (const auto &projection : origin.projections) {
+      if (projection.kind != PlaceProjectionKind::Field)
+        return 0;
+      fields.push_back(projection.field);
+    }
+    if (global == bindings.end())
+      return 0;
+    const PlaceKey key{.domain = domain, .root = origin.root};
+    MirPlaceId root = 0;
+    for (const auto &place : output.places)
+      if (place.root == MirPlaceRootKind::Symbol &&
+          place.symbol == origin.root && place.projections.empty() &&
+          place.type == global->info.type && place.key == key)
+        root = place.id;
+    if (root == 0)
+      root = appendPlace({.root = MirPlaceRootKind::Symbol,
+                          .symbol = origin.root,
+                          .type = global->info.type,
+                          .access = global->info.access,
+                          .traits = resolvedTraits(global->info.type),
+                          .key = key});
+    return fields.empty() ? root : projectBorrowFields(root, fields);
+  }
+
   [[nodiscard]] MirPlaceId placeForBorrowOrigin(const BorrowOriginPlace &origin,
                                                 const HirValue &value) {
     if (!origin.valid()) {
       return 0;
     }
+    // A carrier whose complete contract names global storage borrows that
+    // storage's own typed place, not a place typed as the carrier.
+    if ((value.info.type.kind == SemanticType::Class ||
+         value.info.type.kind == SemanticType::Enum) &&
+        value.info.traits.containsBorrowedState && value.borrowDependencies)
+      if (const MirPlaceId global =
+              globalStoragePlace(origin, output.placeDomain))
+        return global;
     const std::optional<SemanticType> fallibleReferent =
         mirFallibleBorrowReferent(value.info.type);
     const SemanticType originType =
@@ -14088,11 +14151,21 @@ private:
               const bool restoredAliases =
                   function->restoresReferenceResult &&
                   mir_detail::restoredReferenceReturnWitness(output, candidate);
-              // This builder has an unfinished CFG. Preserve the checked
-              // caller-witness contract now; independent verification proves
-              // unique alias initialization and dominance on the final CFG.
+              // A call result's carriers may be local reference aliases of
+              // its exact address. This builder has an unfinished CFG;
+              // independent verification proves unique alias initialization
+              // and dominance on the final CFG.
+              const bool referenceAliases =
+                  std::all_of(candidate.carriers.begin(),
+                              candidate.carriers.end(), [&](HirBindingId id) {
+                                const auto *alias = findBinding(id);
+                                return alias != nullptr &&
+                                       alias->info.type.kind ==
+                                           SemanticType::Reference;
+                              });
               if (candidate.kind != MirLoanKind::CallResult ||
-                  (!candidate.carriers.empty() && !restoredAliases) ||
+                  (!candidate.carriers.empty() && !restoredAliases &&
+                   !referenceAliases) ||
                   candidate.escapes || !loanIsActive(scopes, transient)) {
                 break;
               }
@@ -14145,6 +14218,20 @@ private:
                     transferredEntry = id;
                 }
             }
+            // A local carrier's group relays the summarized entry's caller
+            // authority to the referent its stored reference designates. The
+            // group and then the entry end on the ordinary scope-exit
+            // schedule, after the independent Return capability publishes.
+            bool relayedEntry = false;
+            if (const auto *relay = output.findLoan(transient);
+                relay != nullptr && !transientChain.empty() &&
+                relay->kind == MirLoanKind::Stored && !relay->entry &&
+                !relay->escapes && relay->parent != 0 &&
+                relay->parent == mappedEntry &&
+                loanIsActive(scopes, relay->id)) {
+              transient = relay->parent;
+              relayedEntry = true;
+            }
             const bool validTail =
                 function->returnBorrowOrigin == BorrowOriginKind::Receiver ||
                         function->returnBorrowOrigin == BorrowOriginKind::Global
@@ -14195,7 +14282,7 @@ private:
                        .loan = ended});
                   removeLoanFromState(ended, scopes, bindingLoans);
                 }
-                if (summarizedEntry != 0 &&
+                if (summarizedEntry != 0 && !relayedEntry &&
                     output.loans[normalized - 1].storedDependency !=
                         summarizedEntry &&
                     !temporaryCarrierLoans().contains(summarizedEntry)) {

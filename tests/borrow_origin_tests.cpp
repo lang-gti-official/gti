@@ -304,7 +304,12 @@ void checkReferents() {
                 "representation admission rejects forged borrow publication");
           }
         }
-    if (std::string(relative) != "fixtures/fallible_borrow.gti")
+    // A reference selected through an accessor call relays that call's loan
+    // without an address operand; only a direct local publication has an
+    // address to forge. The runtime test checks these referents.
+    const std::string_view name = relative;
+    if (name != "fixtures/fallible_borrow.gti" &&
+        !name.starts_with("coverage/reproducers/a25-"))
       expect(checked != 0,
              "fixture exercises exact local reference publication");
   }

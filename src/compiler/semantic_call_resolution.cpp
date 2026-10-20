@@ -7383,6 +7383,24 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     if (instantiated) {
       if (contractFields)
         resolved.borrowFields = complete->dependencies;
+      // A result whose contract names only static storage has no caller
+      // input to borrow from: it borrows that exact global place.
+      if (resolved.borrowOrigin == BorrowOriginKind::None)
+        if (const auto global = std::find_if(
+                complete->dependencies.begin(), complete->dependencies.end(),
+                [](const BorrowedFieldOrigin &mapping) {
+                  return mapping.origin == BorrowOriginKind::Global &&
+                         mapping.globalRoot != 0;
+                });
+            global != complete->dependencies.end()) {
+          BorrowOriginPlace place{.root = global->globalRoot};
+          for (const auto field : global->sourceFields)
+            place.projections.push_back(
+                {.kind = PlaceProjectionKind::Field, .field = field});
+          resolved.borrowOrigin = BorrowOriginKind::Global;
+          resolved.borrowAccess = global->access;
+          resolved.borrowPlace = std::move(place);
+        }
       semanticModel.record(call, resolved);
       semanticModel.recordBorrowDependencySet(call, *instantiated);
     } else if (noNormalResult &&

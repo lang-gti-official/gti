@@ -9,6 +9,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace {
@@ -18,6 +19,15 @@ void expect(bool condition, const char *message) {
     std::cerr << message << '\n';
     ++failures;
   }
+}
+// Results are ordinary prelude classes: recognize them by their declared
+// identity, never by a compiler-owned type kind.
+bool isPreludeClass(const lang::FrontendResult &result,
+                    const lang::SemanticType &type, std::string_view name) {
+  if (type.kind != lang::SemanticType::Class)
+    return false;
+  const auto *info = result.semantics.findClassType(type.classId);
+  return info && info->qualifiedName == name;
 }
 lang::FrontendResult analyze(const std::string &source,
                              const std::string &trustedMemorySuffix = {}) {
@@ -141,7 +151,7 @@ int main() {
           owner.type.arguments.size() != 1)
         continue;
       const auto &payload = owner.type.arguments.front();
-      if (payload.kind != lang::SemanticType::Expected)
+      if (!isPreludeClass(aggregates, payload, "expected"))
         continue;
       ++expected;
       bool transfer = true, share = true;
@@ -271,10 +281,11 @@ void owner_states<T>() {
         const bool directOwner =
             component.kind == lang::SemanticType::UniqueOwner;
         const bool nestedOwner =
-            component.kind == lang::SemanticType::Expected &&
+            isPreludeClass(transported, component, "expected") &&
             component.arguments.size() == 2 &&
             component.arguments.front().kind == lang::SemanticType::UniqueOwner;
-        const bool error = component.kind == lang::SemanticType::Unexpected;
+        const bool error = isPreludeClass(transported, component,
+                                          "std::detail::unexpected_value");
         if (!directOwner && !nestedOwner && !error)
           continue;
         unexpected += error;

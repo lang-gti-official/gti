@@ -744,6 +744,8 @@ struct BorrowedFieldOrigin {
   std::vector<SymbolId> resultFields;
   BorrowOriginKind origin = BorrowOriginKind::None;
   std::size_t parameter = 0;
+  // A Global origin's static storage root; sourceFields select within it.
+  SymbolId globalRoot = 0;
   std::vector<SymbolId> sourceFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> resultConditions;

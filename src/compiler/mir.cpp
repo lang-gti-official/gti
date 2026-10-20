@@ -13095,8 +13095,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               std::next(current) == block.instructions.end()) {
             return false;
           }
+          // Local reference aliases of the call result name its exact address
+          // and end with the body. Escape authority stays with the Return
+          // loan's own source and summary checks, as for an unaliased result.
           if (!retained->carriers.empty() &&
-              (field || !mir_detail::restoredReferenceReturnAliases(
+              (field || !mir_detail::callResultReferenceAliases(
                             body, *retained, block,
                             static_cast<std::size_t>(
                                 current - block.instructions.begin()))))
