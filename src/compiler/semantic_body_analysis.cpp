@@ -1162,6 +1162,12 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
                "' is not writable here (the field is immutable or the owner "
                "is read-only).",
            "GTI-S2112");
+  } else if (mutableAccess) {
+    // The writable place required above is a mutable use of the owner's
+    // binding for GTI-S2096, even when the access only reads the field.
+    if (const SemanticPlace place = semanticPlace(&alias);
+        place.root != nullptr)
+      recordMutableBindingUse(toolingSymbolFor(*place.root));
   }
   currentType = result;
   // No borrow origin: the call *is* the place its alias denotes, and every
