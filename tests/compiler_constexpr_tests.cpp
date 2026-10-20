@@ -3933,6 +3933,73 @@ int main() { return distance(translate(Point(3, 4), 2)) == 50 ? 0 : 1; }
       "duplicated field identities cannot stand in for complete record state");
 }
 
+// A temporary borrowed inside a conditional arm or a `&&`/`||` operand lives
+// in the hidden slot that carries its conditional drop through the merge.
+// Staged MIR execution publishes the producer's result into that slot for
+// argument and receiver borrows alike, with or without a destructor, so the
+// slot is never read empty and a skipped operand's slot is never touched.
+void testConstexprConditionalTemporaries() {
+  const std::string source = R"(
+struct box {
+  int v;
+  constexpr box(int value) : v(value) {}
+  constexpr int get() { return this.v; }
+};
+struct guard {
+  int v;
+  constexpr guard(int value) : v(value) {}
+  ~guard() {}
+};
+constexpr box make(int v) { return box(v); }
+constexpr guard make_guard(int v) { return guard(v); }
+constexpr int read(box& b) { return b.v; }
+constexpr int held(guard& g) { return g.v; }
+constexpr int sum(bool a, bool b) {
+  mut int total = 0;
+  if (a && read(make(10)) == 10) { total += 1; }
+  if (b && read(box(20)) == 20) { total += 2; }
+  if (!a || read(make(30)) == 30) { total += 4; }
+  total += a ? read(make(100)) : read(box(1000));
+  total += (b && make(7).get() == 7) ? 8 : 0;
+  total += (a || held(make_guard(9)) == 9) ? 16 : 0;
+  return total;
+}
+static_assert(sum(true, true) == 131);
+static_assert(sum(true, false) == 121);
+static_assert(sum(false, true) == 1030);
+static_assert(sum(false, false) == 1020);
+int main() { return sum(true, false) == 121 ? 0 : 1; }
+)";
+  lang::FrontendWorkMetrics metrics;
+  const auto frontend =
+      lang::Frontend({.workMetrics = &metrics})
+          .analyze("constexpr-conditional-temporaries.gti", source);
+  if (!frontend.canGenerateCode() || metrics.constexprMirExecutions != 4) {
+    std::cerr << "Conditional temporary MIR executions: "
+              << metrics.constexprMirExecutions << '\n';
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.primary.line << ": " << diagnostic.message
+                << '\n';
+  }
+  expect(frontend.canGenerateCode() && metrics.constexprMirExecutions == 4,
+         "temporaries borrowed in conditional arms and short-circuit "
+         "operands execute through staged MIR with exact results");
+
+  std::string wrong = source;
+  const std::string expected = "sum(true, false) == 121);";
+  wrong.replace(wrong.find(expected), expected.size(),
+                "sum(true, false) == 120);");
+  lang::FrontendWorkMetrics wrongMetrics;
+  const auto failed = lang::Frontend({.workMetrics = &wrongMetrics})
+                          .analyze("constexpr-conditional-mismatch.gti", wrong);
+  expect(!failed.semanticValid &&
+             hasDiagnosticCode(failed.diagnostics, "GTI-S2079") &&
+             !hasDiagnosticCode(failed.diagnostics, "GTI-S2057") &&
+             wrongMetrics.constexprMirExecutions == 4,
+         "a staged conditional-temporary result is a real value: a wrong "
+         "assertion fails as an assertion, not as an unsupported read");
+}
+
 void testConstexprStringViewInspection() {
   // Exercise the service independently of host char signedness and the lexer.
   std::string bytes;
@@ -5607,6 +5674,8 @@ constexpr NamedTest kTests[] = {
     {"testConstexprStringViewInspection", testConstexprStringViewInspection},
     {"testMirConstantEvaluation", testMirConstantEvaluation},
     {"testMirConstantRecords", testMirConstantRecords},
+    {"testConstexprConditionalTemporaries",
+     testConstexprConditionalTemporaries},
     {"testConstexprLibrary", testConstexprLibrary},
     {"testConstexprOperators", testConstexprOperators},
     {"testDependentConstexprBranches", testDependentConstexprBranches},
