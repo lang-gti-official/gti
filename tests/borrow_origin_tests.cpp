@@ -89,6 +89,144 @@ int main() { return 0; }
          "invalid mixed return fails in semantics, not MIR/backend");
 }
 
+// A view or c_string field holds only an ownerless view, so returning one is
+// a lifetime-independent alternative. Its summary names no owner, and in a
+// summarized relay its exact field load replaces the escaping loan.
+void checkStoredViewReturns() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrow_stored_view_return.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "stored view fields return as ownerless views");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "stored view return MIR verifies");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "stored view returns reach the production backend");
+  const auto missingLoan = [](const lang::MirProgram &program) {
+    const auto result = lang::verifyMirProgram(program);
+    return std::any_of(
+        result.errors.begin(), result.errors.end(), [](const auto &error) {
+          return error.message.find("owner-dependent return is missing its "
+                                    "escaping loan") != std::string::npos;
+        });
+  };
+  std::size_t ownerless = 0;
+  std::size_t alternatives = 0;
+  std::size_t dependent = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.returnType.kind != lang::SemanticType::StringView &&
+        function.returnType.kind != lang::SemanticType::CString)
+      continue;
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+          !block.terminator.value ||
+          block.terminator.value->kind != lang::MirOperandKind::Value)
+        continue;
+      const auto *value =
+          function.body.findValue(block.terminator.value->value);
+      if (!value)
+        continue;
+      if (block.terminator.returnLoan) {
+        ++dependent;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidate : changed->body.blocks)
+          if (candidate.id == block.id)
+            candidate.terminator.returnLoan.reset();
+        for (auto &candidate : changed->body.values)
+          if (candidate.id == value->id)
+            candidate.info.traits.containsBorrowedState = false;
+        expect(missingLoan(malformed),
+               "a stored alternative does not excuse a dependent return");
+        continue;
+      }
+      const lang::MirInstruction *definition = nullptr;
+      for (const auto &candidateBlock : function.body.blocks)
+        for (const auto &candidate : candidateBlock.instructions)
+          if (candidate.id == value->definition)
+            definition = &candidate;
+      const auto *place =
+          definition != nullptr &&
+                  definition->kind == lang::MirInstructionKind::Load &&
+                  definition->operands.size() == 1
+              ? function.body.findPlace(definition->operands.front().place)
+              : nullptr;
+      if (place == nullptr || place->projections.empty())
+        continue;
+      if (function.returnBorrowOrigin == lang::BorrowOriginKind::None) {
+        ++ownerless;
+        continue;
+      }
+      ++alternatives;
+      for (unsigned mutation = 0; mutation < 3; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidate : changed->body.values)
+          if (mutation == 0 && candidate.id == value->id)
+            candidate.info.traits.containsBorrowedState = true;
+        for (auto &candidate : changed->body.places)
+          if (candidate.id == place->id) {
+            if (mutation == 1)
+              candidate.projections.back().kind =
+                  lang::MirProjectionKind::Dereference;
+            if (mutation == 2)
+              candidate.type = lang::SemanticType::Bool;
+          }
+        expect(missingLoan(malformed),
+               "an ownerless alternative requires an exact stored-view load");
+      }
+    }
+  }
+  expect(ownerless >= 9 && alternatives >= 1 && dependent >= 1,
+         "field, element, nested, parameter and generic stored views are "
+         "exercised beside a dependent relay");
+
+  const auto invalid =
+      analyzeWithStandardLibrary("invalid-stored-view-return.gti", R"gti(
+#include <std/string>
+struct Inner { std::string_view name = "inner"; };
+class Holder {
+  std::string_view name = "stored";
+  std::string text{"owned"};
+public:
+  Holder() = default;
+  std::string_view Shadowed() {
+    std::string_view name = this.text.view();
+    return name;
+  }
+};
+std::string_view Expired(bool stored) {
+  Inner inner{};
+  if (stored) { return inner.name; }
+  std::string local{"expired"};
+  return local.view();
+}
+int main() { return 0; }
+)gti");
+  expect(!invalid.semanticValid && !invalid.canGenerateCode(),
+         "a field name or stored alternative does not launder a dependent "
+         "view");
+  expect(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code == "GTI-S2045";
+                       }) >= 2 &&
+             std::none_of(invalid.diagnostics.begin(),
+                          invalid.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "dependent views beside stored ones fail in semantics, not MIR");
+}
+
 void checkReferents() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
   for (const auto &relative :
@@ -642,6 +780,7 @@ void checkNestedReadonlyReferences() {
 int main() {
   checkReferents();
   checkStaticReturnAlternatives();
+  checkStoredViewReturns();
   checkInvalidEscapes();
   checkProjectedParameterOrigins();
   checkDirectProjectedReturnOrigins();
