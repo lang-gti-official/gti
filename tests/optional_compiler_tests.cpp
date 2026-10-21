@@ -583,8 +583,7 @@ int main() { auto text = Text::value("static"); return 0; }
   }
 
   for (const std::string storage :
-       {"Holder value{.text = std::move(view)};",
-        "std::string_view values[1] = {std::move(view)};",
+       {"std::string_view values[1] = {std::move(view)};",
         "mut std::vector<std::string_view> values{}; "
         "values.push_back(std::move(view));"}) {
     const auto moved = lang::Frontend().analyze(
@@ -598,9 +597,25 @@ int main() { auto text = Text::value("static"); return 0; }
     expect(!moved.canGenerateCode() &&
                hasDiagnosticCode(moved.diagnostics, "GTI-S2045") &&
                !hasDiagnosticCode(moved.diagnostics, "GTI-B0001"),
-           "moving owner-dependent text does not erase its loan at a field, "
-           "fixed-array, or dynamic-storage boundary");
+           "moving owner-dependent text does not erase its loan at a "
+           "fixed-array or dynamic-storage boundary");
   }
+  // A local struct value carries the moved view's owner at its field
+  // (L-OWN-02), so the owner stays borrowed while the value is live.
+  const auto movedField = lang::Frontend().analyze(
+      "moved-text-field-loan.gti",
+      "#include <std/string>\n"
+      "struct Holder { std::string_view text; };\n"
+      "int main() { mut std::string owner{\"owned\"}; "
+      "std::string_view view = owner.view(); "
+      "Holder value{.text = std::move(view)}; owner.clear(); "
+      "return int(value.text.size()); }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!movedField.canGenerateCode() &&
+             hasDiagnosticCode(movedField.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(movedField.diagnostics, "GTI-B0001"),
+         "moving owner-dependent text into a local value's field keeps its "
+         "owner loan");
 
   const auto localText = lang::Frontend().analyze(
       "moved-text-local-loan.gti", R"(
