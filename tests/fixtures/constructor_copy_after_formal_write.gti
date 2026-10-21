@@ -1,0 +1,331 @@
+// A constructor copies a formal into a field after an earlier initializer
+// wrote that formal: through a mutable-reference argument, a compound
+// assignment, an increment, a plain assignment, a closure capturing it by
+// mutable reference, a field constructor writing through its reference
+// parameter, or a mutating method, field borrow or field assignment of a
+// class formal. The copy must see the written value. The native
+// member-initializer list runs before all of that work, so these copies stay
+// in body order; each of them used to store the formal's entry value.
+// A copy made before the write, and the copy of a formal nothing writes,
+// still publish natively.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+int32_t bump(mut int32_t& value) {
+  value = value + 1;
+  return value;
+}
+
+int32_t set_seven(mut int32_t& value) {
+  value = 7;
+  return 1;
+}
+
+int32_t run<F>(mut F f) { return f(); }
+
+// A call that can fail writes the formal before the copy.
+class Bumped {
+public:
+  int32_t first;
+  int32_t second;
+  Bumped(mut int32_t seed) : first(bump(seed)), second(seed) {}
+};
+
+// A failure-free call, a compound assignment, an increment and a closure
+// capturing the formal by mutable reference each write it first.
+class Written {
+public:
+  int32_t set;
+  int32_t after_set;
+  int32_t added;
+  int32_t after_add;
+  int32_t incremented;
+  int32_t after_increment;
+  int32_t captured;
+  int32_t after_capture;
+  Written(mut int32_t a, mut int32_t b, mut int32_t c, mut int32_t d)
+      : set(set_seven(a)), after_set(a), added(b += 5), after_add(b),
+        incremented(++c), after_increment(c),
+        captured(run([mut &d]() -> int32_t {
+          d += 1;
+          return d;
+        })),
+        after_capture(d) {}
+};
+
+// A plain assignment cannot fail, so the ordinary constructor form keeps the
+// copy after it.
+class Assigned {
+public:
+  int32_t first;
+  int32_t second;
+  Assigned(mut int32_t seed) : first(seed = 5), second(seed) {}
+};
+
+// Moving the formal after the assignment is failure-free as well, and the
+// ordinary form moves it in body order after the write.
+class MovedAfterAssign {
+public:
+  int32_t first;
+  int32_t second;
+  MovedAfterAssign(mut int32_t seed)
+      : first(seed = 5), second(std::move(seed)) {}
+};
+
+// A field's constructor writes the formal through its reference parameter.
+class Writer {
+public:
+  int32_t value;
+  Writer(mut int32_t& target) : value(bump(target)) {}
+};
+
+class Built {
+public:
+  Writer writer;
+  int32_t copy;
+  Built(mut int32_t seed) : writer(Writer(seed)), copy(seed) {}
+};
+
+enum class Shade { light, dark };
+
+int32_t darken(mut Shade& shade) {
+  shade = Shade::dark;
+  return 1;
+}
+
+int32_t retarget(mut const int32_t*& target, const int32_t* other) {
+  target = other;
+  return 1;
+}
+
+// A plain enum and a raw pointer are changed through references first.
+class Kinds {
+public:
+  int32_t darkened;
+  Shade shade;
+  int32_t retargeted;
+  const int32_t* target = nullptr;
+  Kinds(mut Shade shade, mut const int32_t* target, const int32_t* other)
+      : darkened(darken(shade)), shade(shade),
+        retargeted(retarget(target, other)), target(target) {}
+};
+
+struct Point {
+  mut int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t advance() mut {
+    this.x = this.x + 1;
+    return this.x;
+  }
+};
+
+int32_t shift(mut Point& point) {
+  point.x = point.x + 10;
+  return point.x;
+}
+
+// A generated-copy struct formal is written by a call, a mutating method, a
+// field borrow and a field assignment before each copy. The field starts
+// from its empty state and receives the copy in body order.
+class Tracked {
+public:
+  int32_t shifted;
+  Point by_call;
+  int32_t advanced;
+  Point by_method;
+  int32_t bumped;
+  Point by_field;
+  int32_t assigned;
+  Point by_assignment;
+  Tracked(mut Point a, mut Point b, mut Point c, mut Point d)
+      : shifted(shift(a)), by_call(a), advanced(b.advance()), by_method(b),
+        bumped(bump(c.x)), by_field(c), assigned(d.x = 40), by_assignment(d) {}
+};
+
+// A fixed array element and a generic owner's formal are written first too.
+class Counts {
+public:
+  int32_t first;
+  int32_t[2] counts;
+  Counts(mut int32_t[2] counts) : first(bump(counts[0])), counts(counts) {}
+};
+
+int32_t replace<T>(mut T& value, T replacement) {
+  value = replacement;
+  return 1;
+}
+
+class Shelf<T> {
+public:
+  int32_t replaced;
+  T value;
+  Shelf(mut T value, T replacement)
+      : replaced(replace(value, replacement)), value(value) {}
+};
+
+// A copy made before the write and the copy of a formal nothing writes keep
+// their native publication; only the copy after the write waits for it.
+class Mixed {
+public:
+  int32_t before;
+  int32_t bumped;
+  int32_t untouched;
+  int32_t after;
+  Mixed(mut int32_t seed, int32_t other)
+      : before(seed), bumped(bump(seed)), untouched(other), after(seed) {}
+};
+
+// A write on one branch precedes the copy on that path only.
+class Branched {
+public:
+  int32_t first;
+  int32_t second;
+  Branched(mut int32_t seed, bool write)
+      : first(write ? bump(seed) : 0), second(seed) {}
+};
+
+// A copied class formal beside a moved owning formal, and a copy from a
+// reference formal, publish in body order as well.
+class Labeled {
+public:
+  int32_t shifted;
+  Point point;
+  std::string name;
+  Labeled(mut Point point, std::string name)
+      : shifted(shift(point)), point(point), name(std::move(name)) {}
+};
+
+class Referenced {
+public:
+  Point point;
+  Referenced(Point& point) : point(point) {}
+};
+
+// Constructed fields and base initializers read formals natively too. A field
+// built from the formal after the write, a write inside the constructed
+// field's own arguments, and a base whose computed argument writes the formal
+// before a field copy all see the written value.
+class Inner {
+public:
+  int32_t a;
+  int32_t b;
+  Inner(int32_t a, int32_t b) : a(a), b(b) {}
+};
+
+class Outer {
+public:
+  int32_t first;
+  Inner inner;
+  Outer(mut int32_t seed) : first(bump(seed)), inner(Inner(seed, seed)) {}
+};
+
+class Nested {
+public:
+  Inner inner;
+  Nested(mut int32_t seed) : inner(Inner(seed += 5, seed)) {}
+};
+
+class Base {
+public:
+  int32_t a;
+  int32_t b;
+  Base(int32_t a, int32_t b) : a(a), b(b) {}
+};
+
+class Derived : public Base {
+public:
+  int32_t copy;
+  Derived(mut int32_t seed) : Base(seed += 5, seed), copy(seed) {}
+};
+
+// Work after the body-ordered copies can still fail.
+class Divided {
+public:
+  int32_t first;
+  int32_t second;
+  int32_t shifted;
+  Point point;
+  int32_t quotient;
+  Divided(mut int32_t seed, mut Point point)
+      : first(bump(seed)), second(seed), shifted(shift(point)), point(point),
+        quotient(60 / divisor_for(1)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Bumped bumped = Bumped(1);
+  std::println(bumped.first * 10 + bumped.second);
+
+  Written written = Written(1, 1, 1, 1);
+  std::println(written.set * 10 + written.after_set);
+  std::println(written.added * 10 + written.after_add);
+  std::println(written.incremented * 10 + written.after_increment);
+  std::println(written.captured * 10 + written.after_capture);
+
+  Assigned assigned = Assigned(1);
+  std::println(assigned.first * 10 + assigned.second);
+  MovedAfterAssign moved_after = MovedAfterAssign(1);
+  std::println(moved_after.first * 10 + moved_after.second);
+
+  Built built = Built(1);
+  std::println(built.writer.value * 10 + built.copy);
+
+  int32_t left = 1;
+  int32_t right = 2;
+  Kinds kinds = Kinds(Shade::light, &left, &right);
+  std::println(kinds.darkened * 1000 + (kinds.shade == Shade::dark ? 100 : 0) +
+               kinds.retargeted * 10 + (kinds.target == &right ? 1 : 0));
+
+  Tracked tracked =
+      Tracked(Point(1, 2), Point(1, 2), Point(1, 2), Point(1, 2));
+  std::println(tracked.shifted * 10 + tracked.by_call.x);
+  std::println(tracked.advanced * 10 + tracked.by_method.x);
+  std::println(tracked.bumped * 10 + tracked.by_field.x);
+  std::println(tracked.assigned * 10 + tracked.by_assignment.x);
+  std::println(tracked.by_call.y + tracked.by_method.y + tracked.by_field.y +
+               tracked.by_assignment.y);
+
+  int32_t[2] initial = {1, 3};
+  Counts counts = Counts(initial);
+  std::println(counts.first * 100 + counts.counts[0] * 10 + counts.counts[1]);
+
+  Shelf<Point> points = Shelf<Point>(Point(1, 2), Point(4, 5));
+  std::println(points.replaced * 100 + points.value.x * 10 + points.value.y);
+  Shelf<int32_t> numbers = Shelf<int32_t>(2, 9);
+  std::println(numbers.replaced * 10 + numbers.value);
+
+  Mixed mixed = Mixed(1, 5);
+  std::println(mixed.before * 1000 + mixed.bumped * 100 + mixed.untouched * 10 +
+               mixed.after);
+
+  Branched written_branch = Branched(1, true);
+  Branched kept_branch = Branched(1, false);
+  std::println(written_branch.first * 10 + written_branch.second);
+  std::println(kept_branch.first * 10 + kept_branch.second);
+
+  Labeled labeled = Labeled(Point(1, 2), std::string("label"));
+  std::println(labeled.shifted * 10 + labeled.point.x);
+  std::println(labeled.name);
+
+  Point anchor = Point(3, 7);
+  Referenced referenced = Referenced(anchor);
+  std::println(referenced.point.x * 10 + referenced.point.y);
+
+  Outer outer = Outer(1);
+  std::println(outer.first * 100 + outer.inner.a * 10 + outer.inner.b);
+  Nested nested = Nested(1);
+  std::println(nested.inner.a * 10 + nested.inner.b);
+  Derived derived = Derived(1);
+  std::println(derived.a * 100 + derived.b * 10 + derived.copy);
+
+  Divided divided = Divided(1, Point(1, 2));
+  std::println(divided.first * 1000 + divided.second * 100 + divided.shifted +
+               divided.point.x + divided.quotient);
+  return 0;
+}
