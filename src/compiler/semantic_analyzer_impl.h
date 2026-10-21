@@ -2027,6 +2027,21 @@ private:
   // code outside the creating body reads the field as ownerless text.
   [[nodiscard]] bool textPublicationOwner(const SemanticType &type) const;
 
+  // Whether a construction through `constructor` (null for a designated
+  // list) keeps a published text field from every other reader. Its body
+  // must be empty, and no other initializer or field default may read the
+  // object under construction; such code would read the field as ownerless
+  // text.
+  [[nodiscard]] bool
+  constructionKeepsPublishedText(const SemanticType &type,
+                                 const ConstructorDecl *constructor) const;
+  // Whether `expression` may read the object under construction: `this`, or
+  // a name that is not one of `formals` and names a non-static member.
+  // Expression forms this does not inspect count as reads.
+  [[nodiscard]] bool
+  readsConstructedObject(const Expr &expression, const ClassInfo &owner,
+                         const std::vector<Parameter> *formals) const;
+
   // Whether `field` names a direct text field of the class `type`.
   [[nodiscard]] bool directTextField(const SemanticType &type,
                                      SymbolId field) const;

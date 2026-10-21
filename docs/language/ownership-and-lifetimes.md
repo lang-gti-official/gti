@@ -2358,9 +2358,11 @@ receiver, returned, captured, bound by a reference, assigned into existing
 storage, or stored in a global, a field, an array or a container. Each of these
 is `GTI-S2045`. Code outside the creating body reads text fields as ownerless,
 so a dependent value must not reach it. For the same reason a class with a
-destructor, a base or virtual methods keeps the ownerless field rule. A value
-holds dynamic text from at most one owner, and that owner must be a named
-place: a view of a temporary owner is rejected as before.
+destructor, a base or virtual methods keeps the ownerless field rule. So does
+a constructor with a non-empty body, which could read the published field
+back through `this` as ownerless text. A value holds dynamic text from at most
+one owner, and that owner must be a named place: a view of a temporary owner
+is rejected as before.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
