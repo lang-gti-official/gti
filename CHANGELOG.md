@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.452.1 — Class assertions with reflected constants
+## 0.453.2 — Class assertions with reflected constants
 
 - Fix a compiler crash (bus error, exit 138) when a generic class's
   `static_assert` calls a constexpr function or uses reflection, as in
@@ -32,6 +32,40 @@ for what minor and patch releases mean.
   global initializer calls it.
 - A dependent class assertion may call a constexpr function declared after
   the class, as an assertion in a generic function already could.
+
+## 0.453.1 — Constructors that move a plain value after other initializers
+
+- Fix the internal compiler error `GTI-B0001` ("backend failed while
+  generating a representation") when a constructor moves a parameter of a
+  plain value type into a field after another member initializer, as in
+  `shelf(int32_t tag) : v(std::vector<int32_t>()), tag(std::move(tag)) {}`.
+  The earlier initializer could build a field that can fail, compute a value
+  such as `odd(tag % 2 == 1)`, or call a function. Integers, `bool`, floats,
+  `char`, enums (including enums whose payloads are plain values), raw
+  pointers and fixed arrays of these were all affected, as were generic
+  classes such as `shelf<T>` with `T = int32_t`. Copying the parameter
+  (`tag(tag)`) already worked.
+- Moving a `std::string_view`, a lambda or a function name into a field after
+  one of these initializers is still rejected with `GTI-B0001`. Copying the
+  view works.
+
+## 0.453.0 — Clearer `expected` diagnostics
+
+- Repeated errors report once. A library instance that failed at several
+  internal sites for one call used to print the same error for each site; it
+  now prints one error, with each site as a note. Mapping an `expected`
+  through a callable class is an example. A check that ran twice over the
+  same code also reports once. Errors from different concrete instances stay
+  separate.
+- A concept can now state what satisfies it, as in
+  `[[unsatisfied("A gauge reports one reading.")]] concept gauge<T> { ... };`.
+  Each unsatisfied requirement on the concept shows the text as its first
+  `help:` line. For a concept with a body, the text replaces the generic hint
+  about `for concept` blocks. The prelude uses it, so an `and_then` mapper
+  that returns a different error type now gets "An 'and_then' mapper must
+  return an 'expected' with the same error type as the result it maps."
+- `unexpected(error)` now returns the public `std::unexpected_value<E>`, so
+  diagnostics name that type instead of `std::detail::unexpected_value<E>`.
 
 ## 0.452.0 — Checked references to raw pointers
 

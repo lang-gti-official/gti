@@ -351,3 +351,4 @@ extern "C" {
 expected<int, int> source_result_highlight() {
   return unexpected(7);
 }
+[[unsatisfied("A gauge reads.")]] concept explained_highlight<T> = std::integral<T>;

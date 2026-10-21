@@ -302,6 +302,10 @@
       "suite": "text"
     },
     {
+      "name": "testMovedPassiveFieldAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },

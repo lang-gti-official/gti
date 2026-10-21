@@ -278,3 +278,54 @@ for <T> concept adds_to<Tally<T>, Tally<T>> {
             (initializer_expression
               (primary_expression
                 (identifier)))))))))
+
+================================================================================
+Concept explanations
+================================================================================
+
+[[unsatisfied("A readable type has 'int read()'.")]]
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+
+[[unsatisfied("A gauge reports one reading.")]]
+concept gauge<T> {
+  int read(T& item);
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (concept_declaration
+    (concept_attribute
+      (identifier)
+      (string_literal))
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (identifier)
+        (identifier)
+        (type
+          (primitive_type)))))
+  (concept_declaration
+    (concept_attribute
+      (identifier)
+      (string_literal))
+    (identifier)
+    (identifier)
+    (concept_body
+      (function_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))))))
