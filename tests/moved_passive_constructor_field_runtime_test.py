@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     # What main prints after each group of constructions, in order.
     printed = ["74\n1\n7\n", "1\n69\n", "71\n", "74\n17\n", "107\n1\n", "85\n6\n",
-               "22\n"]
+               "22\n", "66\n", "168\n3\nclose ledger\n"]
 
     def through(count):
         return "".join(printed[:count])
@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     ledger = failure("id(id + 60 / divisor)")
     main(names=(name,), cases={name: [
-        ((), (0, through(7) + closed(7), "")),
+        ((), (0, through(9) + closed(8), "")),
         # Stocked's ledger fails before the move into its sibling field.
         (("1",), (70, "", ledger)),
         # A sibling fails after the move; Measured's built ledger rolls back.
@@ -42,4 +42,11 @@ if __name__ == "__main__":
         # Headed's ledger fails after the scalar moved first, before the
         # owning move.
         (("1", "2", "3", "4", "5", "6"), (70, through(5) + closed(6), ledger)),
+        # Viewed's ledger fails before its view and C string moves.
+        (("1", "2", "3", "4", "5", "6", "7"),
+         (70, through(8) + closed(8), ledger)),
+        # Viewed's body fails after the moves; its built ledger rolls back.
+        (("1", "2", "3", "4", "5", "6", "7", "8"),
+         (70, through(8) + closed(9),
+          failure("this.quotient = 60 / divisor_for(8)"))),
     ]})
