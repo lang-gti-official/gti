@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     # Every copy sees the written formal: 22 is first = 2, copy = 2.
     printed = ("22\n17\n66\n22\n22\n55\n22\n1111\n121\n22\n22\n440\n8\n223\n"
-               "145\n19\n1252\n22\n1\n121\nlabel\n37\n")
+               "145\n19\n1252\n22\n1\n121\nlabel\n37\n222\n66\n666\n")
     main(names=(name,), cases={name: [
         ((), (0, printed + "2282\n", "")),
         # The quotient fails after both body-ordered copies in Divided.
