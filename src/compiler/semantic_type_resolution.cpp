@@ -2419,13 +2419,18 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       // dependency, as a reference field carries its referent's (L-OWN-02).
       // A class whose fields other code reads keeps the ownerless rule.
       bool restrictedOwner = false;
+      bool readingConstructor = false;
       if (!potentialPackView && !contextualConstruction &&
           index < arguments.size()) {
         auto dependencies = textFieldInitializerDependencies(
             constructedType, *initializer, *argument);
         restrictedOwner =
             !dependencies.empty() && !textPublicationOwner(constructedType);
-        if (restrictedOwner)
+        readingConstructor =
+            !dependencies.empty() && !restrictedOwner &&
+            !constructionKeepsPublishedText(constructedType,
+                                            selected.constructor->declaration);
+        if (restrictedOwner || readingConstructor)
           dependencies.clear();
         if (!dependencies.empty() && !textOrigins.empty()) {
           // Phase 1 of L-OWN-02 publishes one owner per value.
@@ -2456,6 +2461,11 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             "A class with a destructor, a base class or virtual methods keeps "
             "its text fields ownerless, because that code reads them outside "
             "the body that created the value.");
+      if (readingConstructor)
+        diagnostics.back().hints.emplace_back(
+            "This constructor's body or another of its initializers reads the "
+            "object, so it keeps its text fields ownerless; a constructor with "
+            "an empty body can store the view of a local owner.");
       diagnostics.back().hints.emplace_back(
           "Pass a literal-backed value, store owned text instead, or use a "
           "checked reference field to retain the view and its owner.");

@@ -23,6 +23,9 @@ struct TextBody {
   const MirBody &body;
   std::span<const SemanticType> types;
   std::span<const HirBindingId> bindings;
+  // A constructor's text fields that a construction may publish, each mapped
+  // to the formal that initializes it (L-OWN-02).
+  const std::map<SymbolId, std::size_t> *publishedFields = nullptr;
 };
 
 class TextContracts {
@@ -38,9 +41,9 @@ public:
     std::set<std::size_t> requirements;
     std::map<std::size_t, SymbolId> fields;
   };
-  InitializerTextInputs
-  initializerTextInputs(const MirConstructorInstance &constructor,
-                        bool diagnose);
+  InitializerTextInputs initializerTextInputs(
+      const MirConstructorInstance &constructor, bool diagnose,
+      const std::map<SymbolId, std::size_t> *published = nullptr);
 
 private:
   const MirProgram &program;
@@ -50,6 +53,9 @@ private:
   // Per constructor: the formals that initialize exactly one direct text
   // field and reach no other text initializer, keyed to that field.
   std::vector<std::map<std::size_t, SymbolId>> constructorTextFields;
+  // Per constructor: each publishable text field and the formal that
+  // initializes it, before excluding fields read back through `this`.
+  std::vector<std::map<SymbolId, std::size_t>> constructorPublishedFields;
   // Formals whose text a construction published under its result's loan; the
   // constructor body must not also store them as ownerless text.
   std::set<std::pair<std::size_t, std::size_t>> publishedFormals;
@@ -90,6 +96,16 @@ private:
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
         return {};
+      // A published field read back through `this` inside its constructor
+      // holds that formal's text, not ownerless text.
+      if (context.publishedFields && place->root == MirPlaceRootKind::This &&
+          place->projections.size() == 1 &&
+          place->projections.front().kind == MirProjectionKind::Field) {
+        const auto published =
+            context.publishedFields->find(place->projections.front().field);
+        if (published != context.publishedFields->end())
+          return {.known = true, .parameters = {published->second}};
+      }
       if (isOwnerlessTextFieldProjection(program, context.body, *place))
         return {.known = true};
       // Static storage of text holds only ownerless text: semantics admits
@@ -431,10 +447,10 @@ private:
 };
 
 auto TextContracts::initializerTextInputs(
-    const MirConstructorInstance &constructor, bool diagnose)
-    -> InitializerTextInputs {
+    const MirConstructorInstance &constructor, bool diagnose,
+    const std::map<SymbolId, std::size_t> *published) -> InitializerTextInputs {
   const TextBody context{constructor.body, constructor.parameterTypes,
-                         constructor.parameterBindings};
+                         constructor.parameterBindings, published};
   InitializerTextInputs inputs;
   std::map<std::size_t, std::size_t> uses;
   for (const auto &initializer : constructor.initializers) {
@@ -475,8 +491,16 @@ MirVerificationResult TextContracts::verify() {
   requirements.resize(program.functionInstances().size());
   constructorRequirements.resize(program.constructorInstances().size());
   constructorTextFields.resize(program.constructorInstances().size());
+  constructorPublishedFields.resize(program.constructorInstances().size());
   for (const auto &constructor : program.constructorInstances()) {
     auto inputs = initializerTextInputs(constructor, true);
+    auto &published = constructorPublishedFields[constructor.id - 1];
+    for (const auto &[formal, field] : inputs.fields)
+      published.emplace(field, formal);
+    // Another initializer reading a published field through `this` stores
+    // that formal's text too, so the field is no longer exclusive.
+    if (!published.empty())
+      inputs = initializerTextInputs(constructor, false, &published);
     constructorRequirements[constructor.id - 1] =
         std::move(inputs.requirements);
     constructorTextFields[constructor.id - 1] = std::move(inputs.fields);
@@ -537,7 +561,8 @@ MirVerificationResult TextContracts::verify() {
   std::vector<std::set<std::size_t>> constructorBodyNeeds;
   for (const auto &constructor : program.constructorInstances()) {
     const TextBody context{constructor.body, constructor.parameterTypes,
-                           constructor.parameterBindings};
+                           constructor.parameterBindings,
+                           &constructorPublishedFields[constructor.id - 1]};
     const auto needed = scan(context, constructor.id, true);
     if (!std::includes(constructorRequirements[constructor.id - 1].begin(),
                        constructorRequirements[constructor.id - 1].end(),
