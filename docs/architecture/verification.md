@@ -12,6 +12,9 @@
 - `testConfinement` rejects relays into functions that store, forward, or
   return the field.
 - `view_fields_runtime` runs the relays in every mode.
+- `instance_reuse` analyzes a program with a relay, a receiver relay, a
+  forwarding function and a whole-formal use. Every eligible library
+  instance must be stored, and an unchanged snapshot must reuse them all.
 
 A prototype of the dependent-read rule changed 2 of 1,342 corpus programs
 against the same `main`, and no emitted C++. A differential `--emit-cpp`
@@ -25,6 +28,16 @@ The final run, against a fresh build of `main` at `8ab82f81`, changes no
 program's status, and 1,338 of 1,343 programs emit byte-identical C++.
 Example 170 and the `view_fields` fixture gained relays; three
 source-location fixtures differ only in the embedded checkout path.
+
+The first recorded full suite failed `instance_reuse`: an unchanged editor
+snapshot reused 317 of 318 library instances. Both text finalizers also run
+at the end of every instance analysis, and the new contract and relay passes
+looked up the functions their records name. Each lookup counted as a
+function the instance consulted, and demanded its body. The warm run then
+analyzed bodies in another order, and one stored journal no longer matched.
+With relays in user code, 80 of 155 library instances were not stored at
+all. Instance analyses now record no field use, forward or relay, and decide
+none. The corpus again reuses 18,495 instances, as `main` does.
 
 ## Constructor bodies and published view fields (0.454.2)
 

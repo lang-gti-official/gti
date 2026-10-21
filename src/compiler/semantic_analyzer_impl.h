@@ -2036,9 +2036,13 @@ private:
   // non-generic, non-virtual GTI function or method body, outside lambdas,
   // constructors and destructors.
   [[nodiscard]] const FunctionInfo *textFieldContractScope() const;
-  // Whether `function` can carry a field-level contract, by the same rule.
-  [[nodiscard]] bool
-  textFieldContractFunction(const FunctionInfo &function) const;
+  // Whether a function can carry a field-level contract, by the same rule.
+  // It reads declaration facts only, because looking the function up during
+  // analysis would demand its body.
+  [[nodiscard]] bool textFieldContractFunction(const FunctionDecl *declaration,
+                                               const FunctionDecl *body,
+                                               bool dynamicDispatch,
+                                               ClassId ownerClass) const;
   // Whether formal `index` is read-only: an immutable by-value parameter or
   // a read-only reference. Only such a formal takes a relayed value.
   [[nodiscard]] bool
@@ -5830,6 +5834,8 @@ private:
       Token location;
       bool consumed = false;
       bool diagnosed = false;
+      // A relay waits for the request's own finalization to decide it.
+      bool relayed = false;
     };
     // A use of a formal or the receiver of a publishable class inside a
     // contract scope. A field read or a forwarding call consumes it; any
@@ -5854,6 +5860,7 @@ private:
       FunctionId callee = 0;
       OwnerlessTextField calleeFormal;
       std::vector<SymbolId> fields;
+      bool decided = false;
     };
     struct MutableLocalCandidate {
       SymbolId symbol = 0;

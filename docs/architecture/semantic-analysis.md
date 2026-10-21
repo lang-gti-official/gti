@@ -2560,9 +2560,14 @@ Inside it:
   every text field, then closes forwarding to a fixpoint.
 
 A dependent argument or receiver records a `TextDependentRelay` with its
-designated fields, while its scope is live. Finalization consumes the relay
-when the analyzed callee requires none of those fields, and otherwise reports
-`GTI-S2045` related to the callee.
+designated fields, while its scope is live. The request's own finalization
+decides it, once every body that feeds the contracts is analyzed: it consumes
+the relay when the analyzed callee requires none of those fields, and
+otherwise reports `GTI-S2045` related to the callee. An instance analysis
+records no field use, forward or relay. Its finalization leaves relays pending
+and skips the contract pass, because looking up the functions a contract names
+would record them as functions the instance consulted, and demand their
+bodies.
 
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
