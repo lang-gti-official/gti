@@ -318,6 +318,10 @@
       "suite": "text"
     },
     {
+      "name": "testCopiedFormalAfterEarlierWrite",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },
