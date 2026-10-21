@@ -49,9 +49,11 @@ void run() {
        {"class", "struct", "enum", "interface", "namespace", "using", "fn"})
     require(snippet(top, label) != nullptr, "namespace template missing");
   require(snippet(top, "ctor") == nullptr, "constructor without owner");
-  const auto ranked = query("void class_helper() {}\ncl|");
+  const auto ranked = query("void f() { bool ifelse = true; ifelse|; }");
   require(!ranked.candidates.empty() &&
-              ranked.candidates.front().label == "class_helper",
+              ranked.candidates.front().label == "ifelse" &&
+              ranked.candidates.front().kind !=
+                  lang::CompletionCandidateKind::Snippet,
           "snippet displaced an exact semantic candidate");
 
   const auto member = query("class Widget { public: | }; ");
@@ -81,7 +83,8 @@ void run() {
         "void f() { this.cl|; }", "namespace n {} void f() { n::cl|; }",
         "// cl|", "/* cl| */", "/* cl|", "\"cl|\"", "\"cl|",
         "void f() { char c = 'c|'; }", "#include <cl|>",
-        "#if defined(NEVER)\ncl|\n#endif\n"}) {
+        "#if defined(NEVER)\ncl|\n#endif\n",
+        "#if target.os == \"never\"\ncl|\n#endif\n"}) {
     const auto result = query(source);
     if (std::any_of(result.candidates.begin(), result.candidates.end(),
                     [](const auto &candidate) {

@@ -1311,7 +1311,7 @@ public:
     const SourceUnit *completionUnit =
         snapshot.sourceGraph.findUnit(snapshot.sourceGraph.entryUnit());
     const bool inactiveSyntax =
-        snapshot.syntaxCompletion && completionUnit &&
+        input.includeSnippets && snapshot.syntaxCompletion && completionUnit &&
         std::any_of(
             completionUnit->inactiveSpans.begin(),
             completionUnit->inactiveSpans.end(), [&](const SourceSpan &span) {
