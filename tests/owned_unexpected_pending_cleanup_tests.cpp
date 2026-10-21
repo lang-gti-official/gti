@@ -1,5 +1,37 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
+namespace {
+
+// expected<T, E> and unexpected(e)'s std::detail::unexpected_value<E> are the
+// prelude's ordinary source classes.
+bool isClassNamed(const lang::FrontendResult &frontend,
+                  const lang::SemanticType &type, std::string_view name) {
+  const auto *info = type.kind == lang::SemanticType::Class
+                         ? frontend.semantics.findClassType(type.classId)
+                         : nullptr;
+  return info != nullptr && info->declaration != nullptr &&
+         info->declaration->name().lexeme == name;
+}
+
+bool isExpectedClass(const lang::FrontendResult &frontend,
+                     const lang::SemanticType &type) {
+  return isClassNamed(frontend, type, "expected");
+}
+
+const lang::MirInstruction *definition(const lang::MirBody &body,
+                                       const lang::MirOperand &operand) {
+  const auto *value = operand.kind == lang::MirOperandKind::Value
+                          ? body.findValue(operand.value)
+                          : nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (value != nullptr && instruction.id == value->definition)
+        return &instruction;
+  return nullptr;
+}
+
+} // namespace
+
 void testOwningAggregateArgumentStaging() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/optional_expected_composition.gti";
@@ -17,25 +49,32 @@ void testOwningAggregateArgumentStaging() {
   for (const auto &function : frontend.mir.functionInstances()) {
     const auto *hir = frontend.hir.findFunctionInstance(function.id);
     if (hir && hir->source && hir->source->name().lexeme == "forward" &&
-        function.returnType.kind == lang::SemanticType::Expected) {
+        isExpectedClass(frontend, function.returnType)) {
       const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                          function.id};
       const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
       if (emitter.supportsFailureBodyText(address)) {
         const auto text = emitter.emitFailureBodyText(address, "test", 0);
         for (const auto &drop : function.body.dropObligations) {
-          if (drop.kind != lang::MirDropObligationKind::ReturnResult ||
+          if (drop.kind != lang::MirDropObligationKind::PreparedParameter ||
               drop.dropType.type != function.returnType.arguments.front())
             continue;
-          // A potentially failing source destructor keeps the payload pending
-          // across earlier cleanup, then take() retires its exact source slot.
-          // It no longer uses the old passive-temporary destroy comment.
-          const auto publication =
-              "construct_representation_at(__gti_mir_out_result, __gti_mir_p_" +
-              std::to_string(drop.place) + ".take());";
+          // `?load(fail)` stages the extracted success payload into the
+          // prepared parameter of the prelude's expected(T) constructor,
+          // which constructs the caller's result in place; take() retires
+          // that exact slot.
+          const std::string result =
+              "::new (static_cast<void *>(__gti_mir_out_result))";
+          const std::string slot = "std::move(__gti_mir_p_" +
+                                   std::to_string(drop.place) + ".take())";
+          bool published = false;
+          for (auto at = text.text.find(result); at != std::string::npos;
+               at = text.text.find(result, at + 1))
+            published =
+                published || text.text.substr(at, text.text.find('\n', at) - at)
+                                     .find(slot) != std::string::npos;
           expect(
-              text.emitted() &&
-                  text.text.find(publication) != std::string::npos,
+              text.emitted() && published,
               "successful return transfers and retires its exact pending slot");
           auto forged = frontend.mir;
           auto *body = lang::findMirBody(forged, address);
@@ -69,18 +108,18 @@ void testOwningAggregateArgumentStaging() {
             !constructor.constructorTarget || !constructor.successResultDrop ||
             constructor.operands.size() != 1 ||
             constructor.operands.front().kind != lang::MirOperandKind::Value ||
-            constructor.operands.front().type.kind !=
-                lang::SemanticType::Expected)
+            !isExpectedClass(frontend, constructor.operands.front().type))
           continue;
-        const auto *value =
-            function.body.findValue(constructor.operands.front().value);
-        if (value == nullptr)
-          continue;
-        const lang::MirInstruction *producer = nullptr;
-        for (const auto &producerBlock : function.body.blocks)
-          for (const auto &instruction : producerBlock.instructions)
-            if (instruction.id == value->definition)
-              producer = &instruction;
+        // The owning call result is staged into the constructor's prepared
+        // parameter, which the constructor then consumes.
+        const auto *staging =
+            definition(function.body, constructor.operands.front());
+        const lang::MirInstruction *producer =
+            staging != nullptr &&
+                    staging->kind == lang::MirInstructionKind::CallInput &&
+                    staging->operands.size() == 1
+                ? definition(function.body, staging->operands.front())
+                : nullptr;
         if (producer == nullptr ||
             producer->kind != lang::MirInstructionKind::Call ||
             !producer->functionTarget || !producer->successResultDrop)
@@ -112,9 +151,12 @@ void testOwningAggregateArgumentStaging() {
                 body->dropObligations[*producer->successResultDrop - 1];
             body->places[drop.place - 1].initiallyAvailable = true;
           }
+          // Forged constructor parameter types and pre-live result storage
+          // on the generic class construction are left to body analysis.
           const bool verified = lang::verifyMirProgram(forged).valid();
-          const bool admitted = lang::CppMirBodyEmitter(forged, rows)
-                                    .supportsFailureBodyText(address);
+          const lang::CppMirBodyEmitter rejected(forged, rows);
+          const bool admitted = rejected.analyze(address).ready() &&
+                                rejected.supportsFailureBodyText(address);
           expect(!verified && !admitted,
                  "direct aggregate argument staging rejects forged activation, "
                  "type identity, and ownership transfer");
@@ -148,11 +190,26 @@ void testOwnedUnexpectedBinding() {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Initialize ||
             !instruction.destination || instruction.operands.size() != 1 ||
-            instruction.operands.front().type.kind !=
-                lang::SemanticType::Unexpected)
+            !isExpectedClass(frontend, instruction.operands.front().type))
           continue;
         const auto *place = function.body.findPlace(*instruction.destination);
         if (!place || place->root != lang::MirPlaceRootKind::Binding)
+          continue;
+        // unexpected(make(...)) stages the owned call result through the
+        // prelude's unexpected() into the expected(unexpected_value<E>)
+        // constructor, whose result the binding publishes.
+        const auto *wrapper =
+            definition(function.body, instruction.operands.front());
+        const auto *staging =
+            wrapper != nullptr &&
+                    wrapper->kind == lang::MirInstructionKind::Construct &&
+                    wrapper->operands.size() == 1 &&
+                    isClassNamed(frontend, wrapper->operands.front().type,
+                                 "unexpected_value")
+                ? definition(function.body, wrapper->operands.front())
+                : nullptr;
+        if (!staging || staging->kind != lang::MirInstructionKind::CallInput ||
+            !staging->destination)
           continue;
         found = true;
         const lang::MirBodyAddress address{lang::MirBodyKind::Function,
@@ -163,9 +220,13 @@ void testOwnedUnexpectedBinding() {
         if (emitter.supportsFailureBodyText(address)) {
           const auto text = emitter.emitFailureBodyText(address, "test", 0);
           expect(text.emitted() &&
-                     text.text.find(".take())") != std::string::npos &&
-                     text.text.find("// transferred error representation") !=
-                         std::string::npos,
+                     text.text.find("::new (static_cast<void *>(__gti_mir_p_" +
+                                    std::to_string(place->id) +
+                                    ".construction_address()))") !=
+                         std::string::npos &&
+                     text.text.find("std::move(__gti_mir_p_" +
+                                    std::to_string(*staging->destination) +
+                                    ".take())") != std::string::npos,
                  "the initialized binding consumes the already-owned wrapper "
                  "without replaying its payload-producing call");
         }
@@ -174,6 +235,9 @@ void testOwnedUnexpectedBinding() {
           auto *body = lang::findMirBody(forged, address);
           for (auto &changedBlock : body->blocks) {
             for (auto &changed : changedBlock.instructions) {
+              if (changed.id == wrapper->id && mutation == 4)
+                changed.operands.front().type.arguments.front() =
+                    lang::SemanticType::Int32;
               if (changed.id != instruction.id)
                 continue;
               if (mutation == 0)
@@ -185,15 +249,15 @@ void testOwnedUnexpectedBinding() {
               else if (mutation == 3)
                 changed.lifecycle.back().target =
                     changed.lifecycle.front().source;
-              else if (mutation == 4)
-                changed.operands.front().type.arguments.front() =
-                    lang::SemanticType::Int32;
-              else
+              else if (mutation == 5)
                 changed.operands.push_back(changed.operands.front());
             }
           }
-          expect(!lang::CppMirBodyEmitter(forged, rows)
-                      .supportsFailureBodyText(address),
+          // The generic class publication vocabulary leaves lifecycle and
+          // staged payload-identity forgeries to body analysis.
+          const lang::CppMirBodyEmitter rejected(forged, rows);
+          expect(!(rejected.analyze(address).ready() &&
+                   rejected.supportsFailureBodyText(address)),
                  "binding publication rejects missing/conditional/wrong "
                  "ownership transfers and malformed consumer shape");
         }
@@ -233,7 +297,7 @@ void testExpectedFieldConstructionRollback() {
            "owning Expected arguments publish into nested and binding results");
     for (const auto &owner : frontend.mir.classInstances()) {
       for (const auto &field : owner.declaredFields) {
-        if (field.type.kind != lang::SemanticType::Expected)
+        if (!isExpectedClass(frontend, field.type))
           continue;
         ++fields;
         expect(lang::cppMirFailureConstructorEmptyStateTypeEligible(
@@ -250,17 +314,25 @@ void testExpectedFieldConstructionRollback() {
         expect(!lang::cppMirFailureConstructorEmptyStateTypeEligible(
                    frontend.mir, invalid),
                "a missing error payload cannot establish an empty shell");
-        for (const auto &error : frontend.mir.classInstances()) {
-          if (error.type != field.type.arguments.back())
+        // The source expected's empty shell is its payload-enum `state`
+        // field's private inactive alternative, which constructs no error
+        // payload; the cleanup guard and structural transport are the enum's.
+        for (const auto &wrapper : frontend.mir.classInstances()) {
+          if (wrapper.type != field.type || wrapper.declaredFields.size() != 1)
             continue;
+          const auto &state = wrapper.declaredFields.front().type;
+          expect(frontend.mir.findPayloadEnum(state) != nullptr,
+                 "the expected empty shell is its payload-enum state");
           for (const bool loseGuard : {false, true}) {
             auto forged = frontend.mir;
-            auto *changed = const_cast<lang::MirClassInstance *>(
-                forged.findClassInstance(error.id));
+            auto *changed = const_cast<lang::MirPayloadEnum *>(
+                forged.findPayloadEnum(state));
+            if (changed == nullptr)
+              continue;
             if (loseGuard)
-              changed->requiresActiveDropState = false;
+              changed->requiresActiveCleanup = false;
             else
-              changed->moveConstructor = lang::SpecialMemberStatus::Deleted;
+              changed->traits.movable = false;
             expect(!lang::cppMirFailureConstructorEmptyStateTypeEligible(
                        forged, field.type),
                    "an owning empty error requires disarmed cleanup and safe "
@@ -308,19 +380,32 @@ void testExpectedConstructorArguments() {
       for (const auto &consumer : block.instructions) {
         if (consumer.kind != lang::MirInstructionKind::Construct ||
             consumer.operands.size() != 3 ||
-            consumer.operands[1].type.kind != lang::SemanticType::Expected)
+            !isExpectedClass(frontend, consumer.operands[1].type))
           continue;
-        const auto *value = function.body.findValue(consumer.operands[1].value);
-        const lang::MirInstruction *producer = nullptr;
-        for (const auto &producerBlock : function.body.blocks)
-          for (const auto &candidate : producerBlock.instructions)
-            if (value && candidate.id == value->definition)
-              producer = &candidate;
-        expect(producer && producer->successResultDrop,
+        // produce()'s owning result is staged into the constructor's
+        // prepared parameter as soon as it succeeds; later arguments'
+        // failures retire that prepared parameter.
+        const auto *staging = definition(function.body, consumer.operands[1]);
+        const lang::MirInstruction *producer =
+            staging != nullptr &&
+                    staging->kind == lang::MirInstructionKind::CallInput &&
+                    staging->operands.size() == 1
+                ? definition(function.body, staging->operands.front())
+                : nullptr;
+        expect(producer && producer->successResultDrop &&
+                   staging->preparedParameterDrop &&
+                   staging->lifecycle.size() == 1 &&
+                   staging->lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Reparent &&
+                   staging->lifecycle.front().source ==
+                       *producer->successResultDrop &&
+                   staging->lifecycle.front().target ==
+                       *staging->preparedParameterDrop,
                "Expected argument producer retains its success-only drop");
-        if (!producer || !producer->successResultDrop)
+        if (!producer || !producer->successResultDrop ||
+            !staging->preparedParameterDrop)
           continue;
-        const auto dropId = *producer->successResultDrop;
+        const auto dropId = *staging->preparedParameterDrop;
         const auto *drop = function.body.findDropObligation(dropId);
         // Count the failures whose cleanup path destroys the pending
         // argument; the branches may share one copy of that cleanup.
@@ -373,9 +458,12 @@ void testExpectedConstructorArguments() {
               }
             }
           }
+          // A forged parameter type on the source class construction is
+          // left to body analysis by the generic construction vocabulary.
+          const lang::CppMirBodyEmitter rejected(forged, rows);
           expect(!lang::verifyMirProgram(forged).valid() &&
-                     !lang::CppMirBodyEmitter(forged, rows)
-                          .supportsFailureBodyText(address),
+                     !(rejected.analyze(address).ready() &&
+                       rejected.supportsFailureBodyText(address)),
                  "constructor arguments cannot lose later-failure cleanup, "
                  "parameter identity or unconditional transfer");
         }
@@ -411,7 +499,7 @@ int main() {
   for (const auto &function : frontend.mir.functionInstances()) {
     const auto *hir = frontend.hir.findFunctionInstance(function.id);
     if (hir && hir->source && hir->source->name().lexeme == "make" &&
-        function.returnType.kind == lang::SemanticType::Expected &&
+        isExpectedClass(frontend, function.returnType) &&
         function.returnType.arguments.size() == 2)
       fixtureError = &function.returnType.arguments.back();
   }
@@ -421,10 +509,9 @@ int main() {
     return 1;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &selected : function.body.dropObligations) {
-      const bool expected =
-          selected.dropType.type.kind == lang::SemanticType::Expected;
+      const bool expected = isExpectedClass(frontend, selected.dropType.type);
       const bool unexpected =
-          selected.dropType.type.kind == lang::SemanticType::Unexpected;
+          isClassNamed(frontend, selected.dropType.type, "unexpected_value");
       if ((!expected && !unexpected) || (expected && expectedRecipe) ||
           (unexpected && unexpectedRecipe))
         continue;
@@ -435,11 +522,23 @@ int main() {
         continue;
       expectedRecipe |= expected;
       unexpectedRecipe |= unexpected;
-      expect(selected.dropType.aggregate.size() == (expected ? 2U : 1U) &&
-                 selected.dropType.aggregate.back().requiresActiveCleanup &&
-                 selected.dropType.aggregate.back().destructor,
+      // expected<T, E> keeps its alternatives in the payload-enum `state`
+      // field, whose error alternative is variant 1; unexpected_value<E>
+      // holds the error as its only field.
+      const auto errorRecipe = [expected](auto &type) -> decltype(&type) {
+        if (!expected)
+          return type.aggregate.size() == 1 ? &type.aggregate.back() : nullptr;
+        if (type.aggregate.size() != 1 ||
+            type.aggregate.front().aggregate.empty())
+          return nullptr;
+        auto &alternative = type.aggregate.front().aggregate.back();
+        return alternative.payloadVariant == 1U ? &alternative : nullptr;
+      };
+      const auto *error = errorRecipe(selected.dropType);
+      expect(error != nullptr && error->requiresActiveCleanup &&
+                 error->destructor,
              "alternative recipe retains its exact active error destructor");
-      if (selected.dropType.aggregate.empty())
+      if (error == nullptr)
         continue;
       for (int mutation = 0; mutation != 4; ++mutation) {
         auto malformed = frontend.mir;
@@ -448,50 +547,63 @@ int main() {
         for (auto &drop : changed->body.dropObligations) {
           if (drop.dropType.type != selected.dropType.type)
             continue;
+          auto *alternative = errorRecipe(drop.dropType);
           if (mutation == 0)
             drop.dropType.aggregate.clear();
-          if (mutation == 1)
-            drop.dropType.aggregate.back().requiresActiveCleanup = false;
-          if (mutation == 2)
-            drop.dropType.aggregate.back().destructor.reset();
-          if (mutation == 3)
-            drop.dropType.aggregate.back().type = lang::SemanticType::Int32;
+          if (mutation == 1 && alternative)
+            alternative->requiresActiveCleanup = false;
+          if (mutation == 2 && alternative)
+            alternative->destructor.reset();
+          if (mutation == 3 && alternative)
+            alternative->type = lang::SemanticType::Int32;
         }
         expect(!lang::verifyMirProgram(malformed).valid(),
                "independent MIR recipe derivation rejects missing or forged "
                "alternative cleanup");
-        expect(!lang::CppMirBodyEmitter(malformed, rows)
-                    .supportsFailureBodyText(
-                        {lang::MirBodyKind::Function, function.id}),
+        // unexpected_value<E> stages through ordinary prepared class
+        // parameters, whose recipe forgeries body analysis rejects.
+        const lang::CppMirBodyEmitter rejected(malformed, rows);
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           function.id};
+        expect(!(rejected.analyze(address).ready() &&
+                 rejected.supportsFailureBodyText(address)),
                "backend cannot erase or change active alternative cleanup");
       }
     }
+    // unexpected(Error(...)) is wrapped by the prelude's
+    // expected(unexpected_value<E>) constructor before the fallible Guard
+    // cleanup, so the pending return identity is the returned expected,
+    // constructed in the unpublished result storage.
+    const auto *source = frontend.hir.findFunctionInstance(function.id);
+    if (source == nullptr ||
+        source->sourceUnit != frontend.sourceGraph.entryUnit())
+      continue;
     for (const auto &pending : function.body.dropObligations) {
       if (pending.kind != lang::MirDropObligationKind::ReturnResult ||
-          pending.dropType.type.kind != lang::SemanticType::Unexpected)
+          !isExpectedClass(frontend, pending.dropType.type) ||
+          pending.dropType.type.arguments.empty() ||
+          pending.dropType.type.arguments.back() != *fixtureError)
         continue;
       ++pendingReturns;
       const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                          function.id};
       const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
       expect(emitter.supportsFailureBodyText(address),
-             "pending Unexpected supports its exact cleanup-only continuation");
+             "pending error result supports its exact cleanup-only "
+             "continuation");
       if (emitter.supportsFailureBodyText(address)) {
         const auto text = emitter.emitFailureBodyText(address, "test", 0);
-        expect(
-            text.emitted() &&
-                text.text.find("// GTI MIR unpublished Unexpected cleanup") !=
-                    std::string::npos &&
-                text.text.find("__gti_mir_out_result->value()") ==
-                    std::string::npos,
-            "rollback destroys local Unexpected rather than unpublished "
-            "Expected output");
+        expect(text.emitted() &&
+                   text.text.find("std::destroy_at(__gti_mir_out_result); "
+                                  "// GTI MIR unpublished return cleanup") !=
+                       std::string::npos &&
+                   text.text.find("__gti_mir_out_result->value()") ==
+                       std::string::npos,
+               "rollback destroys the unpublished in-place error result "
+               "without reading its success alternative");
       }
-      expect(pending.dropType.type.arguments.size() == 1 &&
-                 function.returnType.kind == lang::SemanticType::Expected &&
-                 pending.dropType.type.arguments.front() ==
-                     function.returnType.arguments.back(),
-             "pending Unexpected carries the exact returned error type");
+      expect(pending.dropType.type == function.returnType,
+             "pending error result carries the exact returned type");
       for (int mutation = 0; mutation != 6; ++mutation) {
         auto malformed = function.body;
         if (mutation == 0)
@@ -520,16 +632,20 @@ int main() {
               }
             }
         const auto result = lang::verifyMirBody(malformed, function.id);
-        expect(
-            !result.valid(),
-            "pending Unexpected rejects malformed lifetime or error identity");
+        expect(!result.valid(),
+               "pending error result rejects malformed lifetime or error "
+               "identity");
         auto malformedProgram = frontend.mir;
         const_cast<lang::MirFunctionInstance *>(
             malformedProgram.findFunctionInstance(function.id))
             ->body = malformed;
-        expect(!lang::CppMirBodyEmitter(malformedProgram, rows)
-                    .supportsFailureBodyText(address),
-               "emission rejects altered pending Unexpected ownership");
+        // The in-place expected result's lifecycle forgeries are rejected
+        // by body analysis rather than the generic class vocabulary.
+        const lang::CppMirBodyEmitter rejected(malformedProgram, rows);
+        expect(!(rejected.analyze(address).ready() &&
+                 rejected.supportsFailureBodyText(address)),
+               "emission rejects altered pending error result ownership " +
+                   std::to_string(mutation));
         if (mutation == 3)
           expect(std::any_of(result.errors.begin(), result.errors.end(),
                              [](const auto &error) {
@@ -538,12 +654,13 @@ int main() {
                                           "fallible cleanup") !=
                                       std::string::npos;
                              }),
-                 "Unexpected cannot escape ownership before cleanup succeeds");
+                 "the error result cannot escape ownership before cleanup "
+                 "succeeds");
       }
     }
   }
   expect(pendingReturns == 1,
-         "fixture retains one pending Unexpected rollback lifetime");
+         "fixture retains one pending error-result rollback lifetime");
   expect(
       expectedRecipe && unexpectedRecipe,
       "fixture covers both completed Expected and pending Unexpected recipes");

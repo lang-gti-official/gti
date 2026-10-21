@@ -1,0 +1,30 @@
+struct Rejected {
+  int code;
+  constexpr Rejected(int value) : code(value) {}
+};
+struct Checked {
+  int value;
+  int code;
+  constexpr Checked(int value, int code) : value(value), code(code) {}
+};
+struct Status {
+  int code;
+  constexpr Status(int value) : code(value) {}
+  implicit constexpr Status(Rejected value) : code(value.code) {}
+};
+for concept std::tryable<Checked> {
+  using value_type = int;
+  using residual_type = Rejected;
+  constexpr bool has_value(Checked& value) { return value.code == 0; }
+  constexpr int take_value(Checked value) { return value.value; }
+  constexpr Rejected take_residual(Checked value) { return Rejected(value.code); }
+};
+constexpr Status calculate(bool valid) {
+  int value = ?Checked(42, valid ? 0 : 7);
+  return Status(value);
+}
+static_assert(calculate(true).code == 42);
+static_assert(calculate(false).code == 7);
+int main() {
+  return calculate(true).code == 42 && calculate(false).code == 7 ? 0 : 1;
+}

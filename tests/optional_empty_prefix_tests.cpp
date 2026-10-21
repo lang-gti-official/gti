@@ -58,8 +58,12 @@ void nonassignable_control() { MutexOuter outer{}; }
       auto malformed = frontend.mir;
       auto *changed = const_cast<lang::MirClassInstance *>(
           malformed.findClassInstance(owner.id));
+      // Construction-only empty state recurses through fields, so a class
+      // whose enum fields may carry borrows still qualifies; a direct
+      // reference field does not (docs/architecture/backend.md).
       if (mutation == 0)
-        changed->traits.containsBorrowedState = true;
+        changed->declaredFields.front().type = lang::SemanticType::referenceTo(
+            changed->declaredFields.front().type, lang::AccessMode::ReadOnly);
       else if (mutation == 1)
         changed->cAbiRecord = true;
       else
@@ -210,14 +214,18 @@ void checkEnumStorage(const char *fixture, bool owning) {
             publication.lifecycle.front().source = 0;
           expect(lang::rebuildMirValueUses(changed->body),
                  "enum publication mutation retains SSA use records");
+          // A lost initializer is backend admission's to reject: the
+          // vocabulary rejects the owning publication, while body analysis
+          // rejects the passive one.
+          const lang::CppMirBodyEmissionMap rows(
+              buildRows(frontend, frontend.mir));
+          const lang::CppMirBodyEmitter emitter(malformed, rows);
+          const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                             constructor.id};
           const bool rejected =
-              mutation == 0
-                  ? !lang::CppMirBodyEmitter(
-                         malformed, lang::CppMirBodyEmissionMap(
-                                        buildRows(frontend, frontend.mir)))
-                         .supportsFailureBodyText(
-                             {lang::MirBodyKind::Constructor, constructor.id})
-                  : !lang::verifyMirProgram(malformed).valid();
+              mutation == 0 ? !(emitter.analyze(address).ready() &&
+                                emitter.supportsFailureBodyText(address))
+                            : !lang::verifyMirProgram(malformed).valid();
           expect(rejected,
                  "enum publication rejects missing initializer, wrong type, "
                  "extra operand, field identity and cleanup transfer drift "

@@ -1,6 +1,7 @@
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
 
+#include <regex>
 #include <set>
 
 namespace {
@@ -76,8 +77,8 @@ int main() {}
       "the frontend should reject return, parameter, and definition shapes "
       "outside the two supported main entry contracts");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("missing-return.gti", R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "missing-return.gti", R"(
 int branch(bool value) {
   if (value) {
     return 1;
@@ -131,7 +132,8 @@ int main() {
   };
   return 0;
 }
-)");
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode() &&
              countDiagnosticCode(invalid.diagnostics, "GTI-S2031") == 8 &&
              hasDiagnostic(invalid.diagnostics,
@@ -1004,8 +1006,9 @@ void testStandardLibraryImports() {
       tcpCpp.find("class socket") != std::string::npos &&
           tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "socket") +
                       "(") != std::string::npos &&
-          tcpCpp.find("open__gti_mir_failure(::gti_internal::backend::"
-                      "expected") != std::string::npos &&
+          std::regex_search(
+              tcpCpp, std::regex(R"(open__gti_mir_failure\(::__gti_program::)"
+                                 R"(__gti_type_[0-9a-f]+_expected)")) &&
           tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "close") +
                       "(") != std::string::npos &&
           tcpCpp.find("socket(socket &&other) noexcept") != std::string::npos &&
@@ -1608,8 +1611,8 @@ int inspect(bool condition) {
          "conditional arm states should merge explicit moves across runtime "
          "paths");
 
-  const lang::FrontendResult borrowedResult =
-      lang::Frontend().analyze("conditional-borrowed-result.gti", R"(
+  const lang::FrontendResult borrowedResult = lang::Frontend().analyze(
+      "conditional-borrowed-result.gti", R"(
 class BorrowedValue {
   int& value;
 
@@ -1622,7 +1625,7 @@ BorrowedValue choose_borrowed(
   return condition ? std::move(left) : std::move(right);
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!borrowedResult.canGenerateCode() &&
              hasDiagnosticCode(borrowedResult.diagnostics, "GTI-S2051"),
          "conditional values should reject branch-selected borrowed state "
@@ -3214,6 +3217,30 @@ void testSupportFacilities() {
          "LLVM-backed facilities should agree on availability");
 }
 
+void testConcreteCallableSemanticFailure() {
+  const auto result = lang::Frontend().analyze("concrete-callback.gti", R"gti(
+int apply<F>(F& callback) { return callback(1); }
+int main() {
+  auto callback = [](bool value) -> int { return 1; };
+  return apply(callback);
+}
+)gti");
+  expect(!result.semanticValid && !result.canGenerateCode() &&
+             std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.phase ==
+                                      lang::DiagnosticPhase::Semantics &&
+                                  diagnostic.severity ==
+                                      lang::DiagnosticSeverity::Error;
+                         }) &&
+             std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "concrete generic callback errors remain semantic failures even when "
+         "instance discovery demands them during HIR lowering");
+}
+
 void testAnnotatedFunctionContracts() {
   const std::string validSource = "namespace app { [[test]] void first() {} }\n"
                                   "[[test, track_caller]] void second() {}\n";
@@ -3251,6 +3278,8 @@ void testAnnotatedFunctionContracts() {
 }
 
 constexpr NamedTest kTests[] = {
+    {"testConcreteCallableSemanticFailure",
+     testConcreteCallableSemanticFailure},
     {"testAnnotatedFunctionContracts", testAnnotatedFunctionContracts},
     {"testDefiniteReturnAnalysis", testDefiniteReturnAnalysis},
     {"testSourceUnitDependencyGraph", testSourceUnitDependencyGraph},

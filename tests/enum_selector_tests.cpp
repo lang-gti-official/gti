@@ -80,9 +80,23 @@ int main() {
   expect(exact.canGenerateCode(), "exact native aliases remain valid GTI");
   if (exact.canGenerateCode()) {
     const auto exactText = gti_test::emitCppText(exact);
-    expect(
-        exactText.find("__gti_enum_selector_") == std::string::npos,
-        "exact-only native aliases never demand a dependent selector catalog");
+    // The prelude's generic expected<T, E> template selects its state enum
+    // dependently, so only the fixture's own enum families must stay exact.
+    std::size_t fixtureEnums = 0;
+    for (const auto &enumeration : exact.hir.enumDeclarations()) {
+      if (enumeration.sourceUnit != exact.sourceGraph.entryUnit())
+        continue;
+      ++fixtureEnums;
+      expect(exactText.find("__gti_enum_selector_" +
+                            std::to_string(enumeration.declaration) + "<") ==
+                     std::string::npos &&
+                 exactText.find("__gti_enum_selector_" +
+                                std::to_string(enumeration.declaration) +
+                                ";") == std::string::npos,
+             "exact-only native aliases never demand a dependent selector "
+             "catalog");
+    }
+    expect(fixtureEnums != 0, "exact alias fixture declares its own enum");
   }
   return failures ? 1 : 0;
 }

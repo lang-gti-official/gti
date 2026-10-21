@@ -978,5 +978,149 @@ int main() { return 0; }
         result.canGenerateCode(),
         "factory calls and empty/borrowed return paths verify independently");
   }
+  {
+    const std::string wrapper = R"gti(
+#include <std/panic>
+enum Cell { empty, value(int& owner) };
+class View {
+  mut Cell cell;
+public:
+  View(int& owner) : cell(Cell::value(owner)) {}
+  View() : cell(Cell::empty) {}
+  int& read() {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+  int& take() && {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+};
+)gti";
+    acceptedSemantics(analyze(wrapper + R"gti(
+int main() {
+  int owner = 42;
+  mut auto view = View(owner);
+  int& retained = std::move(view).take();
+  return retained - 42;
+}
+)gti"));
+    for (const auto *suffix :
+         {"View escape() { int local = 42; return View(local); } int main() { "
+          "return 0; }",
+          "int& escape() { int local = 42; mut auto view = View(local); return "
+          "std::move(view).take(); } int main() { return 0; }",
+          "int main() { mut int owner = 42; auto view = View(owner); owner = "
+          "7; return view.read(); }"}) {
+      const auto result = analyze(wrapper + suffix);
+      expect(result.syntaxValid && !result.semanticValid,
+             "borrowed class cannot escape a local or invalidate a live "
+             "external owner");
+    }
+    const auto owned = analyze(R"gti(
+class Owner {
+  mut int value;
+public:
+  Owner() : value(42) {}
+  int& take() && { return this.value; }
+};
+int main() { return 0; }
+)gti");
+    expect(
+        owned.syntaxValid && !owned.semanticValid,
+        "consuming reference extraction cannot retain receiver-owned storage");
+  }
+  {
+    const std::string generic = R"gti(
+#include <std/panic>
+enum BorrowedCell<T> { empty, value(T& owner) };
+class GenericView<T> {
+  mut BorrowedCell<T> cell;
+public:
+  GenericView(T& owner) : cell(BorrowedCell<T>::value(owner)) {}
+  T& read() {
+    switch (this.cell) {
+    case BorrowedCell<T>::value(auto& owner): return owner;
+    case BorrowedCell<T>::empty: std::panic("empty");
+    }
+  }
+};
+)gti";
+    acceptedSemantics(analyze(generic + R"gti(
+int main() {
+  int owner = 42;
+  auto view = GenericView<int>(owner);
+  GenericView<int> copied = view;
+  return copied.read() + view.read() - 84;
+}
+)gti"));
+    for (const auto *suffix :
+         {"GenericView<int> escape() { int local = 1; return "
+          "GenericView<int>(local); } int main() { return 0; }",
+          "int& escape() { int local = 1; auto view = GenericView<int>(local); "
+          "return view.read(); } int main() { return 0; }",
+          "int main() { mut int owner = 1; auto view = "
+          "GenericView<int>(owner); GenericView<int> copied = view; owner = 2; "
+          "return copied.read(); }"}) {
+      const auto result = analyze(generic + suffix);
+      expect(result.syntaxValid && !result.semanticValid,
+             "concrete generic borrow proofs reject local escape and live-copy "
+             "mutation");
+    }
+    const auto nondependent = analyze(generic + R"gti(
+class Invalid<T> {
+  int& bad() { int local = 7; return local; }
+};
+int main() { return 0; }
+)gti");
+    expect(nondependent.syntaxValid && !nondependent.semanticValid,
+           "deferred conditional selection does not hide unrelated "
+           "local-reference errors");
+    const auto ownedErrorCopy = analyze(R"gti(
+#include <std/string>
+enum CopyState<T, E> { ready(T& owner), failed(E error) };
+class CopyView<T, E> {
+  mut CopyState<T, E> state;
+public:
+  CopyView(T& owner) : state(CopyState<T, E>::ready(owner)) {}
+};
+int main() {
+  int owner = 42;
+  auto view = CopyView<int, std::string>(owner);
+  CopyView<int, std::string> copied = view;
+  return 0;
+}
+)gti");
+    expect(ownedErrorCopy.syntaxValid && !ownedErrorCopy.semanticValid,
+           "shared-reference wrapper is not copyable when another payload is "
+           "move-only");
+    auto invalidSelection = generic;
+    const auto selectedReturn = invalidSelection.find("return owner;");
+    expect(selectedReturn != std::string::npos,
+           "generic selected return fixture exists");
+    if (selectedReturn != std::string::npos) {
+      invalidSelection.replace(selectedReturn,
+                               std::string("return owner;").size(),
+                               "T local = owner; return local;");
+      const auto concrete = lang::Frontend().analyze(
+          root / "tests" / "reference-payload-generic-negative.gti",
+          invalidSelection + R"gti(
+int main() { int owner = 42; auto view = GenericView<int>(owner); return view.read(); }
+)gti",
+          {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+      expect(
+          concrete.syntaxValid && !concrete.canGenerateCode() &&
+              std::any_of(concrete.diagnostics.begin(),
+                          concrete.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-S");
+                          }),
+          "concrete instance must recheck and reject a dangling deferred arm");
+    }
+  }
   return failures == 0 ? 0 : 1;
 }

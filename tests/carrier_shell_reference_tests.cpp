@@ -1717,8 +1717,35 @@ void checkSharedAccessorRange() {
       std::cerr << diagnostic.message << '\n';
     return;
   }
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto prefix = source.substr(0, source.find("int main("));
+  // expected<T&, E>::value() is an ordinary source accessor, so the fixture's
+  // ranges borrow accessor call results. A range over a borrowed carrier's
+  // stored reference still has the stored shared parent.
+  const auto stored = lang::Frontend().analyze(
+      "shared-stored-range.gti", prefix + R"(
+struct Elements {
+  std::vector<Item>& items;
+  Elements(std::vector<Item>& items) : items(items) {}
+};
+int main() {
+  mut Bag owner{};
+  {
+    Elements borrowed{owner.elements()};
+    mut int sum = 0;
+    for (auto& item : borrowed.items) { sum += item.read(); }
+    if (sum != 15) { return 1; }
+  }
+  owner.clear();
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(stored.canGenerateCode() && lang::verifyMirProgram(stored.mir).valid(),
+         "read-only traversal of a stored carrier reference verifies");
   bool checked = false;
-  for (const auto &function : frontend.mir.functionInstances()) {
+  for (const auto &function : stored.mir.functionInstances()) {
     for (const auto &range : function.body.rangeIterations) {
       const auto *element = function.body.findLoan(range.elementLoan);
       const auto *parent = function.body.findLoan(range.rangeLoan);
@@ -1752,7 +1779,7 @@ void checkSharedAccessorRange() {
       if (!iterator || !producer)
         continue;
       for (int mutation = 0; mutation < 12; ++mutation) {
-        auto invalid = frontend.mir;
+        auto invalid = stored.mir;
         auto &body = const_cast<lang::MirFunctionInstance *>(
                          invalid.findFunctionInstance(function.id))
                          ->body;
@@ -1823,9 +1850,6 @@ void checkSharedAccessorRange() {
   }
   expect(checked, "borrowed accessor range exercises a stored shared parent");
 
-  std::ifstream input(fixture);
-  const std::string source((std::istreambuf_iterator<char>(input)), {});
-  const auto prefix = source.substr(0, source.find("int main("));
   for (const auto &operation :
        {"owner.clear();", "auto moved = std::move(owner);"}) {
     const auto invalid = lang::Frontend().analyze(

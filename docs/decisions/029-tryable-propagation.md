@@ -96,7 +96,8 @@ body, satisfied through `for concept` blocks outside the type.
   owner preferred not to add one as a workaround. The source-defined
   `std::experimental::optional`, over a payload enum and consuming payload
   matches, has the block, and is the planned replacement.
-- `?` through `std::tryable` is not available in constant evaluation yet.
+- At initial implementation, `?` through `std::tryable` was unavailable in
+  constant evaluation; the MIR-execution revision below supersedes that bound.
 - The operand must be a class, struct or payload-enum type. Payload enums
   joined in the 2026-10-15 revision below; a scalar-backed enum remains
   outside this phase.
@@ -129,3 +130,14 @@ retains the selected call contract; MIR verifies the same call and preserves
 the result loan across the success edge. The residual remains owned. General
 variant-conditional dependencies are separate required work, not an implicit
 promise made by permitting this protocol contract.
+
+## Constant execution through the same protocol (2026-10-18)
+
+Prefix `?` in a constexpr function uses the ordinary selected protocol calls,
+branch, residual conversion and early-return cleanup. The staged HIR query
+requires available constexpr definitions for its call closure, then executes
+verified MIR under the existing resource budgets. A runtime-only protocol
+operation cannot enter that closure. No AST protocol interpreter or special
+result-type execution path is introduced. This applies to unrelated source
+carriers as well as source-defined library results; persistent constants still
+must satisfy the constant profile's ordinary storage restrictions.

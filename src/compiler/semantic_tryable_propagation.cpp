@@ -1,7 +1,7 @@
 // Prefix `?` through the standard `std::tryable` protocol concept.
 //
-// Built-in `expected` keeps its own propagation rule. Any other operand must
-// satisfy `std::tryable`, which the prelude declares; the compiler binds `?`
+// Every operand, including the prelude's `expected`, must satisfy
+// `std::tryable`, which the prelude declares; the compiler binds `?`
 // to that concept by trusted declaration identity and knows nothing about the
 // types that conform to it. The selected conformance block's functions run as
 // ordinary calls, and the residual initializes the enclosing return type as
@@ -9,6 +9,7 @@
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
+#include <array>
 
 namespace lang {
 
@@ -124,12 +125,20 @@ auto SemanticVisitor::Impl::selectResidualReturn(
     }
   }
   if (matches.size() != 1) {
+    // A trusted library type cannot gain a constructor from this program;
+    // the failure itself must change before it can propagate here.
     return reject(returned + ", which declares " +
                       (matches.empty() ? "no" : "more than one") +
                       " implicit constructor taking exactly that residual.",
-                  "Declare one 'implicit " + owner->name.lexeme + "(" +
-                      typeSpelling(residualType) +
-                      " residual)' constructor without further parameters.");
+                  isCompilerTrustedUnit(owner->sourceUnit)
+                      ? "Convert the operand's failure to a residual '" +
+                            typeSpelling(target) +
+                            "' accepts, or handle the failure explicitly "
+                            "instead of applying '?'."
+                      : "Declare one 'implicit " + owner->name.lexeme + "(" +
+                            typeSpelling(residualType) +
+                            " residual)' constructor without further "
+                            "parameters.");
   }
   const ConstructorInfo &selected = *matches.front();
   if (!selected.requirements.empty() || selected.requiresUnsafe) {
@@ -207,12 +216,10 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                   "'?' uses.",
                   "Restore the standard library's prelude.");
   }
-  if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
-      currentFunctionDeclaration->isConstexpr()) {
-    return reject("Error propagation through 'std::tryable' is not yet "
-                  "available in a constexpr function.",
-                  "Test the value explicitly in constant code.");
-  }
+  // A constant invocation uses the same selected calls, branch, residual
+  // construction and cleanup as runtime. The staged HIR closure admits only
+  // available constexpr definitions, and verified MIR executes those calls;
+  // the protocol has no separate constant-evaluation semantics.
 
   // The operand is passed like a by-value argument: a temporary or an
   // explicit std::move moves, and a named place is copied.
@@ -230,12 +237,19 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                   "external dependencies can be checked.");
   }
   if (consumes ? !traits.movable : !traits.copyable) {
+    const Expr *named = expr.right().get();
+    while (const auto *grouping = exprAs<Grouping>(named))
+      named = grouping->expression().get();
+    const auto *variable = exprAs<Variable>(named);
+    const std::string spelling =
+        variable != nullptr ? variable->name().lexeme : std::string("name");
     return reject(std::string("Error propagation passes its operand like a "
                               "by-value argument, so it cannot ") +
                       (consumes ? "move" : "copy") + " '" + operand + "'.",
-                  consumes ? "Propagate a movable type."
-                           : "Apply '?' to std::move(name) to consume a "
-                             "named move-only operand explicitly.");
+                  consumes ? std::string("Propagate a movable type.")
+                           : "Apply '?' to std::move(" + spelling +
+                                 ") to consume a named move-only operand "
+                                 "explicitly.");
   }
 
   const std::vector<SemanticType> arguments{operandType};
@@ -344,9 +358,25 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     return SemanticType::Unknown;
   }
   // This path returns from the enclosing callable even though its source is
-  // an expression, not a ReturnStmt. Until the selected residual operation's
-  // complete result contract is instantiated here, it contributes unknown.
-  loanFlow.unknownImplicitResultReturn = true;
+  // an expression, not a ReturnStmt. The residual is owned and holds no
+  // stored borrow (checked above), so a selected residual construction
+  // publishes exactly the alternatives of its complete contract for a
+  // dependency-free input. Without that contract the return is unknown.
+  std::optional<SemanticBorrowDependencySet> residualReturn;
+  if (construction)
+    if (const auto summary =
+            completeConstructorBorrow(*construction, tokenSpan(site))) {
+      ResolvedCallInfo publication;
+      publication.returnType = construction->constructedType;
+      publication.parameterTypes = construction->parameterTypes;
+      const std::array<const ExprPtr *, 1> residualInput{nullptr};
+      residualReturn = instantiateCompleteBorrowArguments(publication, *summary,
+                                                          residualInput);
+    }
+  if (residualReturn && residualReturn->dependencies.empty())
+    loanFlow.implicitResultReturns.push_back(std::move(*residualReturn));
+  else
+    loanFlow.unknownImplicitResultReturn = true;
   if (outputDependencies)
     semanticModel.recordBorrowDependencySet(expr, *outputDependencies);
   semanticModel.recordTryablePropagation(

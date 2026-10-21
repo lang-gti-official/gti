@@ -1119,15 +1119,15 @@ private:
   }
 
   static bool isBuiltinType(std::string_view word) {
-    return word == "auto" || word == "bool" || word == "expected" ||
-           word == "float" || word == "double" || word == "int" ||
-           word == "int8_t" || word == "int16_t" || word == "int32_t" ||
-           word == "int64_t" || word == "int8" || word == "int16" ||
-           word == "int32" || word == "int64" || word == "nullptr_t" ||
-           word == "char" || word == "uint" || word == "uint8_t" ||
-           word == "uint16_t" || word == "uint32_t" || word == "uint64_t" ||
-           word == "uint8" || word == "uint16" || word == "uint32" ||
-           word == "uint64" || word == "void";
+    return word == "auto" || word == "bool" || word == "float" ||
+           word == "double" || word == "int" || word == "int8_t" ||
+           word == "int16_t" || word == "int32_t" || word == "int64_t" ||
+           word == "int8" || word == "int16" || word == "int32" ||
+           word == "int64" || word == "nullptr_t" || word == "char" ||
+           word == "uint" || word == "uint8_t" || word == "uint16_t" ||
+           word == "uint32_t" || word == "uint64_t" || word == "uint8" ||
+           word == "uint16" || word == "uint32" || word == "uint64" ||
+           word == "void";
   }
 
   static std::string_view canonicalIntegerType(std::string_view word) {
@@ -2280,9 +2280,6 @@ private:
     if (previous == nullptr || previous->kind != Kind::Word) {
       return false;
     }
-    if (previous->text == "expected") {
-      return true;
-    }
     if (isConceptGenericAngle(lexemes, index) ||
         isRequiresGenericAngle(lexemes, index)) {
       return true;
@@ -2305,9 +2302,28 @@ private:
     }
     if (next->kind == Kind::Operator &&
         (next->text == "*" || next->text == "&" || next->text == "&&")) {
-      return isKnownTypeWord(
-          lexemes, static_cast<std::size_t>(previous - lexemes.data()),
-          declaredTypes);
+      if (isKnownTypeWord(lexemes,
+                          static_cast<std::size_t>(previous - lexemes.data()),
+                          declaredTypes)) {
+        return true;
+      }
+      // An imported generic need not be declared in this file. A primitive
+      // type argument identifies its angle clause structurally, without a
+      // special case for a public library name. A numeric conversion such
+      // as `left < int(2) > &right` remains an ordinary expression.
+      const Lexeme *argument = nextSyntaxLexeme(lexemes, index);
+      const Lexeme *afterArgument =
+          argument == nullptr
+              ? nullptr
+              : nextSyntaxLexeme(lexemes, static_cast<std::size_t>(
+                                              argument - lexemes.data()));
+      return argument != nullptr && argument->kind == Kind::Word &&
+             isBuiltinType(argument->text) && afterArgument != nullptr &&
+             (afterArgument->kind == Kind::Comma ||
+              afterArgument->kind == Kind::Greater ||
+              afterArgument->kind == Kind::LeftBracket ||
+              (afterArgument->kind == Kind::Operator &&
+               (afterArgument->text == "*" || afterArgument->text == "&")));
     }
     if (next->kind != Kind::Word) {
       return false;

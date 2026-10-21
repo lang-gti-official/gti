@@ -46,13 +46,15 @@ void errors() {
     check(result.syntaxValid && !result.semanticValid &&
               !result.canGenerateCode(),
           "move-only error copying stops before MIR/backend generation");
-    const auto diagnostic =
-        std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
-                     [](const auto &d) {
-                       return d.code == "GTI-S2003" &&
-                              d.message.find("Cannot copy error payload") !=
-                                  std::string::npos;
-                     });
+    // unexpected(e) is an ordinary source function: copying a move-only
+    // payload into its by-value parameter is the general deleted-copy error.
+    const auto diagnostic = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [](const auto &d) {
+          return d.code == "GTI-S2018" &&
+                 d.message.find("would call the deleted copy "
+                                "constructor of 'Error'") != std::string::npos;
+        });
     check(diagnostic != result.diagnostics.end(),
           "error transport explains unavailable copy");
     if (diagnostic != result.diagnostics.end()) {
@@ -93,9 +95,16 @@ int main() { auto first = moved(); auto second = relay(); auto third = copied();
               instruction.ownership.reset();
               changed = true;
             } else if (!loseOwnership &&
-                       instruction.operation ==
-                           lang::MirOperation::Unexpected &&
-                       instruction.operands.size() == 1) {
+                       instruction.kind == lang::MirInstructionKind::Call &&
+                       instruction.functionTarget &&
+                       instruction.operands.size() == 1 && [&] {
+                         // The prelude's source unexpected(e) factory.
+                         const auto *callee = valid.hir.findFunctionInstance(
+                             *instruction.functionTarget);
+                         return callee != nullptr &&
+                                callee->source != nullptr &&
+                                callee->source->name().lexeme == "unexpected";
+                       }()) {
               instruction.operands.front().type = lang::SemanticType::Int32;
               changed = true;
             }

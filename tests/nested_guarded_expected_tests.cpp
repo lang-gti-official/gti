@@ -41,9 +41,12 @@ int main() {
          "relocation proves guarded transfer without pretending cleanup is "
          "passive");
   const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-  expect(lang::cppMirExpectedClassPlacementResult(frontend.mir, rows,
-                                                  factory->returnType),
-         "Expected result placement admits exact nested guarded owner");
+  const lang::MirBodyAddress factoryAddress{lang::MirBodyKind::Function,
+                                            factory->id};
+  expect(factory->returnType.kind == lang::SemanticType::Class &&
+             lang::CppMirBodyEmitter(frontend.mir, rows)
+                 .supportsFailureBodyText(factoryAddress),
+         "ordinary source result placement admits exact nested guarded owner");
   const auto artifact = gti_test::emitCpp(frontend);
   const std::string active =
       "__gti_lifecycle_active_" + std::to_string(leaf->declaration);
@@ -80,10 +83,9 @@ int main() {
           !lang::mirTypeRelocationIsDefinedFailureFree(malformed, owner->type),
           "relocation rejects missing guards, non-generated moves, cycles and "
           "unions");
-    expect(!lang::cppMirExpectedClassPlacementResult(malformed, rows,
-                                                     factory->returnType),
-           "Expected placement independently rejects malformed nested owner "
-           "proof");
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "source result verification independently rejects malformed nested "
+           "owner proof");
   }
   return failures ? 1 : 0;
 }

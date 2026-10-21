@@ -180,10 +180,11 @@ int main() {
                         for d in message["params"]["diagnostics"]))["params"]
             storage = next(d for d in publication["diagnostics"]
                            if d.get("code") == "GTI-S2045"
-                           and "must bind every borrowed field" in d["message"])
-            # Source-defined optional uses ordinary stored-reference rules,
-            # not the retired builtin optional payload-admission diagnostic.
-            assert "exact compatible constructor parameter" in storage["message"], storage
+                           and "complete checked dependency contract" in d["message"])
+            # Source-defined optional is a conditional stored-reference
+            # carrier: construction needs a complete dependency contract for
+            # every active borrowed field and alternative.
+            assert "active borrowed field and alternative" in storage["message"], storage
             assert storage["severity"] == 1, storage
             assert storage["data"]["phase"] == "semantics", storage
             assert not storage["data"].get("fixes"), storage

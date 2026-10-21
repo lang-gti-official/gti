@@ -2,8 +2,9 @@
 #include <std/vector>
 
 // A cleanup-free class result produced in each arm of a conditional
-// expression by a member call, or by a call that consumes a value moved into
-// it, then bound, returned, assigned, passed on or read through a field.
+// expression by a member call, by a call that consumes a value moved into it,
+// or by a callable value invocation, then bound, returned, assigned, passed
+// on or read through a field.
 // The receiver may be borrowed, read-only or mutable, or consumed by a `&&`
 // member; a moved cleanup-free receiver or by-value argument is a prepared
 // input that the call transfers to its callee. Only the arm that runs calls
@@ -132,6 +133,12 @@ Pod returned_raising(bool left, Plain a, Plain b, int divisor) {
 // Ordinary calls that can fail, returned from a join.
 Pod returned_lifted(bool left, int a, int b) { return left ? lift(a) : lift(b); }
 
+// A callable parameter's invocation publishes one arm.
+int through<F>(F produce, bool left, int base) {
+  Pod kept = left ? produce(base + 53) : fresh(base + 54);
+  return kept.read();
+}
+
 // Runs every shape through one arm; `base` keeps the two runs apart.
 int run(bool left, int base) {
   mut int total = 0;
@@ -222,6 +229,18 @@ int run(bool left, int base) {
     Pod kept = left ? std::move(a).make(base + 43)
                     : forward<Plain>(std::move(b), base + 44);
     total += kept.read();
+  }
+  {
+    // Callable value invocations: a stored closure's checked result
+    // publishes an arm of a binding and of a replacement, and a callable
+    // parameter's invocation another.
+    auto lifted = [](int id) -> Pod { return Pod(id + 1000); };
+    Pod kept = left ? lifted(base + 49) : fresh(base + 50);
+    total += kept.read();
+    mut Pod replaced{base};
+    replaced = left ? fresh(base + 51) : lifted(base + 52);
+    total += replaced.read();
+    total += through([](int id) -> Pod { return Pod(id); }, left, base);
   }
   {
     // Receivers and a moved argument with cleanup of their own: the moved

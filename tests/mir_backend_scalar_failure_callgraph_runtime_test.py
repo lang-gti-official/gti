@@ -79,8 +79,10 @@ def validate_emission(
                 f"{spelling!r}\n"
             )
             return False
+    # Small source bodies carry the backend's inline hint before the result.
     signature = re.compile(
-        r"  bool (?:__gti_entry|__gti_fn_[0-9]+_[A-Za-z_][A-Za-z0-9_]*)"
+        r"  (?:__gti_small_source_inline )?bool "
+        r"(?:__gti_entry|__gti_fn_[0-9]+_[A-Za-z_][A-Za-z0-9_]*)"
         r"__gti_mir_failure\("
         r"[^{};]*std::int32_t \*__gti_mir_out_result, "
         r"::gti_failure_record_v2 \*__gti_mir_failure_record\) \{\n"

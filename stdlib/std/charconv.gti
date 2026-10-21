@@ -118,18 +118,18 @@ from_chars_result parse_integer<std::integral T>(
     int digit = digit_value(input[index]);
     if (digit < 0 || digit >= base) { break; }
     if (!overflow) {
-      auto scaled = gti_internal::integer_checked_mul<expected<T, arithmetic_errc>, T>(value, T(base));
-      if (!scaled.has_value()) {
+      if (gti_internal::integer_mul_overflows(value, T(base))) {
         overflow = true;
-      } else if (negative) {
-        // Accumulate negatively so the signed minimum never needs negation.
-        auto next = gti_internal::integer_checked_sub<expected<T, arithmetic_errc>, T>(scaled.value(), T(digit));
-        if (!next.has_value()) { overflow = true; }
-        else { value = next.value(); }
       } else {
-        auto next = gti_internal::integer_checked_add<expected<T, arithmetic_errc>, T>(scaled.value(), T(digit));
-        if (!next.has_value()) { overflow = true; }
-        else { value = next.value(); }
+        T scaled = gti_internal::integer_wrapping_mul(value, T(base));
+        if (negative) {
+          // Accumulate negatively so the signed minimum never needs negation.
+          overflow = gti_internal::integer_sub_overflows(scaled, T(digit));
+          if (!overflow) { value = gti_internal::integer_wrapping_sub(scaled, T(digit)); }
+        } else {
+          overflow = gti_internal::integer_add_overflows(scaled, T(digit));
+          if (!overflow) { value = gti_internal::integer_wrapping_add(scaled, T(digit)); }
+        }
       }
     }
     // Consume the whole valid digit sequence even after overflow.

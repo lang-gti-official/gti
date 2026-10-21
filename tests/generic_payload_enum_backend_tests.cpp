@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <variant>
@@ -20,6 +21,10 @@ struct MirProgramTestAccess {
   }
   static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
     return program.functions;
+  }
+  static std::vector<MirConstructorInstance> &
+  constructors(MirProgram &program) {
+    return program.constructors;
   }
 };
 struct LoweredProgramTestAccess {
@@ -169,8 +174,8 @@ int main() {
   expect(leftName && rightName && leftName != rightName,
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
-  expect(serialized.starts_with("lowered-program-v22") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v110"),
+  expect(serialized.starts_with("lowered-program-v23") &&
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v112"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
@@ -1362,6 +1367,489 @@ int main() {
              "move publication preserves distinct source/value/binding "
              "obligations and cannot duplicate source cleanup authority");
     }
+  }
+  const auto receiverReferences = lang::Frontend().analyze(
+      "receiver-enum-reference.gti", R"gti(
+#include <std/panic>
+enum Slot { present(int& value), absent };
+class Reading {
+  mut Slot slot;
+public:
+  Reading(int& value) : slot(Slot::present(value)) {}
+  Reading() : slot(Slot::absent) {}
+  bool empty() {
+    switch (this.slot) {
+    case Slot::present: return false;
+    case Slot::absent: return true;
+    }
+  }
+  int& view() {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("absent");
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("absent");
+    }
+  }
+};
+[[borrowed_from(owner)]] Reading read(int& owner, bool absent) {
+  if (absent) return Reading();
+  return Reading(owner);
+}
+int main() {
+  int owner = 42;
+  auto view = read(owner, false);
+  auto missing = read(owner, true);
+  auto consumed = read(owner, false);
+  int& retained = std::move(consumed).take();
+  return view.view() == retained && missing.empty() ? 0 : 1;
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(receiverReferences.canGenerateCode(),
+         "receiver enum reference paths retain complete checked origins");
+  if (receiverReferences.canGenerateCode()) {
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto malformed = receiverReferences.mir;
+      bool changed = false;
+      for (auto &constructor :
+           lang::MirProgramTestAccess::constructors(malformed)) {
+        if (changed)
+          break;
+        for (auto &loan : constructor.body.loans) {
+          if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
+              loan.storedField == 0 || loan.designatedFields.empty())
+            continue;
+          expect(lang::cppMirStoredReferenceBindings(malformed, constructor)
+                     .has_value(),
+                 "exact enum field publication needs no native pointer shell");
+          if (mutation == 0)
+            loan.designatedFields.clear();
+          else if (mutation == 1)
+            loan.conditions.clear();
+          else if (mutation == 2)
+            loan.producedBy = 0;
+          else
+            loan.storedField = 1;
+          changed = true;
+          expect(!lang::cppMirStoredReferenceBindings(malformed, constructor),
+                 "enum field erasure rejects a substituted field, producer "
+                 "or conditional dependency group");
+          break;
+        }
+      }
+      expect(changed, "enum field publication mutation exercises its proof");
+    }
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      try {
+        expect(
+            !gti_test::emitCpp(receiverReferences, standard).contents.empty(),
+            "receiver provenance paths are not emitted as unconditional enum "
+            "field reads");
+      } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        expect(false,
+               "checked receiver enum references have a native representation");
+      }
+    }
+  }
+  const auto mixedOwnership = lang::Frontend().analyze(
+      "borrowed-owning-enum-field.gti", R"gti(
+#include <std/string>
+#include <std/panic>
+enum Choice { borrowed(int& value), owned(std::string value) };
+class Envelope {
+  mut Choice choice;
+public:
+  Envelope(int& value) : choice(Choice::borrowed(value)) {}
+  Envelope(std::string value) : choice(Choice::owned(std::move(value))) {}
+  int& take() && {
+    switch (this.choice) {
+    case Choice::borrowed(auto& value): return value;
+    case Choice::owned: std::panic("no borrowed value");
+    }
+  }
+};
+class DirectReference {
+  int& value;
+public:
+  DirectReference(int& owner) : value(owner) {}
+};
+int main() {
+  int owner = 42;
+  mut auto borrowed = Envelope(owner);
+  auto owned = Envelope(std::string("owned"));
+  auto direct = DirectReference(owner);
+  int& retained = std::move(borrowed).take();
+  return retained == 42 ? 0 : 1;
+}
+)gti",
+      {compositionLibrary / "prelude.gti"}, {}, {compositionLibrary});
+  expect(mixedOwnership.canGenerateCode(),
+         "an enum field may select either external borrowing or owned cleanup");
+  if (!mixedOwnership.canGenerateCode())
+    for (const auto &diagnostic : mixedOwnership.diagnostics)
+      std::cerr << diagnostic.primary.line << ": " << diagnostic.message
+                << '\n';
+  if (mixedOwnership.canGenerateCode()) {
+    bool sawEnum = false;
+    bool sawReference = false;
+    for (const auto &owner : mixedOwnership.mir.classInstances()) {
+      if (owner.declaredFields.size() != 1)
+        continue;
+      const auto &field = owner.declaredFields.front();
+      if (field.type.kind == lang::SemanticType::Enum &&
+          owner.traits.containsBorrowedState && field.requiresActiveCleanup) {
+        sawEnum = true;
+        expect(lang::cppMirFailureConstructorEmptyStateEligible(
+                   mixedOwnership.mir, owner.id) &&
+                   lang::cppMirFailureConstructorEmptyStateTypeEligible(
+                       mixedOwnership.mir, field.type),
+               "an inactive enum payload supplies a construction-only native "
+               "shell without inventing a source borrow");
+      } else if (field.type.kind == lang::SemanticType::Reference) {
+        sawReference = true;
+        expect(!lang::cppMirFailureConstructorEmptyStateEligible(
+                   mixedOwnership.mir, owner.id) &&
+                   !lang::cppMirFailureConstructorEmptyStateTypeEligible(
+                       mixedOwnership.mir, owner.type),
+               "a direct reference field cannot acquire an empty native shell");
+      }
+    }
+    expect(sawEnum && sawReference,
+           "empty-shell tests cover both conditional and direct borrows");
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = mixedOwnership.mir;
+      bool changed = false;
+      for (auto &constructor :
+           lang::MirProgramTestAccess::constructors(malformed)) {
+        if (changed)
+          break;
+        for (auto &value : constructor.body.values) {
+          if (!value.borrowDependencies ||
+              value.info.type.kind != lang::SemanticType::Enum ||
+              !value.info.traits.containsBorrowedState ||
+              (mutation < 2) != value.borrowDependencies->dependencies.empty())
+            continue;
+          if (mutation == 0 || mutation == 2)
+            value.borrowDependencies.reset();
+          else if (mutation == 1)
+            value.borrowDependencies->possibleAlternatives.clear();
+          else if (mutation == 3)
+            value.borrowDependencies->dependencies.clear();
+          else
+            value.borrowDependencies->dependencies.front().source = 0;
+          changed = true;
+          break;
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "mixed enum publication rejects missing, forged-empty or "
+             "substituted provenance");
+    }
+    const auto mixedLowered = gti_test::lowerProgram(
+        mixedOwnership, mixedOwnership.mir, mixedOwnership.mir);
+    const lang::CppMirBodyEmissionMap mixedMap(
+        lang::buildCppMirBodyEmissionMapRows(mixedLowered,
+                                             lang::CppStandard::Cpp23));
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = mixedOwnership.mir;
+      bool changed = false;
+      lang::HirFunctionInstanceId changedFunction = 0;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (changed)
+          break;
+        for (auto &block : function.body.blocks) {
+          if (changed)
+            break;
+          for (auto &instruction : block.instructions) {
+            if (instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+                instruction.callInputKind !=
+                    lang::HirCallInputKind::MoveValue ||
+                !instruction.result ||
+                !instruction.info.traits.containsBorrowedState)
+              continue;
+            auto *value = const_cast<lang::MirValue *>(
+                function.body.findValue(*instruction.result));
+            if (!value || !value->borrowDependencies ||
+                value->borrowDependencies->dependencies.empty())
+              continue;
+            if (mutation == 0)
+              value->borrowDependencies.reset();
+            if (mutation == 1)
+              value->borrowDependencies->dependencies.clear();
+            if (mutation == 2)
+              value->borrowDependencies->dependencies.front().source = 0;
+            changed = true;
+            changedFunction = function.id;
+            break;
+          }
+        }
+      }
+      if (mutation == 0) {
+        // The annotation is optional: MIR reconstructs the actual dependency
+        // from executable loan flow. This bounded native slot classifier
+        // additionally requires its exact attached transport witness.
+        const lang::CppMirBodyEmitter rejected(malformed, mixedMap);
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           changedFunction};
+        expect(
+            changed && lang::verifyMirProgram(malformed).valid() &&
+                !rejected.supportsBodyText(address) &&
+                !rejected.supportsFailureBodyText(address),
+            "native consuming transport requires its exact optional witness");
+      } else {
+        expect(changed && !lang::verifyMirProgram(malformed).valid(),
+               "consuming receiver cannot substitute its proved external "
+               "dependencies");
+      }
+    }
+    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      try {
+        expect(!gti_test::emitCpp(mixedOwnership, standard).contents.empty(),
+               "mixed owning/reference enum fields retain exact native "
+               "construction and cleanup schedules");
+      } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        expect(false,
+               "mixed owning/reference enum fields have a representation");
+      }
+    }
+  }
+  const auto conditionalPath =
+      std::filesystem::path(__FILE__).parent_path() /
+      "fixtures/consuming_owned_conditional_argument.gti";
+  std::ifstream conditionalInput(conditionalPath);
+  const std::string conditionalSource{
+      std::istreambuf_iterator<char>(conditionalInput), {}};
+  const auto conditional = lang::Frontend().analyze(
+      conditionalPath, conditionalSource, {compositionLibrary / "prelude.gti"},
+      {}, {compositionLibrary});
+  expect(
+      conditional.canGenerateCode(),
+      "ordinary consuming method result has verified conditional argument MIR");
+  if (conditional.canGenerateCode()) {
+    const auto conditionalLowered =
+        gti_test::lowerProgram(conditional, conditional.mir, conditional.mir);
+    const lang::CppMirBodyEmissionMap conditionalMap(
+        lang::buildCppMirBodyEmissionMapRows(conditionalLowered,
+                                             lang::CppStandard::Cpp23));
+    expect(lang::CppMirBodyEmitter(conditional.mir, conditionalMap)
+               .analyzeProgram()
+               .ready(),
+           "ordinary consuming method result retains its exact lifetime across "
+           "later arguments");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = conditional.mir;
+      bool changed = false;
+      lang::HirFunctionInstanceId entry = 0;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
+          continue;
+        entry = function.id;
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputRole != lang::MirCallInputRole::Argument ||
+                !instruction.preparedParameterDrop ||
+                instruction.lifecycle.size() != 1 ||
+                instruction.operands.size() != 1)
+              continue;
+            const auto *record =
+                function.body.findValue(instruction.operands.front().value);
+            if (!record)
+              continue;
+            const lang::MirInstruction *producer = nullptr;
+            for (const auto &candidateBlock : function.body.blocks)
+              for (const auto &candidate : candidateBlock.instructions)
+                if (candidate.id == record->definition)
+                  producer = &candidate;
+            if (!producer || !producer->receiver || !producer->functionTarget)
+              continue;
+            if (mutation == 0)
+              ++instruction.callSite;
+            if (mutation == 1)
+              instruction.lifecycle.front().conditional = true;
+            if (mutation == 2)
+              instruction.lifecycle.front().source = 0;
+            changed = true;
+          }
+      }
+      expect(changed && !lang::CppMirBodyEmitter(malformed, conditionalMap)
+                             .supportsFailureBodyText(
+                                 {lang::MirBodyKind::Function, entry}),
+             "ordinary method result cannot lose its exact argument transfer "
+             "proof");
+    }
+  }
+  const auto arrayPath = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/passive_result_array_assignment.gti";
+  std::ifstream arrayInput(arrayPath);
+  const std::string arraySource{std::istreambuf_iterator<char>(arrayInput), {}};
+  const auto arrayResult = lang::Frontend().analyze(
+      arrayPath, arraySource, {compositionLibrary / "prelude.gti"}, {},
+      {compositionLibrary});
+  expect(
+      arrayResult.canGenerateCode(),
+      "passive source call result has verified checked array assignment MIR");
+  if (arrayResult.canGenerateCode()) {
+    const auto lowered =
+        gti_test::lowerProgram(arrayResult, arrayResult.mir, arrayResult.mir);
+    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+        lowered, lang::CppStandard::Cpp23));
+    expect(
+        lang::CppMirBodyEmitter(arrayResult.mir, map).analyzeProgram().ready(),
+        "passive source call result publishes through checked array "
+        "assignment");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto malformed = arrayResult.mir;
+      bool changed = false;
+      lang::HirFunctionInstanceId entry = 0;
+      for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
+          continue;
+        entry = function.id;
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.kind != lang::MirInstructionKind::Assign ||
+                instruction.info.type.kind != lang::SemanticType::Class ||
+                instruction.localFailureSites.empty())
+              continue;
+            if (mutation == 0)
+              instruction.localFailureSites.clear();
+            if (mutation == 1)
+              instruction.definedFailure.localOrigins.clear();
+            if (mutation == 2)
+              instruction.preparedParameterDrop = 1;
+            if (mutation == 3) {
+              expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                         block.terminator.invokeInstruction == instruction.id,
+                     "lexical-trait passive array write owns its failure edge");
+              block.terminator.kind = lang::MirTerminatorKind::Goto;
+              block.terminator.invokeInstruction = 0;
+              block.terminator.failureRecord = 0;
+              block.terminator.elseTarget = 0;
+            }
+            changed = true;
+          }
+      }
+      expect(changed && !lang::CppMirBodyEmitter(malformed, map)
+                             .supportsFailureBodyText(
+                                 {lang::MirBodyKind::Function, entry}),
+             "checked array assignment cannot erase its exact failure/storage "
+             "contract");
+      if (mutation == 3)
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "MIR independently rejects a missing passive array write edge");
+    }
+  }
+  const auto payloadPath = std::filesystem::path(__FILE__).parent_path() /
+                           "fixtures/passive_result_payload.gti";
+  std::ifstream payloadInput(payloadPath);
+  const std::string payloadSource{std::istreambuf_iterator<char>(payloadInput),
+                                  {}};
+  const auto payloadResult = lang::Frontend().analyze(
+      payloadPath, payloadSource, {compositionLibrary / "prelude.gti"}, {},
+      {compositionLibrary});
+  expect(
+      payloadResult.canGenerateCode(),
+      "ordinary passive calls can supply enum fields and constructor fields");
+  if (payloadResult.canGenerateCode()) {
+    const auto lowered = gti_test::lowerProgram(
+        payloadResult, payloadResult.mir, payloadResult.mir);
+    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+        lowered, lang::CppStandard::Cpp23));
+    expect(lang::CppMirBodyEmitter(payloadResult.mir, map)
+               .analyzeProgram()
+               .ready(),
+           "passive source call results stage at their producer before enum "
+           "publication");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = payloadResult.mir;
+      bool changed = false;
+      for (auto &constructor :
+           lang::MirProgramTestAccess::constructors(malformed))
+        for (auto &block : constructor.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed ||
+                instruction.operation != lang::MirOperation::PayloadConstruct ||
+                instruction.operands.empty())
+              continue;
+            const auto *value =
+                constructor.body.findValue(instruction.operands.front().value);
+            if (!value || value->info.type.kind != lang::SemanticType::Class)
+              continue;
+            if (mutation == 0)
+              instruction.operands.push_back(instruction.operands.front());
+            if (mutation == 1)
+              instruction.enumVariant = 999;
+            if (mutation == 2)
+              instruction.operands.front().type = lang::SemanticType::Int32;
+            changed = true;
+          }
+      expect(
+          changed && !lang::verifyMirProgram(malformed).valid() &&
+              !lang::CppMirBodyEmitter(malformed, map).analyzeProgram().ready(),
+          "passive enum field rejects duplicate use and altered variant/type");
+    }
+  }
+  const auto inlinePolicy =
+      lang::Frontend().analyze("native-inline-policy.gti", R"(
+class Gauge {
+  mut int reading;
+public:
+  Gauge(int value) : reading(value) {}
+  int observe() { return reading; }
+};
+int tiny_leaf(int value) { return value + 1; }
+int tiny_forward(int value) { return tiny_leaf(value); }
+int inspect(Gauge value) { return value.observe(); }
+int recursive(int value) { return value == 0 ? 0 : recursive(value - 1); }
+int looping(int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index += 1) total += index;
+  return total;
+}
+int main() {
+  Gauge value{7};
+  return tiny_forward(inspect(value)) + recursive(3) + looping(3) - 11;
+}
+)");
+  expect(inlinePolicy.canGenerateCode(),
+         "general source inline fixture verifies");
+  if (inlinePolicy.canGenerateCode()) {
+    const auto text = gti_test::emitCpp(inlinePolicy).contents;
+    const auto hinted = [&](std::string_view name) {
+      for (auto at = text.find(name); at != std::string::npos;
+           at = text.find(name, at + name.size())) {
+        const auto begin = text.rfind('\n', at);
+        if (text.substr(begin == std::string::npos ? 0 : begin + 1,
+                        at - (begin == std::string::npos ? 0 : begin + 1))
+                .find("__gti_small_source_inline ") != std::string::npos)
+          return true;
+      }
+      return false;
+    };
+    expect(hinted("_tiny_leaf("),
+           "small unrelated scalar source body gets an early inline hint");
+    expect(hinted("_tiny_forward("),
+           "bounded exact source-call graph gets an early inline hint");
+    expect(hinted("_inspect("),
+           "proven passive class retirement is not an unknown invocation");
+    expect(
+        text.find("_recursive(") != std::string::npos &&
+            text.find("_looping(") != std::string::npos &&
+            !hinted("_recursive(") && !hinted("_looping("),
+        "recursive and cyclic source bodies retain native inliner discretion");
+    expect(hinted("::Gauge("),
+           "ordinary small source constructors share the structural policy");
   }
   return failures == 0 ? 0 : 1;
 }

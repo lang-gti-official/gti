@@ -1,0 +1,32 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+};
+
+enum State {
+  borrowed(int& value, int checked),
+  owned(std::unique_ptr<Resource> value, int checked)
+};
+class Envelope {
+  mut State state;
+public:
+  Envelope(int& value, int divisor)
+      : state(State::borrowed(value, 12 / divisor)) {}
+  Envelope(std::unique_ptr<Resource> value, int divisor)
+      : state(State::owned(std::move(value), 12 / divisor)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource guard{9};
+  int owner = 42;
+  auto borrowed = Envelope(owner, 1);
+  int divisor = argc == 2 ? 0 : 1;
+  auto owned = Envelope(std::make_unique<Resource>(7), divisor);
+  return 0;
+}

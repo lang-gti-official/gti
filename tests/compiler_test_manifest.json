@@ -2,6 +2,10 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testConcreteCallableSemanticFailure",
+      "suite": "frontend"
+    },
+    {
       "name": "testAnnotatedFunctionContracts",
       "suite": "frontend"
     },
@@ -679,6 +683,14 @@
     },
     {
       "name": "testConstexprResults",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprTryable",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprPayloadEnums",
       "suite": "constexpr"
     },
     {

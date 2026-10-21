@@ -156,7 +156,7 @@ void testPrivateArithmeticAuthority() {
     expect(!lang::evaluateDefinedIntegerBinary(
                lang::CheckedIntegerOperation::Add, {.magnitude = 2},
                {.magnitude = 3}, signedDomain,
-               lang::IntegerArithmeticMode::CheckedResult),
+               lang::IntegerArithmeticMode::OverflowPredicate),
            "checked-result arithmetic should retain its explicit outcome");
   }
 
@@ -216,18 +216,33 @@ constantCheckedResult(const lang::FrontendResult &result,
   const auto *node = constant
                          ? std::get_if<lang::ConstantAggregateValue>(&*constant)
                          : nullptr;
-  if (!node || !node->value || !node->value->exactType ||
-      node->value->exactType->kind != lang::SemanticType::Expected)
+  // expected<T, E> is an ordinary source class: its constant is an object
+  // whose single `state` field holds the active payload-enum alternative.
+  const auto *info =
+      node && node->value && node->value->exactType &&
+              node->value->kind == lang::ConstantAggregateKind::Object &&
+              node->value->exactType->kind == lang::SemanticType::Class
+          ? result.semantics.findClassType(node->value->exactType->classId)
+          : nullptr;
+  if (!info || !info->declaration ||
+      info->declaration->name().lexeme != "expected" ||
+      node->value->exactType->arguments.size() != 2 ||
+      node->value->fields.size() != 1)
     return std::nullopt;
   const auto domain =
       lang::constantIntegerDomain(node->value->exactType->arguments[0]);
-  if (!domain)
+  const auto *state = std::get_if<lang::ConstantAggregateValue>(
+      &node->value->fields.front().value);
+  if (!domain || !state || !state->value ||
+      state->value->kind != lang::ConstantAggregateKind::PayloadEnum ||
+      state->value->elements.size() != 1)
     return std::nullopt;
-  const auto payload = lang::constantResultPayload(*constant, true);
-  return CheckedConstant{
-      *domain,
-      payload ? std::optional{std::get<lang::ConstantInteger>(*payload.value)}
-              : std::nullopt};
+  // Alternative 0 is `value(T payload)`; alternative 1 is `error(E failure)`.
+  return CheckedConstant{*domain,
+                         state->value->variant == 0
+                             ? std::optional{std::get<lang::ConstantInteger>(
+                                   state->value->elements.front())}
+                             : std::nullopt};
 }
 
 void printDiagnostics(const lang::FrontendResult &result) {
@@ -372,6 +387,36 @@ int main() {
                    !effect.writesUnknownMemory,
                "MIR should retain non-failing, memory-free arithmetic "
                "effects");
+        if (lang::integerArithmeticIntrinsic(instruction.intrinsic)->mode ==
+            lang::IntegerArithmeticMode::OverflowPredicate) {
+          expect(instruction.info.type == lang::SemanticType::Bool,
+                 "overflow primitives expose a fact, not a result carrier");
+          for (int mutation = 0; mutation < 5; ++mutation) {
+            auto malformed = result.mir;
+            auto *body = lang::findMirBody(
+                malformed, {lang::MirBodyKind::Function, function.id});
+            auto *changedBlock = body->findBlock(block.id);
+            auto changed = std::find_if(changedBlock->instructions.begin(),
+                                        changedBlock->instructions.end(),
+                                        [&](const auto &candidate) {
+                                          return candidate.id == instruction.id;
+                                        });
+            if (mutation == 0)
+              changed->intrinsic = lang::IntrinsicKind::IntegerWrappingAdd;
+            else if (mutation == 1)
+              changed->operands.pop_back();
+            else if (mutation == 2)
+              changed->parameterTypes[1] = lang::SemanticType::Bool;
+            else if (mutation == 3)
+              changed->receiver = changed->operands.front();
+            else
+              changed->info.type = changed->operands.front().type;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "overflow queries reject substituted operation, arity, "
+                   "operand domain, receiver or result type: " +
+                       std::to_string(mutation));
+          }
+        }
       }
     }
   }
@@ -386,11 +431,10 @@ int main() {
     const std::string generated = gti_test::emitCppText(result);
     for (const std::string_view helper :
          {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
-          "saturating_sub", "saturating_mul", "checked_add", "checked_sub",
-          "checked_mul"}) {
-      const bool checked = helper.starts_with("checked_");
+          "saturating_sub", "saturating_mul", "integer_add_overflow_flag",
+          "integer_subtract_overflow_flag", "integer_multiply_overflow_flag"}) {
       expect(generated.find("::gti_internal::backend::" + std::string(helper) +
-                            (checked ? "<" : "(")) != std::string::npos,
+                            "(") != std::string::npos,
              "production MIR emission should lower each ordinary std wrapper "
              "through the selected private helper");
     }
@@ -419,7 +463,7 @@ int after = 42;
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const lang::Diagnostic &candidate) {
         return candidate.code == "GTI-S2057" &&
-               candidate.message.find("inactive or void result alternative") !=
+               candidate.message.find("terminal defined-failure operation") !=
                    std::string::npos;
       });
   expect(!result.canGenerateCode() && diagnostic != result.diagnostics.end(),

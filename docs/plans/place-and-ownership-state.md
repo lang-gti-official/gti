@@ -437,6 +437,12 @@ misclassified as absent merely because M-OWN-02 did not implement it.
 
 ## 9. Implemented M-OWN-04 Named Expected-Payload Range Slice
 
+**Superseded (2026-10-20).** `expected` is now a source-defined prelude class.
+Its `value()` and `error()` are ordinary accessors returning references tied to
+their receiver, so this traversal, and the shapes the slice excluded, follow
+the general range and borrow rules. The `ExpectedValue` projection described
+below no longer participates. The section is kept as the record of the slice.
+
 The portable byte-I/O surface supplies the first concrete client that changes
 the priority of one previously broad restriction:
 

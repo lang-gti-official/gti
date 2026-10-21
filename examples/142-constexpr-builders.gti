@@ -71,6 +71,8 @@ enum class config_error { invalid_budget };
 
 // The ordinary recoverable result composes at either execution time. Prefix
 // ? returns the exact error; it does not panic or invent a default payload.
+// expected is a source class: the same std::tryable conformance calls and MIR
+// branch execute here as for a user-defined result with constexpr operations.
 constexpr expected<int, config_error> checked_budget(int requested) {
   if (requested < 1) { return unexpected(config_error::invalid_budget); }
   return requested;

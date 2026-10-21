@@ -238,7 +238,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v22") == 0 &&
+  expect(firstText.find("lowered-program-v23") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -1338,6 +1338,58 @@ int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
   }
 }
 
+void testClassDefinitionFamilyIdentity() {
+  const auto frontend = lang::Frontend().analyze("definition-family.gti", R"(
+class Record<T, E> { public: int kind() { return 1; } };
+class Record<void, E> { public: int kind() { return 2; } };
+class Unrelated<T, E> {};
+int main() {
+  Record<int, int> value{};
+  Record<void, int> empty{};
+  return value.kind() + empty.kind() - 3;
+}
+)");
+  expect(frontend.canGenerateCode(), "definition family fixture is valid");
+  if (!frontend.canGenerateCode())
+    return;
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "definition family crosses the lowered boundary");
+  if (!built.valid())
+    return;
+  std::size_t memberIndex = built.program->declarations().size();
+  lang::ClassId unrelated = 0;
+  for (std::size_t index = 0; index < built.program->declarations().size();
+       ++index) {
+    const auto &declaration = built.program->declarations()[index];
+    const auto *type =
+        std::get_if<lang::LoweredClassDeclaration>(&declaration.payload);
+    if (!type)
+      continue;
+    if (type->definitionFamilyPrimary != 0)
+      memberIndex = index;
+    if (declaration.name == "Unrelated")
+      unrelated = type->id;
+  }
+  expect(memberIndex < built.program->declarations().size() && unrelated != 0,
+         "family fixture retains its member and unrelated identity");
+  if (memberIndex >= built.program->declarations().size() || unrelated == 0)
+    return;
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto forged = *built.program;
+    auto &member = std::get<lang::LoweredClassDeclaration>(
+        lang::LoweredProgramTestAccess::declarations(forged)[memberIndex]
+            .payload);
+    member.definitionFamilyPrimary = mutation == 0   ? member.id
+                                     : mutation == 1 ? unrelated
+                                                     : 999999;
+    expect(hasIssue(lang::verifyLoweredProgram(forged),
+                    lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+           "self, unrelated and missing class family identities are rejected");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -1349,6 +1401,7 @@ int main() {
   testConcreteBranchSymbols();
   testConcreteLambdaPacks();
   testConcreteClassAliases();
+  testClassDefinitionFamilyIdentity();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";
     return 1;

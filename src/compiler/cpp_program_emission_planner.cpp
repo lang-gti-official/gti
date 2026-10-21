@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -361,6 +362,7 @@ public:
           case IntrinsicKind::ThreadScope:
           case IntrinsicKind::ThreadJoinable:
           case IntrinsicKind::ThreadJoin:
+          case IntrinsicKind::ThreadResultTake:
           case IntrinsicKind::ThreadAutoJoin:
             return true;
           default:
@@ -1059,12 +1061,138 @@ public:
     return parameterCount + 1;
   }
 
+  // Native cleanup guards can make a small source wrapper look expensive to
+  // the host inliner before those guards fold away. Give a bounded, closed
+  // source graph an early inline hint; this never removes a MIR operation or
+  // changes its effect/cleanup contract. The budget counts every invocation,
+  // not merely distinct callees, and rejects both control-flow and call cycles.
+  [[nodiscard]] bool smallSourceBody(MirBodyAddress root) {
+    const auto key = std::pair{root.kind, root.owner};
+    if (const auto found = smallSourceBodies.find(key);
+        found != smallSourceBodies.end())
+      return found->second;
+    std::size_t remaining = 256;
+    std::vector<MirBodyAddress> active;
+    const auto visit = [&](const auto &self, MirBodyAddress address) -> bool {
+      if (active.size() == 16 ||
+          std::find(active.begin(), active.end(), address) != active.end())
+        return false;
+      if (address.kind == MirBodyKind::Function) {
+        const auto *function = mir.findFunctionInstance(address.owner);
+        if (!function ||
+            function->definitionKind != MirDefinitionKind::Source ||
+            function->entryKind != ProgramEntryKind::None ||
+            function->virtualMethod ||
+            function->linkage != LanguageLinkage::Gti)
+          return false;
+      } else if (address.kind == MirBodyKind::Constructor) {
+        const auto *constructor = mir.findConstructorInstance(address.owner);
+        if (!constructor ||
+            constructor->definitionKind != MirDefinitionKind::Source)
+          return false;
+      } else {
+        return false;
+      }
+      const MirBody *body = findMirBody(mir, address);
+      if (!body || body->blocks.empty() || body->blocks.size() > 64)
+        return false;
+      std::vector<unsigned char> colors(body->blocks.size(), 0);
+      const auto acyclic = [&](const auto &walk, MirBlockId id) -> bool {
+        if (id == 0)
+          return true;
+        const auto *block = body->findBlock(id);
+        if (!block || colors[id - 1] == 1)
+          return false;
+        if (colors[id - 1] == 2)
+          return true;
+        colors[id - 1] = 1;
+        if (!walk(walk, block->terminator.target) ||
+            !walk(walk, block->terminator.elseTarget))
+          return false;
+        for (const auto &target : block->terminator.switchTargets)
+          if (!walk(walk, target.target))
+            return false;
+        colors[id - 1] = 2;
+        return true;
+      };
+      if (!acyclic(acyclic, body->entry))
+        return false;
+      active.push_back(address);
+      std::size_t local = 0;
+      for (const auto &block : body->blocks) {
+        if (colors[block.id - 1] == 0)
+          continue;
+        for (const auto &instruction : block.instructions) {
+          if (instruction.tombstone)
+            continue;
+          if (++local > 64 || remaining == 0)
+            return false;
+          --remaining;
+          const auto traits = effects(mir, *body, instruction);
+          if (traits.allocates || traits.maySynchronize)
+            return false;
+          // A verified empty cleanup recipe is a local retirement, not an
+          // unknown invocation. The general invocation inventory conservatively
+          // marks an empty destructor-target list as a boundary. Retain the
+          // retirement operation and its budget, but do not chase a callee that
+          // the sealed MIR explicitly says does not exist.
+          const bool localRetirement =
+              instruction.kind == MirInstructionKind::Drop &&
+              instruction.destination && !instruction.lifecycle.empty() &&
+              std::all_of(
+                  instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [&](const auto &event) {
+                    if (event.kind != MirLifecycleEventKind::Drop ||
+                        event.source == 0 ||
+                        event.source > body->dropObligations.size())
+                      return false;
+                    const auto &obligation =
+                        body->dropObligations[event.source - 1];
+                    const auto &drop = obligation.dropType;
+                    return obligation.place == *instruction.destination &&
+                           drop.type == instruction.info.type &&
+                           !drop.requiresActiveCleanup && !drop.destructor &&
+                           !drop.fixedArray && !drop.uniquePointeeClass &&
+                           !drop.polymorphicCleanup && !drop.recursiveCleanup &&
+                           drop.aggregate.empty();
+                  });
+          if (localRetirement || isMirStructuralValueDrop(mir, instruction))
+            continue;
+          const auto targets = mirInvocationTargets(mir, *body, instruction);
+          if (targets.boundary)
+            return false;
+          for (const auto target : targets.addresses)
+            if (!self(self, target))
+              return false;
+        }
+      }
+      active.pop_back();
+      return true;
+    };
+    const bool result = visit(visit, root);
+    smallSourceBodies.emplace(key, result);
+    return result;
+  }
+
+  [[nodiscard]] bool smallSourceFunctionFamily(FunctionId declaration) {
+    const auto instances = loweredFunctionInstances(declaration);
+    return !instances.empty() &&
+           std::all_of(
+               instances.begin(), instances.end(), [&](const auto *item) {
+                 return smallSourceBody({MirBodyKind::Function, item->id});
+               });
+  }
+
   void emitLoweredFunctionSignature(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const MirFunctionInstance *instance, bool failure,
       bool insideClass = false, std::string_view owner = {},
       bool sourceParameterTypes = false, bool explicitGenericArguments = false,
       std::optional<bool> dependentIndirect = std::nullopt) {
+    if (!function.virtualMethod &&
+        (instance ? smallSourceBody({MirBodyKind::Function, instance->id})
+                  : smallSourceFunctionFamily(function.id)))
+      output << "__gti_small_source_inline ";
     if (!failure && !dependentIndirect && instance != nullptr &&
         sourceParameterTypes && !function.virtualMethod &&
         !function.genericParameters.empty() &&
@@ -1842,9 +1970,13 @@ public:
     const bool indirectResult =
         cppRequiresIndirectValueTransport(mir, instance.returnType);
     if (failure) {
+      if (smallSourceBody({MirBodyKind::Function, instance.id}))
+        output << "__gti_small_source_inline ";
       output << "bool ";
     } else {
       output << "template <> ";
+      if (smallSourceBody({MirBodyKind::Function, instance.id}))
+        output << "__gti_small_source_inline ";
       if (indirectResult)
         output << "void";
       else
@@ -1893,6 +2025,8 @@ public:
     }
     const bool indirectResult =
         cppRequiresIndirectValueTransport(mir, instance.returnType);
+    if (smallSourceBody({MirBodyKind::Function, instance.id}))
+      output << "__gti_small_source_inline ";
     if (failure) {
       output << "bool ";
     } else {
@@ -2368,11 +2502,11 @@ public:
       // value-initializing inactive payload bytes. No source value can observe
       // those bytes, and zeroing them needlessly couples scalar payload bits
       // to the discriminant when native optimizers combine return paths.
-      output << name << "() noexcept {}\n";
+      output << "constexpr " << name << "() noexcept {}\n";
       writeIndent();
       output << "template <std::size_t Index, typename... Args>\n";
       writeIndent();
-      output << "explicit " << name
+      output << "constexpr explicit " << name
              << "(std::in_place_index_t<Index> selected, Args &&...args)"
                 " : __gti_value(selected, std::forward<Args>(args)...) {}\n";
       writeIndent();
@@ -7088,6 +7222,8 @@ public:
         if (!directConstructor && (genericOwner || (generic && !failureForm))) {
           output << "template <> ";
         }
+        if (smallSourceBody({MirBodyKind::Constructor, instance->id}))
+          output << "__gti_small_source_inline ";
         output << ownerSpelling << "::" << constructorName << '(';
         emitLoweredConstructorParameters(*instance, failureForm);
         output << ')';
@@ -7221,6 +7357,12 @@ public:
       emitLoweredClassTemplateHeaders(owner);
       emitLoweredTemplateDeclaration(constructor.genericParameters);
       writeIndent();
+      if (std::all_of(genericNormalBodies.begin(), genericNormalBodies.end(),
+                      [&](const auto &body) {
+                        return smallSourceBody(
+                            {MirBodyKind::Constructor, body.instance->id});
+                      }))
+        output << "__gti_small_source_inline ";
       output << loweredPrimaryClassSpelling(owner) << "::" << owner.name << '(';
       emitLoweredGenericOwnerConstructorParameters(constructor, *first.instance,
                                                    false);
@@ -7617,6 +7759,8 @@ public:
         writeIndent();
         if (genericOwner && !directOwner)
           output << "template <> ";
+        if (smallSourceBody({MirBodyKind::Constructor, constructor->id}))
+          output << "__gti_small_source_inline ";
         output << ownerSpelling << "::" << constructorName << '(';
         emitLoweredConstructorParameters(*constructor, failure);
         output << ')';
@@ -9618,6 +9762,26 @@ public:
           output << '}';
         return;
       }
+      if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum) {
+        const auto *enumeration = mir.findPayloadEnum(*type);
+        const auto &node = *aggregate->value;
+        if (!enumeration || node.identity != type->enumId ||
+            node.variant >= enumeration->variants.size() ||
+            node.elements.size() !=
+                enumeration->variants[node.variant].payloadTypes.size())
+          throw std::logic_error(
+              "payload constant differs from its exact variant");
+        emitSemanticType(*type);
+        output << "{std::in_place_index<" << node.variant + 1 << ">";
+        for (std::size_t index = 0; index < node.elements.size(); ++index) {
+          output << ", ";
+          emitConstant(
+              node.elements[index],
+              &enumeration->variants[node.variant].payloadTypes[index]);
+        }
+        output << '}';
+        return;
+      }
       if (aggregate->value->kind == ConstantAggregateKind::Array) {
         if (type->kind != SemanticType::Array || type->arguments.size() != 1 ||
             type->arrayLengthParameterId != 0 ||
@@ -9816,6 +9980,7 @@ public:
   std::vector<std::pair<std::string, std::string>> lastInitializerFields_;
   CppStandard standard;
   const MirProgram &mir;
+  std::map<std::pair<MirBodyKind, std::size_t>, bool> smallSourceBodies;
   const LoweredProgram &loweredProgram;
   bool debugInfo;
   CppMirProgramPlan programPlan;

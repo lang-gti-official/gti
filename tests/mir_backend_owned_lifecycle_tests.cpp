@@ -303,7 +303,7 @@ void testFamily(const std::filesystem::path &fixture) {
          "proved constructors should use exact targets without failure edges");
 
   const std::string dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v110 ") &&
+  expect(dump.starts_with("mir-v112 ") &&
              dump.find("constructor-initializer=1") != std::string::npos,
          "MIR v24 should print the new initializer-stage authority");
 
@@ -583,10 +583,11 @@ void testFamily(const std::filesystem::path &fixture) {
 
 void testSameTypedConstructorSwapAndCheckedFallback(
     const std::filesystem::path &fixture) {
+  const std::filesystem::path standardLibrary =
+      fixture.parent_path().parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      fixture.string(), readFile(fixture),
-      {fixture.parent_path().parent_path().parent_path() / "stdlib" /
-       "prelude.gti"});
+      fixture.string(), readFile(fixture), {standardLibrary / "prelude.gti"},
+      {}, {standardLibrary});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -696,10 +697,11 @@ void testSameTypedConstructorSwapAndCheckedFallback(
 }
 
 void testCommaUsesGeneralMir(const std::filesystem::path &fixture) {
+  const std::filesystem::path standardLibrary =
+      fixture.parent_path().parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      fixture.string(), readFile(fixture),
-      {fixture.parent_path().parent_path().parent_path() / "stdlib" /
-       "prelude.gti"});
+      fixture.string(), readFile(fixture), {standardLibrary / "prelude.gti"},
+      {}, {standardLibrary});
   expect(frontend.canGenerateCode(),
          "the lifecycle comma fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -902,13 +904,14 @@ void testOwningAssignmentRequiresTransfer(
          "missing-transfer mutation covers bindings and array elements");
 }
 
-// Assigning an owning payload to a whole Expected binding converts it into a
-// distinct wrapper type. The Assign transfers the payload's value obligation
-// out, as a converting initialization does, while the binding's obligation
-// keeps owning the converted value; no later Drop names the transferred
-// payload. A same-typed Replace across the conversion, or no transfer at all,
-// fails verification. (Regression for issue #227: lowering emitted a Replace
-// whose source and target types differ.)
+// Assigning an owning payload to a whole expected binding converts it into a
+// distinct wrapper type through the source class's operator=. The call
+// transfers the payload's value obligation out, as a converting
+// initialization does, while the binding's obligation keeps owning the
+// converted value; no later Drop names the transferred payload. A same-typed
+// Replace across the conversion, or no transfer at all, fails verification.
+// (Regression for issue #227: lowering emitted a Replace whose source and
+// target types differ.)
 void testConvertingOwningAssignmentTransfersOut(
     const std::filesystem::path &fixtures) {
   const auto library = fixtures.parent_path().parent_path() / "stdlib";
@@ -936,18 +939,31 @@ int main() {
          "converting owning assignment should lower to verified MIR");
   if (!frontend.canGenerateCode())
     return;
+  // expected<T, E> is the prelude's ordinary source class.
+  const auto isExpected = [&](const lang::SemanticType &type) {
+    const auto *info = type.kind == lang::SemanticType::Class
+                           ? frontend.semantics.findClassType(type.classId)
+                           : nullptr;
+    return info != nullptr && info->declaration != nullptr &&
+           info->declaration->name().lexeme == "expected";
+  };
   bool found = false;
   for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hirFunction = frontend.hir.findFunctionInstance(function.id);
+    if (hirFunction == nullptr ||
+        hirFunction->sourceUnit != frontend.sourceGraph.entryUnit())
+      continue;
     const auto &body = function.body;
     for (const auto &block : body.blocks) {
       for (const auto &instruction : block.instructions) {
-        const auto *place = instruction.destination
-                                ? body.findPlace(*instruction.destination)
+        const auto *place = instruction.receiver
+                                ? body.findPlace(instruction.receiver->place)
                                 : nullptr;
-        if (instruction.kind != lang::MirInstructionKind::Assign || !place ||
-            place->type.kind != lang::SemanticType::Expected ||
-            instruction.operands.size() != 1 ||
-            instruction.operands.front().type.kind != lang::SemanticType::Class)
+        if (instruction.kind != lang::MirInstructionKind::Call || !place ||
+            !isExpected(place->type) || instruction.operands.size() != 1 ||
+            instruction.operands.front().type.kind !=
+                lang::SemanticType::Class ||
+            isExpected(instruction.operands.front().type))
           continue;
         found = true;
         const auto *source =
@@ -959,8 +975,8 @@ int main() {
                        lang::MirLifecycleEventKind::TransferOut &&
                    instruction.lifecycle.front().target == 0 &&
                    source->dropType.type == instruction.operands.front().type,
-               "the converting Assign should transfer the payload obligation "
-               "out");
+               "the converting operator= call should transfer the payload "
+               "obligation out");
         if (source == nullptr)
           continue;
         const bool laterDrop = std::any_of(
@@ -1003,7 +1019,8 @@ int main() {
       }
     }
   }
-  expect(found, "the fixture should contain one converting owning Assign");
+  expect(found, "the fixture should contain one converting owning operator= "
+                "call");
 }
 
 } // namespace

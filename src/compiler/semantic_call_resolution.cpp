@@ -2334,8 +2334,8 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
     const SemanticType &pattern, const SemanticType &argument,
     const std::vector<GenericParameterInfo> &parameters,
     GenericSubstitution &substitution, const ExprPtr *expression,
-    GenericParameterId *conflictingParameter, bool *conflictingValueParameter)
-    -> bool {
+    GenericParameterId *conflictingParameter,
+    bool *conflictingValueParameter) const -> bool {
   if (pattern.kind == SemanticType::Reference &&
       pattern.arguments.size() == 1) {
     const SemanticType &referent = argument.kind == SemanticType::Reference &&
@@ -2417,9 +2417,18 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
     return true;
   }
 
+  const auto definitionFamily = [&](ClassId id) {
+    if (id == 0 || id > classes.size())
+      return id;
+    const auto primary = classInfo(id).definitionFamilyPrimary;
+    return primary == 0 ? id : primary;
+  };
+  // Deduce from a family's public arguments. Concrete substitution still
+  // selects an exact definition and ordinary argument matching checks it;
+  // distinct definitions are not interchangeable object representations.
   if (pattern.kind != argument.kind ||
       pattern.nativeCScalar != argument.nativeCScalar ||
-      pattern.classId != argument.classId ||
+      definitionFamily(pattern.classId) != definitionFamily(argument.classId) ||
       pattern.enumId != argument.enumId ||
       pattern.signatureReceiver != argument.signatureReceiver ||
       pattern.arrayLength != argument.arrayLength ||
@@ -3411,6 +3420,49 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
               : "Pass a lambda to a direct generic value or checked-reference "
                 "parameter with a visible, proven confined contract; exact "
                 "owned transport requires a value parameter.");
+      argumentDiagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+  // A fresh function item borrowed for one call may be matched before the
+  // target's contract is final, as a lambda is; the target must then prove
+  // the parameter confined.
+  for (const auto &[call, resolved] : semanticModel.calls) {
+    if (call == nullptr || resolved.ephemeralBorrowArguments.empty() ||
+        !finalizesCall(call)) {
+      continue;
+    }
+    const FunctionInfo *target = semanticModel.findFunction(resolved.function);
+    for (const std::size_t index : resolved.ephemeralBorrowArguments) {
+      if (index >= call->arguments().size()) {
+        continue;
+      }
+      const ExpressionInfo *info =
+          semanticModel.findExpression(*call->arguments()[index]);
+      if (info == nullptr || info->type.kind != SemanticType::FunctionItem) {
+        continue;
+      }
+      const CallableParameterContract *contract =
+          target == nullptr ? nullptr
+                            : callableParameterContract(target->id, index);
+      if (contract != nullptr &&
+          contract->boundary == CallableBoundary::Confined) {
+        continue;
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2046", DiagnosticPhase::Semantics,
+          expressionToken(call->arguments()[index]),
+          "Function item argument " + std::to_string(index + 1) +
+              " cannot be borrowed for the call because the selected target "
+              "parameter is not proven confined.");
+      if (target != nullptr && target->declaration != nullptr &&
+          index < target->bodyDeclaration()->parameters().size()) {
+        diagnostic.related.push_back(
+            {tokenSpan(target->bodyDeclaration()->parameters()[index].name),
+             "Selected generic parameter declared here."});
+      }
+      diagnostic.hints.emplace_back(
+          "Pass the function to a generic reference parameter that it only "
+          "invokes or forwards to another confined parameter.");
       argumentDiagnostics.emplace_back(std::move(diagnostic));
     }
   }
@@ -4598,6 +4650,8 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     const Token &paren, std::span<const ExprPtr> arguments,
     CallReceiverMode receiverMode) -> bool {
   if (function.receiverMutability == ReceiverMutability::Consuming &&
+      !conditionalReferenceReturn(function.returnType, function.parameterTypes,
+                                  function.dispatchOwner) &&
       (function.returnType.kind == SemanticType::Reference ||
        function.returnBorrowOrigin != BorrowOriginKind::None ||
        typeTraits(function.returnType).containsBorrowedState)) {
@@ -4705,9 +4759,11 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     if (production) {
       transientReceiver = true;
       receiverPlace = std::move(production->place);
-      if (temporaryReceiver) {
-        // Mutability of the materialized carrier shell does not upgrade a
-        // stored shared dependency into exclusive access to its owner.
+      if (temporaryReceiver ||
+          function.receiverMutability == ReceiverMutability::Consuming) {
+        // Neither mutating a materialized carrier shell nor consuming a
+        // fresh carrier upgrades a stored shared dependency into exclusive
+        // access to its owner.
         callReceiverAccess = production->access;
       } else if (production->access == AccessMode::Mutable) {
         callReceiverAccess = AccessMode::Mutable;
@@ -7119,6 +7175,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     }
   }
   recordCallableForwardings(call, function);
+  recordOwnerlessTextCall(call, function);
   recordDefaultArgumentEffects(call, function);
   if (requestSession.hasCThreadRequirements && !instanceAnalysisActive &&
       function.declaration != nullptr) {
@@ -7307,18 +7364,89 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // Read the exact declaration after the order-independent body demand above;
   // never reuse an open primary's facts for a different concrete instance.
   if (function.returnType.kind == SemanticType::Enum ||
-      conditionalReferenceReturn(function.returnType,
-                                 function.parameterTypes)) {
+      (function.returnType.kind == SemanticType::Class &&
+       typeTraits(function.returnType).containsBorrowedState) ||
+      conditionalReferenceReturn(function.returnType, function.parameterTypes,
+                                 function.dispatchOwner)) {
     const auto complete = completeFunctionReturnBorrow(
         function, resolved.typeArguments, resolved.valueArguments,
         tokenSpan(expressionToken(call.callee())));
+    bool noNormalResult = false;
     const auto instantiated =
-        complete ? instantiateCompleteCallBorrow(call, resolved, *complete)
+        complete ? instantiateCompleteCallBorrow(call, resolved, *complete,
+                                                 &noNormalResult)
                  : std::nullopt;
-    if (instantiated)
+    // The exact instance's complete contract names the result's fields
+    // whether or not this call's inputs instantiate its dependency set.
+    const bool contractFields =
+        complete && (function.returnType.kind == SemanticType::Class ||
+                     (function.returnType.kind == SemanticType::Reference &&
+                      function.dispatchOwner.kind == SemanticType::Class));
+    // A reference selected from a receiver's alternative-guarded stored path
+    // is relayed only from a named or fresh receiver. Reaching that carrier
+    // through a field, element or dereference of another value needs a
+    // composed receiver-prefix proof that verified MIR does not yet carry.
+    if (instantiated && function.returnType.kind == SemanticType::Reference &&
+        std::any_of(complete->dependencies.begin(),
+                    complete->dependencies.end(),
+                    [](const BorrowedFieldOrigin &mapping) {
+                      return mapping.origin == BorrowOriginKind::Receiver &&
+                             !mapping.sourceConditions.empty();
+                    }))
+      if (const auto *member = exprAs<Get>(call.callee().get())) {
+        const Expr *receiver = member->object().get();
+        while (const auto *grouping = exprAs<Grouping>(receiver))
+          receiver = grouping->expression().get();
+        const auto *dereference = exprAs<Unary>(receiver);
+        if (exprAs<Get>(receiver) || exprAs<Index>(receiver) ||
+            (dereference && dereference->oper().kind == TokenKind::STAR))
+          report(member->name(),
+                 "A reference selected from a conditional borrowed carrier "
+                 "cannot yet be returned through a field, element or "
+                 "dereference of another value; call it on a named local, "
+                 "parameter or temporary carrier.",
+                 "GTI-S2045");
+      }
+    if (instantiated) {
+      if (contractFields)
+        resolved.borrowFields = complete->dependencies;
+      // A result whose contract names only static storage has no caller
+      // input to borrow from: it borrows that exact global place.
+      if (resolved.borrowOrigin == BorrowOriginKind::None)
+        if (const auto global = std::find_if(
+                complete->dependencies.begin(), complete->dependencies.end(),
+                [](const BorrowedFieldOrigin &mapping) {
+                  return mapping.origin == BorrowOriginKind::Global &&
+                         mapping.globalRoot != 0;
+                });
+            global != complete->dependencies.end()) {
+          BorrowOriginPlace place{.root = global->globalRoot};
+          for (const auto field : global->sourceFields)
+            place.projections.push_back(
+                {.kind = PlaceProjectionKind::Field, .field = field});
+          resolved.borrowOrigin = BorrowOriginKind::Global;
+          resolved.borrowAccess = global->access;
+          resolved.borrowPlace = std::move(place);
+        }
+      semanticModel.record(call, resolved);
       semanticModel.recordBorrowDependencySet(call, *instantiated);
-    else
+    } else if (noNormalResult &&
+               function.returnType.kind == SemanticType::Reference) {
+      // The exact input alternative domain excludes every normal reference
+      // result. Keep this call-site fact distinct from declaration noreturn;
+      // no referent or empty dependency set is manufactured for its result.
+      resolved.noNormalBorrowResult = true;
+      resolved.neverReturns = true;
+      resolved.borrowFields = complete->dependencies;
+      semanticModel.record(call, resolved);
       semanticModel.clearBorrowDependencySet(call);
+    } else {
+      if (contractFields) {
+        resolved.borrowFields = complete->dependencies;
+        semanticModel.record(call, resolved);
+      }
+      semanticModel.clearBorrowDependencySet(call);
+    }
   }
   recordSelectedCallOccurrence(call, std::move(resolved));
 }

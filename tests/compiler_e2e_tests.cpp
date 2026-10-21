@@ -209,7 +209,8 @@ int main() { [[discard]] flow(true); }
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "mir-foundation.gti", source, {standardLibraryPrelude()});
+      "mir-foundation.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected MIR diagnostic: " << diagnostic.message << '\n';
@@ -334,6 +335,26 @@ int main() { [[discard]] flow(true); }
     }
     return count;
   };
+  // The result's state test is an ordinary call of the prelude class's
+  // contextual operator bool, not a compiler-known operation.
+  const auto resultStateTests = std::count_if(
+      flow->blocks.begin(), flow->blocks.end(),
+      [&](const lang::MirBlock &block) {
+        return std::any_of(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              const lang::ClassTypeInfo *receiver =
+                  instruction.receiver && instruction.receiver->type.kind ==
+                                              lang::SemanticType::Class
+                      ? frontend.semantics.findClassType(
+                            instruction.receiver->type.classId)
+                      : nullptr;
+              return instruction.kind == lang::MirInstructionKind::Call &&
+                     instruction.info.type == lang::SemanticType::Bool &&
+                     receiver != nullptr &&
+                     receiver->qualifiedName == "expected";
+            });
+      });
   // A compound update is an ordered read/operate/commit schedule rather than
   // one closed mutation operation, so its arithmetic appears as an ordinary
   // Compute and its commit as an ordinary Assign.
@@ -341,8 +362,7 @@ int main() { [[discard]] flow(true); }
                         lang::MirOperation::Add) >= 1 &&
              operationCount(lang::MirInstructionKind::Compute,
                             lang::MirOperation::Less) >= 1 &&
-             operationCount(lang::MirInstructionKind::Compute,
-                            lang::MirOperation::ExpectedHasValue) >= 1 &&
+             resultStateTests >= 1 &&
              operationCount(lang::MirInstructionKind::Assign,
                             lang::MirOperation::Assign) >= 1 &&
              instructionCount(*flow, lang::MirInstructionKind::Load) >= 1,
@@ -802,8 +822,8 @@ int main() {
 }
 
 void testOrderedClassValueCallInputs() {
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("ordered-class-value-inputs.gti", R"(
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "ordered-class-value-inputs.gti", R"(
 class CopiedValue {
   int value;
 
@@ -846,7 +866,7 @@ int main() {
   return total + observe_borrowed(BorrowedValue(observed)) - 10;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected class-value call diagnostic: "
@@ -1038,7 +1058,7 @@ int main() {
          "when the callee begins");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v90\n") &&
+  expect(dump.starts_with("mir-body-v91\n") &&
              dump.find("call-input-kind=copy-value") != std::string::npos &&
              dump.find("call-input-kind=move-value") != std::string::npos &&
              dump.find("prepared-parameter-drop=") != std::string::npos,
@@ -1046,8 +1066,8 @@ int main() {
 }
 
 void testOrderedOrdinaryConstructorInputs() {
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("ordered-constructor-inputs.gti", R"(
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "ordered-constructor-inputs.gti", R"(
 class CopiedValue {
   int value;
 public:
@@ -1088,7 +1108,7 @@ int main() {
   return changed - 7;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected ordered-constructor diagnostic: "
@@ -3847,8 +3867,10 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!invalid.canGenerateCode() && invalid.semanticValid &&
-             !invalid.hirValid,
+  // HIR lowering ran (its instances exist) and its concrete reanalysis
+  // reports the source error as a semantic failure.
+  expect(!invalid.canGenerateCode() && !invalid.semanticValid &&
+             !invalid.hirValid && !invalid.hir.functionInstances().empty(),
          "invalid ownership in a concrete generic instance should fail in "
          "HIR lowering");
   expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2003") &&

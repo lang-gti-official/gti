@@ -2,6 +2,7 @@
 // success reference tied to the caller's owner. Its error owns its text.
 #include <std/string>
 #include <std/panic>
+#include <std/vector>
 
 class Reading {
 public:
@@ -140,8 +141,68 @@ Status inspect_borrowed_parse(int& owner, bool fail) {
   return Status(value);
 }
 
-int main() {
+// A source class can retain the enum's complete conditional dependency. Its
+// empty alternative needs no dummy reference. Consuming the class does not
+// consume the external owner named by the successful alternative.
+enum ReadingSlot { ready(int& value), empty };
+class StoredReading {
+  mut ReadingSlot slot;
+public:
+  implicit StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
+  StoredReading() : slot(ReadingSlot::empty) {}
+  bool has_value() {
+    switch (this.slot) {
+      case ReadingSlot::ready: return true;
+      case ReadingSlot::empty: return false;
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+      case ReadingSlot::ready(auto& value): return value;
+      case ReadingSlot::empty: std::panic("empty reading");
+    }
+  }
+};
+
+StoredReading store_reading(int& owner) {
+  return owner; // Implicit construction retains the external owner.
+}
+
+int& relay_reading(int& owner) {
+  return store_reading(owner).take(); // Only the temporary wrapper is consumed.
+}
+
+// A by-value text field retains only ownerless text. The compiler propagates
+// that requirement through ordinary generic helpers, rather than specializing
+// their safety based on whichever caller happens to be visited first.
+struct StaticLabel<T> {
+  mut T text;
+  StaticLabel(T input) : text(std::move(input)) {}
+  T take() && { return std::move(this.text); }
+};
+
+StaticLabel<T> make_label<T>(T input) {
+  return StaticLabel<T>(std::move(input));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  // Run with an extra argument to observe the accessor's defined failure.
+  // The empty alternative has no owner; no dummy reference is manufactured.
+  if (argc > 1) {
+    mut auto missing = StoredReading();
+    return std::move(missing).take();
+  }
   int owner = 42;
+  mut auto stored = StoredReading(owner);
+  auto empty = StoredReading();
+  int& retained = std::move(stored).take();
+  if (empty.has_value() || retained != owner || relay_reading(owner) != owner)
+    return 1;
+  auto label = make_label("static label");
+  if (std::move(label).take() != "static label")
+    return 2;
+  // make_label(a_local_string.view()) is rejected: forwarding through a
+  // generic function cannot erase a dynamic text-owner dependency.
   std::println(std::to_string(inspect(owner, false).code));
   std::println(std::to_string(inspect(owner, true).code));
   mut int changing = 8;

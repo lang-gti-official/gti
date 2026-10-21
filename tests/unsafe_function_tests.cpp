@@ -105,7 +105,7 @@ int main() {
       unsafeFunctions == 3 && unsafeCalls == 3,
       "only exact unsafe overloads and concrete instances carry the contract");
   const auto dump = lang::MirPrinter().print(frontend.mir);
-  expect(dump.starts_with("mir-v110 ") &&
+  expect(dump.starts_with("mir-v112 ") &&
              dump.find("requires-unsafe=1") != std::string::npos,
          "the deterministic MIR snapshot includes the unsafe contract");
   const auto lowered =

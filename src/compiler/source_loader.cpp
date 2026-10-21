@@ -10,6 +10,7 @@
 #include <iterator>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -210,11 +211,28 @@ SourceGraph SourceLoader::load(
     }
   }
 
+  // Preludes are layered in order. A unit that an earlier prelude already
+  // reaches, or that prelude itself, lies below every later prelude and never
+  // depends on one; a later prelude root sees the earlier ones. Otherwise an
+  // extra prelude, such as a test suite's, becomes reachable from the core
+  // prelude, and the cycle check below then hides the core prelude from the
+  // units that extra prelude includes.
+  std::unordered_map<SourceUnitId, std::size_t> preludeLayer;
   for (const SourceUnit &unit : graph.sourceUnits()) {
-    if (unit.prelude) {
-      continue;
+    for (std::size_t index = 0; index < preludes.size(); ++index) {
+      if (unit.id == preludes[index] ||
+          graph.hasDependencyPath(preludes[index], unit.id)) {
+        preludeLayer.emplace(unit.id, index);
+        break;
+      }
     }
-    for (const SourceUnitId prelude : preludes) {
+  }
+  for (const SourceUnit &unit : graph.sourceUnits()) {
+    const auto layer = preludeLayer.find(unit.id);
+    const std::size_t visible =
+        layer == preludeLayer.end() ? preludes.size() : layer->second;
+    for (std::size_t index = 0; index < visible; ++index) {
+      const SourceUnitId prelude = preludes[index];
       if (unit.id != prelude && !graph.hasDirectDependency(unit.id, prelude) &&
           !graph.hasDependencyPath(prelude, unit.id)) {
         graph.addDependency({.source = unit.id,

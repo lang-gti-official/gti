@@ -659,11 +659,17 @@ def main():
                 emitted_extern_c,
             )
             assert "class socket" in emitted_extern_c
-            assert (
-                "static ::gti_internal::backend::expected<"
-                "::__gti_program::__gti_std::tcp::socket, "
-                "::__gti_program::__gti_std::tcp::errc>"
-                in emitted_extern_c
+            # open() returns the prelude's expected<socket, errc> instance.
+            expected_socket = re.search(
+                r"static ::__gti_program::(__gti_type_[0-9a-f]+_expected) "
+                r"__gti_fn_\d+_open\(\);",
+                emitted_extern_c,
+            )
+            assert expected_socket
+            assert re.search(
+                r"explicit " + expected_socket.group(1) +
+                r"\(::__gti_program::__gti_std::tcp::socket __gti_mir_arg_0\);",
+                emitted_extern_c,
             )
             close_call = native_spelling(emitted_extern_c, "close")
             assert re.search(
@@ -3074,9 +3080,11 @@ def main():
         assert "// GTI verified-MIR body: scalar-cfg-failure-v1" in emitted_source
         assert "static_cast<std::int32_t>(42)" in emitted_source
         assert "#include <expected>" not in emitted_source
-        assert (
-            "::gti_internal::backend::expected<std::int32_t, std::int32_t>"
-            in emitted_source
+        # calculate() returns the prelude's expected<int, int> class instance.
+        assert re.search(
+            r"::__gti_program::__gti_type_[0-9a-f]+_expected "
+            r"__gti_fn_\d+_calculate\(const bool fail\);",
+            emitted_source,
         )
         # Source target branches must be resolved before program emission.
         # The backend support preamble independently guards its native ABI;
@@ -3101,11 +3109,13 @@ def main():
             ]
         )
         emitted_cpp20_source = emitted_cpp20.read_text(encoding="utf-8")
-        # Both standards share GTI's own expected representation.
+        # Both standards share GTI's own expected representation: the
+        # prelude's class instance.
         assert "nonstd/expected.hpp" not in emitted_cpp20_source
-        assert (
-            "::gti_internal::backend::expected<std::int32_t, std::int32_t>"
-            in emitted_cpp20_source
+        assert re.search(
+            r"::__gti_program::__gti_type_[0-9a-f]+_expected "
+            r"__gti_fn_\d+_calculate\(const bool fail\);",
+            emitted_cpp20_source,
         )
 
         kept_executable = root / "kept"
@@ -3562,8 +3572,10 @@ def main():
             [gti, str(invalid_expected), "-o", str(root / "invalid_expected")],
             65,
         )
-        assert "Cannot return a value of type 'unexpected<std::string_view>'" in (
-            rejected_expected.stderr
+        assert (
+            "Cannot return a value of type "
+            "'std::detail::unexpected_value<std::string_view>'"
+            in rejected_expected.stderr
         )
 
         missing_semicolon = root / "missing-semicolon.gti"

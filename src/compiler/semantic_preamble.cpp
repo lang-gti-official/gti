@@ -203,6 +203,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
   lateFinalization = &scope;
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
+  finalizeOwnerlessTextContracts();
   discoverOwnedCallableValueParameters();
   validateOnceCallableForwardings();
   validateOwnedCallableArguments();

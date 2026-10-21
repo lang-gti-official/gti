@@ -1,5 +1,39 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
+namespace {
+// The fixture's own bodies; prelude result members also consume receivers.
+bool entryFunction(const lang::FrontendResult &frontend,
+                   lang::HirFunctionInstanceId id) {
+  const lang::HirFunctionInstance *function =
+      frontend.hir.findFunctionInstance(id);
+  return function != nullptr &&
+         function->sourceUnit == frontend.sourceGraph.entryUnit();
+}
+
+// value() of the prelude's ordinary source class expected<T, E>.
+bool expectedValueCall(const lang::FrontendResult &frontend,
+                       const lang::MirBody &body,
+                       const lang::MirInstruction &instruction) {
+  const lang::HirFunctionInstance *target =
+      instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.functionTarget
+          ? frontend.hir.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  const lang::MirValue *receiver =
+      instruction.receiver ? body.findValue(instruction.receiver->value)
+                           : nullptr;
+  const auto *owner =
+      receiver != nullptr &&
+              receiver->info.type.kind == lang::SemanticType::Class
+          ? frontend.semantics.findClassType(receiver->info.type.classId)
+          : nullptr;
+  return target != nullptr && target->source != nullptr &&
+         target->source->name().lexeme == "value" && owner != nullptr &&
+         owner->declaration != nullptr &&
+         owner->declaration->name().lexeme == "expected";
+}
+} // namespace
+
 int main() {
   {
     const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -14,6 +48,8 @@ int main() {
     const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances()) {
+      if (!entryFunction(frontend, function.id))
+        continue;
       for (const auto &block : function.body.blocks) {
         for (const auto &instruction : block.instructions) {
           if (!instruction.functionTarget ||
@@ -86,7 +122,7 @@ int main() {
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
         for (const auto &instruction : block.instructions) {
-          if (instruction.intrinsic != lang::IntrinsicKind::ExpectedValue ||
+          if (!expectedValueCall(frontend, function.body, instruction) ||
               instruction.info.type.kind != lang::SemanticType::Class)
             continue;
           ++checked;
@@ -101,19 +137,28 @@ int main() {
                 if (mutation == 0)
                   candidate.info.type = lang::SemanticType::Int32;
                 else if (mutation == 1) {
+                  // The wrong-state check runs in the source accessor; its
+                  // caller must keep propagating that failure.
                   candidate.localFailureSites.clear();
                   candidate.definedFailure.localOrigins.clear();
+                  candidate.definedFailure.propagation =
+                      lang::FailurePropagationKind::None;
                 } else
                   candidate.successResultDrop = 999;
               }
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "payload return retains type, wrong-state check, and drop "
                    "identity");
-            expect(
-                !lang::CppMirBodyEmitter(malformed, rows)
-                     .supportsFailureBodyText(
-                         {lang::MirBodyKind::Function, function.id}),
-                "payload return admission rejects forged checked publication");
+            // value() is an ordinary source call: the emitter's admission is
+            // its vocabulary probe plus a Ready analysis, which re-verifies
+            // the call's exact result and failure contracts.
+            const lang::CppMirBodyEmitter emitter(malformed, rows);
+            const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                               function.id};
+            expect(!emitter.supportsFailureBodyText(address) ||
+                       !emitter.analyze(address).ready(),
+                   "payload return admission rejects forged checked "
+                   "publication");
           }
         }
       }

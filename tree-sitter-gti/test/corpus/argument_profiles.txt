@@ -1,0 +1,43 @@
+==================
+Headerless argument-profile definitions
+==================
+class Packet<T, E> {};
+class Packet<void, E> {};
+class Packet<T&, E> {};
+class Mutable<mut T&, E> {};
+struct Other<T, E&> {};
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter (identifier))
+      (generic_parameter (identifier)))
+    (class_body))
+  (class_declaration
+    (identifier)
+    (generic_argument_profile_clause
+      (type (user_type (identifier))))
+    (class_body))
+  (class_declaration
+    (identifier)
+    (generic_argument_profile_clause
+      (identifier)
+      (reference_declarator)
+      (type (user_type (identifier))))
+    (class_body))
+  (class_declaration
+    (identifier)
+    (generic_argument_profile_clause
+      (identifier)
+      (reference_declarator)
+      (type (user_type (identifier))))
+    (class_body))
+  (class_declaration
+    (identifier)
+    (generic_argument_profile_clause
+      (identifier)
+      (identifier)
+      (reference_declarator))
+    (class_body)))

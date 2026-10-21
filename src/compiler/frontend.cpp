@@ -737,6 +737,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                      entry->declarationCount};
         }
       }
+      for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
+        if (result.sourceGraph.isCompilerTrusted(unit.id))
+          scope.trustedSources.push_back(unit.path.string());
       if (!options.lowerLibraryOnlyInstanceBodies) {
         scope.omitLibraryOnlyBodies = true;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
@@ -797,6 +800,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);
+  // Concrete instance discovery can demand semantic analysis while lowering
+  // HIR. Its source errors are still semantic failures, not valid semantics
+  // followed by an unexplained HIR failure.
+  result.semanticValid =
+      result.semanticValid &&
+      std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                   [](const Diagnostic &diagnostic) {
+                     return diagnostic.phase == DiagnosticPhase::Semantics &&
+                            diagnostic.severity == DiagnosticSeverity::Error;
+                   });
   if (!result.hirValid && !hasErrorDiagnostics(result.diagnostics)) {
     const SourceUnit *entry =
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
@@ -819,7 +832,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // HIR instance reanalysis is the last reader of the semantic visitor;
   // move the model into the result instead of deep-copying it.
   result.semantics = semantic.takeModel();
-  if (!result.hirValid || options.stopAfter == FrontendPhase::Hir) {
+  if (!result.semanticValid || !result.hirValid ||
+      options.stopAfter == FrontendPhase::Hir) {
     applyAuditPolicy();
     return result;
   }

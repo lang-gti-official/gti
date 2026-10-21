@@ -1,14 +1,48 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
 namespace {
+// expected<T, E> is the prelude's ordinary source class.
+bool isExpected(const lang::FrontendResult &frontend,
+                const lang::SemanticType &type) {
+  const auto *info = type.kind == lang::SemanticType::Class
+                         ? frontend.semantics.findClassType(type.classId)
+                         : nullptr;
+  return info != nullptr && info->declaration != nullptr &&
+         info->declaration->name().lexeme == "expected";
+}
+
+bool calls(const lang::FrontendResult &frontend,
+           const lang::MirInstruction &instruction, std::string_view name) {
+  const lang::HirFunctionInstance *target =
+      instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.functionTarget
+          ? frontend.hir.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  return target != nullptr && target->source != nullptr &&
+         target->source->name().lexeme == name;
+}
+
+const lang::MirInstruction *definition(const lang::MirBody &body,
+                                       lang::MirValueId value) {
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.result == value)
+        return &instruction;
+  return nullptr;
+}
+
+// Backend admission is body analysis plus the text vocabulary. The source
+// expected class publishes through the generic class vocabulary, which leaves
+// lifecycle forgeries of its owned results to body analysis.
 bool admitted(const lang::MirProgram &program,
               const lang::CppMirBodyEmissionMap &rows,
               const lang::MirFunctionInstance &function) {
   const lang::CppMirBodyEmitter emitter(program, rows);
   const lang::MirBodyAddress address{lang::MirBodyKind::Function, function.id};
-  return function.mayRaiseDefinedFailure
-             ? emitter.supportsFailureBodyText(address)
-             : emitter.supportsBodyText(address);
+  return emitter.analyze(address).ready() &&
+         (function.mayRaiseDefinedFailure
+              ? emitter.supportsFailureBodyText(address)
+              : emitter.supportsBodyText(address));
 }
 } // namespace
 
@@ -36,8 +70,11 @@ int main() {
             "void Expected success and error observers share an emitted slot");
         for (const auto &block : function.body.blocks) {
           for (const auto &instruction : block.instructions) {
-            if (instruction.intrinsic != lang::IntrinsicKind::ExpectedValue ||
-                instruction.info.type != lang::SemanticType::Void)
+            // `?` observes a void success through the tryable protocol.
+            if (!calls(frontend, instruction, "take_value") ||
+                instruction.info.type != lang::SemanticType::Void ||
+                instruction.operands.size() != 1 ||
+                !isExpected(frontend, instruction.operands.front().type))
               continue;
             ++checked;
             expect(!instruction.result,
@@ -86,7 +123,10 @@ expected<void, Error> complete(bool fail) {
         buildRows(passive, passive.mir));
     std::size_t checked = 0;
     for (const auto &function : passive.mir.functionInstances()) {
-      if (function.returnType.kind != lang::SemanticType::Expected)
+      const auto *hir = passive.hir.findFunctionInstance(function.id);
+      if (hir == nullptr ||
+          hir->sourceUnit != passive.sourceGraph.entryUnit() ||
+          !isExpected(passive, function.returnType))
         continue;
       ++checked;
       expect(!lang::cppMirExpectedClassPlacementResult(passive.mir, passiveRows,
@@ -136,17 +176,28 @@ expected<void, Error> complete(bool fail) {
             instruction.destination
                 ? function.body.findPlace(*instruction.destination)
                 : nullptr;
+        // The implicit expected(T) constructor converts the passive success
+        // value; its owned class result is reparented into the binding.
+        const auto *converted =
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.operands.size() == 1
+                ? definition(function.body, instruction.operands.front().value)
+                : nullptr;
         if (instruction.kind == lang::MirInstructionKind::Initialize &&
-            destination &&
-            destination->type.kind == lang::SemanticType::Expected &&
+            destination && isExpected(frontend, destination->type) &&
             destination->type.arguments.size() == 2 &&
             destination->type.arguments.front() == lang::SemanticType::Int32 &&
-            instruction.operands.size() == 1 &&
-            instruction.operands.front().type == lang::SemanticType::Int32) {
+            converted != nullptr &&
+            converted->kind == lang::MirInstructionKind::Construct &&
+            converted->operands.size() == 1 &&
+            converted->operands.front().type == lang::SemanticType::Int32) {
           ++passiveBindings;
           expect(instruction.lifecycle.size() == 1 &&
                      instruction.lifecycle.front().kind ==
-                         lang::MirLifecycleEventKind::Initialize,
+                         lang::MirLifecycleEventKind::Reparent &&
+                     converted->successResultDrop &&
+                     instruction.lifecycle.front().source ==
+                         *converted->successResultDrop,
                  "passive success activates its owning-alternative binding");
           if (instruction.lifecycle.size() != 1)
             continue;
@@ -181,21 +232,24 @@ expected<void, Error> complete(bool fail) {
                    "and drop metadata");
             expect(!admitted(malformed, rows, function),
                    "emission rejects malformed passive Expected binding "
-                   "publication");
+                   "publication: " +
+                       std::to_string(mutation));
           }
         }
-        if (instruction.kind != lang::MirInstructionKind::Compute ||
-            instruction.operation != lang::MirOperation::Unexpected)
+        // unexpected(e) is the prelude's source factory: it consumes its
+        // prepared payload and activates its wrapper on the success edge.
+        if (!calls(frontend, instruction, "unexpected"))
           continue;
         ++wrappers;
         expect(
-            instruction.lifecycle.size() == 2 &&
+            instruction.lifecycle.size() == 1 &&
                 instruction.lifecycle.front().kind ==
                     lang::MirLifecycleEventKind::TransferOut &&
-                instruction.lifecycle.back().kind ==
-                    lang::MirLifecycleEventKind::Initialize,
+                instruction.successResultDrop &&
+                block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                block.terminator.invokeInstruction == instruction.id,
             "Unexpected transfers one exact payload and activates its wrapper");
-        if (instruction.lifecycle.size() != 2)
+        if (instruction.lifecycle.size() != 1 || !instruction.successResultDrop)
           continue;
         for (int mutation = 0; mutation != 4; ++mutation) {
           auto malformed = frontend.mir;
@@ -206,14 +260,14 @@ expected<void, Error> complete(bool fail) {
               if (candidate.id == instruction.id) {
                 if (mutation == 0)
                   candidate.lifecycle.front().source =
-                      candidate.lifecycle.back().target;
+                      *candidate.successResultDrop;
                 if (mutation == 1)
                   candidate.lifecycle.erase(candidate.lifecycle.begin());
                 if (mutation == 2)
-                  candidate.lifecycle.back().target =
+                  candidate.successResultDrop =
                       candidate.lifecycle.front().source;
                 if (mutation == 3)
-                  candidate.lifecycle.pop_back();
+                  candidate.successResultDrop.reset();
               }
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "MIR rejects missing or wrong Unexpected source/wrapper "
@@ -254,7 +308,8 @@ expected<void, Error> complete(bool fail) {
                    "handoff");
             expect(!admitted(malformed, rows, function),
                    "emitter cannot publish an owning result without exact "
-                   "handoff");
+                   "handoff: " +
+                       name + " mutation " + std::to_string(mutation));
           }
         }
       }

@@ -531,6 +531,30 @@ int main() {
            "and operation calls",
            {"__gti_conformance_"});
 
+  // A structural family conformance proves its open applications without
+  // asking each caller to repeat an already established requirement.
+  accepted(measurable + blocks + R"gti(
+measurable<Crate<T>>::unit_type family_count<T>(Crate<T>& item) {
+  return measurable<Crate<T>>::measure(item);
+}
+int main() {
+  Crate<int> item{1, 42};
+  return family_count(item) - 42;
+}
+)gti",
+           "open family heads should establish projections and operations");
+  rejected(measurable + R"gti(
+for concept measurable<Crate<int>> {
+  using unit_type = int;
+  int measure(Crate<int>& item) { return item.count; }
+  bool is_empty(Crate<int>& item) { return item.count == 0; }
+};
+measurable<Crate<T>>::unit_type unsupported<T>(Crate<T>& item) {
+  return measurable<Crate<T>>::measure(item);
+}
+)gti",
+           "GTI-S2123", "requires 'requires measurable<Crate<T>>'");
+
   // Generic code: a projection in the signature, calls through the
   // requirement, and forwarding the requirement to another generic.
   accepted(measurable + blocks + R"gti(

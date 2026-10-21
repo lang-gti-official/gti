@@ -163,7 +163,12 @@ void checkCompatible(std::string_view destructor) {
              "closure and nominal field publication comments do not split "
              "constructor representation");
       for (const auto &instance : lowered.mir().constructorInstances()) {
-        if (instance.parameterTypes.size() != 1 ||
+        // Only the fixture's Owner constructors; prelude constructors such as
+        // expected's are emitted in their failure form.
+        const auto *source = frontend.hir.findConstructorInstance(instance.id);
+        if (source == nullptr ||
+            source->sourceUnit != frontend.sourceGraph.entryUnit() ||
+            instance.parameterTypes.size() != 1 ||
             (instance.parameterTypes.front().kind !=
                  lang::SemanticType::Lambda &&
              instance.parameterTypes.front().kind != lang::SemanticType::Class))

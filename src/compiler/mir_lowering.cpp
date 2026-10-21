@@ -379,6 +379,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .owner = instance.owner,
          .returnType = instance.returnType,
          .parameterTypes = instance.parameterTypes,
+         .ownerlessTextParameters = instance.ownerlessTextParameters,
          .parameterBindings = instance.parameterBindings,
          .entryKind = instance.entryKind,
          .entryArgumentAppendTarget = instance.entryArgumentAppendTarget,
@@ -518,6 +519,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .borrowParameter = instance.borrowParameter,
          .borrowAccess = instance.borrowAccess,
          .borrowParameters = instance.borrowParameters,
+         .completeBorrow = instance.completeBorrow,
          .definitionKind =
              instance.generatedDefault || (instance.source != nullptr &&
                                            instance.source->body() != nullptr)

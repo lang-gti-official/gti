@@ -379,9 +379,9 @@ enum class IntrinsicKind {
   IntegerSaturatingAdd,
   IntegerSaturatingSubtract,
   IntegerSaturatingMultiply,
-  IntegerCheckedAdd,
-  IntegerCheckedSubtract,
-  IntegerCheckedMultiply,
+  IntegerAddOverflows,
+  IntegerSubtractOverflows,
+  IntegerMultiplyOverflows,
   StorageBoundsCheck,
   OptionalStorageHasValue,
   OptionalStorageConstruct,
@@ -411,6 +411,8 @@ enum class IntrinsicKind {
   ThreadSpawn,
   ThreadJoinable,
   ThreadJoin,
+  // Moves a successful typed join's owned result out of its handle.
+  ThreadResultTake,
   ThreadAutoJoin,
   AtomicLoad,
   AtomicStore,
@@ -430,6 +432,8 @@ enum class IntrinsicKind {
   RequireContainerArgument,
   Panic,
   FailEmptyOwner,
+  FailInactiveValue,
+  FailInactiveError,
   SharedOwnerEmpty,
   SharedOwnerFromUnique,
   SharedOwnerClone,
@@ -531,6 +535,12 @@ enum class IntrinsicKind {
 };
 
 // Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] inline bool intrinsicTracksCaller(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::Panic ||
+         intrinsic == IntrinsicKind::FailInactiveValue ||
+         intrinsic == IntrinsicKind::FailInactiveError;
+}
+
 [[nodiscard]] inline std::optional<DefinedFailureOutcome>
 intrinsicTerminalFailureOutcome(IntrinsicKind intrinsic) {
   switch (intrinsic) {
@@ -540,6 +550,12 @@ intrinsicTerminalFailureOutcome(IntrinsicKind intrinsic) {
   case IntrinsicKind::FailEmptyOwner:
     return DefinedFailureOutcome{DefinedFailureCode::EmptyOwnerAccess,
                                  DefinedFailureDetail::MemberAccess};
+  case IntrinsicKind::FailInactiveValue:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidExpectedAccess,
+                                 DefinedFailureDetail::ValueOnError};
+  case IntrinsicKind::FailInactiveError:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidExpectedAccess,
+                                 DefinedFailureDetail::ErrorOnValue};
   default:
     return std::nullopt;
   }
@@ -728,6 +744,8 @@ struct BorrowedFieldOrigin {
   std::vector<SymbolId> resultFields;
   BorrowOriginKind origin = BorrowOriginKind::None;
   std::size_t parameter = 0;
+  // A Global origin's static storage root; sourceFields select within it.
+  SymbolId globalRoot = 0;
   std::vector<SymbolId> sourceFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> resultConditions;
@@ -855,6 +873,10 @@ struct FunctionInfo {
   // Derived from resolved calls, after all source bodies have been analyzed.
   bool requiresCThreadRuntime = false;
   std::vector<RawBorrowContract> rawBorrowContracts;
+  // Conditional source preconditions: an index requires ownerless input only
+  // when its concrete by-value formal is StringView or CString. These are
+  // inferred from storage and exact forwarding, never from a literal caller.
+  std::vector<std::size_t> ownerlessTextParameters;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1009,6 +1031,9 @@ struct ClassTypeInfo {
   std::vector<std::string> namespaceScope;
   // Lexical ownership, not an enclosing object or lifetime dependency.
   ClassId enclosingClass = 0;
+  // Distinct definitions in one resolved generic class family share a source
+  // template name, not object identity. Zero denotes the first definition.
+  ClassId definitionFamilyPrimary = 0;
   // An exact specialization is a distinct semantic class identity whose
   // qualified source name and canonical argument key still name this primary.
   // Zero denotes an ordinary (possibly generic) class declaration.
@@ -1201,6 +1226,9 @@ struct ConstructorInfo {
   // Distinct formal inputs retained by a composed read-only carrier. Includes
   // the primary borrowParameter when there is more than one input.
   std::vector<std::size_t> borrowParameters;
+  // Complete, declaration-relative field/tag dependencies established by
+  // checked initializer execution. Empty is a proof, not missing metadata.
+  std::optional<FunctionBorrowDependencySummary> completeBorrow;
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   // Declared `implicit`: a declaration may construct from its one argument.
@@ -1254,6 +1282,10 @@ struct ResolvedConstructionInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // Contextual construction keeps the source expression as its original
+  // argument. Its synthetic result therefore needs distinct complete facts;
+  // never overwrite the argument's expression type, place or dependencies.
+  std::optional<SemanticBorrowDependencySet> contextualBorrowDependencies;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
   // Exact same-type fresh-result initialization names the existing result
@@ -1317,6 +1349,7 @@ struct ResolvedCallInfo {
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   bool neverReturns = false;
+  bool noNormalBorrowResult = false;
   bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
@@ -1997,6 +2030,71 @@ struct SemanticAnalysisSeal {
 makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
                          const SourceGraph *sourceGraph = nullptr);
 
+// A call-local terminal fact is distinct from declaration noreturn. Only the
+// semantic query that excludes every normal result supplier can issue this
+// exact source/selection proof; MIR independently reconstructs the exclusion.
+class SemanticNoNormalBorrowResultProof {
+public:
+  [[nodiscard]] const Call *source() const { return source_; }
+  [[nodiscard]] const ResolvedCallInfo &call() const { return call_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticNoNormalBorrowResultProof(const Call &source, ResolvedCallInfo call,
+                                    std::uint64_t snapshot)
+      : source_(&source), call_(std::move(call)), snapshot_(snapshot) {}
+  const Call *source_;
+  ResolvedCallInfo call_;
+  std::uint64_t snapshot_;
+};
+
+// Caller provenance belongs to the analyzed source occurrence, including one
+// first analyzed in a concrete generic body. HIR cannot invent a new origin.
+class SemanticCallerLocationProof {
+public:
+  [[nodiscard]] const Expr *source() const { return source_; }
+  [[nodiscard]] const CallerLocationOrigin &origin() const { return origin_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticCallerLocationProof(const Expr &source, CallerLocationOrigin origin,
+                              std::uint64_t snapshot)
+      : source_(&source), origin_(origin), snapshot_(snapshot) {}
+  const Expr *source_;
+  CallerLocationOrigin origin_;
+  std::uint64_t snapshot_;
+};
+
+// Inferred text-input requirements are callable preconditions. HIR carries
+// the exact concrete semantic signature and set; it cannot erase a premise.
+class SemanticOwnerlessTextContractProof {
+public:
+  [[nodiscard]] const FunctionDecl *source() const { return source_; }
+  [[nodiscard]] FunctionId function() const { return function_; }
+  [[nodiscard]] const std::vector<SemanticType> &parameters() const {
+    return parameters_;
+  }
+  [[nodiscard]] const std::vector<std::size_t> &required() const {
+    return required_;
+  }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticOwnerlessTextContractProof(const FunctionInfo &function,
+                                     std::uint64_t snapshot)
+      : source_(function.bodyDeclaration()), function_(function.id),
+        parameters_(function.parameterTypes),
+        required_(function.ownerlessTextParameters), snapshot_(snapshot) {}
+  const FunctionDecl *source_;
+  FunctionId function_;
+  std::vector<SemanticType> parameters_;
+  std::vector<std::size_t> required_;
+  std::uint64_t snapshot_;
+};
+
 // Immutable selected-construction provenance. HIR may carry or copy a proof,
 // but cannot manufacture one for a different source expression. Concrete
 // instance models issue the same proof even when the primary skipped an arm.
@@ -2027,6 +2125,31 @@ private:
   const Expr *producer_;
   SemanticType type_;
   std::uint64_t snapshot_;
+};
+
+// A bare return has no expression to carry constructor provenance. Keep its
+// selected construction bound to that exact statement and semantic snapshot.
+class SemanticEmptyReturnConstructionProof {
+public:
+  [[nodiscard]] const ReturnStmt *source() const { return source_; }
+  [[nodiscard]] const ResolvedConstructionInfo &construction() const {
+    return construction_;
+  }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+  [[nodiscard]] bool unsafeConstruction() const { return unsafeConstruction_; }
+
+private:
+  friend class SemanticModel;
+  SemanticEmptyReturnConstructionProof(const ReturnStmt &source,
+                                       ResolvedConstructionInfo construction,
+                                       std::uint64_t snapshot,
+                                       bool unsafeConstruction)
+      : source_(&source), construction_(std::move(construction)),
+        snapshot_(snapshot), unsafeConstruction_(unsafeConstruction) {}
+  const ReturnStmt *source_;
+  ResolvedConstructionInfo construction_;
+  std::uint64_t snapshot_;
+  bool unsafeConstruction_;
 };
 
 // Immutable, source-bound contextual constructor selection. Concrete models
@@ -2104,6 +2227,12 @@ public:
 
   [[nodiscard]] const CallerLocationOrigin *
   findCallerLocation(const Expr &expression) const;
+  [[nodiscard]] std::optional<SemanticCallerLocationProof>
+  callerLocationProof(const Expr &expression) const;
+  [[nodiscard]] std::optional<SemanticOwnerlessTextContractProof>
+  ownerlessTextContractProof(const FunctionDecl &function) const;
+  [[nodiscard]] std::optional<SemanticNoNormalBorrowResultProof>
+  noNormalBorrowResultProof(const Call &call) const;
 
   [[nodiscard]] const RawReferenceAssertionInfo *
   findRawReferenceAssertion(const Expr &expression) const;
@@ -2447,6 +2576,12 @@ public:
   // The initializer token a contextual construction reports and locates at.
   [[nodiscard]] std::optional<Token>
   contextualConstructionSite(const Expr &initializer) const;
+
+  [[nodiscard]] std::optional<SemanticEmptyReturnConstructionProof>
+  emptyReturnConstructionProof(const ReturnStmt &statement) const;
+  void recordEmptyReturnConstruction(const ReturnStmt &statement,
+                                     ResolvedConstructionInfo info,
+                                     bool unsafeConstruction);
 
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const;
@@ -2962,6 +3097,12 @@ private:
   std::unordered_map<const Expr *, ResolvedConstructionInfo>
       contextualConstructions;
   std::unordered_map<const Expr *, Token> contextualConstructionSites;
+  struct EmptyReturnConstruction {
+    ResolvedConstructionInfo construction;
+    bool unsafeConstruction = false;
+  };
+  std::unordered_map<const ReturnStmt *, EmptyReturnConstruction>
+      emptyReturnConstructions;
   std::unordered_map<const ConstructorInitializer *,
                      ResolvedConstructorInitializerInfo>
       constructorInitializers;

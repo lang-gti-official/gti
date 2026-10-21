@@ -2,6 +2,7 @@
 """Byte-preserving native-record transport through ordinary GTI containers."""
 
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -35,7 +36,13 @@ def main():
             emitted = directory / f"containers-{standard}.cpp"
             run([compiler, source, "--std", standard, "--emit-cpp", "-o", emitted])
             text = emitted.read_text()
-            assert "byte_expected<::__gti_program::NativeAddress" in text
+            # The source-defined expected keeps a native record payload in a
+            # representation cell of its private state enumeration.
+            assert re.search(
+                r"struct expected_state__gti_enum_[0-9a-f]+ \{\s*"
+                r"struct __gti_variant_0 \{\s*"
+                r"::gti_internal::backend::representation_cell<"
+                r"::__gti_program::NativeAddress> __gti_field_0;", text)
             assert "representation_cell<::__gti_program::NativeAddress>" in text
             assert "byte_field<T>" in text
             assert ".native.get()" in text

@@ -896,6 +896,25 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
+The native destructor's engaged semantic-slot check remains mandatory. Its
+missing-`Drop` diagnostic and cleanup-emergency handoff query live in a cold
+out-of-line helper, keeping that exceptional path out of ordinary wrapper
+inlining cost. Empty-slot destruction, explicit retirement/access checks and
+representation-only destructor behavior are unchanged; this is not permission
+to omit a MIR cleanup operation or infer that a checked failure cannot occur.
+
+Small source functions and constructors receive an early native inline hint
+in optimized GNU/Clang builds. The structural policy admits at most 64 reachable
+instructions and 64 blocks per body, 256 instructions across the exact expanded
+invocation graph, and 16 invocation levels. It rejects CFG/call cycles,
+allocation, synchronization, native/dynamic invocation boundaries, virtual
+methods and program entries. A shared generic native definition is hinted only
+when every represented concrete instance qualifies. This is a bounded native
+optimization preference, not a source guarantee or permission to elide checks;
+larger bodies retain the native optimizer's normal discretion. It applies to
+ordinary user-defined wrappers without recognizing a library name or return
+type, and makes no change to GTI failure, lifetime or cleanup authority.
+
 Grouping a class value does not construct another object. HIR records the
 grouping source as a non-executing alias of the exact producer value, preserving
 its type, source identity and lifetime rather than introducing another value or
@@ -968,8 +987,10 @@ the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
 A passive arm may also be a static source call, publishing plainly or on its
-Invoke success edge, a copy of a named place, or the move out of a nested
-passive join. A member call arm keeps the receiver identity that ordinary call
+Invoke success edge, a callable value invocation (a closure literal, a stored
+closure or a callable parameter), which publishes on its Invoke success edge
+like a checked source call, a copy of a named place, or the move out of a
+nested passive join. A member call arm keeps the receiver identity that ordinary call
 admission proves: its exact read-only or mutable borrow
 (`exactMemberBorrowReceiver`), or a consumed receiver
 (`exactMemberConsumingReceiver`), where a cleanup-free receiver moved out of a
@@ -1538,10 +1559,18 @@ When an exact temporary-place extraction moves into prepared parameter storage,
 its MIR Reparent ends the source temporary's lifetime. The native lifetime-slot
 carrier is retired after movement so a loop can execute the same temporary
 again; generated movement has already disarmed source user cleanup. Named
-binding carriers do not take this early-retirement route. A stable unprojected
-local receiver may remain staged across an expected propagation branch only
-when the branch is the exact `ExpectedHasValue` observation and its unique
-success edge proves extraction of that same carrier.
+binding carriers do not take this early-retirement route. A cleanup-free
+temporary may instead keep a passive obligation of its own, as the hidden
+branch-only temporary of a `?` operand in a conditional arm or on the right of
+`||` does. It moves into a directly activated prepared slot, and its moved-from
+shell ends where MIR drops it rather than at the move. A stable unprojected
+local receiver may remain staged across a propagation branch. The branch is
+either the exact `ExpectedHasValue` observation, whose unique success edge
+proves extraction of that same carrier, or the failure-free `has_value` call
+of a `?` through `std::tryable`. Its success edge continues with the
+`take_value` call, which MIR names with the propagation's own HIR value as it
+does the branch, and only the ends of the test's own input loans may follow
+the test in its block.
 
 A cleanup-free direct result may forward into caller storage without inventing
 a result-drop obligation when it has one exact return use and only inert
@@ -1982,10 +2011,17 @@ slot on its Invoke success edge. The `Assign` then move-assigns the slot's
 value into the binding, and the generated representation retires. A failed
 construction leaves the binding untouched. The class needs a generated move
 constructor and move assignment, no borrowed state and no active drop state.
-The construction's only lifecycle events may transfer its owning arguments'
-own value drops into the constructor, once each, so a consumed owning Expected
-argument is accepted too. A failure-free construction, or any construction
-the fused assignment already spells, keeps that fused route.
+The construction's only lifecycle events may hand each by-value argument to
+the constructor once (`preparedArgumentTransfer`): an owning argument's own
+value drop, so a consumed owning Expected argument is accepted too, or the
+prepared-parameter slot of a class argument, a named copy or move staged there
+or a fresh result already published into it, as in `h = holder(q)`. A
+failure-free construction, or any construction the fused assignment already
+spells, keeps that fused route. A cleanup-free class call result may likewise
+replace the exact mutable referent returned by a source call, as in
+`*cursor = make()`. The referent's loan, not the synthesized place's
+contextual access, owns the permission, and only that loan's canonical
+two-phase activation may sit between the publication and the `Assign`.
 
 The success class of such an Expected often has no default constructor. An
 ordinary SSA local would value-initialize the native wrapper and invent that
@@ -2736,16 +2772,17 @@ equal payload types at different indices, alignment, nested carriers/arrays,
 native construction/move/assignment failures and exact retirement counts;
 source runtime tests retain failure-cleanup and sanitizer coverage.
 
-Cleanup-free enum fields use the same destination-construction policy through
-their existing MIR initializer-record publication. The exact source constructor,
-declared field, root value, unique initializer and immediately following full-
-expression boundary must agree; an explicit `Initialize` takes precedence over
-that record route. The enum must be borrow-free, trivial to drop and free of
-relocation failure, with no other runtime use or value-rooted place. Its native
-empty field shell is replaced directly at the producer, preserving operand
-order and avoiding a whole-enum temporary assignment. Substituted fields,
-duplicated roots, borrowed state, effects and mismatched boundaries retain the
-ordinary staged path or fail representation admission.
+Cleanup-free enum fields may fuse a producer with its exact adjacent constructor
+`Initialize`. The source constructor, declared field, root value, unique
+initializer, destination and following full-expression boundary must agree.
+The enum must have only scalar payload fields, be borrow-free, trivial to drop
+and move-assignable, with no other runtime use or value-rooted place. The native
+carrier independently asserts trivial move assignment. Assigning the fresh
+alternative directly into the private initialized empty shell preserves operand
+order and the source publication point without a redundant staged enum or native
+object-lifetime restart. This is a representation operation, not a source
+assignment. Substituted fields, duplicated roots, borrowed state, effects and
+mismatched boundaries retain the ordinary staged path or fail admission.
 
 A bounded closed-tag-domain proof exposes an exhaustive switch's impossible
 default edge to the native optimizer. It independently matches the exact
@@ -2761,8 +2798,18 @@ operands against its solved projected-place availability. Constructor bodies
 begin after required fields are initialized, and destructor bodies precede
 automatic field retirement. The focused moved-enum-field/observer regression
 retains that invariant alongside the general projected-field ownership tests.
-Constructor/destructor bodies, local/value roots, consuming or mutable
-receivers, moved state, intervening effects and incomplete/substituted rows do
+An exact passive transfer extends that entry proof to a consuming source
+method: a direct, still-available enum field moves into an unavailable local
+match subject through adjacent `Move`, `Initialize` and full-expression
+instructions. Producer/result identity, source field/type/traits, destination,
+available-to-moved ownership metadata and the matching final boundary must all
+agree. The enum carries neither active cleanup nor borrowed state. No other
+instruction may precede the switch, and the original no-backedge and complete
+alternative checks still apply. The destination inherits a valid discriminant
+from that exact transfer; a local declaration or an exhaustive switch alone
+establishes nothing.
+Constructor/destructor bodies, unrelated local/value roots, mutable receivers,
+previously moved state, intervening effects and incomplete/substituted rows do
 not qualify. This distinction excludes the carrier's private empty/vacant
 shells; an exhaustive-case count alone is never sufficient. The proof emits
 `mir_closed_enum_unreachable_v1` only on that switch edge. Ordinary MIR
@@ -2770,6 +2817,8 @@ shells; an exhaustive-case count alone is never sufficient. The proof emits
 abort/diagnostic behavior. Mutation tests cover omitted, duplicate, substituted
 and mistyped cases, unavailable sources, wrong fields/formals, effectful entry,
 changed defaults and backedges.
+Transfer mutations additionally cover altered producers, initialization targets,
+availability, ownership endpoints and intervening cleanup/raw effects.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
@@ -2841,6 +2890,17 @@ array of concrete generic class elements uses each element's private tag
 constructor and never assumes that the public class has a zero-argument
 constructor. This remains a backend-only rollback representation and does not
 add a GTI constructor or observable initialized value.
+A payload enum's private inactive alternative contains no active payload or
+borrow, including when its alternatives mix owning values and references.
+Construction-only empty-state admission may therefore recurse through such an
+enum field. It does not make direct reference fields default-constructible or
+authorize reassignment of borrowed objects. Publication still proves the exact
+producer, field `Initialize`, value-to-field reparent and rollback schedule.
+Borrow-carrying producers additionally retain their complete dependency set:
+nonempty sets require the corresponding checked field-loan publication, while
+empty sets require explicit selected-alternative evidence. The native move
+carries existing reference addresses; it never invents a pointer to an inactive
+payload.
 Ordinary native constructor overloads that publish fields from the same MIR
 body use the same proved private empty state as their failure-form overloads.
 They must not implicitly call a source default constructor before MIR field
@@ -4108,12 +4168,43 @@ unless it cannot fail. Its only lifecycle effect is that slot's activation, its
 inputs are those of a nested call without owning arguments, and its receiver,
 if any, is read-borrowed. An argument borrow's call-argument loan may end
 inside the region, but the staged input's own loan may not. No such slot is the
-borrowed place. Whether the receiver is a method object or a local lambda does
-not change this proof. Other user-call shapes, other owning transfers, raw
-memory, other loans, and arbitrary stores remain outside this proof. Thus the
-deferred local address denotes the same object that was selected before
-argument evaluation; the backend does not reorder an observable address
-computation across a branch.
+borrowed place.
+An ordinary safe source method may also consume a separately rooted local
+receiver and publish an owned class result into that exact prepared argument.
+The bounded zero-argument method shape reuses the moved receiver's full-expression
+slot proof and the result's exact activation/reparent/sole-handoff proof. Only
+the linked move, receiver stage, method call and result stage are admitted;
+neither receiver nor result carries borrowed state. Both checked Invoke-success
+publication and a failure-free producer's unconditional activation retain their
+existing cleanup schedules. This rule depends on storage and call facts, not a
+library result spelling.
+Whether the receiver is a method object or a local lambda does not change
+this proof. Other user-call shapes, other owning transfers, raw memory, other
+loans, and arbitrary stores remain outside this proof. Thus the deferred local
+address denotes the same object that was selected before argument evaluation;
+the backend does not reorder an observable address computation across a branch.
+
+A cleanup-free source class call result assigned into a fixed-array element
+uses its existing representation-only result slot until the adjacent assignment.
+Admission requires the exact mutable array/field element, generated failure-free
+move/assignment, and the checked write's exact bounds origin and status edge (or
+its independently verified discharge). The native checked-array write consumes
+the staged result only after producer success; bounds failure follows the MIR
+failure edge and cannot publish to the array. Its moved-from passive shell is
+retired without inventing a source cleanup obligation. A failed producer leaves
+the destination untouched, and unrelated active owners retain normal MIR cleanup.
+The MIR routing rule also covers bounds-only class assignments with no lifecycle
+transition: lexical-drop type traits alone do not suppress that required edge.
+Owning replacement still checks bounds at its separate `CleanupBeforeAssign`
+operation; this routing rule does not authorize an unproved owning transfer.
+
+The same cleanup-free result slot can feed one exact payload-enum field.
+Constructors and ordinary source calls share the proof: the selected variant's
+field type and sole operand use match, there is no semantic value-root/drop,
+and the producer's successful continuation dominates publication. A generated
+failure-free move transfers the completed value into the payload, then retires
+the passive representation shell. Failed production cannot publish the enum;
+borrowed or owning results retain their separate checked loan/drop transport.
 
 An owned class result returned directly from an erased virtual call or a stored
 lambda invocation may use the caller's placement output. Admission requires the

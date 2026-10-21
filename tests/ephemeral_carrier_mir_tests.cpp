@@ -1627,8 +1627,12 @@ int main() {
       const auto *iterator = function.body.findPlace(range.iterator);
       if (!element || !parent || !cursor || !iterator)
         continue;
+      // expected<T&, E>::value() is a source accessor: the range borrows its
+      // call result, which reborrows the carrier's Stored reference.
+      const auto *carrier = function.body.findLoan(parent->parent);
       expect(
-          parent->kind == lang::MirLoanKind::Stored &&
+          parent->kind == lang::MirLoanKind::CallResult && carrier &&
+              carrier->kind == lang::MirLoanKind::Stored &&
               cursor->id != parent->id &&
               cursor->kind == lang::MirLoanKind::Stored &&
               cursor->parent == parent->id,

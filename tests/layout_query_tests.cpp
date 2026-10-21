@@ -13,6 +13,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -161,6 +162,16 @@ analyze(std::string_view name, std::string source,
   }
   return lang::Frontend(std::move(options))
       .analyze(std::string(name), std::move(source));
+}
+
+// User programs see the prelude, whose `expected` is an ordinary source class.
+lang::FrontendResult analyzeWithPrelude(std::string_view name,
+                                        std::string source) {
+  const std::filesystem::path standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  return lang::Frontend().analyze(std::string(name), std::move(source),
+                                  {standardLibrary / "prelude.gti"}, {},
+                                  {standardLibrary});
 }
 
 void testParserAndAst() {
@@ -372,7 +383,8 @@ void expectLayoutFailure(std::string_view name, std::string source,
                          std::string_view messageFragment,
                          std::string_view primarySpelling) {
   const std::size_t primaryStart = source.rfind(primarySpelling);
-  const lang::FrontendResult result = analyze(name, std::move(source));
+  const lang::FrontendResult result =
+      analyzeWithPrelude(name, std::move(source));
   const lang::Diagnostic *diagnostic = findCode(result, "GTI-S2063");
   const bool focused =
       !result.canGenerateCode() && countCode(result, "GTI-S2063") == 1 &&

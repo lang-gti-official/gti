@@ -510,8 +510,8 @@ int main() {
 }
 
 void testCharactersAndStringViews() {
-  const lang::FrontendResult valid =
-      lang::Frontend().analyze("text-values.gti", R"(
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "text-values.gti", R"(
 char letter = 'G';
 char newline = '\n';
 std::string_view text = "GTI\0text";
@@ -532,7 +532,7 @@ int main() {
   return 1;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
          "character values and literal-backed string views should validate");
 
@@ -583,7 +583,7 @@ int main() {
       "int main() { mut std::string_view view = \"abc\"; "
       "view[0] = 'x'; char outside = \"abc\"[3]; "
       "char wrong = view[false]; view.missing(); return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidView.canGenerateCode() &&
              countDiagnosticCode(invalidView.diagnostics, "GTI-S2035") == 4 &&
              hasDiagnostic(invalidView.diagnostics,
@@ -616,7 +616,7 @@ int main() {
       "character-numeric.gti",
       "int main() { char value = 'A'; int number = value; "
       "return value + 1; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!numeric.canGenerateCode() &&
              hasDiagnostic(numeric.diagnostics, "value of type 'char'") &&
              hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
@@ -628,7 +628,7 @@ int main() {
       "static_assert(uint8_t('B') == uint8_t(66)); "
       "int main() { mut uint8_t byte = uint8_t(67); char value = char(byte); "
       "return value == 'C' ? 0 : 1; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(codeUnitBridge.canGenerateCode(),
          "char and uint8_t should support an explicit, lossless code-unit "
          "bridge in both directions");
@@ -637,7 +637,7 @@ int main() {
       "invalid-character-code-unit.gti",
       "int main() { uint8_t byte = uint8_t(65); char implicit = byte; "
       "char wide = char(uint16_t(65)); return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidCodeUnitBridge.canGenerateCode() &&
              hasDiagnostic(invalidCodeUnitBridge.diagnostics,
                            "Cannot initialize 'implicit'") &&
@@ -648,7 +648,7 @@ int main() {
 
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const lang::Diagnostic *migration =
       findDiagnosticByCode(obsolete.diagnostics, "GTI-S2033");
   expect(!obsolete.canGenerateCode() && migration != nullptr &&
@@ -1414,8 +1414,9 @@ int main() {
 
 void testMirConstantEvaluation() {
   lang::FrontendWorkMetrics metrics;
-  const auto frontend = lang::Frontend({.workMetrics = &metrics})
-                            .analyze("mir-constexpr.gti", R"(
+  const auto frontend =
+      lang::Frontend({.workMetrics = &metrics})
+          .analyze("mir-constexpr.gti", R"(
 constexpr int32_t sum(int32_t count) {
   mut int32_t total = 0;
   for (mut int32_t index = 0; index < count; index++) { total += index; }
@@ -1484,7 +1485,7 @@ static_assert(sum_result == 10 && factorial_result == 720 && text_result == 461)
 static_assert(table_sum(5) == 22 && array_defaults(4) == 5);
 int main() { return twice<int32_t>(21) == 42 ? 0 : 1; }
 )",
-                                     {standardLibraryPrelude()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(frontend.canGenerateCode(), "MIR constexpr fixture should lower");
   expect(metrics.constexprMirExecutions >= 5,
          "semantic constant calls actually use staged MIR before whole-program "
@@ -1867,7 +1868,7 @@ int enclosing(int value) {
   else { return should_not_exist; }
 }
 )",
-                   {standardLibraryPrelude()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!stagedGeneric.semanticValid ||
       genericMetrics.constexprMirExecutions < 6) {
     std::cerr << "Generic MIR executions: "
@@ -1881,8 +1882,9 @@ int enclosing(int value) {
          "enclosing scopes");
 
   lang::FrontendWorkMetrics loanMetrics;
-  const auto loanIsolation = lang::Frontend({.workMetrics = &loanMetrics})
-                                 .analyze("constexpr-loan-isolation.gti", R"(
+  const auto loanIsolation =
+      lang::Frontend({.workMetrics = &loanMetrics})
+          .analyze("constexpr-loan-isolation.gti", R"(
 constexpr T twice<std::numeric T>(T value) { return T(value + value); }
 int invalid(int input) {
   mut int local = input;
@@ -1892,7 +1894,7 @@ int invalid(int input) {
   return borrowed;
 }
 )",
-                                          {standardLibraryPrelude()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!loanIsolation.semanticValid &&
              loanMetrics.constexprMirExecutions == 1 &&
              hasDiagnostic(loanIsolation.diagnostics, "borrow"),
@@ -2308,9 +2310,6 @@ void testConstexprOperators() {
        "return 0; } "
        "};",
        "structural aggregate", "operator()", 8},
-      {"struct Item { int x; constexpr int operator()() && { return this.x; } "
-       "};",
-       "cannot consume", "operator()", 8},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
        "constexpr Item item = Item(1); constexpr int bad = item + 2;",
@@ -2352,29 +2351,43 @@ void testConstexprOperators() {
            "exact source diagnostics: " +
                test.source);
   }
-  const auto bounds = lang::Frontend().analyze(
-      "constexpr-operator-bounds.gti",
+  const std::string boundsSource =
       "#include <std/array>\nconstexpr std::array<int, 2> a = std::array<int, "
       "2>({1, 2});\n"
-      "constexpr int invalid = a[2];\nint main() { return 0; }",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+      "constexpr int invalid = a[2];\nint main() { return 0; }";
+  const auto bounds = lang::Frontend().analyze(
+      "constexpr-operator-bounds.gti", boundsSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
   std::ifstream arrayInput(standardLibraryRoot() / "std/array.gti");
   const std::string arraySource((std::istreambuf_iterator<char>(arrayInput)),
                                 std::istreambuf_iterator<char>());
   const auto access = arraySource.find(
       "[index]", arraySource.find("constexpr T& operator[](int"));
-  expect(
-      !bounds.canGenerateCode() && access != std::string::npos &&
-          std::any_of(
-              bounds.diagnostics.begin(), bounds.diagnostics.end(),
-              [&](const auto &d) {
-                return d.code == "GTI-S2057" &&
-                       d.primary.source ==
-                           (standardLibraryRoot() / "std/array.gti").string() &&
-                       d.primary.start == access && d.primary.end == access + 1;
-              }),
-      "constexpr operator bounds failures retain the original library index "
-      "location");
+  // A failure inside a library instance is reported at the requesting index
+  // operator, and the library index stays its related location.
+  const auto request = boundsSource.find("[2]");
+  expect(!bounds.canGenerateCode() && access != std::string::npos &&
+             std::any_of(
+                 bounds.diagnostics.begin(), bounds.diagnostics.end(),
+                 [&](const auto &d) {
+                   return d.code == "GTI-S2057" &&
+                          d.primary.source ==
+                              fixtureSourcePath("constexpr-operator-bounds.gti")
+                                  .string() &&
+                          d.primary.start == request &&
+                          d.primary.end == request + 1 &&
+                          std::any_of(d.related.begin(), d.related.end(),
+                                      [&](const auto &related) {
+                                        return related.span.source ==
+                                                   (standardLibraryRoot() /
+                                                    "std/array.gti")
+                                                       .string() &&
+                                               related.span.start == access &&
+                                               related.span.end == access + 1;
+                                      });
+                 }),
+         "constexpr operator bounds failures retain the original library index "
+         "location");
 }
 
 void testConstexprMutation() {
@@ -2885,6 +2898,152 @@ struct FailingConstructor {
   }
 }
 
+void testConstexprPayloadEnums() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_payload_enum.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  const auto runtime = lang::Frontend().analyze(
+      fixture,
+      source.substr(0, source.find("constexpr Signal<int> frozen")) +
+          "int main() { return 0; }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : runtime.diagnostics)
+    std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
+  for (const auto &function : runtime.hir.functionInstances()) {
+    if (!function.source || !function.source->name().lexeme.ends_with("_work"))
+      continue;
+    const auto computed =
+        lang::evaluateMirConstantFunction(runtime.mir, function.id, {});
+    if (!computed)
+      std::cerr << function.source->name().lexeme << " failure "
+                << int(computed.failure) << " body " << int(computed.body.kind)
+                << ':' << computed.body.owner << " instruction "
+                << computed.instruction << ' ' << computed.detail << '\n';
+  }
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : result.diagnostics)
+    std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode() && metrics.constexprMirExecutions >= 4,
+         "payload enums and source wrappers execute canonical MIR constants");
+  if (!result.canGenerateCode())
+    return;
+  bool mutated = false;
+  for (const auto &function : result.hir.functionInstances()) {
+    if (!function.source || !function.source->name().lexeme.ends_with("_work"))
+      continue;
+    const auto computed =
+        lang::evaluateMirConstantFunction(result.mir, function.id, {});
+    expect(computed &&
+               std::get<lang::ConstantInteger>(*computed.value).magnitude == 42,
+           "enum construction, observations and consuming cleanup agree with "
+           "runtime");
+    expect(!lang::evaluateMirConstantFunction(result.mir, function.id, {},
+                                              {.steps = 2}),
+           "payload execution shares bounded constant work");
+    auto malformed = result.mir;
+    auto *instance = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(function.id));
+    bool changed = false;
+    for (auto &block : instance->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.operation == lang::MirOperation::PayloadConstruct) {
+          instruction.enumVariant = 999;
+          mutated = true;
+          changed = true;
+        }
+    if (changed)
+      expect(!lang::evaluateMirConstantFunction(malformed, function.id, {}),
+             "constant execution rejects malformed active variant identity");
+  }
+  expect(mutated, "payload fixture exercises malformed construction mutation");
+  auto missingStage = result.mir;
+  bool removedStage = false;
+  for (const auto &candidate : result.mir.constructorInstances()) {
+    auto *constructor = const_cast<lang::MirConstructorInstance *>(
+        missingStage.findConstructorInstance(candidate.id));
+    for (auto &block : constructor->body.blocks) {
+      const auto stage = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const auto &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Initialize &&
+                   instruction.constructorInitializer &&
+                   instruction.info.type.kind == lang::SemanticType::Enum;
+          });
+      if (stage != block.instructions.end()) {
+        block.instructions.erase(stage);
+        removedStage = true;
+        break;
+      }
+    }
+    if (removedStage)
+      break;
+  }
+  expect(removedStage && !lang::verifyMirProgram(missingStage).valid(),
+         "enum constructor fields require their exact publication stage");
+  auto wrongConstant = result.mir;
+  bool alteredConstant = false;
+  for (auto &step :
+       const_cast<std::vector<lang::MirProgramInitializationStep> &>(
+           wrongConstant.programInitializationPlan().steps)) {
+    if (!step.dataConstant)
+      continue;
+    const auto *aggregate =
+        std::get_if<lang::ConstantAggregateValue>(&*step.dataConstant);
+    if (!aggregate || !aggregate->value ||
+        aggregate->value->kind != lang::ConstantAggregateKind::PayloadEnum)
+      continue;
+    auto node = *aggregate->value;
+    node.variant = 999;
+    step.dataConstant = lang::makeConstantAggregate(std::move(node));
+    alteredConstant = true;
+    break;
+  }
+  expect(
+      alteredConstant && !lang::verifyMirProgram(wrongConstant).valid(),
+      "MIR verification rejects a forged program-constant active alternative");
+}
+
+void testConstexprTryable() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constexpr_tryable.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  lang::FrontendWorkMetrics metrics;
+  const auto result = lang::Frontend({.workMetrics = &metrics})
+                          .analyze(fixture, source, {standardLibraryPrelude()},
+                                   {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : result.diagnostics)
+    std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode() && metrics.constexprMirExecutions >= 2,
+         "source protocol propagation executes its selected calls and both "
+         "return paths through verified MIR");
+  for (const std::string operation :
+       {"bool has_value", "int take_value", "Rejected take_residual"}) {
+    auto runtimeOnly = source;
+    const auto annotation = runtimeOnly.find("constexpr " + operation);
+    expect(annotation != std::string::npos,
+           "each protocol operation has an explicit constant contract");
+    if (annotation == std::string::npos)
+      continue;
+    runtimeOnly.erase(annotation, std::string("constexpr ").size());
+    const auto rejected = lang::Frontend().analyze(fixture, runtimeOnly,
+                                                   {standardLibraryPrelude()},
+                                                   {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &d) { return d.code == "GTI-S2057"; }),
+           "constant propagation cannot execute a runtime-only selected "
+           "protocol operation");
+  }
+}
+
 void testConstexprResults() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_results.gti";
@@ -2992,58 +3151,81 @@ void testConstexprResults() {
   const std::array<lang::ConstantValue, 1> no{false};
   const auto propagated = lang::evaluateMirConstantFunction(
       result.mir, functionId("after_validation"), no);
-  expect(propagated && lang::constantResultHasValue(*propagated.value).value ==
-                           lang::ConstantValue{false},
+  // A source result constant is an object whose one state field holds the
+  // payload enum's exact alternative: here the error variant and its value.
+  const auto stateOf =
+      [](const lang::ConstantValue &value) -> const lang::ConstantAggregate * {
+    const auto *object = std::get_if<lang::ConstantAggregateValue>(&value);
+    if (!object || !object->value ||
+        object->value->kind != lang::ConstantAggregateKind::Object ||
+        object->value->fields.size() != 1)
+      return nullptr;
+    const auto *state = std::get_if<lang::ConstantAggregateValue>(
+        &object->value->fields.front().value);
+    return state && state->value &&
+                   state->value->kind ==
+                       lang::ConstantAggregateKind::PayloadEnum
+               ? state->value.get()
+               : nullptr;
+  };
+  const auto *propagatedState =
+      propagated ? stateOf(*propagated.value) : nullptr;
+  expect(propagatedState && propagatedState->variant == 1 &&
+             propagatedState->elements.size() == 1 &&
+             std::holds_alternative<lang::ConstantEnum>(
+                 propagatedState->elements.front()),
          "void propagation returns the original exact error alternative");
-  if (propagated) {
-    const auto *wrapped =
-        std::get_if<lang::ConstantAggregateValue>(&*propagated.value);
-    expect(wrapped && wrapped->value,
-           "result constants use the shared typed aggregate representation");
-    if (wrapped && wrapped->value) {
-      const auto consume = functionId("consume_result");
-      const std::array<lang::ConstantValue, 1> valid{*propagated.value};
-      const auto observed =
-          lang::evaluateMirConstantFunction(result.mir, consume, valid);
-      expect(observed &&
-                 std::get<lang::ConstantInteger>(*observed.value).magnitude ==
-                     11,
-             "an externally supplied exact error result is observed by value");
-      for (int corruption = 0; corruption < 3; ++corruption) {
-        auto malformed = *wrapped->value;
-        auto error = std::get<lang::ConstantEnum>(malformed.elements.front());
-        if (corruption == 0)
-          error.enumId = 0;
-        if (corruption == 1)
-          error.value.domain.width = 64;
-        malformed.elements.front() = corruption == 2
-                                         ? lang::ConstantValue{true}
-                                         : lang::ConstantValue{error};
-        const std::array<lang::ConstantValue, 1> invalid{
-            lang::makeConstantAggregate(std::move(malformed))};
-        expect(!lang::evaluateMirConstantFunction(result.mir, consume, invalid),
-               "result payload identity and integer domain are independently "
-               "validated");
-      }
-      for (int corruption = 0; corruption < 6; ++corruption) {
-        auto malformed = *wrapped->value;
-        if (corruption == 0)
-          malformed.identity = 1;
-        if (corruption == 1)
-          malformed.kind = lang::ConstantAggregateKind::Object;
-        if (corruption == 2)
-          malformed.elements.clear();
-        if (corruption == 3)
-          malformed.elements.push_back(true);
-        if (corruption == 4)
-          malformed.fields.push_back({1, true});
-        if (corruption == 5)
-          malformed.exactType.reset();
-        const auto forged = lang::makeConstantAggregate(std::move(malformed));
-        expect(
-            !lang::convertConstantToType(forged, *wrapped->value->exactType),
-            "malformed result state, payload count and identity fail closed");
-      }
+  if (propagatedState) {
+    const auto consume = functionId("consume_result");
+    const std::array<lang::ConstantValue, 1> valid{*propagated.value};
+    const auto observed =
+        lang::evaluateMirConstantFunction(result.mir, consume, valid);
+    expect(observed &&
+               std::get<lang::ConstantInteger>(*observed.value).magnitude == 11,
+           "an externally supplied exact error result is observed by value");
+    const auto &object =
+        *std::get<lang::ConstantAggregateValue>(*propagated.value).value;
+    // Constant nodes are immutable: rebuild the object around a new state.
+    const auto withState = [&](lang::ConstantAggregate state) {
+      auto outer = object;
+      outer.fields.front().value =
+          lang::makeConstantAggregate(std::move(state));
+      return lang::makeConstantAggregate(std::move(outer));
+    };
+    for (int corruption = 0; corruption < 4; ++corruption) {
+      auto state = *propagatedState;
+      auto error = std::get<lang::ConstantEnum>(state.elements.front());
+      if (corruption == 0)
+        error.enumId = 0;
+      if (corruption == 1)
+        error.value.domain.width = 64;
+      state.elements.front() = corruption == 2 ? lang::ConstantValue{true}
+                                               : lang::ConstantValue{error};
+      if (corruption == 3)
+        state.variant = 7;
+      const std::array<lang::ConstantValue, 1> invalid{
+          withState(std::move(state))};
+      expect(!lang::evaluateMirConstantFunction(result.mir, consume, invalid),
+             "result payload identity, alternative and integer domain are "
+             "independently validated");
+    }
+    for (int corruption = 0; corruption < 5; ++corruption) {
+      auto malformed = object;
+      if (corruption == 0)
+        malformed.identity = 1;
+      if (corruption == 1)
+        malformed.kind = lang::ConstantAggregateKind::Array;
+      if (corruption == 2)
+        malformed.fields.clear();
+      if (corruption == 3)
+        malformed.fields.push_back({1, true});
+      if (corruption == 4)
+        malformed.exactType.reset();
+      const std::array<lang::ConstantValue, 1> forged{
+          lang::makeConstantAggregate(std::move(malformed))};
+      expect(!lang::evaluateMirConstantFunction(result.mir, consume, forged),
+             "malformed result state, field count and identity fail closed: " +
+                 std::to_string(corruption));
     }
   }
   const std::string prefix =
@@ -3390,25 +3572,40 @@ void testConstexprReadOnlyReferences() {
                test.body);
   }
 
+  const std::string boundsSource =
+      prefix + "constexpr int value = values.at(3);\nint main() { return 0; }";
   const auto bounds = lang::Frontend().analyze(
-      "constexpr-reference-bounds.gti",
-      prefix + "constexpr int value = values.at(3);\nint main() { return 0; }",
+      "constexpr-reference-bounds.gti", boundsSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   std::ifstream arrayInput(standardLibraryRoot() / "std/array.gti");
   const std::string arraySource((std::istreambuf_iterator<char>(arrayInput)),
                                 std::istreambuf_iterator<char>());
   const auto access =
       arraySource.find("[index]", arraySource.find("constexpr T& at(int"));
+  // The failure is reported at the requesting member, and the library index
+  // expression stays its related location.
+  const auto request = boundsSource.find("at(3)");
   expect(!bounds.canGenerateCode() && access != std::string::npos &&
              std::any_of(bounds.diagnostics.begin(), bounds.diagnostics.end(),
                          [&](const auto &d) {
                            return d.code == "GTI-S2057" &&
                                   d.primary.source ==
-                                      fixtureSourcePath(standardLibraryRoot() /
-                                                        "std/array.gti")
+                                      fixtureSourcePath(
+                                          "constexpr-reference-bounds.gti")
                                           .string() &&
-                                  d.primary.start == access &&
-                                  d.primary.end == access + 1;
+                                  d.primary.start == request &&
+                                  d.primary.end == request + 2 &&
+                                  std::any_of(
+                                      d.related.begin(), d.related.end(),
+                                      [&](const auto &related) {
+                                        return related.span.source ==
+                                                   fixtureSourcePath(
+                                                       standardLibraryRoot() /
+                                                       "std/array.gti")
+                                                       .string() &&
+                                               related.span.start == access &&
+                                               related.span.end == access + 1;
+                                      });
                          }),
          "out-of-bounds returned reference points at the original library "
          "index expression, not an unrelated caller token");
@@ -3448,14 +3645,28 @@ void testConstexprLibrary() {
       lang::Frontend({.workMetrics = &chronoMetrics})
           .analyze(chronoPath, chronoSource, {standardLibraryPrelude()}, {},
                    {standardLibraryRoot()});
-  if (!chrono.canGenerateCode() || chronoMetrics.constexprMirExecutions != 12) {
+  // The library's own constant work, such as the `if constexpr` of the
+  // prelude's tryable conformance behind each `?` in std/chrono, is counted
+  // apart from the fixture's twelve evaluations.
+  lang::FrontendWorkMetrics chronoLibraryMetrics;
+  const auto chronoLibrary =
+      lang::Frontend({.workMetrics = &chronoLibraryMetrics})
+          .analyze(chronoPath,
+                   "#include <std/chrono>\nint main() { return 0; }",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const std::size_t fixtureExecutions =
+      chronoMetrics.constexprMirExecutions -
+      chronoLibraryMetrics.constexprMirExecutions;
+  if (!chrono.canGenerateCode() || !chronoLibrary.canGenerateCode() ||
+      fixtureExecutions != 12) {
     std::cerr << "Chrono MIR executions: "
-              << chronoMetrics.constexprMirExecutions << '\n';
+              << chronoMetrics.constexprMirExecutions << " (library "
+              << chronoLibraryMetrics.constexprMirExecutions << ")\n";
     for (const auto &diagnostic : chrono.diagnostics)
       std::cerr << diagnostic.message << '\n';
   }
   expect(!chronoSource.empty() && chrono.canGenerateCode() &&
-             chronoMetrics.constexprMirExecutions == 12 &&
+             chronoLibrary.canGenerateCode() && fixtureExecutions == 12 &&
              lang::verifyMirProgram(chrono.mir).valid(),
          "chrono constants, signed boundary decomposition and exact distinct "
          "time-point observers execute staged MIR, not native constexpr");
@@ -4049,7 +4260,8 @@ int main() {
   else { return unselected_invalid_name; }
 }
 )",
-                                              {standardLibraryPrelude()});
+                                              {standardLibraryPrelude()}, {},
+                                              {standardLibraryRoot()});
   for (const auto &diagnostic : valid.diagnostics) {
     std::cerr << diagnostic.primary.line << ": " << diagnostic.message << '\n';
   }
@@ -4062,7 +4274,8 @@ int main() {
                                "constexpr char value = text[" +
                                index + "];";
     const auto invalid = lang::Frontend().analyze(
-        "constexpr-text-bounds.gti", source, {standardLibraryPrelude()});
+        "constexpr-text-bounds.gti", source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
     const auto *diagnostic =
         findDiagnosticByCode(invalid.diagnostics, "GTI-S2057");
     expect(
@@ -4078,14 +4291,14 @@ int main() {
             diagnostic->fixes.empty(),
         "constexpr out-of-bounds text access diagnoses its index expression");
   }
-  const auto runtime =
-      lang::Frontend().analyze("constexpr-runtime-text.gti", R"(
+  const auto runtime = lang::Frontend().analyze(
+      "constexpr-runtime-text.gti", R"(
 uint64_t inspect(std::string_view text) {
   constexpr uint64_t size = text.size();
   return size;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!runtime.semanticValid &&
              findDiagnosticByCode(runtime.diagnostics, "GTI-S2057") != nullptr,
          "runtime text cannot be inspected in a required constant context");
@@ -4098,7 +4311,8 @@ constexpr uint64_t spin(std::string_view text) {
 }
 constexpr uint64_t result = spin("x");
 )",
-                                              {standardLibraryPrelude()});
+                                              {standardLibraryPrelude()}, {},
+                                              {standardLibraryRoot()});
   expect(!limit.semanticValid && hasDiagnostic(limit.diagnostics, "limit"),
          "constant text operations share the deterministic execution budget");
 }
@@ -4381,9 +4595,6 @@ constexpr int32_t missing;
 int32_t runtime_value() { return 1; }
 constexpr int32_t called = runtime_value();
 constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
-class InvalidMethod {
-  constexpr int32_t method() && { return 1; }
-};
 class InvalidMember {
   constexpr int32_t value = 1;
 };
@@ -4393,19 +4604,17 @@ struct RuntimePoint {
 };
 constexpr RuntimePoint runtime_point = RuntimePoint(1);
 )");
-  expect(
-      !invalid.semanticValid &&
-          countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
-          hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
-          hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "does not name a constexpr function") &&
-          hasDiagnostic(invalid.diagnostics, "cannot consume its receiver") &&
-          hasDiagnostic(invalid.diagnostics, "must be static") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "not an available constexpr constructor"),
-      "unsupported constexpr forms should fail with focused bounded "
-      "diagnostics");
+  expect(!invalid.semanticValid &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 5 &&
+             hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "does not name a constexpr function") &&
+             hasDiagnostic(invalid.diagnostics, "must be static") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "not an available constexpr constructor"),
+         "unsupported constexpr forms should fail with focused bounded "
+         "diagnostics");
 
   const lang::FrontendResult invalidBranch =
       lang::Frontend().analyze("invalid-if-constexpr.gti", R"(
@@ -5124,8 +5333,9 @@ int main() { return 0; }
       "cleanup-owning aliases, arrays, fields, and bases without unrelated "
       "generic or assignment diagnostics until global shutdown is defined");
 
-  lang::Lexer cleanupQueryLexer;
-  lang::Parser cleanupQueryParser(cleanupQueryLexer.scan(R"(
+  // The prelude declares the result class, so the query program loads it.
+  const lang::FrontendResult cleanupQuery = lang::Frontend().analyze(
+      "cleanup-query.gti", R"(
 class Cleanup {
 public:
   Cleanup() {}
@@ -5146,9 +5356,11 @@ public:
 };
 int main() { return 0; }
 )",
-                                                         "cleanup-query.gti"));
-  const lang::Program cleanupQueryProgram = cleanupQueryParser.parse();
-  lang::SemanticVisitor cleanupQuerySemantic;
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Program &cleanupQueryProgram = cleanupQuery.program;
+  lang::SemanticVisitor cleanupQuerySemantic(lang::TargetInfo::host(),
+                                             &cleanupQuery.sourceGraph, false,
+                                             nullptr, &cleanupQuery.sources);
   (void)cleanupQuerySemantic.check(cleanupQueryProgram);
   const lang::ClassDecl *cleanupClass =
       findTopLevelClass(cleanupQueryProgram, "Cleanup");
@@ -5194,9 +5406,9 @@ int main() { return 0; }
     }
   }
   expect(
-      !cleanupQueryLexer.hadError() && !cleanupQueryParser.hadError() &&
-          cleanupInfo != nullptr && boxInfo != nullptr &&
-          expandInfo != nullptr && branchInfo != nullptr &&
+      cleanupQuery.syntaxValid && cleanupInfo != nullptr &&
+          boxInfo != nullptr && expandInfo != nullptr &&
+          branchInfo != nullptr &&
           cleanupQuerySemantic.requiresActiveCleanupFor(nestedCleanup) &&
           cleanupQuerySemantic.requiresActiveCleanupFor(expandingRecurrence) &&
           !cleanupQuerySemantic.requiresActiveCleanupFor(branchingCleanupFree),
@@ -5233,7 +5445,7 @@ int main() { return 0; }
   const lang::FrontendResult nonShareable =
       lang::Frontend(concurrentOptions)
           .analyze("concurrent-non-shareable-globals.gti", nonShareableSource,
-                   {standardLibraryPrelude()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (countDiagnosticCode(nonShareable.diagnostics, "GTI-S2060") != 6 ||
       countDiagnosticCode(nonShareable.diagnostics, "GTI-S2061") != 1) {
     for (const lang::Diagnostic &diagnostic : nonShareable.diagnostics) {
@@ -5683,6 +5895,8 @@ constexpr NamedTest kTests[] = {
     {"testConstexprMutation", testConstexprMutation},
     {"testConstexprEnumBuilders", testConstexprEnumBuilders},
     {"testConstexprResults", testConstexprResults},
+    {"testConstexprTryable", testConstexprTryable},
+    {"testConstexprPayloadEnums", testConstexprPayloadEnums},
     {"testConstexprAllocation", testConstexprAllocation},
     {"testStaticAssertions", testStaticAssertions},
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},

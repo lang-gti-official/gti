@@ -274,6 +274,27 @@ Source-defined owning wrappers implement read, mutable and consuming invocation
 under the separate callable ownership/cleanup contract. The declaration syntax
 alone does not supply storage, erasure or `std::function` policy.
 
+An argument-profile family can also combine an ordinary type-parameter definition
+with void, checked-reference and raw-pointer profiles, for example
+`class Packet<T, E>`, `class Packet<void, E>`, `class Packet<T&, E>`, and
+`class Packet<const T*, E>`. Each has its own members and layout. A profile head
+contains bare type binders, `void`, reference binders, or one raw-pointer layer
+over a binder (`T*`, `const T*`); it has no packs, defaults, value parameters,
+deeper pointer patterns or nested patterns.
+All definitions have the same public arity, class/struct kind and package owner.
+Non-fallback profiles must be mutually disjoint: `Packet<T&, E>` and
+`Packet<T, E&>` overlap and cannot form a family. At most one ordinary definition
+is the fallback. Selection is independent of declaration order and precedes
+member lookup; constraints on a selected definition do not cause fallback to a
+different one. Read-only and mutable references are distinct profiles, as are
+pointers to read-only and mutable pointees; a pointer binder binds the pointee,
+so `T*` matching `int**` binds `T` to `int*`.
+Generic deduction uses the family's public arguments, then concrete checking
+uses the selected definition's exact identity. This does not allow conversions
+between definitions or erase checked references' origins/access/lifetimes.
+[Source value profiles](../../examples/168-source-value-profiles.gti) demonstrates
+ordinary owned, empty and borrowed classes without a library-specific capability.
+
 A lambda or nominal `operator()` call can expand a concrete parameter pack. Concrete
 reanalysis checks the flattened arity and each exact argument type, including
 an empty expansion. It does not pass a pack object as one lambda argument.
@@ -475,12 +496,25 @@ constructor. A conversion operator without `implicit` converts only
 explicitly; the exact-type error's hint then names `T(...)`.
 
 `implicit` is written first in an ordinary constructor declaration, before
-`constexpr`. It requires a source body and a constructor callable with exactly
-one explicit argument, so any further parameters must have defaults. It is
+`constexpr`. It requires a source body and a constructor callable with zero or
+one explicit arguments, so any further parameters must have defaults. It is
 invalid on a copy or move constructor or a constructor with a parameter pack
 (`GTI-S2121`), and cannot be combined with `unsafe`: a construction a
 declaration performs implicitly carries no unsafe caller obligation.
 Misplaced spellings, such as `constexpr implicit`, are syntax errors.
+
+A bare `return;` in a class-valued function selects an accessible `implicit`
+constructor callable with no explicit arguments. Omitted arguments use the
+constructor's ordinary defaults. A generated default constructor or an explicit
+zero-argument constructor does not opt in. Ambiguity, inaccessible constructors,
+failed construction and cleanup follow ordinary direct construction rules.
+The concrete return type owns selection, including after generic substitution;
+this is not a rule tied to a library type's name. Semantics records the exact
+return statement and selected constructor. HIR preserves that proof and a full
+expression for construction/default-argument cleanup; no synthetic source
+expression is invented. Borrowed dependencies from temporary default arguments
+cannot escape an empty return. Raw-address fields remain unresolved in optional
+pointer auditing until their construction origin is established.
 
 Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
@@ -863,17 +897,35 @@ Consuming members cannot return any reference or tracked borrowed state.
 For an ordinary GTI function or non-operator method call, a direct fresh
 construction, GTI function call, or GTI value-operator result may initialize an
 exact read-only `T&` parameter for that invocation
-only.
+only. An explicit `std::move(local)` of a whole local or parameter may do the
+same, as an explicitly moved receiver does: the move transfers the local into a
+temporary that the enclosing full expression owns and destroys, and the local
+is moved on every later path.
 Overload selection first considers every otherwise-exact candidate that needs
 no temporary argument borrow. Only when that tier is empty does it consider
 otherwise-exact candidates whose mismatch consists solely of one or more such
 fresh values targeting read-only references; selection still requires one
 unique candidate within the active tier. The selected callable must have a
 body, use GTI linkage, and return `void`, a scalar, or an owned value without
-tracked borrowed state. Mutable references, explicit moves, native or callback
-targets, compound producers, borrowed-state values, and results that could
-retain the argument loan remain ill-formed. Transparent parentheses do not
-change eligibility.
+tracked borrowed state. Mutable references, moves of a projection, native or
+callback targets, compound producers, borrowed-state values, and results that
+could retain the argument loan remain ill-formed. Transparent parentheses do
+not change eligibility. A temporary borrowed inside a conditionally evaluated
+operand, such as the right operand of `||`, lives to the end of the enclosing
+full expression only on the path that created it.
+
+The same call-scoped read-only parameter boundary admits an exact fresh lambda,
+an explicitly moved lambda local, or a selected GTI function item. The selected
+generic parameter must still have a proven confined callable contract, and
+invocation must respect the callable's read-only capability. A function item
+may select a target whose contract is proven only after its body is analyzed;
+the program is then rejected unless that parameter is proven confined. A lambda
+may own captures or retain checked shared capture dependencies: those exact
+origins remain live and protected through the call and the temporary's
+full-expression cleanup. No closure copy is introduced, and named callables
+continue to bind by their ordinary reference. This does not admit mutable
+temporary parameters, returned references to the temporary, or conflicting
+mutation of a capture while the call remains live.
 
 A consuming method or call operator may be virtual or an interface requirement. An
 override must preserve its exact `&&` receiver capability, parameters, and
@@ -920,6 +972,11 @@ invocation signature. Pack elements use the existing value/read-only-reference
 binding rules; they do not acquire mutable-reference access. An open forwarding
 pack cannot distinguish overloads by its unknown arity. A unique eligible item
 may be retained symbolically, and every concrete invocation is checked again.
+Likewise, a contract forwarded to a member of a class with several
+definitions, such as `mapping<R, E>` and `mapping<void, E>`, constrains only
+the definition its concrete arguments select. When the candidate's own result
+selects another definition, that edge supplies no signature, and the selected
+member's concrete invocation is checked instead.
 
 The resulting semantic type contains the selected nominal function identity,
 exact parameter types, and exact result type. It is a zero-state read-callable
@@ -1622,6 +1679,13 @@ residual type. In a generic body these checks happen for each concrete
 instance. Propagation through `std::tryable` is not available in constant
 evaluation. Violations are `GTI-S2086`.
 
+The early return of a residual counts as a return of the converted value.
+When `R` carries borrowed dependencies, as `expected<T&, E>` does, that return
+contributes the selected conversion's complete dependency set, which names no
+dependency for an owned residual. A function using `?` therefore keeps a
+complete borrowed-return contract; it is unknown only when the conversion has
+no complete dependency contract.
+
 An owning operand whose expression category is a value selects move transport
 for both alternatives. A named owning place selects copy transport for both
 alternatives.
@@ -1834,7 +1898,7 @@ operations. Ordinary exact typing, ownership transfer, borrow checks, and
 source-written reference/receiver restrictions apply to every instantiation.
 Concrete type and `uint64_t` value-generic arguments retain canonical declaration and
 type/value identity throughout evaluation. A non-static instance method must
-have a read-only or mutable, non-consuming receiver of a supported structural
+have a read-only, mutable, or consuming receiver of a supported structural
 class or struct. Its body
 may use supported automatic value bindings, exact assignment, scalar compound
 assignment, increment and decrement, blocks, returns, ordinary and constexpr
@@ -1843,7 +1907,7 @@ recursion, and calls to available constexpr definitions. Calling the same
 function at runtime remains an ordinary GTI call with the same language
 semantics.
 
-Read-only or mutable arithmetic, bitwise, comparison, subscript, dereference, and call
+Read-only, mutable, or supported consuming arithmetic, bitwise, comparison, subscript, dereference, and call
 operators may also be `constexpr` under those same signature and structural
 receiver rules. Ordinary overload resolution selects the exact target; no
 reversed operands, new conversions, or alternate lookup is introduced. Both
@@ -1995,11 +2059,20 @@ and heap operations. Each request allows at most 1024 allocation identities and
 byte), independent of target layout. Exhaustion is a semantic diagnostic.
 
 Shared ownership, virtual/recursive owning destruction, raw-memory/provider
-allocation protocols, stored-reference carriers, payload enums, unions and
+allocation protocols, stored-reference carriers, unions and
 inherited objects require further constant-execution profiles. They are not
 enabled by their public library names. These new lifetime operations never
 fall back to AST execution. Example 153 demonstrates transient scratch storage
 and runtime parity.
+
+Payload enums also execute in constant contexts when every possible field has
+a supported concrete type. Their exact active alternative survives construction,
+matching, copying, assignment and checked borrowed observation, including when
+nested in ordinary source classes. Consuming methods and enum matches transfer
+their active fields using the normal ownership rules. Transient exclusive owner
+payloads are permitted only within the evaluation request; persistent constants
+remain passive and cannot retain references. The evaluator uses verified MIR,
+including active-variant cleanup, rather than a second enum execution model.
 
 ## 3.12 Compile-Time Iteration And Reflection
 

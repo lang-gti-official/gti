@@ -21,7 +21,6 @@
 [
   "nullptr_t"
   "void"
-  "expected"
   "auto"
 ] @type.builtin
 
@@ -277,7 +276,6 @@
 ; In a conformance block, `for` introduces a declaration, not a loop.
 (conformance_declaration "for" @keyword.type)
 (unsafe_statement "unsafe" @keyword)
-"unexpected" @keyword
 "requires" @keyword
 (layout_query_expression
   operator: [
@@ -379,12 +377,6 @@
   ] @punctuation.bracket)
 
 (type_argument_clause
-  [
-    "<"
-    ">"
-  ] @punctuation.bracket)
-
-(expected_type
   [
     "<"
     ">"

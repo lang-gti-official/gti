@@ -293,6 +293,34 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
   }
+  for (const auto &function : program.functionInstances()) {
+    const bool textSignature =
+        std::any_of(function.parameterTypes.begin(),
+                    function.parameterTypes.end(), [](const auto &type) {
+                      return type.kind == SemanticType::StringView ||
+                             type.kind == SemanticType::CString;
+                    });
+    if (!textSignature && function.ownerlessTextParameters.empty())
+      continue;
+    const auto &proof = function.ownerlessTextContractProof;
+    // HIR publishes a concrete instance's parameters with packs expanded, so
+    // a semantic signature that still groups a concrete pack is compared in
+    // that form. Required indices name source formals ahead of the pack,
+    // which expansion leaves in place.
+    std::vector<SemanticType> proofParameters;
+    if (proof) {
+      for (SemanticType parameter : proof->parameters())
+        SemanticType::appendExpandedArgument(proofParameters,
+                                             std::move(parameter));
+    }
+    if (!proof || proof->source() != function.source ||
+        proof->function() != function.declaration ||
+        proofParameters != function.parameterTypes ||
+        proof->required() != function.ownerlessTextParameters ||
+        proof->snapshot() != program.analysisSeal().programSnapshot)
+      result.errors.emplace_back("HIR ownerless text contract differs from its "
+                                 "exact semantic signature and proof");
+  }
   if (program.programKind() != semantics.programKind()) {
     result.errors.emplace_back(
         "HIR program kind differs from the semantic model");
@@ -875,6 +903,100 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   // borrow, the initializer first and the selected defaults after it.
   const auto verifyContextualConstructions = [&](const HirBody &body) {
     std::unordered_set<HirValueId> listed;
+    std::unordered_set<const ReturnStmt *> emptyReturns;
+    for (const auto &entry : body.emptyReturnConstructions) {
+      const auto &proof = entry.constructionProof;
+      const auto *value = body.findValue(entry.value);
+      const auto *target =
+          value != nullptr && value->constructorTarget
+              ? program.findConstructorInstance(*value->constructorTarget)
+              : nullptr;
+      const auto *owner =
+          target != nullptr && target->owner != 0 &&
+                  target->owner <= program.classInstances().size()
+              ? &program.classInstances()[target->owner - 1]
+              : nullptr;
+      const auto *construction = proof ? &proof->construction() : nullptr;
+      const auto statement = std::find_if(
+          body.statements.begin(), body.statements.end(),
+          [&](const auto &item) { return item.source == entry.source; });
+      const auto fullExpression =
+          value == nullptr
+              ? body.fullExpressions.end()
+              : std::find_if(body.fullExpressions.begin(),
+                             body.fullExpressions.end(), [&](const auto &item) {
+                               return item.id == value->fullExpression;
+                             });
+      bool valid =
+          entry.source != nullptr && !entry.source->value() && proof &&
+          proof->source() == entry.source &&
+          proof->snapshot() == semantics.analysisSeal().programSnapshot &&
+          emptyReturns.insert(entry.source).second &&
+          listed.insert(entry.value).second && value != nullptr &&
+          target != nullptr && owner != nullptr && construction != nullptr &&
+          statement != body.statements.end() &&
+          statement->kind == HirStatementKind::Return &&
+          statement->value == entry.value &&
+          fullExpression != body.fullExpressions.end() &&
+          fullExpression->statement == statement->id &&
+          fullExpression->roots == std::vector<HirValueId>{entry.value} &&
+          value->kind == HirValueKind::DirectInitializer && !value->source &&
+          construction->constructor != 0 && !construction->generatedDefault &&
+          construction->kind == ConstructorKind::Ordinary &&
+          construction->borrowOrigin == BorrowOriginKind::None &&
+          construction->borrowFields.empty() &&
+          target->declaration == construction->constructor &&
+          target->typeArguments == construction->typeArguments &&
+          target->valueArguments == construction->valueArguments &&
+          target->requiresUnsafe == proof->unsafeConstruction() &&
+          owner->type == construction->constructedType &&
+          value->info == ExpressionInfo{.type = owner->type,
+                                        .category = ValueCategory::Value,
+                                        .access = AccessMode::ReadOnly,
+                                        .traits = owner->traits} &&
+          value->parameterTypes == construction->parameterTypes &&
+          value->operands.size() == value->parameterTypes.size() &&
+          value->operands.size() == construction->defaultArguments.size() &&
+          value->defaultArguments == value->operands &&
+          value->constructorKind == ConstructorKind::Ordinary &&
+          value->definedFailure.propagation ==
+              FailurePropagationKind::Constructor &&
+          value->unsafeOperation ==
+              (proof->unsafeConstruction()
+                   ? UnsafeOperationKind::DeclaredUnsafeConstruction
+                   : UnsafeOperationKind::None) &&
+          value->borrowOrigin == BorrowOriginKind::None &&
+          value->borrowFields.empty() && value->borrowArguments.empty() &&
+          !value->borrowPlace && !value->borrowDependencies &&
+          value->callPlan && !value->callPlan->receiver &&
+          value->callPlan->arguments.size() == value->operands.size();
+      if (valid) {
+        for (std::size_t index = 0; index < value->operands.size(); ++index) {
+          const auto *argument = body.findValue(value->operands[index]);
+          const auto &input = value->callPlan->arguments[index];
+          valid = valid && argument != nullptr &&
+                  argument->source == construction->defaultArguments[index] &&
+                  input.value == argument->id &&
+                  input.parameterIndex == index &&
+                  input.parameterType == construction->parameterTypes[index] &&
+                  input.defaultArgument;
+        }
+      }
+      if (!valid)
+        result.errors.emplace_back("empty return construction HIR differs from "
+                                   "its source-bound semantic proof");
+    }
+    for (const auto &statement : body.statements) {
+      const auto *source = stmtAs<ReturnStmt>(statement.source);
+      if (source != nullptr && !source->value() && statement.value &&
+          std::none_of(
+              body.emptyReturnConstructions.begin(),
+              body.emptyReturnConstructions.end(), [&](const auto &entry) {
+                return entry.source == source && entry.value == statement.value;
+              }))
+        result.errors.emplace_back(
+            "bare return HIR value has no source-bound construction proof");
+    }
     for (const HirContextualConstruction &entry :
          body.contextualConstructions) {
       const HirValue *value = body.findValue(entry.value);
@@ -896,16 +1018,38 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   target->owner > program.classInstances().size()
               ? nullptr
               : &program.classInstances()[target->owner - 1];
+      auto expectedDependencies =
+          construction ? construction->contextualBorrowDependencies
+                       : std::nullopt;
+      if (expectedDependencies)
+        for (auto &dependency : expectedDependencies->dependencies)
+          dependency.place.domain = body.placeDomain;
+      // A built-in owning handle argument keeps its unstaged transport, as
+      // the same constructor selected by explicit syntax does.
+      const bool unstagedOwnerHandle =
+          value != nullptr && !value->callPlan &&
+          std::any_of(value->parameterTypes.begin(),
+                      value->parameterTypes.end(),
+                      [](const SemanticType &parameter) {
+                        return parameter.kind == SemanticType::UniqueOwner ||
+                               parameter.kind == SemanticType::SharedPointer;
+                      });
       if (value == nullptr || construction == nullptr || target == nullptr ||
           owner == nullptr || !listed.insert(entry.value).second ||
           value->kind != HirValueKind::DirectInitializer ||
           value->source != nullptr || argument == nullptr ||
-          argument->source != entry.source ||
+          // An initializer with an expression alias (a reflected expression)
+          // lowers as the value of the expression it denotes.
+          (argument->source != entry.source &&
+           std::none_of(body.sourceAliases.begin(), body.sourceAliases.end(),
+                        [&](const auto &alias) {
+                          return alias.source == entry.source &&
+                                 alias.value == argument->id;
+                        })) ||
           body.valueForSource(*entry.source) != argument ||
           construction->constructor == 0 || construction->generatedDefault ||
           construction->kind != ConstructorKind::Ordinary ||
-          construction->borrowOrigin != BorrowOriginKind::None ||
-          !construction->borrowFields.empty() ||
+          (owner->traits.containsBorrowedState && !expectedDependencies) ||
           target->declaration != construction->constructor ||
           owner->type != construction->constructedType ||
           value->info != ExpressionInfo{.type = owner->type,
@@ -923,10 +1067,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value->constructorKind != ConstructorKind::Ordinary ||
           value->definedFailure.propagation !=
               FailurePropagationKind::Constructor ||
-          value->borrowOrigin != BorrowOriginKind::None ||
-          !value->borrowFields.empty() || !value->callPlan ||
-          value->callPlan->receiver ||
-          value->callPlan->arguments.size() != value->operands.size()) {
+          value->borrowOrigin != construction->borrowOrigin ||
+          value->borrowArgument != construction->borrowArgument ||
+          value->borrowAccess != construction->borrowAccess ||
+          value->borrowArguments != construction->borrowArguments ||
+          value->borrowFields != construction->borrowFields ||
+          value->borrowDependencies != expectedDependencies ||
+          (!unstagedOwnerHandle &&
+           (!value->callPlan || value->callPlan->receiver ||
+            value->callPlan->arguments.size() != value->operands.size()))) {
         result.errors.emplace_back(
             "contextual construction HIR value differs from its semantic "
             "construction");
@@ -1203,22 +1352,47 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.kind == HirValueKind::Call && value.functionTarget
               ? program.findFunctionInstance(*value.functionTarget)
               : nullptr;
-      const bool panic = value.kind == HirValueKind::Call &&
-                         value.intrinsic == IntrinsicKind::Panic;
       const bool expectedTerminal =
           (value.kind == HirValueKind::Call &&
            intrinsicTerminalFailureOutcome(value.intrinsic)) ||
-          (contractTarget != nullptr && contractTarget->neverReturns);
+          (contractTarget != nullptr && contractTarget->neverReturns) ||
+          value.noNormalBorrowResultProof.has_value();
+      if (const auto &proof = value.noNormalBorrowResultProof; proof) {
+        const auto &selected = proof->call();
+        if (value.kind != HirValueKind::Call ||
+            value.intrinsic != IntrinsicKind::None || !contractTarget ||
+            contractTarget->neverReturns ||
+            value.dispatch != CallDispatch::Static ||
+            proof->source() != value.source ||
+            proof->snapshot() != semantics.analysisSeal().programSnapshot ||
+            selected.function != contractTarget->declaration ||
+            selected.returnType.kind != SemanticType::Reference ||
+            selected.returnType != contractTarget->returnType ||
+            selected.parameterTypes != value.parameterTypes ||
+            selected.parameterTypes != contractTarget->parameterTypes ||
+            selected.typeArguments != contractTarget->typeArguments ||
+            selected.valueArguments != contractTarget->valueArguments ||
+            selected.dispatchOwner != value.dispatchOwner ||
+            !selected.noNormalBorrowResult || !selected.neverReturns ||
+            value.borrowDependencies) {
+          result.errors.emplace_back("HIR impossible normal result lost its "
+                                     "exact semantic call proof");
+        }
+      }
       const bool expectedTracking =
-          panic || (contractTarget != nullptr && contractTarget->tracksCaller);
-      const CallerLocationOrigin *origin =
-          value.source == nullptr ? nullptr
-                                  : semantics.findCallerLocation(*value.source);
+          (value.kind == HirValueKind::Call &&
+           intrinsicTracksCaller(value.intrinsic)) ||
+          (contractTarget != nullptr && contractTarget->tracksCaller);
+      const auto &callerProof = value.callerLocationProof;
       if (value.neverReturns != expectedTerminal ||
           value.tracksCaller != expectedTracking ||
           value.callerLocation.has_value() != expectedTracking ||
+          callerProof.has_value() != expectedTracking ||
           (value.callerLocation &&
-           (origin == nullptr || *value.callerLocation != *origin))) {
+           (!callerProof || callerProof->source() != value.source ||
+            callerProof->snapshot() !=
+                semantics.analysisSeal().programSnapshot ||
+            callerProof->origin() != *value.callerLocation))) {
         result.errors.emplace_back(
             "HIR call terminal/caller contract differs from its selected "
             "declaration or semantic source origin");

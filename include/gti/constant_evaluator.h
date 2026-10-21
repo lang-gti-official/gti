@@ -63,6 +63,7 @@ enum class ConstantAggregateKind {
   // or publication; only the MIR evaluator may create/resolve these nodes.
   // identity is a request-local allocation ID, not a host or target address.
   TransientOwner,
+  PayloadEnum,
 };
 
 struct ConstantAggregateField {
@@ -83,6 +84,8 @@ struct ConstantAggregate {
   std::shared_ptr<const SemanticType> exactType;
   std::vector<ConstantValue> elements;
   std::vector<ConstantAggregateField> fields;
+  // Exact active alternative for a payload enum; never an underlying integer.
+  std::size_t variant = 0;
 
   friend bool operator==(const ConstantAggregate &, const ConstantAggregate &);
 };

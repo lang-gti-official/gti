@@ -1,0 +1,54 @@
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+enum Observed { ready(int& owner), missing };
+class Observation {
+  mut Observed state;
+public:
+  Observation(int& owner) : state(Observed::ready(owner)) {}
+  Observation() : state(Observed::missing) {}
+  int& view() {
+    switch (this.state) {
+    case Observed::ready(auto& owner): return owner;
+    case Observed::missing: std::panic("missing observation");
+    }
+  }
+  int& take() && {
+    switch (this.state) {
+    case Observed::ready(auto& owner): return owner;
+    case Observed::missing: std::panic("missing consumed observation");
+    }
+  }
+};
+class Guard {
+public:
+  ~Guard() { std::println(99); }
+};
+int accept(int& value) { return value; }
+[[borrowed_from(value)]] int& reference_path(int& value) {
+  auto absent = Observation();
+  return absent.view();
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  int owner = 42;
+  if (argc == 1) {
+    auto present = Observation(owner);
+    return present.view() - 42;
+  }
+  if (argc == 2) {
+    auto absent = Observation();
+    int& ref = absent.view();
+    return ref;
+  }
+  if (argc == 3) {
+    auto absent = Observation();
+    return accept(absent.view());
+  }
+  if (argc == 4) {
+    mut auto absent = Observation();
+    return std::move(absent).take();
+  }
+  return reference_path(owner);
+}

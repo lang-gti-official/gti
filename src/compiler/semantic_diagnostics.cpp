@@ -20,7 +20,7 @@ void SemanticDiagnosticReporter::report(const Token &token, std::string message,
 void SemanticDiagnosticReporter::reportConstexprFailure(
     const VariableDecl &declaration, const SemanticType &type,
     ConstantEvaluationFailure failure, const std::string &failureDetail,
-    const Token &location) {
+    const Token &location, const std::optional<Token> &libraryLocation) {
   std::string message = "The initializer for constexpr binding '" +
                         declaration.name().lexeme +
                         "' is not a constant expression.";
@@ -93,6 +93,10 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
   diagnostic.related.push_back({tokenSpan(*declaration.constexprKeyword()),
                                 "constexpr binding declared here."});
   diagnostic.hints.emplace_back(std::move(hint));
+  if (libraryLocation)
+    diagnostic.related.insert(diagnostic.related.begin(),
+                              {tokenSpan(*libraryLocation),
+                               "Reported inside this library instance."});
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -560,16 +564,33 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       failure.constraintName
           ? semantic_spelling::pathSpelling(*failure.constraintName)
           : "the declared constraint";
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2029", DiagnosticPhase::Semantics, site,
-      "Type '" + typeSpelling(failure.argument) +
-          "' does not satisfy generic constraint '" + constraint +
-          "' for parameter '" + failure.parameter.lexeme + "'.");
+  // A requirement may constrain a written type expression, such as a
+  // callable's result, rather than a generic parameter; name that subject.
+  const TypeRef *subject =
+      failure.application != nullptr && failure.applicationArgumentIndex &&
+              *failure.applicationArgumentIndex <
+                  failure.application->arguments.size()
+          ? &failure.application->arguments[*failure.applicationArgumentIndex]
+          : nullptr;
+  const bool expressionSubject =
+      subject != nullptr &&
+      (subject->name.segments.size() > 1 || !subject->arguments.empty());
+  const std::string subjectSpelling =
+      expressionSubject
+          ? "type '" + semantic_spelling::typeRefSpelling(*subject) + "'"
+          : "parameter '" + failure.parameter.lexeme + "'";
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2029", DiagnosticPhase::Semantics, site,
+                     "Type '" + typeSpelling(failure.argument) +
+                         "' does not satisfy generic constraint '" +
+                         constraint + "' for " + subjectSpelling + ".");
   if (failure.constraintName) {
-    diagnostic.related.push_back({tokenSpan(failure.constraintName->last()),
-                                  "Constraint on generic parameter '" +
-                                      failure.parameter.lexeme +
-                                      "' is declared here."});
+    diagnostic.related.push_back(
+        {tokenSpan(failure.constraintName->last()),
+         expressionSubject
+             ? "Constraint on " + subjectSpelling + " is declared here."
+             : "Constraint on generic parameter '" + failure.parameter.lexeme +
+                   "' is declared here."});
   }
   switch (failure.failed) {
   case GenericConstraintKind::EqualityComparable:

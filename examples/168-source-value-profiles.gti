@@ -1,0 +1,97 @@
+// A source class family can provide distinct value, void and borrowed profiles.
+// Selection changes the source definition, not the rules for checked borrows.
+enum Content<T> { value(T payload) };
+class Packet<T, E> {
+  mut Content<T> payload;
+public:
+  constexpr Packet(T value) : payload(Content<T>::value(std::move(value))) {}
+  constexpr T& value() {
+    switch (this.payload) {
+    case Content<T>::value(auto& value): return value;
+    }
+  }
+  constexpr T take() && {
+    switch (std::move(this.payload)) {
+    case Content<T>::value(value): return std::move(value);
+    }
+  }
+  int kind() { return 1; }
+};
+
+class Packet<void, E> {
+public:
+  Packet() {}
+  void value() {}
+  int kind() { return 2; }
+};
+
+class Packet<T&, E> {
+  T& payload;
+public:
+  Packet(T& value) : payload(value) {}
+  T& value() { return this.payload; }
+  int kind() { return 3; }
+};
+
+int inspect<T, E>(Packet<T, E>& value) { return value.kind(); }
+
+// The same enum-backed source class executes at compile time and at runtime.
+// Borrowed profiles still obey their runtime owner dependency; this does not
+// introduce persistent reference constants.
+constexpr int consume_packet() {
+  Packet<int, int> packet{42};
+  return std::move(packet).take();
+}
+constexpr Packet<int, int> frozen{42};
+static_assert(frozen.value() == 42);
+static_assert(consume_packet() == 42);
+
+// Empty returns are a source-class opt-in, not a result-type exception.
+struct Completion {
+  int code;
+  implicit constexpr Completion(int code = 42) : code(code) {}
+};
+constexpr Completion finish() { return; }
+static_assert(finish().code == 42);
+
+// A passive source result can replace an array element. The checked write
+// happens only after the producer succeeds; an invalid index follows normal
+// defined-failure cleanup rather than publishing an out-of-bounds value.
+bool replace_completion(int index) {
+  mut Completion completions[2] = {Completion(1), Completion(2)};
+  completions[index] = finish();
+  return completions[1].code == 42;
+}
+int embedded_completion() {
+  auto content = Content<Completion>::value(finish());
+  switch (content) {
+  case Content<Completion>::value(auto& completion): return completion.code;
+  }
+}
+
+mut int retired = 0;
+class Ticket {
+public:
+  Ticket() {}
+  ~Ticket() { retired += 1; }
+};
+class OwnedCompletion {
+  Ticket ticket;
+public:
+  implicit OwnedCompletion(Ticket ticket = Ticket())
+      : ticket(std::move(ticket)) {}
+};
+OwnedCompletion finish_owned() { return; }
+void exercise_owned() { auto completed = finish_owned(); }
+
+int main() {
+  exercise_owned();
+  Packet<int, int> owned{42};
+  Packet<void, int> empty{};
+  int owner = 7;
+  Packet<int&, int> borrowed{owner};
+  empty.value();
+  // `owner` must still be alive and cannot be mutated while this borrow is used.
+  return retired == 1 && replace_completion(1) && embedded_completion() == 42 && finish().code == 42 && consume_packet() == 42 && owned.value() == 42 && borrowed.value() == 7 &&
+      inspect(owned) == 1 && inspect(empty) == 2 && inspect(borrowed) == 3 ? 0 : 1;
+}
