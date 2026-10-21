@@ -149,6 +149,15 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             event->before == OwnershipStateSet::Available &&
             event->after == OwnershipStateSet::Available && event->reachable);
   };
+  // Moving a trivially dropped, borrow-free value only leaves its source
+  // unavailable. Verification owns that dataflow; the event does no cleanup.
+  const auto passiveMoveOwnership =
+      [](const std::optional<OwnershipEvent> &event) {
+        return !event ||
+               (event->kind == OwnershipEventKind::Move &&
+                event->before == OwnershipStateSet::Available &&
+                event->after == OwnershipStateSet::Moved && event->reachable);
+      };
   const auto scalarOperation = [](MirOperation operation) {
     switch (operation) {
     case MirOperation::Literal:
@@ -991,6 +1000,34 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
       valid = valid && passiveInfo(value.info);
     }
 
+    // A moved value's HIR ownership event is also recorded on the records
+    // that consume that HIR value, such as its call input and full-expression
+    // boundary. Those copies name the same exact move and perform no other;
+    // the Move itself is proved by its own case below.
+    std::unordered_map<HirValueId, const OwnershipEvent *> passiveMoveEvents;
+    for (const MirBlock &block : body.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (!instruction.tombstone &&
+            instruction.kind == MirInstructionKind::Move &&
+            instruction.hirValue != 0 && instruction.ownership &&
+            passiveMoveOwnership(instruction.ownership)) {
+          passiveMoveEvents.emplace(instruction.hirValue,
+                                    &*instruction.ownership);
+        }
+      }
+    }
+    const auto ownershipAdmitted = [&](const MirInstruction &instruction) {
+      if (instruction.kind == MirInstructionKind::Move) {
+        return passiveMoveOwnership(instruction.ownership);
+      }
+      if (scalarOwnership(instruction.ownership)) {
+        return true;
+      }
+      const auto move = passiveMoveEvents.find(instruction.hirValue);
+      return move != passiveMoveEvents.end() &&
+             *instruction.ownership == *move->second;
+    };
+
     std::unordered_set<MirInstructionId> exactCalls;
     for (const MirBlock &block : body.blocks) {
       for (const MirInstruction &instruction : block.instructions) {
@@ -1026,7 +1063,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             !instruction.payloadIndex &&
             (instruction.intrinsic == IntrinsicKind::None ||
              (instruction.kind == MirInstructionKind::Call &&
-              wrappingIntrinsic(instruction.intrinsic))) &&
+              wrappingIntrinsic(instruction.intrinsic)) ||
+             (instruction.kind == MirInstructionKind::Move &&
+              instruction.intrinsic == IntrinsicKind::Move)) &&
             instruction.synchronization.kind ==
                 SynchronizationOperationKind::None &&
             instruction.localFailureSites.empty() &&
@@ -1044,7 +1083,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             !instruction.successResultDrop &&
             !instruction.successResultDestination &&
             instruction.cleanupBoundaryEnd == 0 &&
-            scalarOwnership(instruction.ownership);
+            ownershipAdmitted(instruction);
         if (!common || !instruction.definedFailure.localOrigins.empty()) {
           valid = false;
           break;
@@ -1238,7 +1277,29 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
           }
           break;
         }
-        case MirInstructionKind::Move:
+        case MirInstructionKind::Move: {
+          // A trivially dropped, borrow-free passive value moves exactly like
+          // a copy: MIR gives it no lifecycle (checked above), and its source
+          // is one of the places admitted above.
+          const MirPlace *source =
+              instruction.operands.size() == 1 &&
+                      instruction.operands.front().kind == MirOperandKind::Move
+                  ? body.findPlace(instruction.operands.front().place)
+                  : nullptr;
+          valid = instruction.callSite == 0 && !instruction.callInputRole &&
+                  !instruction.destination && !instruction.receiver &&
+                  instruction.parameterTypes.empty() &&
+                  !instruction.functionTarget && instruction.result &&
+                  passiveInfo(instruction.info) &&
+                  instruction.operation == MirOperation::None &&
+                  !instruction.literal && instruction.definedFailure.empty() &&
+                  instruction.fullExpressionEnd == 0 &&
+                  instruction.unsafeOperation == UnsafeOperationKind::None &&
+                  !instruction.rawMemoryAccess && source != nullptr &&
+                  source->type == instruction.info.type &&
+                  instruction.operands.front().type == instruction.info.type;
+          break;
+        }
         case MirInstructionKind::Borrow:
         case MirInstructionKind::ActivateBorrow:
         case MirInstructionKind::Construct:
@@ -1720,7 +1781,27 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
           return false;
         }
         break;
-      case MirInstructionKind::Move:
+      case MirInstructionKind::Move: {
+        // A class move transfers its obligation through exact lifecycle
+        // events. A trivially dropped, borrow-free passive value has none to
+        // transfer: its Move copies the value and leaves the source
+        // unavailable, so it is as failure-free as a Load.
+        const MirPlace *source =
+            instruction.operands.size() == 1 &&
+                    instruction.operands.front().kind == MirOperandKind::Move
+                ? body.findPlace(instruction.operands.front().place)
+                : nullptr;
+        const bool owned = classForType(instruction.info.type) != nullptr;
+        const bool passive =
+            !owned &&
+            (passiveValueTraits(instruction.info.traits,
+                                instruction.info.type) ||
+             passiveConstructorValueTraits(instruction.info.traits,
+                                           instruction.info.type)) &&
+            instruction.lifecycle.empty() &&
+            instruction.definedFailure.empty() && source != nullptr &&
+            source->type == instruction.info.type &&
+            instruction.operands.front().type == instruction.info.type;
         if (!instruction.result || instruction.destination ||
             instruction.receiver || instruction.callSite != 0 ||
             instruction.callInputRole || instruction.functionTarget ||
@@ -1728,11 +1809,11 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             !instruction.parameterTypes.empty() ||
             instruction.operation != MirOperation::None ||
             instruction.literal || instruction.operands.size() != 1 ||
-            classForType(instruction.info.type) == nullptr ||
-            instruction.lifecycle.empty()) {
+            (owned ? instruction.lifecycle.empty() : !passive)) {
           return false;
         }
         break;
+      }
       case MirInstructionKind::CallInput: {
         const bool scalar = scalarType(instruction.info.type) ||
                             callbackType(instruction.info.type);
@@ -2185,13 +2266,22 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
     const MirConstructorInitializer &initializer =
         constructor.initializers[index];
     const MirClassFieldInfo &field = owner->declaredFields[index];
+    // A moved passive formal has no parameter drop or rollback to transfer;
+    // the body proof admitted its Move, and the stage below publishes it.
+    const bool passiveOwnedParameter =
+        initializer.ownedParameter &&
+        *initializer.ownedParameter < constructor.parameterTypes.size() &&
+        constructor.parameterTypes[*initializer.ownedParameter] ==
+            initializer.targetType &&
+        passiveConstructorValueType(initializer.targetType);
     valid = initializer.kind == ConstructorInitializerTargetKind::Field &&
             initializer.field == field.symbol &&
             fields.insert(initializer.field).second &&
             initializer.targetType == field.type && !initializer.base &&
             !initializer.constructorTarget &&
             initializer.arguments.size() == 1 && !initializer.storesReference &&
-            !initializer.generatedDefault && !initializer.ownedParameter;
+            !initializer.generatedDefault &&
+            (!initializer.ownedParameter || passiveOwnedParameter);
     if (!valid) {
       break;
     }

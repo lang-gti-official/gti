@@ -64,6 +64,23 @@ std::size_t stagedExpectedArguments(const lang::FrontendResult &frontend,
   return staged;
 }
 
+// unexpected() staged its result in `slot`. A failure-capable unexpected()
+// writes through the slot's construction address; one whose error moves
+// failure-free (a scalar error) returns the value the slot is built from.
+bool stagedByUnexpected(const std::string &text, const std::string &slot) {
+  const std::size_t produced = text.find(slot + ".construction_address()");
+  const std::size_t producer =
+      produced == std::string::npos ? produced : text.rfind('\n', produced);
+  if (producer != std::string::npos &&
+      text.substr(producer, produced - producer)
+              .find("_unexpected__gti_mir_failure(") != std::string::npos)
+    return true;
+  const std::size_t built = text.find(slot + ".construct_from([&]() { return ");
+  return built != std::string::npos &&
+         text.substr(built, text.find('\n', built) - built)
+                 .find("_unexpected(") != std::string::npos;
+}
+
 void testFieldInitializerExpressionVocabulary() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-body-field-initializer-expressions.gti", R"(
@@ -4425,17 +4442,16 @@ int main() {
           line.substr(idStart, line.find(".get())", idStart) - idStart);
       if (index + 1 >= lines.size() || lines[index + 1] != slot + ".destroy();")
         continue;
-      const std::size_t produced = text.find(slot + ".construction_address()");
-      const std::size_t producer =
-          produced == std::string::npos ? produced : text.rfind('\n', produced);
-      if (producer != std::string::npos &&
-          text.substr(producer, produced - producer)
-                  .find("_unexpected__gti_mir_failure(") != std::string::npos)
+      if (stagedByUnexpected(text, slot))
         ++unexpecteds;
       else if (text.find(slot + ".construct(") != std::string::npos)
         ++payloads;
     }
   }
+  // Moving a scalar error cannot fail, so unexpected(int32_t) and its
+  // unexpected_value constructor have only their plain forms.
+  expect(text.find("_unexpected__gti_mir_failure(") == std::string::npos,
+         "a scalar error should reach unexpected() through its plain form");
   expect(copies == 1 && moves == 1 && unexpecteds == 1 && payloads == 1,
          "a cleanup-free copy and move should assign the binding directly, "
          "and an Unexpected and a payload should each replace it through "
@@ -4614,13 +4630,8 @@ int main() {
       const std::size_t idStart = assigned + assignment.size();
       const std::string slot =
           line.substr(idStart, line.find(".get())", idStart) - idStart);
-      const std::size_t produced = text.find(slot + ".construction_address()");
-      const std::size_t producer =
-          produced == std::string::npos ? produced : text.rfind('\n', produced);
       if (lines[index + 1] == slot + ".destroy();" &&
-          producer != std::string::npos &&
-          text.substr(producer, produced - producer)
-                  .find("_unexpected__gti_mir_failure(") != std::string::npos)
+          stagedByUnexpected(text, slot))
         ++unexpectedReplacements;
     }
   }

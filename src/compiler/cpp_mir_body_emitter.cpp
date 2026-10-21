@@ -4433,6 +4433,15 @@ passiveScalarFieldSibling(const MirProgram &program,
           parameterIndex >= constructor.parameterTypes.size() ||
           constructor.parameterTypes[parameterIndex] != field.type)
         return std::nullopt;
+      // The native list moves an owned formal before this body Load runs,
+      // and never declares the formal's shell. Copying a formal that an
+      // owned initializer moves needs the body-ordered route instead.
+      if (std::any_of(constructor.initializers.begin(),
+                      constructor.initializers.end(),
+                      [&](const MirConstructorInitializer &candidate) {
+                        return candidate.ownedParameter == parameterIndex;
+                      }))
+        return std::nullopt;
     }
     selected = PassiveScalarFieldSibling{.producerInstruction = producer.id,
                                          .initializeInstruction = initialize.id,
@@ -15666,6 +15675,17 @@ bodyStagedOptionalStorageParameter(const MirProgram &program,
 [[nodiscard]] const MirClassInstance *
 passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 
+// A field whose moved formal is a trivially dropped scalar, enum, pointer or
+// fixed array of such values: moving it records no lifecycle, so either
+// constructor form may publish the move in body order. A generated-copy
+// record keeps its own passive-move route.
+[[nodiscard]] bool dropFreeParameterMoveField(const MirProgram &program,
+                                              const MirClassFieldInfo &field) {
+  return passiveGeneratedCopyClass(program, field.type) == nullptr &&
+         passiveConstructorAggregateType(field.type) &&
+         field.dropKind == DropKind::Trivial && !field.requiresActiveCleanup;
+}
+
 // An owned parameter normally publishes through the native member-initializer
 // list, but that would reorder a later move ahead of earlier MIR work. The
 // failure-form constructor may instead begin with private empty fields and
@@ -15676,9 +15696,11 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 // or rollback obligations; prove that absence instead of inventing lifecycle.
 // A trivially dropped, borrow-free scalar, enum, pointer or array value has no
 // parameter shell drop either: MIR records no obligation for its formal, its
-// moved value or its field, so the proof demands that complete absence.
+// moved value or its field, so the proof demands that complete absence. Only
+// such drop-free moves stage in an ordinary-form body (dropFreeOnly).
 [[nodiscard]] bool bodyStagedOwnedParameterFieldInitializers(
-    const MirProgram &program, const MirConstructorInstance &constructor) {
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    bool dropFreeOnly = false) {
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
   if (owner == nullptr) {
     return false;
@@ -15722,10 +15744,10 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         passiveClass->moveConstructor == SpecialMemberStatus::Generated &&
         passiveClass->traits.movable &&
         !passiveClass->traits.containsBorrowedState;
-    const bool dropFreeMove =
-        passiveClass == nullptr &&
-        passiveConstructorAggregateType(initializer.targetType) &&
-        field->dropKind == DropKind::Trivial && !field->requiresActiveCleanup;
+    const bool dropFreeMove = dropFreeParameterMoveField(program, *field);
+    if (dropFreeOnly && !dropFreeMove) {
+      return false;
+    }
     const std::size_t lifecycleCount = passiveMove || dropFreeMove ? 0 : 1;
 
     const MirInstruction *initialize = nullptr;
@@ -28590,6 +28612,32 @@ bool cppMirFailureConstructorEmptyFieldsEligible(
                               program, field.type,
                               EmptyFieldUse::Construction)));
                })));
+}
+
+bool cppMirOrdinaryBodyStagedParameterMoves(
+    const MirProgram &program, const MirConstructorInstance &constructor) {
+  const MirClassInstance *owner = program.findClassInstance(constructor.owner);
+  if (owner == nullptr ||
+      constructor.definitionKind != MirDefinitionKind::Source ||
+      constructor.mayRaiseDefinedFailure ||
+      !cppMirFailureConstructorEmptyFieldsEligible(program, owner->id)) {
+    return false;
+  }
+  // Natively hoisted references, bases and copies execute before the body.
+  // Copies must form the complete first-field prefix, and no reference may be
+  // bound natively, so no MIR work is reordered across either.
+  const auto storedReferences =
+      cppMirStoredReferenceBindings(program, constructor);
+  const auto copies = cppMirCopyParameterFieldBindings(program, constructor);
+  return storedReferences && storedReferences->empty() &&
+         cppMirBaseParameterInitializerBindings(program, constructor) &&
+         copies &&
+         std::all_of(copies->begin(), copies->end(),
+                     [&](const CppMirCopyParameterFieldBinding &binding) {
+                       return failureConstructorCopiedFieldPrefix(
+                           program, constructor, *owner, binding);
+                     }) &&
+         bodyStagedOwnedParameterFieldInitializers(program, constructor, true);
 }
 
 std::optional<std::vector<SemanticType>> cppMirFlattenConcreteParameterTypes(
@@ -52348,18 +52396,32 @@ cppMirBaseParameterInitializerBindings(
 std::optional<std::vector<CppMirCopyParameterFieldBinding>>
 cppMirCopyParameterFieldBindings(const MirProgram &program,
                                  const MirConstructorInstance &constructor) {
+  const MirClassInstance *owner = program.findClassInstance(constructor.owner);
+  if (owner == nullptr) {
+    return std::nullopt;
+  }
+
   // A transformed constructor can publish owned fields in body order. Keep
   // passive parameter reads in that same MIR schedule rather than extracting
   // them into a competing native initializer-list schedule. In particular,
   // plain enum reads carry ownership metadata just like class reads, but do
   // not need native copy construction. Class-valued copies retain their
-  // separate exact construction proof below.
-  const bool bodyOrderedOwner =
-      constructor.mayRaiseDefinedFailure &&
-      std::any_of(constructor.initializers.begin(),
-                  constructor.initializers.end(), [](const auto &initializer) {
-                    return initializer.ownedParameter.has_value();
-                  });
+  // separate exact construction proof below. The failure form can stage any
+  // owned move in body order and the ordinary form a drop-free passive one
+  // (cppMirOrdinaryBodyStagedParameterMoves), so both forms of a constructor
+  // share this schedule whichever route publishes its owned fields.
+  const bool bodyOrderedOwner = std::any_of(
+      constructor.initializers.begin(), constructor.initializers.end(),
+      [&](const MirConstructorInitializer &initializer) {
+        return initializer.ownedParameter.has_value() &&
+               (constructor.mayRaiseDefinedFailure ||
+                std::any_of(owner->declaredFields.begin(),
+                            owner->declaredFields.end(),
+                            [&](const MirClassFieldInfo &field) {
+                              return field.symbol == initializer.field &&
+                                     dropFreeParameterMoveField(program, field);
+                            }));
+      });
   const auto scalarParameterType = [](const SemanticType &type) {
     switch (type.kind) {
     case SemanticType::Int8:
@@ -52402,11 +52464,6 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
            cleanupFreeCopyableFixedArray(program, type) ||
            passiveBorrowedCopy || type.kind == SemanticType::Lambda;
   };
-
-  const MirClassInstance *owner = program.findClassInstance(constructor.owner);
-  if (owner == nullptr) {
-    return std::nullopt;
-  }
 
   std::vector<CppMirCopyParameterFieldBinding> bindings;
   for (std::size_t initializerIndex = 0;
@@ -57245,9 +57302,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     // Owned-parameter fields are likewise emitted in the native
     // member-initializer list. Admission and spelling must share the exact
-    // move/drop proof so the body never consumes the parameter twice.
+    // move/drop proof so the body never consumes the parameter twice. A
+    // drop-free move that cannot be hoisted publishes in body order instead.
     if (!cppMirOwnedParameterFieldBindings(program_, *constructor) &&
-        !(failureForm && exactFailureBoundary)) {
+        !(failureForm ? exactFailureBoundary
+                      : cppMirOrdinaryBodyStagedParameterMoves(program_,
+                                                               *constructor))) {
       return false;
     }
     if (!cppMirCopyParameterFieldBindings(program_, *constructor)) {
