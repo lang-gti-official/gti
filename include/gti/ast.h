@@ -405,6 +405,19 @@ struct CompilerConstraintBinding {
   std::string name;
 };
 
+// `[[unsatisfied("text")]]` on a concept declaration: its author's statement
+// of what satisfies the concept, reported with each unsatisfied requirement on
+// it.
+struct ConceptExplanation {
+  Token attribute;
+  Token literal;
+
+  [[nodiscard]] std::string_view text() const {
+    const auto *value = std::get_if<std::string>(&literal.literal);
+    return value == nullptr ? std::string_view{} : std::string_view(*value);
+  }
+};
+
 // `@compiler_type("<binding>")` on a class declaration in a trusted
 // standard-library unit. The compiler binds the class by this name, never by
 // its public spelling: either to construct instances of it (an ordinary class
@@ -2683,12 +2696,14 @@ public:
       Token keyword, Token name, std::vector<Token> typeParameters,
       ConstraintExpression requirements,
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
-      std::optional<ProtocolConceptBody> protocolBody = std::nullopt)
+      std::optional<ProtocolConceptBody> protocolBody = std::nullopt,
+      std::optional<ConceptExplanation> explanation = std::nullopt)
       : keyword_(std::move(keyword)), name_(std::move(name)),
         typeParameters_(std::move(typeParameters)),
         requirements_(std::move(requirements)),
         compilerBinding_(std::move(compilerBinding)),
-        protocolBody_(std::move(protocolBody)) {}
+        protocolBody_(std::move(protocolBody)),
+        explanation_(std::move(explanation)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConceptDecl(*this);
@@ -2713,6 +2728,9 @@ public:
   [[nodiscard]] const std::optional<ProtocolConceptBody> &protocolBody() const {
     return protocolBody_;
   }
+  [[nodiscard]] const std::optional<ConceptExplanation> &explanation() const {
+    return explanation_;
+  }
 
 private:
   Token keyword_;
@@ -2721,6 +2739,7 @@ private:
   ConstraintExpression requirements_;
   std::optional<CompilerConstraintBinding> compilerBinding_;
   std::optional<ProtocolConceptBody> protocolBody_;
+  std::optional<ConceptExplanation> explanation_;
 };
 
 /// `for <Parameters> concept Concept<Pattern> { members };`: supplies a

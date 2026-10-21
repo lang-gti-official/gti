@@ -3574,7 +3574,7 @@ def main():
         )
         assert (
             "Cannot return a value of type "
-            "'std::detail::unexpected_value<std::string_view>'"
+            "'std::unexpected_value<std::string_view>'"
             in rejected_expected.stderr
         )
 

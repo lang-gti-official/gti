@@ -1337,6 +1337,32 @@
     }
   },
   {
+    "type": "concept_attribute",
+    "named": true,
+    "fields": {
+      "attribute": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "explanation": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "concept_body",
     "named": true,
     "fields": {},
@@ -1359,6 +1385,16 @@
     "type": "concept_declaration",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "concept_attribute",
+            "named": true
+          }
+        ]
+      },
       "binding": {
         "multiple": false,
         "required": false,
