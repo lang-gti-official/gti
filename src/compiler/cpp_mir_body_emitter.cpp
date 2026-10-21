@@ -3745,6 +3745,72 @@ constructorFieldMoveInitialize(const MirBody &body, MirValueId id) {
   return initialize;
 }
 
+// The copying sibling: a class Load in a constructor prologue whose one
+// consumer is the explicit Initialize for this.field. A copy the native
+// member-initializer list cannot publish, such as a formal copied after an
+// earlier initializer wrote it, keeps the Load's sequencing in an inferred
+// transient that the Initialize then publishes into the field. Only a
+// cleanup-free copy qualifies: neither record carries a lifecycle event and
+// the copied value owns no drop obligation or place of its own. Like the
+// native copy, the Load must be the exact reachable Read of its source.
+[[nodiscard]] const MirInstruction *
+constructorFieldCopyInitialize(const MirBody &body, MirValueId id) {
+  const MirValue *value = body.findValue(id);
+  const MirInstruction *definition =
+      value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const MirPlace *source =
+      definition == nullptr || definition->operands.size() != 1
+          ? nullptr
+          : body.findPlace(definition->operands.front().place);
+  if (definition == nullptr || value->info.type.kind != SemanticType::Class ||
+      definition->kind != MirInstructionKind::Load || source == nullptr ||
+      definition->operands.front().kind != MirOperandKind::Copy ||
+      !definition->lifecycle.empty() ||
+      !definition->localFailureSites.empty() ||
+      !definition->definedFailure.empty() || !source->key ||
+      !definition->ownership ||
+      definition->ownership->kind != OwnershipEventKind::Read ||
+      definition->ownership->place != *source->key ||
+      definition->ownership->before != OwnershipStateSet::Available ||
+      definition->ownership->after != OwnershipStateSet::Available ||
+      !definition->ownership->reachable) {
+    return nullptr;
+  }
+  const std::vector<MirValueUse> uses = nonRootRecordUses(body, id);
+  if (body.kind != MirBodyKind::Constructor || !definition->result ||
+      *definition->result != id || uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      std::any_of(body.places.begin(), body.places.end(),
+                  [&](const MirPlace &place) {
+                    return place.root == MirPlaceRootKind::Value &&
+                           place.value == id;
+                  }) ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.generatedValue == id;
+                  })) {
+    return nullptr;
+  }
+  const MirInstruction *initialize =
+      findInstruction(body, uses.front().instruction);
+  if (initialize == nullptr ||
+      initialize->kind != MirInstructionKind::Initialize ||
+      initialize->constructorInitializer == 0 || !initialize->destination ||
+      !initialize->lifecycle.empty() || initialize->operands.size() != 1 ||
+      initialize->operands.front().kind != MirOperandKind::Value ||
+      initialize->operands.front().value != id) {
+    return nullptr;
+  }
+  const MirPlace *destination = body.findPlace(*initialize->destination);
+  if (destination == nullptr || destination->root != MirPlaceRootKind::This ||
+      destination->projections.size() != 1 ||
+      destination->projections.front().kind != MirProjectionKind::Field ||
+      destination->type != value->info.type) {
+    return nullptr;
+  }
+  return initialize;
+}
+
 // The constructor metadata's ownedParameter field binding is the semantic
 // authority for a direct member initializer. This helper ties it back to the
 // exact entry-block Move/Initialize pair so body emission can erase those two
@@ -30283,10 +30349,12 @@ public:
           continue;
         }
         if (valueDefinition != nullptr &&
-            sequencedCopiedArgument(program, facts.body, value.id) ==
-                valueDefinition) {
-          // The sequenced copied argument declares at its load; a second
-          // pre-declared local would invent an extra copy.
+            (sequencedCopiedArgument(program, facts.body, value.id) ==
+                 valueDefinition ||
+             constructorFieldCopyInitialize(facts.body, value.id) != nullptr)) {
+          // A sequenced copied argument or a body-ordered field copy declares
+          // at its load; a second pre-declared local would invent an extra
+          // copy.
           continue;
         }
         if (valueDefinition != nullptr &&
@@ -35637,8 +35705,10 @@ private:
         instruction.operands.front().type.kind == SemanticType::UniqueOwner ||
         moveOnlyValueInitialization ||
         (instruction.operands.front().kind == MirOperandKind::Value &&
-         constructorFieldMoveInitialize(
-             facts.body, instruction.operands.front().value) == &instruction);
+         (constructorFieldMoveInitialize(
+              facts.body, instruction.operands.front().value) == &instruction ||
+          constructorFieldCopyInitialize(
+              facts.body, instruction.operands.front().value) == &instruction));
     const MirPlace *rawDestination =
         facts.body.findPlace(*instruction.destination);
     if (rawDestination &&
@@ -36304,10 +36374,13 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Load && instruction.result &&
-        sequencedCopiedArgument(program, facts.body, *instruction.result) ==
-            &instruction) {
-      // The sequenced copied argument declares here, keeping MIR's
-      // copy-before-call order; its consuming argument moves the local.
+        (sequencedCopiedArgument(program, facts.body, *instruction.result) ==
+             &instruction ||
+         constructorFieldCopyInitialize(facts.body, *instruction.result) !=
+             nullptr)) {
+      // The sequenced copied argument or body-ordered field copy declares
+      // here, keeping MIR's copy-before-consumer order; its consuming
+      // argument or field Initialize moves the local.
       const MirPlace *source =
           facts.body.findPlace(instruction.operands.front().place);
       if (source == nullptr) {
@@ -44062,6 +44135,107 @@ cppMirBaseParameterInitializerBindings(
   return bindings;
 }
 
+namespace {
+
+// A native member initializer reads a formal's entry value: the C++ argument,
+// or the prepared value published before the base. MIR reads the formal at
+// `read`, after every instruction on a path into it, including a loop around
+// it. The two agree only when none of that earlier code can change the
+// formal's own storage. Copies and read-only borrows leave it intact. An
+// assignment, initialization or drop of one of its places, a move, an address
+// or a mutable borrow or loan of it can change it, there or later through the
+// borrow. A place reached through a dereference is another object's storage.
+[[nodiscard]] bool formalMayChangeBefore(const MirBody &body,
+                                         HirBindingId formal,
+                                         MirInstructionId read) {
+  const auto ownStorage = [&](MirPlaceId id) {
+    const MirPlace *place = body.findPlace(id);
+    return place != nullptr && place->root == MirPlaceRootKind::Binding &&
+           place->binding == formal &&
+           std::none_of(
+               place->projections.begin(), place->projections.end(),
+               [](const MirPlaceProjection &projection) {
+                 return projection.kind == MirProjectionKind::Dereference ||
+                        projection.kind == MirProjectionKind::RawDereference ||
+                        projection.kind == MirProjectionKind::RawIndex;
+               });
+  };
+  const auto mutableLoan = [&](MirLoanId id) {
+    std::size_t steps = 0;
+    for (const MirLoan *loan = body.findLoan(id);
+         loan != nullptr && steps <= body.loans.size(); ++steps) {
+      if (loan->access != AccessMode::ReadOnly && ownStorage(loan->source))
+        return true;
+      loan = loan->parent == 0 ? nullptr : body.findLoan(loan->parent);
+    }
+    return false;
+  };
+  const auto operandChanges = [&](const MirOperand &operand) {
+    switch (operand.kind) {
+    case MirOperandKind::Value:
+    case MirOperandKind::Constant:
+    case MirOperandKind::Copy:
+    case MirOperandKind::BorrowRead:
+      return false;
+    case MirOperandKind::Loan:
+      return mutableLoan(operand.loan);
+    case MirOperandKind::Address:
+    case MirOperandKind::Move:
+    case MirOperandKind::BorrowWrite:
+      return ownStorage(operand.place);
+    }
+    return true;
+  };
+  const auto changes = [&](const MirInstruction &instruction) {
+    return (instruction.destination && ownStorage(*instruction.destination)) ||
+           (instruction.successResultDestination &&
+            ownStorage(*instruction.successResultDestination)) ||
+           (instruction.retainedOwnerPlace &&
+            ownStorage(*instruction.retainedOwnerPlace)) ||
+           (instruction.receiver && operandChanges(*instruction.receiver)) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       operandChanges) ||
+           (instruction.loan && mutableLoan(*instruction.loan));
+  };
+
+  const MirBlock *readBlock = nullptr;
+  for (const MirBlock &block : body.blocks)
+    for (const MirInstruction &instruction : block.instructions)
+      if (instruction.id == read)
+        readBlock = &block;
+  if (readBlock == nullptr)
+    return true;
+  std::unordered_map<MirBlockId, std::vector<MirBlockId>> predecessors;
+  for (const MirBlock &block : body.blocks)
+    forEachTerminatorEdge(block.terminator, [&](MirBlockId target) {
+      if (target != 0)
+        predecessors[target].push_back(block.id);
+    });
+  std::unordered_set<MirBlockId> earlier;
+  std::vector<MirBlockId> pending{readBlock->id};
+  while (!pending.empty()) {
+    const MirBlockId block = pending.back();
+    pending.pop_back();
+    for (const MirBlockId predecessor : predecessors[block])
+      if (earlier.insert(predecessor).second)
+        pending.push_back(predecessor);
+  }
+  for (const MirBlock &block : body.blocks) {
+    const bool whole = earlier.count(block.id) != 0;
+    if (!whole && &block != readBlock)
+      continue;
+    for (const MirInstruction &instruction : block.instructions) {
+      if (!whole && instruction.id == read)
+        break;
+      if (instruction.id != read && changes(instruction))
+        return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
+
 std::optional<std::vector<CppMirCopyParameterFieldBinding>>
 cppMirCopyParameterFieldBindings(const MirProgram &program,
                                  const MirConstructorInstance &constructor) {
@@ -44366,6 +44540,11 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
                                   initialize->id) ||
                              binding.boundaryInstruction == boundary->id;
                     })) {
+      continue;
+    }
+    // An earlier initializer that writes the formal, such as
+    // `first(bump(seed)), second(seed)`, leaves the copy in body order.
+    if (formalMayChangeBefore(constructor.body, source->binding, load->id)) {
       continue;
     }
     bindings.push_back(
@@ -48013,6 +48192,11 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
         return std::nullopt;
       }
     }
+    // The native list moves the formal's entry value, as a native copy reads
+    // it; a formal written before its Move stays in body order.
+    if (formalMayChangeBefore(constructor.body, source->binding, move->id)) {
+      return std::nullopt;
+    }
 
     const bool duplicate = std::any_of(
         bindings.begin(), bindings.end(),
@@ -50362,6 +50546,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           conditionalClassReturnJoinSlotForValue(body, value.id) != nullptr ||
           movedIntoValueStage() ||
           constructorFieldMoveInitialize(body, value.id) != nullptr ||
+          // A body-ordered field copy declares at its Load. The field starts
+          // in its native empty state, as the planner gives every field the
+          // native list does not publish, and receives the copy there.
+          (constructorFieldCopyInitialize(body, value.id) != nullptr &&
+           copyLoadResult() &&
+           cppMirFailureConstructorEmptyStateTypeEligible(program_,
+                                                          value.info.type)) ||
           (address.kind == MirBodyKind::Constructor &&
            ownedParameterFieldBinding(program_, body, address.owner,
                                       value.id)) ||
