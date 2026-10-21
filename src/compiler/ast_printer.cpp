@@ -196,10 +196,6 @@ void AstPrinter::visitUnaryExpr(const Unary &expr) {
   result = parenthesize(expr.oper().lexeme, {expr.right().get()});
 }
 
-void AstPrinter::visitUnexpectedExpr(const Unexpected &expr) {
-  result = parenthesize("unexpected", {expr.error().get()});
-}
-
 void AstPrinter::visitVariableExpr(const Variable &expr) {
   result = (expr.isMutablePattern() ? "mut " : "") +
            std::string(expr.isReferencePattern() ? "auto& " : "") +

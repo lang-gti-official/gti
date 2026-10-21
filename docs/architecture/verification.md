@@ -1,5 +1,38 @@
 # Compiler Verification
 
+## Built-in expected retirement (internal, 0.453)
+
+Since 0.449.0 `expected` is a prelude class. This change removes the
+compiler's unreachable built-in `expected` path from every layer. The evidence
+is that live programs compile exactly as before.
+
+A differential `--emit-cpp` run against the 0.453.0 compiler (`180d1da7`),
+with one `GTI_STDLIB_PATH`, covered the 1,336 programs in `examples`,
+`tests/fixtures` and `tests/coverage` at O0 and O3. The 113 programs that are
+rejected on purpose report identical diagnostics. The 1,223 programs that emit
+C++ differ only by deleted dead support text:
+
+- 23 protected `#undef` names that only the built-in representation used;
+- the `mir_expected_*` observer helpers in the failure support.
+
+`#undef expected_result` now comes from the program-name list, because the
+prelude declares that name.
+
+The first differential run, before the fix below, failed 127 programs with
+`GTI-B0001`, and `compiler_pipeline`, `cpp_mir_body_emitter_text` and
+`cpp_mir_body_emitter_lifecycle` failed with it. Two pieces of live emitter
+code had been removed along with Expected-only code:
+
+- `returnExpectedConditionalDrop` also handled a returned class conditional
+  join whose later cleanup can fail. That case is now
+  `returnConditionalClassDrop`.
+- `lifetimeSlotPlace` admits lexical pack-element bindings next to its removed
+  Expected checks. That block is restored.
+
+Both were located by tracing the refusal sites of `supportsBodyTextImpl`.
+Every other removed statement was then audited: each either names an Expected
+construct or sits under a guard that requires one.
+
 ## Class assertions with staged reflection (0.453.2)
 
 `reflection_semantics` adds `checkClassAssertions`, run under Complete and

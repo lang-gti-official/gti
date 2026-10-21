@@ -361,8 +361,6 @@ struct SemanticType {
     FunctionItem,
     NativeFunction,
     Lambda,
-    Expected,
-    Unexpected,
     FunctionSignature,
   };
 
@@ -762,28 +760,6 @@ isImplicitScalarInitializationConversion(const SemanticType &target,
          target.arguments.front() == source.arguments.front() &&
          target.pointerAccess == AccessMode::ReadOnly &&
          source.pointerAccess == AccessMode::Mutable;
-}
-
-// A value initialization selects exactly one expected alternative. Borrowed
-// successes use their separate loan-bearing conversion contract, not this
-// owning/passive publication rule.
-[[nodiscard]] inline bool
-isImplicitExpectedInitializationConversion(const SemanticType &target,
-                                           const SemanticType &source) {
-  if (target.kind != SemanticType::Expected || target.arguments.size() != 2 ||
-      target == source)
-    return false;
-  const bool error =
-      source.kind == SemanticType::Unexpected && source.arguments.size() == 1;
-  const auto &selected = target.arguments[error ? 1 : 0];
-  const auto &payload = error ? source.arguments.front() : source;
-  if (selected == SemanticType::Void ||
-      selected.kind == SemanticType::Reference)
-    return false;
-  return selected == payload ||
-         (selected.kind != SemanticType::UniqueOwner &&
-          isImplicitScalarInitializationConversion(selected, payload)) ||
-         isImplicitExpectedInitializationConversion(selected, payload);
 }
 
 // Primitive by-value inputs have no loan or cleanup to transfer across an
