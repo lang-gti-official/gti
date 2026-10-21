@@ -233,7 +233,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           {tokenSpan(*failure.conformanceBorrowOperation),
            "The required result-origin contract is declared here."});
     }
-    if (failure.missingConformance) {
+    if (failure.conceptExplanation) {
+      // The concept's author states what satisfies it. For a concept with a
+      // body, conformance blocks are how a type does so, not what a caller
+      // must provide, so the statement replaces the block hint.
+      diagnostic.hints.insert(diagnostic.hints.begin(),
+                              *failure.conceptExplanation);
+    } else if (failure.missingConformance) {
       const std::string name =
           failure.constraintName
               ? semantic_spelling::pathSpelling(*failure.constraintName)

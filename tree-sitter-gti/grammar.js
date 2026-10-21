@@ -404,6 +404,7 @@ module.exports = grammar({
           ";",
         ),
         seq(
+          optional(field("attribute", $.concept_attribute)),
           "concept",
           field("name", $.identifier),
           "<",
@@ -414,6 +415,7 @@ module.exports = grammar({
           ";",
         ),
         seq(
+          optional(field("attribute", $.concept_attribute)),
           "concept",
           field("name", $.identifier),
           "<",
@@ -422,6 +424,18 @@ module.exports = grammar({
           field("body", $.concept_body),
           ";",
         ),
+      ),
+
+    // `[[unsatisfied("text")]]`: what satisfies the concept, reported with
+    // each unsatisfied requirement on it.
+    concept_attribute: ($) =>
+      seq(
+        "[[",
+        field("attribute", alias("unsatisfied", $.identifier)),
+        "(",
+        field("explanation", $.string_literal),
+        ")",
+        "]]",
       ),
 
     concept_body: ($) =>

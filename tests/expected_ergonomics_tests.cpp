@@ -123,6 +123,21 @@ void testDiagnostics() {
              "int map(int value) { return value; }\n"
              "int main() { [[discard]] read().and_then(map); return 0; }\n",
          "GTI-S2029", ")", "int32_t");
+  // The prelude's concept states the mapper contract instead of naming its
+  // private conformance blocks.
+  for (const std::string result : {"expected<int, bool>", "int"}) {
+    const auto mismatch =
+        analyze(producer + result + " map(int value) { return value; }\n" +
+                "int main() { [[discard]] read().and_then(map); return 0; }\n");
+    const auto found = std::find_if(
+        mismatch.diagnostics.begin(), mismatch.diagnostics.end(),
+        [](const auto &diagnostic) { return diagnostic.code == "GTI-S2029"; });
+    check(found != mismatch.diagnostics.end() && found->hints.size() == 1 &&
+              found->hints.front() ==
+                  "An 'and_then' mapper must return an 'expected' with the "
+                  "same error type as the result it maps.",
+          "and_then explains its mapper contract in one hint");
+  }
   // A reference-returning mapper makes the result borrow the temporary
   // mapper argument, which the general fresh-argument rule rejects.
   reject("int value = 7; int& map(int input) { return value; }\n" + producer +

@@ -8,8 +8,9 @@ implicit error conversion.
 `expected` is an ordinary source-defined class family in the implicit prelude,
 not a reserved type expression. It deliberately remains a global name rather
 than `std::expected`. Its owned, void and read-only-reference profiles store
-private payload enums; `unexpected(error)` is an ordinary global factory for
-the error constructor argument. Construction, observers, mapping and propagation
+private payload enums; `unexpected(error)` is an ordinary global factory that
+returns the error constructor argument, a `std::unexpected_value<E>`.
+Construction, observers, mapping and propagation
 use general class, enum and protocol rules, not native C++ `std::expected`.
 Like a built-in type, it is available in every program without an include.
 
