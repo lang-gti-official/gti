@@ -198,7 +198,7 @@ private:
     }
     if (check(TokenKind::LEFT_BRACKET) &&
         peekAt(1).kind == TokenKind::LEFT_BRACKET) {
-      return bracketAttributedDeclaration(LanguageLinkage::Gti);
+      return bracketAttributedDeclaration(LanguageLinkage::Gti, true);
     }
     if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
                TokenKind::UNION})) {
@@ -465,7 +465,8 @@ private:
 
   StmtPtr conceptDeclaration(
       Token keyword,
-      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt) {
+      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
+      std::optional<ConceptExplanation> explanation = std::nullopt) {
     Token name = consume(TokenKind::IDENTIFIER, "Expect concept name.");
     consume(TokenKind::LESS, "Expect '<' after concept name.");
     std::vector<Token> typeParameters;
@@ -493,7 +494,7 @@ private:
     return std::make_shared<ConceptDecl>(
         std::move(keyword), std::move(name), std::move(typeParameters),
         std::move(requirements), std::move(compilerBinding),
-        std::move(protocolBody));
+        std::move(protocolBody), std::move(explanation));
   }
 
   // `{ typename name; Result operation(Parameters); ... }`. Members are only
@@ -807,7 +808,10 @@ private:
                 "interface, or union declarations.");
   }
 
-  StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
+  // Concepts, and so `[[unsatisfied(...)]]`, are declared only at namespace
+  // scope.
+  StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage,
+                                       bool namespaceScope = false) {
     std::optional<NativeCArrayAttribute> nativeCArray;
     std::optional<NativeLinkNameAttribute> nativeLinkName;
     std::vector<FunctionAttribute> functionAttributes;
@@ -957,6 +961,13 @@ private:
           attribute.argument = previous();
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the borrowed_from owner.");
+        } else if (attribute.name.lexeme == "unsatisfied") {
+          consume(TokenKind::LEFT_PAREN, "Expect '(' after 'unsatisfied'.");
+          attribute.argument =
+              consume(TokenKind::STRING_LITERAL,
+                      "Expect a quoted explanation in '[[unsatisfied(...)]]'.");
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the unsatisfied explanation.");
         } else if ((attribute.name.lexeme == "unsafe_transfer" ||
                     attribute.name.lexeme == "unsafe_share") &&
                    match({TokenKind::LEFT_PAREN})) {
@@ -985,6 +996,41 @@ private:
               "Expect ']]' after declaration attributes.");
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
+      const auto explanation =
+          std::find_if(attributes.begin(), attributes.end(),
+                       [](const FunctionAttribute &attribute) {
+                         return attribute.name.lexeme == "unsatisfied";
+                       });
+      if (explanation != attributes.end() && !check(TokenKind::CONCEPT)) {
+        throw error(explanation->name, "[[unsatisfied(...)]] must directly "
+                                       "precede a concept declaration.");
+      }
+      if (check(TokenKind::CONCEPT)) {
+        // A concept's only attribute states what satisfies it.
+        if (explanation == attributes.end() || attributes.size() != 1 ||
+            !functionAttributes.empty() || !declared.empty()) {
+          const Token &extra =
+              !declared.empty()             ? declared.front().name.last()
+              : !functionAttributes.empty() ? functionAttributes.front().name
+              : explanation == attributes.begin() ? attributes.back().name
+                                                  : attributes.front().name;
+          throw error(extra, "A concept declaration accepts only one "
+                             "[[unsatisfied(\"...\")]] attribute.");
+        }
+        if (!namespaceScope) {
+          throw error(peek(),
+                      "Concept declarations are limited to namespace scope.");
+        }
+        ConceptExplanation stated{.attribute = explanation->name,
+                                  .literal = *explanation->argument};
+        if (stated.text().empty()) {
+          throw error(stated.literal,
+                      "An [[unsatisfied(...)]] explanation cannot be empty.");
+        }
+        Token keyword = advance();
+        return conceptDeclaration(std::move(keyword), std::nullopt,
+                                  std::move(stated));
+      }
       // Attribute spelling is semantic policy. A typed declaration identifies
       // the function-attribute context even when every attribute is unknown.
       bool functionAttributeList =

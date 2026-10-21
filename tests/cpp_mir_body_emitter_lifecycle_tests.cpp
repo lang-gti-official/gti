@@ -14090,7 +14090,7 @@ void testPassiveUnexpectedBinding() {
   expect(
       emitter.analyzeProgram().ready(),
       "passive error binding must not construct an inactive success payload");
-  // unexpected(e) returns the prelude's std::detail::unexpected_value<E>,
+  // unexpected(e) returns the prelude's std::unexpected_value<E>,
   // which the expected(unexpected_value<E>) constructor stages into the
   // error alternative that the binding publishes.
   const auto unexpectedValue = [&](const lang::SemanticType &type) {
