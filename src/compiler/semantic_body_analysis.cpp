@@ -121,7 +121,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();
-  requestSession.assertingClassInstances.reset();
+  requestSession.openReanalyses.reset();
+  requestSession.assertionsOwnedUpChain = false;
   requestSession.collectingRawResult.reset();
   requestSession.rawAccessObservation = 0;
   requestSession.hasCThreadRequirements = false;
@@ -416,7 +417,12 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     const std::vector<CompileTimeValue> &functionValueArguments)
     -> SemanticInstanceAnalysis {
   const FunctionInfo *function = semanticModel.findFunction(functionId);
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Function,
+                                      .declaration = functionId,
+                                      .classTypes = classTypeArguments,
+                                      .classValues = classValueArguments,
+                                      .types = functionTypeArguments,
+                                      .values = functionValueArguments});
   if (function == nullptr || function->declaration == nullptr) {
     return scope.finish();
   }
@@ -519,7 +525,12 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
       break;
     }
   }
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Constructor,
+                                      .declaration = constructorId,
+                                      .classTypes = classTypeArguments,
+                                      .classValues = classValueArguments,
+                                      .types = constructorTypeArguments,
+                                      .values = constructorValueArguments});
   if (constructor == nullptr || constructor->declaration == nullptr) {
     return scope.finish();
   }
@@ -576,7 +587,10 @@ auto SemanticVisitor::Impl::analyzeDestructorInstance(
       classType == nullptr || classType->declaration == nullptr
           ? nullptr
           : semanticModel.findClassLifecycle(*classType->declaration);
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Destructor,
+                                      .declaration = classId,
+                                      .classTypes = classTypeArguments,
+                                      .classValues = classValueArguments});
   if (lifecycle == nullptr || !lifecycle->declaredDestructor ||
       lifecycle->declaredDestructor->declaration == nullptr) {
     return scope.finish();
@@ -597,7 +611,11 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
     const std::vector<CompileTimeValue> &classValueArguments)
     -> SemanticInstanceAnalysis {
   const ClassTypeInfo *classType = semanticModel.findClassType(classId);
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(
+      *this, {.kind = InstanceAnalysisKind::ClassFieldInitializers,
+              .declaration = classId,
+              .classTypes = classTypeArguments,
+              .classValues = classValueArguments});
   if (classType == nullptr || classType->declaration == nullptr) {
     return scope.finish();
   }
@@ -607,27 +625,12 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
                                    classValueArguments)) {
     return scope.finish();
   }
-  const SemanticType concreteType =
-      SemanticType::classType(classId, classTypeArguments, classValueArguments);
-  // A constant an assertion requires may need this same instance's concrete
-  // facts (reflecting on its own fields, constructing it), so staging can
-  // reanalyse the instance in a nested worker. The enclosing evaluation owns
-  // the assertions' outcome and an assertion yields no value, so the nested
-  // reanalysis supplies the instance's facts without evaluating them again.
-  if (!requestSession.assertingClassInstances)
-    requestSession.assertingClassInstances =
-        std::make_shared<std::vector<SemanticType>>();
-  std::vector<SemanticType> &asserting =
-      *requestSession.assertingClassInstances;
-  if (std::find(asserting.begin(), asserting.end(), concreteType) ==
-      asserting.end()) {
-    asserting.push_back(concreteType);
-    analyzeConcreteClassStaticAssertions(classType->declaration->members());
-    asserting.pop_back();
-  }
+  analyzeConcreteClassStaticAssertions(classType->declaration->members());
   if (const auto *primary =
           semanticModel.findClassLifecycle(*classType->declaration)) {
     auto concrete = *primary;
+    const SemanticType concreteType = SemanticType::classType(
+        classId, classTypeArguments, classValueArguments);
     concrete.traits = typeTraits(concreteType);
     if (concrete.defaultConstructor == SpecialMemberStatus::Generated)
       concrete.defaultConstructor =
@@ -1730,6 +1733,9 @@ auto SemanticVisitor::Impl::visitCompileErrorDirective(
 
 auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
     -> void {
+  // The open reanalysis further up the staging chain evaluates it.
+  if (requestSession.assertionsOwnedUpChain)
+    return;
   const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t diagnosticsBefore = diagnostics.size();
   const bool enclosingStaticAssert = analyzingDependentConstantCondition;

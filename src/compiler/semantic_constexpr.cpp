@@ -217,13 +217,9 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
       requestSession.rawResultQueries;
-  // A class instance whose assertions an enclosing evaluation is running
-  // can be reanalysed by this worker; it must see that they are running.
-  if (!requestSession.assertingClassInstances)
-    requestSession.assertingClassInstances =
-        std::make_shared<std::vector<SemanticType>>();
-  worker.impl->requestSession.assertingClassInstances =
-      requestSession.assertingClassInstances;
+  // This worker can reanalyse an instance whose reanalysis is open here or
+  // further up; it must see that one owns the instance's assertions.
+  worker.impl->requestSession.openReanalyses = openReanalyses();
   worker.impl->nextLambdaId = nextLambdaId;
   return *worker.impl;
 }

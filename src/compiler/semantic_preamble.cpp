@@ -88,7 +88,7 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);
   requestSession.rawResultQueries.reset();
-  requestSession.assertingClassInstances.reset();
+  requestSession.openReanalyses.reset();
   requestSession.collectingRawResult.reset();
   compilerTypeClasses = source.compilerTypeClasses;
   designatedMoves = source.designatedMoves;

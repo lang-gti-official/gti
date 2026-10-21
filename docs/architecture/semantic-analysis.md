@@ -2711,14 +2711,16 @@ Required constants encountered during concrete reanalysis of any instance kind
 (function, constructor, destructor, or class field initializers and static
 assertions) stage against its canonical base model, never its partially
 analyzed delta. Nested workers keep separate semantic state and share only a
-constant-request work account and the class instances whose assertions are
-being evaluated. Nested staging counts toward the depth bound, and its executed
-work consumes the same 4096-step budget as the enclosing request. Recursive
-semantic-staging cycles therefore fail with a resource diagnostic instead of
-unbounded reentry. A class assertion's constant may need that same instance,
-for example to reflect on its fields. The worker then reanalyzes the instance
-without evaluating its assertions again: the enclosing evaluation owns their
-outcome, and an assertion yields no value.
+constant-request work account and the list of instances whose reanalysis is
+open along the staging chain. Nested staging counts toward the depth bound,
+and its executed work consumes the same 4096-step budget as the enclosing
+request. Recursive semantic-staging cycles therefore fail with a resource
+diagnostic instead of unbounded reentry. An assertion's constant may need the
+instance that owns it, as when a class assertion or a destructor reflects on
+the class's fields. A worker then reanalyzes that open instance without
+evaluating its assertions: the enclosing reanalysis owns their outcome, and an
+assertion yields no value. Other required constants, such as `if constexpr`
+conditions, are still evaluated, so a genuine cycle still fails as above.
 
 Concrete reanalysis resets body scopes, so early HIR discovery uses a lazy,
 isolated semantic provider rather than reentering the unfinished caller. Its

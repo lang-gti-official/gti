@@ -5038,6 +5038,22 @@ int main() { return counter.first() + picked - 6; }
          "class and function instances reanalysed by constant evaluation or "
          "initializer effects should see the completed program");
 
+  // Evaluating an assertion can need the very instance that owns it. The
+  // nested reanalysis staging performs supplies that instance's facts and
+  // leaves the assertion to its owner instead of reentering it.
+  const lang::FrontendResult selfAssertion =
+      lang::Frontend().analyze("self-instance-static-assert.gti", R"(
+constexpr int32_t unit<uint64_t N>() {
+  static_assert(unit<N>() == 1, "unit instance");
+  return 1;
+}
+int main() { return unit<3>() - 1; }
+)");
+  expect(selfAssertion.canGenerateCode() &&
+             !hasDiagnosticCode(selfAssertion.diagnostics, "GTI-S2057"),
+         "an assertion that evaluates its own function instance should be "
+         "evaluated once by that instance");
+
   const std::array<std::pair<std::string, std::string>, 7> malformed{{
       {"static_assert; int recovered() { return 0; }", "Expect '('"},
       {"static_assert(); int recovered() { return 0; }", "Expect a condition"},
