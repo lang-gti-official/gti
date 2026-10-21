@@ -1,0 +1,10 @@
+// A trusted library for diagnostics tests: one request of `twice` that fails
+// at both of its internal calls with the same error is reported once, at the
+// request, with both library locations.
+namespace fixture {
+int twice<F>(F& fn) {
+  int first = fn(1);
+  int second = fn(2);
+  return first + second;
+}
+}
