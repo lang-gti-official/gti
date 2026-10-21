@@ -238,9 +238,14 @@ int main() {
        R"(int main() { mut int owner = 3; mut int& parent = owner;
     TYPE& alias = parent; parent = 4; return alias; })",
        false);
-  pair("raw pointer reference boundary", "int*",
-       R"(int main() { int* owner = nullptr;
-    TYPE& alias = owner; return 0; })",
+  pair("raw pointer slot", "int*",
+       R"(int main() { mut int value = 3; int* owner = &value;
+    TYPE& alias = owner; unsafe { return *alias - 3; } })",
+       true);
+  // A fixed pointer array holds native pointer objects, not pointer slots.
+  pair("raw pointer array element boundary", "int*",
+       R"(int main() { int* owner[1] = {nullptr};
+    TYPE& alias = owner[0]; return 0; })",
        false);
   const auto lambda = analyze(R"(int main() {
     auto function = [](int value) -> int { return value + 1; };
