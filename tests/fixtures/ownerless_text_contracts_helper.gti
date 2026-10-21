@@ -1,0 +1,14 @@
+#include <std/string>
+#include <std/utility>
+
+// This ordinary wrapper deliberately has no dynamic-view retention policy.
+// A concrete text-view instantiation therefore requires ownerless input.
+struct StaticLabel<T> {
+  mut T payload;
+  StaticLabel(T input) : payload(std::move(input)) {}
+  T take() && { return std::move(this.payload); }
+};
+
+StaticLabel<T> imported_label<T>(T input) {
+  return StaticLabel<T>(std::move(input));
+}

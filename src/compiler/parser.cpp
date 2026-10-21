@@ -1661,9 +1661,9 @@ private:
     return name;
   }
 
-  // The signature's '(' distinguishes a headerless patterned primary from
-  // the existing parameter declaration grammar. In particular, stop at '=':
-  // a default such as <S = void()> is still an ordinary generic parameter.
+  // A signature, void argument or reference distinguishes a patterned primary
+  // from the existing parameter declaration grammar. In particular, stop at
+  // '=': a default such as <S = void()> is still an ordinary generic parameter.
   // This lookahead never resolves identifiers or edits/splits lexer tokens.
   bool classSignaturePatternAhead() const {
     std::size_t depth = 0;
@@ -1674,11 +1674,14 @@ private:
         return false;
       }
       if (depth == 0) {
-        if (kind == TokenKind::LEFT_PAREN) {
+        // Signature, void, reference and raw-pointer argument patterns.
+        if (kind == TokenKind::LEFT_PAREN || kind == TokenKind::VOID ||
+            kind == TokenKind::AMPERSAND || kind == TokenKind::STAR ||
+            kind == TokenKind::CONST) {
           return true;
         }
-        if (kind == TokenKind::COMMA || kind == TokenKind::EQUAL ||
-            kind == TokenKind::GREATER || kind == TokenKind::GREATER_EQUAL ||
+        if (kind == TokenKind::EQUAL || kind == TokenKind::GREATER ||
+            kind == TokenKind::GREATER_EQUAL ||
             kind == TokenKind::SHIFT_RIGHT ||
             kind == TokenKind::SHIFT_RIGHT_EQUAL) {
           return false;

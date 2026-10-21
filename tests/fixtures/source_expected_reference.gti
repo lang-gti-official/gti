@@ -1,0 +1,21 @@
+#include <std/string>
+
+expected<int&, int> find_value(int& owner, bool missing) {
+  if (missing) return unexpected(7);
+  return owner;
+}
+
+int& require_value(int& owner) {
+  return find_value(owner, false).expect("required value");
+}
+
+int main() {
+  int owner = 42;
+  auto present = find_value(owner, false);
+  auto copied = present;
+  auto missing = find_value(owner, true);
+  mut auto moved = find_value(owner, false);
+  int& extracted = std::move(moved).value();
+  if (missing || missing.error() != 7) return 1;
+  return copied.value() + present.value() + extracted + require_value(owner) - 168;
+}

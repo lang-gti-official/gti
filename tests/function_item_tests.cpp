@@ -650,6 +650,57 @@ int main() { auto value = Box(work); return 0; }
          "not as an unresolved MIR value");
 }
 
+void testForwardedContextualSignatures() {
+  const std::string declarations = R"(
+int selected(int value) { return value + 1; }
+bool selected(bool value) { return !value; }
+int relay<F>(F& callback, int value) { return invoke(callback, value); }
+int invoke<F>(F& callback, int value) { return callback(value); }
+class Router<T> {
+public:
+  T route<F>(F& callback, T value) { return this.forward(callback, value); }
+private:
+  T forward<F>(F& callback, T value) { return callback(value); }
+};
+)";
+  const auto result = analyze("forwarded-function-item.gti", declarations + R"(
+int main() {
+  Router<int> router{};
+  return relay(selected, 3) + router.route(selected, 4) - 9;
+}
+)");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "exact callable signatures propagate through ordinary generic "
+         "function and class helper forwarding");
+  if (result.canGenerateCode()) {
+    std::size_t selectedItems = 0;
+    forEachInstruction(
+        result.mir, [&](const lang::MirInstruction &instruction) {
+          if (instruction.operation != lang::MirOperation::FunctionItem)
+            return;
+          ++selectedItems;
+          expect(instruction.info.type.arguments.size() == 2 &&
+                     instruction.info.type.arguments.front() ==
+                         lang::SemanticType::Int32 &&
+                     instruction.info.type.arguments.back() ==
+                         lang::SemanticType::Int32,
+                 "forwarding selects the exact integer function item");
+        });
+    expect(selectedItems == 2, "both forwarded contextual names select items");
+  }
+  const auto ambiguous = analyze("forwarded-function-item-ambiguous.gti", R"(
+void selected(int value) {}
+void selected(int& value) {}
+void invoke<F>(F& callback, int value) { callback(value); }
+void relay<F>(F& callback, int value) { invoke(callback, value); }
+int main() { relay(selected, 1); return 0; }
+)");
+  expect(!ambiguous.canGenerateCode() && hasCode(ambiguous, "GTI-S2090"),
+         "forwarded contextual constraints do not rank ambiguous overloads");
+}
+
 void testPackInvocationContracts() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/function_item_pack_contracts.gti";
@@ -982,6 +1033,7 @@ int main() {
   testGenericAndManagedPipeline();
   testContextualDiagnosticsAndBoundaries();
   testConstructorValueArguments();
+  testForwardedContextualSignatures();
   testPackInvocationContracts();
   testDerivedReferenceArguments();
   return failures == 0 ? 0 : 1;

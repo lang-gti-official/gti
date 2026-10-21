@@ -78,11 +78,13 @@ def main() -> int:
         if emitted.returncode != 0:
             return fail("emit C++23/O0", emitted)
         generated = generated_path.read_text(encoding="utf8")
-        extraction = re.search(
-            r" = ::gti_internal::backend::mir_expected_value_move_v1\("
-            r"[^,]+, &(__gti_mir_p_\d+)\);",
-            generated,
+        # The consuming value() of the source-defined expected constructs the
+        # extracted payload directly in the argument's prepared slot.
+        extraction_call = (
+            r"_value__gti_mir_failure\(UINT32_C\(\d+\), "
+            r"(__gti_mir_p_\d+)\.construction_address\(\)"
         )
+        extraction = re.search(extraction_call, generated)
         if extraction is None:
             sys.stderr.write(
                 "generated C++ lost the owning Expected extraction slot\n"
@@ -91,10 +93,7 @@ def main() -> int:
         slot = extraction.group(1)
         if (
             len(
-                re.findall(
-                    r" = ::gti_internal::backend::mir_expected_value_move_v1\(",
-                    generated,
-                )
+                re.findall(extraction_call, generated)
             )
             != 1
             or generated.count(f"std::move({slot}.get())") != 1

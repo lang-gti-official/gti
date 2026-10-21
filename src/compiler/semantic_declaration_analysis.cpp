@@ -38,6 +38,84 @@ signatureClassKey(const ClassDecl &owner) {
                                !pattern.arguments.empty() &&
                                pattern.arguments.back().reference.has_value()};
 }
+
+// An argument-profile family has an ordinary type-parameter fallback and
+// mutually disjoint void/reference profiles. This is source type selection:
+// each definition has its own class identity and ordinary member semantics.
+// It does not change reference access, lifetime, or constructor eligibility.
+enum class ArgumentProfile {
+  Any,
+  Void,
+  ReadOnlyReference,
+  MutableReference,
+  ReadOnlyPointer,
+  MutablePointer,
+};
+using ClassProfile = std::vector<ArgumentProfile>;
+
+[[nodiscard]] std::optional<ClassProfile>
+classArgumentProfile(const ClassDecl &owner) {
+  if (owner.isForwardDeclaration() || owner.isExactSpecialization() ||
+      (owner.kind() != ClassKind::Class && owner.kind() != ClassKind::Struct))
+    return std::nullopt;
+  ClassProfile profile;
+  if (owner.genericArgumentPatterns().empty()) {
+    if (owner.genericParameters().empty())
+      return std::nullopt;
+    for (const auto &parameter : owner.genericParameters()) {
+      if (parameter.pack || parameter.valueType || parameter.defaultType ||
+          parameter.defaultValue)
+        return std::nullopt;
+      profile.push_back(ArgumentProfile::Any);
+    }
+    return profile;
+  }
+  for (const auto &pattern : owner.genericArgumentPatterns()) {
+    // One raw-pointer layer over a type parameter distinguishes its pointee
+    // access, as a reference pattern distinguishes its referent access.
+    const bool pointer = pattern.pointers.size() == 1 && !pattern.reference;
+    if (pattern.isFunctionSignature() || pattern.isNativeFunction() ||
+        pattern.qualifiedOwner || pattern.name.segments.size() != 1 ||
+        !pattern.arguments.empty() || (!pattern.pointers.empty() && !pointer) ||
+        !pattern.arrayExtents.empty() || pattern.packExpansion)
+      return std::nullopt;
+    if (pattern.name.last().kind == TokenKind::VOID && !pattern.reference &&
+        !pointer) {
+      profile.push_back(ArgumentProfile::Void);
+    } else if (pattern.name.last().kind == TokenKind::IDENTIFIER && pointer) {
+      profile.push_back(pattern.pointers.front().pointeeConst
+                            ? ArgumentProfile::ReadOnlyPointer
+                            : ArgumentProfile::MutablePointer);
+    } else if (pattern.name.last().kind == TokenKind::IDENTIFIER) {
+      profile.push_back(!pattern.reference ? ArgumentProfile::Any
+                        : pattern.referenceMutability
+                            ? ArgumentProfile::MutableReference
+                            : ArgumentProfile::ReadOnlyReference);
+    } else {
+      return std::nullopt;
+    }
+  }
+  return profile;
+}
+
+[[nodiscard]] bool fallbackProfile(const ClassProfile &profile) {
+  return std::all_of(profile.begin(), profile.end(), [](ArgumentProfile item) {
+    return item == ArgumentProfile::Any;
+  });
+}
+
+[[nodiscard]] bool compatibleProfiles(const ClassProfile &left,
+                                      const ClassProfile &right) {
+  if (left.size() != right.size())
+    return false;
+  if (fallbackProfile(left) || fallbackProfile(right))
+    return fallbackProfile(left) != fallbackProfile(right);
+  for (std::size_t index = 0; index < left.size(); ++index)
+    if (left[index] != ArgumentProfile::Any &&
+        right[index] != ArgumentProfile::Any && left[index] != right[index])
+      return true;
+  return false;
+}
 } // namespace
 
 auto SemanticVisitor::Impl::collectRootNativeStorageSymbols(
@@ -2575,14 +2653,27 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         if (key && signatureClassKey(*first.declaration) &&
             first.kind == classDecl->kind() &&
             samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit) &&
-            std::none_of(first.signatureFamilyMembers.begin(),
-                         first.signatureFamilyMembers.end(),
+            std::none_of(first.definitionFamilyMembers.begin(),
+                         first.definitionFamilyMembers.end(),
                          [&](ClassId member) {
                            return signatureClassKey(
                                       *classInfo(member).declaration) == key;
                          }) &&
             signatureClassKey(*first.declaration) != key) {
           familyPrimary = existing->second;
+        }
+        if (const auto profile = classArgumentProfile(*classDecl);
+            profile && first.kind == classDecl->kind() &&
+            samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit)) {
+          const auto compatible = [&](ClassId member) {
+            const auto other =
+                classArgumentProfile(*classInfo(member).declaration);
+            return other && compatibleProfiles(*profile, *other);
+          };
+          if (compatible(existing->second) &&
+              std::all_of(first.definitionFamilyMembers.begin(),
+                          first.definitionFamilyMembers.end(), compatible))
+            familyPrimary = existing->second;
         }
       }
       if (namespaces.contains(qualified) ||
@@ -2758,7 +2849,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .enclosingClass = enclosingClass,
           .enclosingAccess = enclosingAccess == nullptr ? AccessModifier::Public
                                                         : *enclosingAccess,
-          .signatureFamilyPrimary = familyPrimary,
+          .definitionFamilyPrimary = familyPrimary,
           .genericParameters = std::move(genericParameters),
           .cAbiRecord = capabilityPolicies.cAbiRecord,
           .cAbiAttribute = capabilityPolicies.cAbiSource,
@@ -2796,7 +2887,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         }
       }
       if (familyPrimary != 0) {
-        auto &members = classInfo(familyPrimary).signatureFamilyMembers;
+        auto &members = classInfo(familyPrimary).definitionFamilyMembers;
         if (members.empty()) {
           members.push_back(familyPrimary);
         }
@@ -2892,20 +2983,52 @@ auto SemanticVisitor::Impl::canonicalExactSpecializationType(
       owner.exactValueArguments));
 }
 
-auto SemanticVisitor::Impl::selectSignatureClassDefinition(
+auto SemanticVisitor::Impl::selectClassDefinition(
     ClassId id, const std::vector<SemanticType> &arguments) const -> ClassId {
-  if (id == 0 || id > classes.size() || arguments.size() != 1 ||
-      arguments.front().kind != SemanticType::FunctionSignature) {
+  if (id == 0 || id > classes.size()) {
     return id;
   }
-  const auto primary = classInfo(id).signatureFamilyPrimary;
+  const auto primary = classInfo(id).definitionFamilyPrimary;
   const auto &family = classInfo(primary == 0 ? id : primary);
+  ClassId fallback = 0;
+  for (ClassId member : family.definitionFamilyMembers) {
+    const auto profile = classArgumentProfile(*classInfo(member).declaration);
+    if (!profile || profile->size() != arguments.size())
+      continue;
+    if (fallbackProfile(*profile)) {
+      fallback = member;
+      continue;
+    }
+    bool matches = true;
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const auto &argument = arguments[index];
+      const auto shape =
+          argument.kind == SemanticType::Void ? ArgumentProfile::Void
+          : argument.kind == SemanticType::RawPointer
+              ? (argument.pointerAccess == AccessMode::Mutable
+                     ? ArgumentProfile::MutablePointer
+                     : ArgumentProfile::ReadOnlyPointer)
+          : argument.kind != SemanticType::Reference ? ArgumentProfile::Any
+          : argument.referenceAccess == AccessMode::Mutable
+              ? ArgumentProfile::MutableReference
+              : ArgumentProfile::ReadOnlyReference;
+      matches = matches && ((*profile)[index] == ArgumentProfile::Any ||
+                            (*profile)[index] == shape);
+    }
+    if (matches)
+      return member;
+  }
+  if (fallback != 0)
+    return fallback;
+  if (arguments.size() != 1 ||
+      arguments.front().kind != SemanticType::FunctionSignature)
+    return id;
   const SignatureClassKey requested{
       .receiver = arguments.front().signatureReceiver,
       .referenceResult =
           !arguments.front().arguments.empty() &&
           arguments.front().arguments.front().kind == SemanticType::Reference};
-  for (ClassId member : family.signatureFamilyMembers) {
+  for (ClassId member : family.definitionFamilyMembers) {
     const auto &candidate = classInfo(member);
     if (signatureClassKey(*candidate.declaration) == requested) {
       return member;
@@ -4006,7 +4129,7 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
       classInfo(type.classId).exactSpecializationPrimary != 0) {
     return type;
   }
-  type.classId = selectSignatureClassDefinition(type.classId, type.arguments);
+  type.classId = selectClassDefinition(type.classId, type.arguments);
   // The root is already a primary, so only its own recorded specializations
   // can match; skip canonicalizing the full key for every nested class.
   if (std::none_of(exactClassSpecializations.begin(),
@@ -4215,7 +4338,7 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
     if (!resolved.valid) {
       continue;
     }
-    primaryId = selectSignatureClassDefinition(*primaryId, resolved.types);
+    primaryId = selectClassDefinition(*primaryId, resolved.types);
     std::vector<SemanticType> typeArguments = resolved.types;
     for (SemanticType &argument : typeArguments) {
       argument = canonicalExactSpecializationType(std::move(argument));
@@ -4766,7 +4889,7 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
       }
       if (const auto found = classDeclIds.find(classDecl);
           found != classDeclIds.end()) {
-        const auto family = classInfo(found->second).signatureFamilyPrimary;
+        const auto family = classInfo(found->second).definitionFamilyPrimary;
         if (family != 0) {
           publishNamespaceSymbol(qualifiedName(scope, classDecl->name().lexeme),
                                  Symbol{.type = SemanticType::typeName(family),
@@ -5007,6 +5130,22 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayout(
     if (!cycle && !exhausted) {
       continue;
     }
+    // One recursive layout is reported once: an instance whose field reaches
+    // a type already reported, such as a wrapper instantiated with the
+    // recursive type, is part of that same cycle.
+    const bool reported =
+        !exhausted &&
+        std::any_of(requestSession.invalidOrdinaryLayouts.begin(),
+                    requestSession.invalidOrdinaryLayouts.end(),
+                    [&](const SemanticType &invalid) {
+                      std::vector<SemanticType> visitingInvalid{ownerType};
+                      std::vector<SemanticType> visitingInvalidEnums;
+                      bool exhaustedInvalid = false;
+                      return invalid != ownerType &&
+                             byValueTypeReachesClass(
+                                 fieldType, invalid, visitingInvalid,
+                                 visitingInvalidEnums, exhaustedInvalid);
+                    });
     requestSession.invalidOrdinaryLayouts.push_back(ownerType);
     if (exhausted) {
       diagnostics.push_back(
@@ -5017,6 +5156,8 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayout(
     }
     if (!catalog.sealed)
       recursiveLayoutFields.insert(field.declaration);
+    if (reported)
+      continue;
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2082", DiagnosticPhase::Semantics,
                        field.declaration->type().name.last(),
@@ -6743,6 +6884,40 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     }
     const auto dependencies =
         storedReferencePaths(SemanticType::classType(owner.id));
+    if (std::any_of(
+            dependencies.begin(), dependencies.end(),
+            [](const auto &path) { return !path.conditions.empty(); })) {
+      // Conditional fields are checked by the concrete constructor's complete
+      // result summary. A type-wide unconditional origin map would invent a
+      // dependency for alternatives which hold no reference.
+      if (owner.constructors.empty())
+        report(owner.name,
+               "A conditionally borrowed value requires a declared constructor "
+               "with a complete checked field-initialization contract.",
+               "GTI-S2045");
+      // The guarded set may come from a payload-enum field. A field whose
+      // class is itself a conditional carrier would nest one carrier's
+      // guarded set inside another's, which is not yet a supported view graph.
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr || field.declaration->type().reference)
+          continue;
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member == owner.members.end() ||
+            member->second.symbol.type.kind != SemanticType::Class)
+          continue;
+        const auto nested = storedReferencePaths(member->second.symbol.type);
+        if (std::any_of(nested.begin(), nested.end(), [](const auto &path) {
+              return !path.conditions.empty();
+            }))
+          report(field.declaration->name(),
+                 "Borrowed field state must use checked stored-reference "
+                 "paths through ordinary nominal fields; fallible and other "
+                 "non-nominal carriers cannot be stored as fields.",
+                 "GTI-S2045");
+      }
+      continue;
+    }
     if (dependencies.size() > 1) {
       if (owner.constructors.empty()) {
         report(owner.name,
@@ -7326,7 +7501,11 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
-  return valid ? result : std::nullopt;
+  // Unknown provenance and a proven absence of dependencies are distinct.
+  // Every safe write to a by-value text field already requires ownerless
+  // storage; reading that field need not invent a dependency on its shell.
+  return valid ? std::optional(result.value_or(FunctionReturnBorrowSummary{}))
+               : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
@@ -8530,17 +8709,15 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
 
       if (const std::optional<Token> &implicit =
               constructor->implicitKeyword()) {
-        // A declaration constructs from one value of another type: a copy or
-        // move policy never has that role, and the constructor must be
-        // callable with exactly one explicit argument.
+        // Contextual construction supplies zero or one explicit values. A
+        // copy/move policy never supplies a conversion or empty return.
         if (info.kind != ConstructorKind::Ordinary) {
           report(*implicit, "A copy or move constructor cannot be implicit.",
                  "GTI-S2121");
-        } else if (info.parameterPack || constructor->parameters().empty() ||
-                   info.requiredParameterCount > 1) {
+        } else if (info.parameterPack || info.requiredParameterCount > 1) {
           report(*implicit,
-                 "An implicit constructor must accept exactly one explicit "
-                 "argument.",
+                 "An implicit constructor must accept zero or one explicit "
+                 "arguments.",
                  "GTI-S2121");
         } else {
           info.implicitConstruction = true;
@@ -9215,6 +9392,7 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
                 qualifiedName(owner.namespaceScope, owner.name.lexeme),
             .namespaceScope = owner.namespaceScope,
             .enclosingClass = owner.enclosingClass,
+            .definitionFamilyPrimary = owner.definitionFamilyPrimary,
             .exactSpecializationPrimary = owner.exactSpecializationPrimary,
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,
@@ -9313,6 +9491,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
                 qualifiedName(owner.namespaceScope, owner.name.lexeme),
             .namespaceScope = owner.namespaceScope,
             .enclosingClass = owner.enclosingClass,
+            .definitionFamilyPrimary = owner.definitionFamilyPrimary,
             .exactSpecializationPrimary = owner.exactSpecializationPrimary,
             .exactTypeArguments = owner.exactTypeArguments,
             .exactValueArguments = owner.exactValueArguments,

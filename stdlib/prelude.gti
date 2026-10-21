@@ -78,6 +78,12 @@ namespace gti_internal {
   // Terminal checked access failure, independent of any owner representation.
   [[noreturn]]
   void fail_empty_owner();
+  // Source result policy selects these terminal failure categories. These
+  // operations know neither the carrier's type nor its representation.
+  [[noreturn, track_caller]]
+  void fail_inactive_value();
+  [[noreturn, track_caller]]
+  void fail_inactive_error();
 
 
   namespace runtime {
@@ -171,7 +177,7 @@ namespace std {
       std::addable<T> && std::subtractable<T> && std::negatable<T> &&
       std::scalable_by<T, Scalar> && std::copyable<T>;
 
-  /// The protocol of prefix `?` for every type except built-in `expected`.
+  /// The source-defined protocol of prefix `?`, including expected and optional.
   ///
   /// A type takes part through a `for concept std::tryable<T>` block. For
   /// `?operand`, the operand is evaluated once and passed like a by-value
@@ -309,3 +315,510 @@ namespace std {
     print("\n");
   }
 }
+
+// Results are ordinary source classes in the global prelude vocabulary.
+#include <std/meta>
+
+namespace std::detail {
+class unexpected_value<E> {
+  mut E payload;
+public:
+  constexpr unexpected_value(E value) : payload(std::move(value)) {}
+  constexpr E error() && { return std::move(this.payload); }
+};
+
+enum expected_state<T, E> { value(T payload), error(E failure) };
+enum expected_void_state<E> { value, error(E failure) };
+
+// Source-level evidence used by and_then: the mapped result belongs to this
+// result family with the same error type. No compiler type-name recognition.
+struct expected_error_identity<E> {};
+concept expected_result<R, Error> { typename value_type; };
+
+// A void invocation publishes an empty success; a value invocation moves its
+// result into the success alternative. Both policies use ordinary source class
+// profiles, so their callable contracts remain visible before instantiation.
+// The mapper input is one exact argument (none for a void source), so a
+// function item's signature is checked where the combinator is called.
+class expected_mapping<R, E> {
+public:
+  expected<R, E> invoke<F>(F& mapper) {
+    R mapped = mapper();
+    return expected<R, E>(std::move(mapped));
+  }
+  expected<R, E> invoke<F, A>(F& mapper, A argument) {
+    R mapped = mapper(std::move(argument));
+    return expected<R, E>(std::move(mapped));
+  }
+};
+class expected_mapping<void, E> {
+public:
+  expected<void, E> invoke<F>(F& mapper) {
+    mapper();
+    return expected<void, E>();
+  }
+  expected<void, E> invoke<F, A>(F& mapper, A argument) {
+    mapper(std::move(argument));
+    return expected<void, E>();
+  }
+};
+}
+
+constexpr std::detail::unexpected_value<E> unexpected<E>(E value) {
+  return std::detail::unexpected_value<E>(std::move(value));
+}
+
+class expected<T, E> {
+  mut std::detail::expected_state<T, E> state;
+public:
+  implicit constexpr expected(T value)
+      : state(std::detail::expected_state<T, E>::value(std::move(value))) {}
+  implicit constexpr expected(mut std::detail::unexpected_value<E> failure)
+      : state(std::detail::expected_state<T, E>::error(std::move(failure).error())) {}
+
+  constexpr void operator=(T value) mut {
+    this.state = std::detail::expected_state<T, E>::value(std::move(value));
+  }
+  constexpr void operator=(mut std::detail::unexpected_value<E> failure) mut {
+    this.state = std::detail::expected_state<T, E>::error(std::move(failure).error());
+  }
+
+  constexpr bool has_value() {
+    switch (this.state) {
+    case std::detail::expected_state<T, E>::value: return true;
+    case std::detail::expected_state<T, E>::error: return false;
+    }
+  }
+  constexpr operator bool() { return this.has_value(); }
+
+  [[track_caller]] constexpr T& value() {
+    switch (this.state) {
+    case std::detail::expected_state<T, E>::value(auto& value): return value;
+    case std::detail::expected_state<T, E>::error: gti_internal::fail_inactive_value();
+    }
+  }
+  [[track_caller]] constexpr mut T& value() mut {
+    switch (this.state) {
+    case std::detail::expected_state<T, E>::value(mut auto& value): return value;
+    case std::detail::expected_state<T, E>::error: gti_internal::fail_inactive_value();
+    }
+  }
+  [[track_caller]] constexpr T value() && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value): return std::move(value);
+    case std::detail::expected_state<T, E>::error(error): gti_internal::fail_inactive_value();
+    }
+  }
+
+  [[track_caller]] constexpr E& error() {
+    switch (this.state) {
+    case std::detail::expected_state<T, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T, E>::error(auto& error): return error;
+    }
+  }
+  [[track_caller]] constexpr mut E& error() mut {
+    switch (this.state) {
+    case std::detail::expected_state<T, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T, E>::error(mut auto& error): return error;
+    }
+  }
+  [[track_caller]] constexpr E error() && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value): gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T, E>::error(error): return std::move(error);
+    }
+  }
+
+  constexpr T value_or(T fallback) requires std::copy_constructible<T> {
+    switch (this.state) {
+    case std::detail::expected_state<T, E>::value(value): return value;
+    case std::detail::expected_state<T, E>::error: return std::move(fallback);
+    }
+  }
+  constexpr T value_or(T fallback) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value): return std::move(value);
+    case std::detail::expected_state<T, E>::error: return std::move(fallback);
+    }
+  }
+
+  [[track_caller]] T expect(std::string_view message) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value): return std::move(value);
+    case std::detail::expected_state<T, E>::error(error): gti_internal::panic(message);
+    }
+  }
+
+  expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value):
+      return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper, std::move(value));
+    case std::detail::expected_state<T, E>::error(error):
+      return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
+    }
+  }
+
+  expected<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value):
+      return expected<T, std::meta::callable_return_type<F>>(std::move(value));
+    case std::detail::expected_state<T, E>::error(error):
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return expected<T, std::meta::callable_return_type<F>>(unexpected(std::move(mapped)));
+    }
+  }
+
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T, E>::value(value): return mapper(std::move(value));
+    case std::detail::expected_state<T, E>::error(error):
+      return std::meta::callable_return_type<F>(unexpected(std::move(error)));
+    }
+  }
+};
+
+// A raw-pointer success is observed by value: GTI has no checked reference
+// to a raw pointer, and copying the pointer neither moves nor aliases its
+// pointee. Raw pointers are not constant values, so these profiles are
+// runtime-only; they otherwise match the owned-success profile.
+class expected<T*, E> {
+  mut std::detail::expected_state<T*, E> state;
+public:
+  implicit expected(T* value)
+      : state(std::detail::expected_state<T*, E>::value(std::move(value))) {}
+  implicit expected(mut std::detail::unexpected_value<E> failure)
+      : state(std::detail::expected_state<T*, E>::error(std::move(failure).error())) {}
+
+  void operator=(T* value) mut {
+    this.state = std::detail::expected_state<T*, E>::value(std::move(value));
+  }
+  void operator=(mut std::detail::unexpected_value<E> failure) mut {
+    this.state = std::detail::expected_state<T*, E>::error(std::move(failure).error());
+  }
+
+  bool has_value() {
+    switch (this.state) {
+    case std::detail::expected_state<T*, E>::value: return true;
+    case std::detail::expected_state<T*, E>::error: return false;
+    }
+  }
+  operator bool() { return this.has_value(); }
+
+  [[track_caller]] T* value() {
+    switch (this.state) {
+    case std::detail::expected_state<T*, E>::value(value): return value;
+    case std::detail::expected_state<T*, E>::error: gti_internal::fail_inactive_value();
+    }
+  }
+
+  [[track_caller]] E& error() {
+    switch (this.state) {
+    case std::detail::expected_state<T*, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T*, E>::error(auto& error): return error;
+    }
+  }
+  [[track_caller]] mut E& error() mut {
+    switch (this.state) {
+    case std::detail::expected_state<T*, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T*, E>::error(mut auto& error): return error;
+    }
+  }
+  [[track_caller]] E error() && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T*, E>::value(value): gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T*, E>::error(error): return std::move(error);
+    }
+  }
+
+  T* value_or(T* fallback) {
+    switch (this.state) {
+    case std::detail::expected_state<T*, E>::value(value): return value;
+    case std::detail::expected_state<T*, E>::error: return fallback;
+    }
+  }
+
+  [[track_caller]] T* expect(std::string_view message) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T*, E>::value(value): return std::move(value);
+    case std::detail::expected_state<T*, E>::error(error): gti_internal::panic(message);
+    }
+  }
+
+  expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T*, E>::value(value):
+      return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper, std::move(value));
+    case std::detail::expected_state<T*, E>::error(error):
+      return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
+    }
+  }
+
+  expected<T*, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T*, E>::value(value):
+      return expected<T*, std::meta::callable_return_type<F>>(std::move(value));
+    case std::detail::expected_state<T*, E>::error(error):
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return expected<T*, std::meta::callable_return_type<F>>(unexpected(std::move(mapped)));
+    }
+  }
+
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T*, E>::value(value): return mapper(std::move(value));
+    case std::detail::expected_state<T*, E>::error(error):
+      return std::meta::callable_return_type<F>(unexpected(std::move(error)));
+    }
+  }
+};
+
+class expected<const T*, E> {
+  mut std::detail::expected_state<const T*, E> state;
+public:
+  implicit expected(const T* value)
+      : state(std::detail::expected_state<const T*, E>::value(std::move(value))) {}
+  implicit expected(mut std::detail::unexpected_value<E> failure)
+      : state(std::detail::expected_state<const T*, E>::error(std::move(failure).error())) {}
+
+  void operator=(const T* value) mut {
+    this.state = std::detail::expected_state<const T*, E>::value(std::move(value));
+  }
+  void operator=(mut std::detail::unexpected_value<E> failure) mut {
+    this.state = std::detail::expected_state<const T*, E>::error(std::move(failure).error());
+  }
+
+  bool has_value() {
+    switch (this.state) {
+    case std::detail::expected_state<const T*, E>::value: return true;
+    case std::detail::expected_state<const T*, E>::error: return false;
+    }
+  }
+  operator bool() { return this.has_value(); }
+
+  [[track_caller]] const T* value() {
+    switch (this.state) {
+    case std::detail::expected_state<const T*, E>::value(value): return value;
+    case std::detail::expected_state<const T*, E>::error: gti_internal::fail_inactive_value();
+    }
+  }
+
+  [[track_caller]] E& error() {
+    switch (this.state) {
+    case std::detail::expected_state<const T*, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<const T*, E>::error(auto& error): return error;
+    }
+  }
+  [[track_caller]] mut E& error() mut {
+    switch (this.state) {
+    case std::detail::expected_state<const T*, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<const T*, E>::error(mut auto& error): return error;
+    }
+  }
+  [[track_caller]] E error() && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<const T*, E>::value(value): gti_internal::fail_inactive_error();
+    case std::detail::expected_state<const T*, E>::error(error): return std::move(error);
+    }
+  }
+
+  const T* value_or(const T* fallback) {
+    switch (this.state) {
+    case std::detail::expected_state<const T*, E>::value(value): return value;
+    case std::detail::expected_state<const T*, E>::error: return fallback;
+    }
+  }
+
+  [[track_caller]] const T* expect(std::string_view message) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<const T*, E>::value(value): return std::move(value);
+    case std::detail::expected_state<const T*, E>::error(error): gti_internal::panic(message);
+    }
+  }
+
+  expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<const T*, E>::value(value):
+      return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper, std::move(value));
+    case std::detail::expected_state<const T*, E>::error(error):
+      return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
+    }
+  }
+
+  expected<const T*, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<const T*, E>::value(value):
+      return expected<const T*, std::meta::callable_return_type<F>>(std::move(value));
+    case std::detail::expected_state<const T*, E>::error(error):
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return expected<const T*, std::meta::callable_return_type<F>>(unexpected(std::move(mapped)));
+    }
+  }
+
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<const T*, E>::value(value): return mapper(std::move(value));
+    case std::detail::expected_state<const T*, E>::error(error):
+      return std::meta::callable_return_type<F>(unexpected(std::move(error)));
+    }
+  }
+};
+
+class expected<void, E> {
+  mut std::detail::expected_void_state<E> state;
+public:
+  implicit constexpr expected() : state(std::detail::expected_void_state<E>::value) {}
+  implicit constexpr expected(mut std::detail::unexpected_value<E> failure)
+      : state(std::detail::expected_void_state<E>::error(std::move(failure).error())) {}
+
+  constexpr void operator=(mut std::detail::unexpected_value<E> failure) mut {
+    this.state = std::detail::expected_void_state<E>::error(std::move(failure).error());
+  }
+
+  constexpr bool has_value() {
+    switch (this.state) {
+    case std::detail::expected_void_state<E>::value: return true;
+    case std::detail::expected_void_state<E>::error: return false;
+    }
+  }
+  constexpr operator bool() { return this.has_value(); }
+
+  [[track_caller]] constexpr void value() {
+    if (!this.has_value()) { gti_internal::fail_inactive_value(); }
+  }
+  [[track_caller]] constexpr void value() && {
+    if (!this.has_value()) { gti_internal::fail_inactive_value(); }
+  }
+
+  [[track_caller]] constexpr E& error() {
+    switch (this.state) {
+    case std::detail::expected_void_state<E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_void_state<E>::error(auto& error): return error;
+    }
+  }
+  [[track_caller]] constexpr mut E& error() mut {
+    switch (this.state) {
+    case std::detail::expected_void_state<E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_void_state<E>::error(mut auto& error): return error;
+    }
+  }
+  [[track_caller]] constexpr E error() && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_void_state<E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_void_state<E>::error(error): return std::move(error);
+    }
+  }
+
+  [[track_caller]] void expect(std::string_view message) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_void_state<E>::value: return;
+    case std::detail::expected_void_state<E>::error(error): gti_internal::panic(message);
+    }
+  }
+
+  expected<std::meta::callable_return_type<F>, E> transform<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_void_state<E>::value:
+      return std::detail::expected_mapping<std::meta::callable_return_type<F>, E>().invoke(mapper);
+    case std::detail::expected_void_state<E>::error(error):
+      return expected<std::meta::callable_return_type<F>, E>(unexpected(std::move(error)));
+    }
+  }
+
+  expected<void, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_void_state<E>::value:
+      return expected<void, std::meta::callable_return_type<F>>();
+    case std::detail::expected_void_state<E>::error(error):
+      std::meta::callable_return_type<F> mapped = mapper(std::move(error));
+      return expected<void, std::meta::callable_return_type<F>>(unexpected(std::move(mapped)));
+    }
+  }
+
+  std::meta::callable_return_type<F> and_then<F>(F& mapper) &&
+      requires std::detail::expected_result<std::meta::callable_return_type<F>, std::detail::expected_error_identity<E>> {
+    switch (std::move(this.state)) {
+    case std::detail::expected_void_state<E>::value: return mapper();
+    case std::detail::expected_void_state<E>::error(error):
+      return std::meta::callable_return_type<F>(unexpected(std::move(error)));
+    }
+  }
+};
+
+class expected<T&, E> {
+  mut std::detail::expected_state<T&, E> state;
+public:
+  implicit expected(T& value)
+      : state(std::detail::expected_state<T&, E>::value(value)) {}
+  implicit expected(mut std::detail::unexpected_value<E> failure)
+      : state(std::detail::expected_state<T&, E>::error(std::move(failure).error())) {}
+
+  bool has_value() {
+    switch (this.state) {
+    case std::detail::expected_state<T&, E>::value: return true;
+    case std::detail::expected_state<T&, E>::error: return false;
+    }
+  }
+  operator bool() { return this.has_value(); }
+
+  [[track_caller]] T& value() {
+    switch (this.state) {
+    case std::detail::expected_state<T&, E>::value(auto& value): return value;
+    case std::detail::expected_state<T&, E>::error: gti_internal::fail_inactive_value();
+    }
+  }
+  [[track_caller]] T& value() && {
+    switch (this.state) {
+    case std::detail::expected_state<T&, E>::value(auto& value): return value;
+    case std::detail::expected_state<T&, E>::error: gti_internal::fail_inactive_value();
+    }
+  }
+
+  [[track_caller]] E& error() {
+    switch (this.state) {
+    case std::detail::expected_state<T&, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T&, E>::error(auto& error): return error;
+    }
+  }
+  [[track_caller]] mut E& error() mut {
+    switch (this.state) {
+    case std::detail::expected_state<T&, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T&, E>::error(mut auto& error): return error;
+    }
+  }
+  [[track_caller]] E error() && {
+    switch (std::move(this.state)) {
+    case std::detail::expected_state<T&, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T&, E>::error(error): return std::move(error);
+    }
+  }
+
+  [[track_caller]] T& expect(std::string_view message) && {
+    switch (this.state) {
+    case std::detail::expected_state<T&, E>::value(auto& value): return value;
+    case std::detail::expected_state<T&, E>::error: gti_internal::panic(message);
+    }
+  }
+};
+
+for <T, E> concept std::detail::expected_result<expected<T, E>, std::detail::expected_error_identity<E>> {
+  using value_type = T;
+};
+
+for <T, E> concept std::tryable<expected<T, E>> {
+  using value_type = T;
+  using residual_type = std::detail::unexpected_value<E>;
+  constexpr bool has_value(expected<T, E>& value) { return value.has_value(); }
+  [[borrowed_from(value)]] constexpr T take_value(expected<T, E> value) {
+    if constexpr (std::meta::type<T>().is_void()) {
+      std::move(value).value();
+    } else {
+      return std::move(value).value();
+    }
+  }
+  constexpr residual_type take_residual(expected<T, E> value) {
+    return unexpected(std::move(value).error());
+  }
+};

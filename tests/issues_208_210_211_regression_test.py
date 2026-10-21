@@ -117,7 +117,8 @@ def main() -> int:
         # source literal in every emitted definition, without requiring an
         # unused ordinary ABI definition solely for a fixed text count.
         constructor_definitions = re.findall(
-            r"^\s*holder::holder\(", literal_cpp, re.MULTILINE
+            r"^\s*(?:__gti_small_source_inline\s+)?holder::holder\(",
+            literal_cpp, re.MULTILINE
         )
         if (not constructor_definitions or
                 len(literal_initializer.findall(literal_cpp)) !=

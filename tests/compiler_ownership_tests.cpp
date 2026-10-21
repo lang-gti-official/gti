@@ -16,6 +16,53 @@ bool hasMirIntrinsicKind(const lang::FrontendResult &frontend,
   return false;
 }
 
+// The prelude's result class, identified by its declaration rather than by a
+// compiler-known type kind.
+bool isExpectedClass(const lang::FrontendResult &frontend,
+                     const lang::SemanticType &type) {
+  if (type.kind != lang::SemanticType::Class)
+    return false;
+  const lang::ClassTypeInfo *info =
+      frontend.semantics.findClassType(type.classId);
+  return info != nullptr && info->qualifiedName == "expected";
+}
+
+// The fixture's own bodies; prelude instances also appear in HIR and MIR.
+bool entryFunction(const lang::FrontendResult &frontend,
+                   lang::HirFunctionInstanceId id) {
+  const lang::HirFunctionInstance *function =
+      frontend.hir.findFunctionInstance(id);
+  return function != nullptr &&
+         function->sourceUnit == frontend.sourceGraph.entryUnit();
+}
+
+// An ordinary call of the named member of the prelude result class.
+bool isExpectedMemberCall(const lang::FrontendResult &frontend,
+                          const lang::MirInstruction &instruction,
+                          std::string_view member) {
+  if (instruction.kind != lang::MirInstructionKind::Call ||
+      !instruction.functionTarget || !instruction.receiver ||
+      !isExpectedClass(frontend, instruction.receiver->type))
+    return false;
+  const lang::HirFunctionInstance *target =
+      frontend.hir.findFunctionInstance(*instruction.functionTarget);
+  return target != nullptr && target->source != nullptr &&
+         target->source->name().lexeme == member;
+}
+
+// The instruction defining a MIR value, such as a staged call input.
+const lang::MirInstruction *definingInstruction(const lang::MirBody &body,
+                                                lang::MirValueId value) {
+  const lang::MirValue *defined = body.findValue(value);
+  if (defined == nullptr)
+    return nullptr;
+  for (const lang::MirBlock &block : body.blocks)
+    for (const lang::MirInstruction &instruction : block.instructions)
+      if (instruction.id == defined->definition)
+        return &instruction;
+  return nullptr;
+}
+
 lang::FrontendResult analyzeWithMemory(std::string_view name,
                                        std::string source) {
   source.insert(0, "#include <std/memory>\n");
@@ -188,8 +235,8 @@ int main() {
 }
 
 void testExplicitValueMoves() {
-  const lang::FrontendResult valid =
-      lang::Frontend().analyze("explicit-value-moves.gti", R"(
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "explicit-value-moves.gti", R"(
 struct Record {
   int value = 4;
 };
@@ -212,7 +259,7 @@ int main() {
   return reusable + forwarded + generic + moved_record.value;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected explicit-move diagnostic: " << diagnostic.message
@@ -300,8 +347,8 @@ int main() {
       "the C++ backend should keep explicitly consumed immutable bindings "
       "physically movable");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-explicit-value-moves.gti", R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-explicit-value-moves.gti", R"(
 int global_value = 1;
 
 struct Box {
@@ -336,7 +383,7 @@ int main() {
   return twice + maybe_moved + closure();
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
@@ -357,8 +404,8 @@ int main() {
 }
 
 void testImplicitReturnMoves() {
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("implicit-return-moves.gti", R"(
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "implicit-return-moves.gti", R"(
 class Owner {
 public:
   Owner() {}
@@ -394,7 +441,7 @@ int main() {
   return copy.value;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected implicit-return-move diagnostic: "
@@ -523,8 +570,8 @@ int main() {
          "concrete generic reanalysis should move the noncopyable instance "
          "and leave the copyable instance as a copy");
 
-  const lang::FrontendResult excluded =
-      lang::Frontend().analyze("excluded-implicit-return-moves.gti", R"(
+  const lang::FrontendResult excluded = lang::Frontend().analyze(
+      "excluded-implicit-return-moves.gti", R"(
 class Owner {
 public:
   Owner() {}
@@ -562,7 +609,7 @@ public:
 Pinned return_immovable(Pinned value) { return value; }
 int main() { return 0; }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!excluded.canGenerateCode() &&
              countDiagnosticCode(excluded.diagnostics, "GTI-S2003") == 2 &&
              hasDiagnosticCode(excluded.diagnostics, "GTI-S2018") &&
@@ -578,8 +625,8 @@ int main() { return 0; }
 }
 
 void testEdgeSensitiveMoveFlow() {
-  const lang::FrontendResult loopBackedges =
-      lang::Frontend().analyze("loop-backedge-moves.gti", R"(
+  const lang::FrontendResult loopBackedges = lang::Frontend().analyze(
+      "loop-backedge-moves.gti", R"(
 struct Record { int32_t value = 7; };
 
 int main() {
@@ -604,15 +651,15 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!loopBackedges.canGenerateCode() &&
              countDiagnosticContaining(loopBackedges.diagnostics,
                                        "reachable loop backedge") == 3,
          "while, do-while, and for should reject values consumed before a "
          "reachable backedge");
 
-  const lang::FrontendResult conditionBackedges =
-      lang::Frontend().analyze("condition-backedge-moves.gti", R"(
+  const lang::FrontendResult conditionBackedges = lang::Frontend().analyze(
+      "condition-backedge-moves.gti", R"(
 struct Record { int32_t value = 7; };
 bool consume(Record value) { return value.value == 7; }
 
@@ -625,15 +672,15 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!conditionBackedges.canGenerateCode() &&
              countDiagnosticContaining(conditionBackedges.diagnostics,
                                        "reachable loop backedge") == 2,
          "while and for should validate moves performed by a condition before "
          "that condition can execute again");
 
-  const lang::FrontendResult projectedBackedge =
-      lang::Frontend().analyze("projected-loop-backedge.gti", R"(
+  const lang::FrontendResult projectedBackedge = lang::Frontend().analyze(
+      "projected-loop-backedge.gti", R"(
 struct Record { int32_t value = 7; };
 struct Holder { mut Record field = Record(); };
 
@@ -647,7 +694,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!projectedBackedge.canGenerateCode() &&
              hasDiagnostic(projectedBackedge.diagnostics,
                            "Place 'field' is not available at a reachable "
@@ -655,8 +702,8 @@ int main() {
          "loop backedges should validate projected field moves as well as "
          "whole bindings");
 
-  const lang::FrontendResult reinitialized =
-      lang::Frontend().analyze("reinitialized-loop-backedges.gti", R"(
+  const lang::FrontendResult reinitialized = lang::Frontend().analyze(
+      "reinitialized-loop-backedges.gti", R"(
 struct Record { int32_t value = 7; };
 
 int main() {
@@ -684,13 +731,13 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(reinitialized.canGenerateCode(),
          "a value reinitialized on every reachable backedge should remain "
          "available for the next iteration");
 
-  const lang::FrontendResult shortCircuit =
-      lang::Frontend().analyze("short-circuit-moves.gti", R"(
+  const lang::FrontendResult shortCircuit = lang::Frontend().analyze(
+      "short-circuit-moves.gti", R"(
 struct Record { int32_t value = 7; };
 bool consume(Record value) { return value.value == 7; }
 
@@ -708,7 +755,7 @@ int test_or(bool gate) {
 
 int main() { return test_and(false) + test_or(true); }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!shortCircuit.canGenerateCode() &&
              countDiagnosticContaining(
                  shortCircuit.diagnostics,
@@ -716,8 +763,8 @@ int main() { return test_and(false) + test_or(true); }
          "unknown logical left operands should merge the skipped and "
          "evaluated RHS move states");
 
-  const lang::FrontendResult skippedLogical =
-      lang::Frontend().analyze("skipped-logical-moves.gti", R"(
+  const lang::FrontendResult skippedLogical = lang::Frontend().analyze(
+      "skipped-logical-moves.gti", R"(
 struct Record { int32_t value = 7; };
 bool consume(Record value) { return value.value == 7; }
 
@@ -729,13 +776,13 @@ int main() {
   return and_value.value + or_value.value - 14;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(skippedLogical.canGenerateCode(),
          "literal short-circuit operands should analyze a skipped RHS "
          "without consuming reachable move state");
 
-  const lang::FrontendResult terminatingArm =
-      lang::Frontend().analyze("terminating-if-move.gti", R"(
+  const lang::FrontendResult terminatingArm = lang::Frontend().analyze(
+      "terminating-if-move.gti", R"(
 struct Record { int32_t value = 7; };
 int read_after(bool stop) {
   mut Record value = Record();
@@ -747,13 +794,13 @@ int read_after(bool stop) {
 }
 int main() { return read_after(false) - 7; }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(terminatingArm.canGenerateCode(),
          "a moved state from a terminating if arm should not reach following "
          "statements");
 
-  const lang::FrontendResult unreachableRepair =
-      lang::Frontend().analyze("unreachable-move-repair.gti", R"(
+  const lang::FrontendResult unreachableRepair = lang::Frontend().analyze(
+      "unreachable-move-repair.gti", R"(
 struct Record { int32_t value = 7; };
 int read_after_switch(int32_t selector) {
   mut Record value = Record();
@@ -780,7 +827,7 @@ int main() {
   return read_after_switch(0);
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!unreachableRepair.canGenerateCode() &&
              hasDiagnostic(unreachableRepair.diagnostics,
                            "reachable loop backedge") &&
@@ -1324,7 +1371,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v90\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v91\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -1417,8 +1464,8 @@ int main() {
            "place lifetime is still active");
   }
 
-  const lang::FrontendResult partialOwner =
-      lang::Frontend().analyze("partial-index-owner.gti", R"(
+  const lang::FrontendResult partialOwner = lang::Frontend().analyze(
+      "partial-index-owner.gti", R"(
 struct Record { int value; Record(int initial) : value(initial) {} };
 int main() {
   mut Record values[2] = {Record(1), Record(2)};
@@ -1427,7 +1474,7 @@ int main() {
   return consumed.value + moved[1].value;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!partialOwner.canGenerateCode() &&
              hasDiagnostic(partialOwner.diagnostics,
                            "one of its owned places remains moved"),
@@ -1444,7 +1491,8 @@ int main() {
 int after() { return 0; }
 )";
   const lang::FrontendResult dynamicMove = lang::Frontend().analyze(
-      "dynamic-index-move.gti", dynamicMoveSource, {standardLibraryPrelude()});
+      "dynamic-index-move.gti", dynamicMoveSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
   const auto dynamicMoveDiagnostic = std::find_if(
       dynamicMove.diagnostics.begin(), dynamicMove.diagnostics.end(),
       [](const lang::Diagnostic &diagnostic) {
@@ -1467,8 +1515,8 @@ int after() { return 0; }
          "dynamic indexes should diagnose their exact bracket while "
          "preserving later declarations and disabling code generation");
 
-  const lang::FrontendResult branchMove =
-      lang::Frontend().analyze("branch-index-move.gti", R"(
+  const lang::FrontendResult branchMove = lang::Frontend().analyze(
+      "branch-index-move.gti", R"(
 struct Record { int value; Record(int initial) : value(initial) {} };
 int read(bool select) {
   mut Record values[1] = {Record(1)};
@@ -1479,14 +1527,14 @@ int read(bool select) {
 }
 int main() { return read(false) - 1; }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!branchMove.canGenerateCode() &&
              hasDiagnostic(branchMove.diagnostics,
                            "may have been moved on another control-flow path"),
          "branch joins should retain maybe-moved element state");
 
-  const lang::FrontendResult loopMove =
-      lang::Frontend().analyze("loop-index-move.gti", R"(
+  const lang::FrontendResult loopMove = lang::Frontend().analyze(
+      "loop-index-move.gti", R"(
 struct Record { int value; Record(int initial) : value(initial) {} };
 int main() {
   mut Record values[1] = {Record(1)};
@@ -1498,15 +1546,15 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!loopMove.canGenerateCode() &&
              hasDiagnostic(loopMove.diagnostics,
                            "not available at a reachable loop backedge"),
          "loop backedges should require an exact moved element to be "
          "restored");
 
-  const lang::FrontendResult dynamicRead =
-      lang::Frontend().analyze("dynamic-index-after-move.gti", R"(
+  const lang::FrontendResult dynamicRead = lang::Frontend().analyze(
+      "dynamic-index-after-move.gti", R"(
 struct Record { int value; Record(int initial) : value(initial) {} };
 int read(mut int index) {
   mut Record values[2] = {Record(1), Record(2)};
@@ -1515,7 +1563,7 @@ int read(mut int index) {
 }
 int main() { return read(1) - 3; }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!dynamicRead.canGenerateCode() &&
              hasDiagnostic(dynamicRead.diagnostics, "has already been moved"),
          "a dynamic index should may-alias an unavailable constant element");
@@ -2563,8 +2611,8 @@ int main() { return 0; }
       "nested binary, conditional, assignment, and postfix mutations "
       "should be visible to full-call borrow validation");
 
-  const lang::FrontendResult movedCallOperand =
-      lang::Frontend().analyze("moved-call-operand.gti", R"(
+  const lang::FrontendResult movedCallOperand = lang::Frontend().analyze(
+      "moved-call-operand.gti", R"(
 class Box {
 public:
   mut int value = 2;
@@ -2576,7 +2624,7 @@ int run(mut Box parent) {
 }
 int main() { return run(Box()) - 4; }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!movedCallOperand.canGenerateCode() &&
              countDiagnosticCode(movedCallOperand.diagnostics, "GTI-S2017") ==
                  1 &&
@@ -3159,7 +3207,8 @@ int main() {
   int& missing;
   int values[2] = {1, 2};
   int[2]& array_reference = values;
-  expected<expected<int&, int>, int> nested = unexpected(1);
+  expected<int&, int> inner = immutable;
+  expected<expected<int&, int>, int> nested = inner;
   Counter& dangling_owner = *std::make_unique<Counter>();
   int& dangling_member = Counter().value;
   inspect(mutable_value);
@@ -3181,7 +3230,8 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "Reference bindings require an initializer") &&
           hasDiagnostic(invalid.diagnostics, "References to fixed arrays") &&
-          hasDiagnostic(invalid.diagnostics, "References cannot be nested") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "complete checked dependency contract") &&
           hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
       "reference diagnostics should identify each rejected lifetime rule");
 
@@ -3517,7 +3567,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v110 ") &&
+  expect(mirDump.starts_with("mir-v112 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -4372,7 +4422,8 @@ int main() {
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "stored-references.gti", source, {standardLibraryPrelude()});
+      "stored-references.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected stored-reference diagnostic: "
@@ -4386,9 +4437,9 @@ int main() {
   auto movedWrapperSource = source;
   movedWrapperSource.insert(movedWrapperSource.find("  int& wrapped_value"),
                             "  auto moved_wrapper = std::move(wrapped);\n");
-  const auto movedWrapper =
-      lang::Frontend().analyze("stored-reference-external-adapter-move.gti",
-                               movedWrapperSource, {standardLibraryPrelude()});
+  const auto movedWrapper = lang::Frontend().analyze(
+      "stored-reference-external-adapter-move.gti", movedWrapperSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(movedWrapper.canGenerateCode() &&
              lang::verifyMirProgram(movedWrapper.mir).valid(),
          "an adapter relayed through a stored reference does not freeze the "
@@ -4398,7 +4449,7 @@ int main() {
                               "  wrapped_range.replace(9);\n");
   const auto invalidWrapper = lang::Frontend().analyze(
       "stored-reference-external-adapter-reset.gti", invalidWrapperSource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidWrapper.canGenerateCode() &&
              hasDiagnosticCode(invalidWrapper.diagnostics, "GTI-S2017"),
          "an externally relayed adapter still freezes its actual range owner");
@@ -6062,8 +6113,8 @@ int main() { return 0; }
          "the C++ backend should preserve read-only storage and frontend "
          "special-member decisions on each concrete iterator application");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-stored-references.gti", R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-stored-references.gti", R"(
 class BorrowingIterator<T> {
   T& value;
 public:
@@ -6133,7 +6184,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics,
@@ -6209,7 +6260,8 @@ int main() {
 }
 )";
   const lang::FrontendResult valid = lang::Frontend().analyze(
-      "mutable-stored-dependency.gti", validSource, {standardLibraryPrelude()});
+      "mutable-stored-dependency.gti", validSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected mutable stored-dependency diagnostic: "
@@ -6456,8 +6508,8 @@ int main() {
          "MIR verification should reject ending a transferred mutable "
          "carrier dependency twice");
 
-  const lang::FrontendResult overlapping =
-      lang::Frontend().analyze("mutable-stored-overlap.gti", R"(
+  const lang::FrontendResult overlapping = lang::Frontend().analyze(
+      "mutable-stored-overlap.gti", R"(
 class MutView {
   mut int& referent;
 public:
@@ -6474,7 +6526,7 @@ int main() {
   return first_value + second_value;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!overlapping.canGenerateCode() &&
              hasDiagnosticCode(overlapping.diagnostics, "GTI-S2017") &&
              hasDiagnostic(overlapping.diagnostics,
@@ -6482,8 +6534,8 @@ int main() {
          "a live mutable carrier should exclude owner mutation and a second "
          "overlapping carrier");
 
-  const lang::FrontendResult unsupported =
-      lang::Frontend().analyze("mutable-stored-unsupported-shapes.gti", R"(
+  const lang::FrontendResult unsupported = lang::Frontend().analyze(
+      "mutable-stored-unsupported-shapes.gti", R"(
 class MutView {
   mut int& referent;
 public:
@@ -6508,7 +6560,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!unsupported.canGenerateCode() &&
              hasDiagnostic(unsupported.diagnostics,
                            "Borrowed return dependency is ambiguous") &&
@@ -6556,7 +6608,8 @@ int main() {
   const auto analyze = [&](const std::string &name, const std::string &body,
                            const std::string &extra = "") {
     return lang::Frontend().analyze(name, declarations + extra + setup + body,
-                                    {standardLibraryPrelude()});
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
   };
   const auto valid = analyze("composed-carrier-forwarding.gti", forwarding + R"(
   active.update();
@@ -6842,7 +6895,7 @@ int main() {
   return left.value + right.value - 8;
 }
 )",
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(looped.canGenerateCode() && lang::verifyMirProgram(looped.mir).valid(),
          "a loop-local carrier transfer retires its exact loan on each "
          "iteration without leaking statement acknowledgement state");
@@ -6906,8 +6959,8 @@ Context forward_with_owner(Context context, mut Cell& other) {
 }
 
 void testNestedBorrowedFields() {
-  const auto arrowUpdate =
-      lang::Frontend().analyze("nested-carrier-arrow-update.gti", R"(
+  const auto arrowUpdate = lang::Frontend().analyze(
+      "nested-carrier-arrow-update.gti", R"(
 struct Record { mut int value = 7; };
 class Cursor {
   mut Record& record;
@@ -6926,7 +6979,7 @@ int main() {
   return record.value - 9;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(arrowUpdate.canGenerateCode() &&
              lang::verifyMirProgram(arrowUpdate.mir).valid(),
          "a scalar compound store must invoke the selected nested arrow "
@@ -6957,8 +7010,8 @@ int main() {
   expect(arrowCalls == 1 && checkedAddition,
          "arrow compound update evaluates its target once and retains checked "
          "arithmetic");
-  const auto readonlyReturn =
-      lang::Frontend().analyze("mutable-carrier-shared-return.gti", R"(
+  const auto readonlyReturn = lang::Frontend().analyze(
+      "mutable-carrier-shared-return.gti", R"(
 class View {
   mut int& item;
 public:
@@ -6967,7 +7020,7 @@ public:
 };
 int main() { mut int owner = 42; View view{owner}; return view.get(); }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(readonlyReturn.canGenerateCode() &&
              lang::verifyMirProgram(readonlyReturn.mir).valid(),
          "a mutable stored reference can publish a read-only receiver borrow");
@@ -6986,8 +7039,8 @@ int main() { mut int owner = 42; View view{owner}; return view.get(); }
   }
   expect(changedReturn && !lang::verifyMirProgram(strongerReturn).valid(),
          "a read-only result cannot publish stronger source access");
-  const auto frontend =
-      lang::Frontend().analyze("nested-borrowed-fields.gti", R"(
+  const auto frontend = lang::Frontend().analyze(
+      "nested-borrowed-fields.gti", R"(
 class View {
 public:
   int& item;
@@ -7009,7 +7062,7 @@ int main() {
   return copied.value.read() + nested.value.value.read() - 84;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics) {
       std::cerr << "Nested-borrow diagnostic: " << diagnostic.code << ' '
@@ -7088,9 +7141,9 @@ int main() {
   return value + moved.read() - 8;
 }
 )";
-  const auto projected =
-      lang::Frontend().analyze("stored-carrier-projected-relay.gti",
-                               projectedSource, {standardLibraryPrelude()});
+  const auto projected = lang::Frontend().analyze(
+      "stored-carrier-projected-relay.gti", projectedSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       projected.canGenerateCode() &&
           lang::verifyMirProgram(projected.mir).valid(),
@@ -7103,9 +7156,9 @@ int main() {
   auto invalidProjected = projectedSource;
   invalidProjected.insert(invalidProjected.find("  return value"),
                           "  owner.value = 9;\n");
-  const auto invalidProjection =
-      lang::Frontend().analyze("stored-carrier-projected-relay-owner-write.gti",
-                               invalidProjected, {standardLibraryPrelude()});
+  const auto invalidProjection = lang::Frontend().analyze(
+      "stored-carrier-projected-relay-owner-write.gti", invalidProjected,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidProjection.canGenerateCode() &&
              hasDiagnosticCode(invalidProjection.diagnostics, "GTI-S2017"),
          "moving a relay's carrier must not allow mutation of its still "
@@ -7133,9 +7186,9 @@ int main() {
   return value + moved.get() - 8;
 }
 )";
-  const auto ownedAccessor =
-      lang::Frontend().analyze("stored-carrier-generic-owned-accessor.gti",
-                               ownedAccessorSource, {standardLibraryPrelude()});
+  const auto ownedAccessor = lang::Frontend().analyze(
+      "stored-carrier-generic-owned-accessor.gti", ownedAccessorSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(ownedAccessor.canGenerateCode() &&
              lang::verifyMirProgram(ownedAccessor.mir).valid(),
          "generic accessor composition must preserve the called method's "
@@ -7149,7 +7202,8 @@ int main() {
       invalidOwnedAccessorSource.find("  return value"), "  owner.set(9);\n");
   const auto invalidOwnedAccessor = lang::Frontend().analyze(
       "stored-carrier-generic-owned-accessor-write.gti",
-      invalidOwnedAccessorSource, {standardLibraryPrelude()});
+      invalidOwnedAccessorSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   expect(!invalidOwnedAccessor.canGenerateCode() &&
              hasDiagnosticCode(invalidOwnedAccessor.diagnostics, "GTI-S2017"),
          "a composed owned-storage accessor still freezes its external owner "
@@ -7177,7 +7231,7 @@ int main() {
 )";
   const auto mutableStorage = lang::Frontend().analyze(
       "stored-carrier-mutable-owned-storage.gti", mutableStorageSource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(mutableStorage.canGenerateCode() &&
              lang::verifyMirProgram(mutableStorage.mir).valid(),
          "mutable owned storage is independent of the carrier's read-only "
@@ -7192,7 +7246,8 @@ int main() {
       std::string("owner.get_mut()").size(), "owner.external_value()");
   const auto invalidMutableStorage = lang::Frontend().analyze(
       "stored-carrier-read-only-external-storage.gti",
-      invalidMutableStorageSource, {standardLibraryPrelude()});
+      invalidMutableStorageSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   expect(!invalidMutableStorage.canGenerateCode() &&
              hasDiagnosticCode(invalidMutableStorage.diagnostics, "GTI-S2017"),
          "mutable carrier storage cannot upgrade its read-only external "
@@ -7222,9 +7277,9 @@ int main() {
   return reference.get().read() - 7;
 }
 )";
-  const auto factory =
-      lang::Frontend().analyze("stored-carrier-reference-factory.gti",
-                               factorySource, {standardLibraryPrelude()});
+  const auto factory = lang::Frontend().analyze(
+      "stored-carrier-reference-factory.gti", factorySource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(factory.canGenerateCode() &&
              lang::verifyMirProgram(factory.mir).valid(),
          "a source factory retains both its argument's physical shell and "
@@ -7238,7 +7293,7 @@ int main() {
                               "  owner.reset();\n");
   const auto invalidFactory = lang::Frontend().analyze(
       "stored-carrier-reference-factory-reset.gti", invalidFactorySource,
-      {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidFactory.canGenerateCode() &&
              hasDiagnosticCode(invalidFactory.diagnostics, "GTI-S2017"),
          "a reference factory must not allow mutation of its carrier shell "
@@ -7281,9 +7336,9 @@ int main() {
   return result - 7;
 }
 )";
-  const auto adapter =
-      lang::Frontend().analyze("stored-carrier-value-receiver-adapter.gti",
-                               adapterSource, {standardLibraryPrelude()});
+  const auto adapter = lang::Frontend().analyze(
+      "stored-carrier-value-receiver-adapter.gti", adapterSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(adapter.canGenerateCode() &&
              lang::verifyMirProgram(adapter.mir).valid(),
          "a value-returning receiver adapter and its copies retain physical "
@@ -7299,7 +7354,7 @@ int main() {
                                 "  " + mutation + "\n");
     const auto invalidAdapter = lang::Frontend().analyze(
         "stored-carrier-value-adapter-invalidation.gti", invalidAdapterSource,
-        {standardLibraryPrelude()});
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalidAdapter.canGenerateCode() &&
                hasDiagnosticCode(invalidAdapter.diagnostics, "GTI-S2017"),
            "an independently copied adapter rejects physical owner "
@@ -7340,9 +7395,9 @@ int main() {
   return exact + relayed_exact + relayed.referent - 21;
 }
 )";
-  const lang::FrontendResult valid =
-      lang::Frontend().analyze("stored-carrier-exact-relay.gti", validSource,
-                               {standardLibraryPrelude()});
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "stored-carrier-exact-relay.gti", validSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected stored-carrier relay diagnostic: "
@@ -8013,8 +8068,8 @@ int main() {
 }
 
 void testNestedMemberReferenceReturnForwarding() {
-  const lang::FrontendResult valid =
-      lang::Frontend().analyze("nested-member-reference-return.gti", R"(
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "nested-member-reference-return.gti", R"(
 class Inner {
   mut int elements[2] = {2, 3};
 
@@ -8035,7 +8090,7 @@ int main() {
   return outer[uint64_t(1)] - 11;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected nested-return diagnostic: " << diagnostic.code
@@ -9724,18 +9779,6 @@ int& local_source(int& source) {
 
 int& global_source(int& source) { return global_value; }
 
-DirectPayload& nested_owner_return(
-    expected<std::unique_ptr<DirectPayload>, int>& opened) {
-  return *opened.value();
-}
-
-int nested_owner_retention() {
-  expected<std::unique_ptr<DirectPayload>, int> opened =
-      std::make_unique<DirectPayload>(1);
-  DirectPayload& nested = *opened.value();
-  return nested.value;
-}
-
 View local_view(int& source) {
   int local = 1;
   return View(local);
@@ -9782,16 +9825,39 @@ int main() { return 0; }
              hasDiagnostic(invalid.diagnostics,
                            "must derive from read-only parameter 'source'") &&
              hasDiagnostic(invalid.diagnostics,
-                           "must derive from read-only parameter 'opened'") &&
-             hasDiagnostic(invalid.diagnostics,
                            "must derive from this method's receiver") &&
              hasDiagnostic(invalid.diagnostics,
-                           "Mutable method receiver overlaps a borrow") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Reference initializer is derived from temporary "
-                           "storage"),
+                           "Mutable method receiver overlaps a borrow"),
          "owner-dependency diagnostics should identify the unsafe source or "
          "alias graph");
+
+  // A result's value() is a reference tied to its receiver, and an owning
+  // handle's checked pointee is storage that receiver contains: the pointee
+  // may be retained or returned from a read-only parameter, as for any class.
+  const auto nestedOwner = analyzeWithMemory("nested-owner-projection.gti", R"(
+class DirectPayload {
+public:
+  int value;
+  DirectPayload(int initial) : value(initial) {}
+};
+
+DirectPayload& nested_owner_return(
+    expected<std::unique_ptr<DirectPayload>, int>& opened) {
+  return *opened.value();
+}
+
+int nested_owner_retention() {
+  expected<std::unique_ptr<DirectPayload>, int> opened =
+      std::make_unique<DirectPayload>(1);
+  DirectPayload& nested = *opened.value();
+  return nested.value;
+}
+
+int main() { return nested_owner_retention() - 1; }
+)");
+  expect(nestedOwner.canGenerateCode(),
+         "a result's owned pointee may be retained or returned from its "
+         "read-only owner parameter");
 }
 
 void testSwitchAndBreakLoanFlow() {
@@ -10573,13 +10639,15 @@ int main() {
   bool foundOwningExpectedObligation = false;
   for (const lang::HirFunctionInstance &function :
        frontend.hir.functionInstances()) {
+    if (!entryFunction(frontend, function.id))
+      continue;
     foundOwningExpectedObligation =
         foundOwningExpectedObligation ||
         std::any_of(function.body.dropObligations.begin(),
                     function.body.dropObligations.end(),
-                    [](const lang::HirDropObligation &obligation) {
-                      return obligation.dropType.type.kind ==
-                                 lang::SemanticType::Expected &&
+                    [&](const lang::HirDropObligation &obligation) {
+                      return isExpectedClass(frontend,
+                                             obligation.dropType.type) &&
                              obligation.dropType.requiresActiveCleanup;
                     });
   }
@@ -11602,7 +11670,7 @@ int main() {
     const auto *mir = recoverableStorage.mir.findFunctionInstance(function.id);
     std::optional<std::size_t> index;
     if (name == "try_storage" &&
-        function.returnType.kind == lang::SemanticType::Expected)
+        isExpectedClass(recoverableStorage, function.returnType))
       index = 0;
     else if (name == "capacity" &&
              function.returnType == lang::SemanticType::UInt64)
@@ -12474,9 +12542,12 @@ int main() {
                          std::string::npos;
                 });
           }));
+  // HIR lowering ran (its instances exist) and its concrete reanalysis
+  // reports these source errors as semantic failures.
   expect(!invalidConstruction.canGenerateCode() &&
-             invalidConstruction.semanticValid &&
+             !invalidConstruction.semanticValid &&
              !invalidConstruction.hirValid &&
+             !invalidConstruction.hir.functionInstances().empty() &&
              hasDiagnostic(invalidConstruction.diagnostics,
                            "No constructor of 'Pair' exactly matches argument "
                            "types (int32_t)") &&
@@ -13880,7 +13951,8 @@ int main() {
 )";
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "consuming-callables.gti", source, {standardLibraryPrelude()});
+      "consuming-callables.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected consuming-callable diagnostic: "
@@ -14117,8 +14189,8 @@ int main() {
              lang::Formatter().format(formatted) == formatted,
          "operator() && should format with stable C++-style spacing");
 
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-consuming-callables.gti", R"(
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-consuming-callables.gti", R"(
 class Once {
 public:
   int operator()() && { return 1; }
@@ -14135,7 +14207,7 @@ int main() {
   return invoke_twice(operation) + direct;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(
@@ -14147,8 +14219,8 @@ int main() {
       "once-callable lvalue and repeated invocation should fail through "
       "receiver and path-sensitive move diagnostics");
 
-  const lang::FrontendResult implicitForwarding =
-      lang::Frontend().analyze("implicit-once-forwarding.gti", R"(
+  const lang::FrontendResult implicitForwarding = lang::Frontend().analyze(
+      "implicit-once-forwarding.gti", R"(
 class Once {
 public:
   int operator()() && { return 1; }
@@ -14168,7 +14240,7 @@ int outer<Operation>(Operation operation) {
 
 int main() { return outer(Once()); }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!implicitForwarding.canGenerateCode() &&
              countDiagnosticCode(implicitForwarding.diagnostics, "GTI-S2046") ==
                  1 &&
@@ -14181,8 +14253,8 @@ int main() { return outer(Once()); }
          "a transitive once-confined forwarding edge should require an "
          "explicit source move before HIR");
 
-  const lang::FrontendResult repeatedForwarding =
-      lang::Frontend().analyze("repeated-once-forwarding.gti", R"(
+  const lang::FrontendResult repeatedForwarding = lang::Frontend().analyze(
+      "repeated-once-forwarding.gti", R"(
 class Once {
 public:
   int operator()() && { return 1; }
@@ -14199,7 +14271,7 @@ int forward_twice<Operation>(Operation operation) {
 
 int main() { return forward_twice(Once()); }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!repeatedForwarding.canGenerateCode() &&
              hasDiagnosticCode(repeatedForwarding.diagnostics, "GTI-S2018") &&
              hasDiagnostic(repeatedForwarding.diagnostics,
@@ -14208,8 +14280,8 @@ int main() { return forward_twice(Once()); }
          "two reachable once-confined forwardings should fail through the "
          "ordinary path-sensitive move state before HIR");
 
-  const lang::FrontendResult cleanupReceiver =
-      lang::Frontend().analyze("cleanup-consuming-callables.gti", R"(
+  const lang::FrontendResult cleanupReceiver = lang::Frontend().analyze(
+      "cleanup-consuming-callables.gti", R"(
 class Cleanup {
 public:
   Cleanup() {}
@@ -14251,7 +14323,7 @@ int main() {
   return first + second + third;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!cleanupReceiver.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : cleanupReceiver.diagnostics) {
       std::cerr << "Unexpected cleanup-consuming diagnostic ["
@@ -14262,8 +14334,8 @@ int main() {
          "direct, nested, and mutable-fallback calls retain moved nominal "
          "receivers through full-expression cleanup");
 
-  const lang::FrontendResult genericCleanupReceiver =
-      lang::Frontend().analyze("generic-cleanup-consuming-callable.gti", R"(
+  const lang::FrontendResult genericCleanupReceiver = lang::Frontend().analyze(
+      "generic-cleanup-consuming-callable.gti", R"(
 class Cleanup {
 public:
   Cleanup() {}
@@ -14285,7 +14357,7 @@ int main() {
   return invoke_once(std::move(generic));
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(genericCleanupReceiver.canGenerateCode(),
          "concrete generic once-call selection retains its cleanup-owning "
          "nominal receiver through the full expression");
@@ -14335,7 +14407,8 @@ int main() {
 }
 )";
   const auto frontend = lang::Frontend().analyze(
-      "consuming-methods.gti", source, {standardLibraryPrelude()});
+      "consuming-methods.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   for (const auto &diagnostic : frontend.diagnostics)
     std::cerr << "Consuming methods: " << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(), "ordinary methods and value operators "
@@ -14475,7 +14548,8 @@ int main() {
   };
   for (const auto &[text, fragment] : invalid) {
     const auto result = lang::Frontend().analyze(
-        "invalid-consuming-method.gti", text, {standardLibraryPrelude()});
+        "invalid-consuming-method.gti", text, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
     if (!hasDiagnostic(result.diagnostics, fragment)) {
       std::cerr << "Missing diagnostic " << fragment << " for " << text << '\n';
       for (const auto &diagnostic : result.diagnostics)
@@ -14486,8 +14560,8 @@ int main() {
                !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
            "invalid consuming method use must fail in the frontend");
   }
-  const auto generic =
-      lang::Frontend().analyze("generic-consuming-method.gti", R"(
+  const auto generic = lang::Frontend().analyze(
+      "generic-consuming-method.gti", R"(
 class Box<T> {
 public:
   mut T value;
@@ -14497,7 +14571,7 @@ public:
 };
 int main() { return Box<int>(4).identity<int>(0).take() - 4; }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!generic.canGenerateCode())
     for (const auto &diagnostic : generic.diagnostics)
       std::cerr << "Generic consuming: " << diagnostic.message << '\n';
@@ -14800,7 +14874,8 @@ int main() {
 }
 )";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "read-only-range-loans.gti", source, {standardLibraryPrelude()});
+      "read-only-range-loans.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected read-only range diagnostic: "
@@ -15023,8 +15098,8 @@ int main() {
          "read-only range diagnostics should reject mutation, escaping "
          "element loans, mutable bindings, and unsupported range forms");
 
-  const lang::FrontendResult movedReuse =
-      lang::Frontend().analyze("moved-range-reuse.gti", R"(
+  const lang::FrontendResult movedReuse = lang::Frontend().analyze(
+      "moved-range-reuse.gti", R"(
 interface IteratorContract<T> { T& operator*(); void operator++() mut; };
 class Iterator : public IteratorContract<int> {
   mut int current;
@@ -15049,7 +15124,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!movedReuse.canGenerateCode() &&
              hasDiagnosticCode(movedReuse.diagnostics, "GTI-S2018"),
          "moving an owned range into loop storage should invalidate later "
@@ -15059,8 +15134,8 @@ int main() {
 void testPassiveCleanupRangeTemporary() {
   // The range class has no destructor and only scalar fields, so its lexical
   // cleanup is passive. The loop must still own and drop the temporary.
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("passive-cleanup-range-temporary.gti", R"(
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "passive-cleanup-range-temporary.gti", R"(
 class Cursor {
   mut int32_t at;
 public:
@@ -15094,7 +15169,7 @@ int main() {
   return total - 5 + first_over(6) - 7;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected passive range diagnostic: " << diagnostic.message
               << '\n';
@@ -15168,8 +15243,8 @@ int main() {
 void testSharedPayloadSiblingReborrows() {
   // Read-only payload bindings of one matched enum are siblings. Reborrowing a
   // payload of one sibling must not conflict with the other read-only ones.
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("shared-payload-sibling-reborrows.gti", R"(
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "shared-payload-sibling-reborrows.gti", R"(
 enum Event<T> { item(T value) };
 class Inner {
 public:
@@ -15226,7 +15301,7 @@ int32_t three_siblings() {
 
 int main() { return generic_pair() + three_siblings(); }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected shared payload diagnostic: " << diagnostic.message
               << '\n';
@@ -15306,6 +15381,8 @@ expected<CounterRange, int32_t> make_range(int32_t first, int32_t last) {
   return CounterRange(first, last);
 }
 
+// Read-only owners select the read-only value() accessor; a `mut` owner
+// selects the mutable one, whose read-only loop shares its mutable loan.
 int count_parameter(expected<std::string, int32_t> text) {
   mut int count = 0;
   for (auto& outer : text.value()) {
@@ -15324,20 +15401,20 @@ int return_from_loop(expected<std::string, int32_t> text) {
 }
 
 int nominal_ranges() {
-  mut auto values = make_range(1, 4);
+  auto values = make_range(1, 4);
   mut int32_t total = 0;
   for (auto& value : values.value()) { total += value; }
-  mut auto empty = make_range(0, 0);
+  auto empty = make_range(0, 0);
   for (auto& value : empty.value()) { return 1; }
   return total - 6;
 }
 
 int main() {
-  mut auto first = make_text();
+  auto first = make_text();
   mut int count = 0;
   for (auto& byte : first.value()) { count += 1; }
-  mut auto second = make_text();
-  mut auto third = make_text();
+  auto second = make_text();
+  auto third = make_text();
   return count + count_parameter(std::move(second)) +
          return_from_loop(std::move(third)) + nominal_ranges() - 8;
 }
@@ -15358,18 +15435,41 @@ int main() {
              lang::verifyMirProgram(frontend.mir).valid(),
          "named Expected payloads should form verified read-only range loans");
 
+  // A named result's payload range borrows the reference that an ordinary
+  // value() call of the prelude class returns from that named owner.
+  const auto payloadSource =
+      [&](const lang::HirBody &body,
+          const lang::HirRangeIteration &range) -> const lang::HirValue * {
+    const lang::HirValue *source = body.findValue(range.source);
+    const lang::HirValue *receiver = source == nullptr || !source->receiver
+                                         ? nullptr
+                                         : body.findValue(*source->receiver);
+    const lang::HirFunctionInstance *target =
+        source == nullptr || !source->functionTarget
+            ? nullptr
+            : frontend.hir.findFunctionInstance(*source->functionTarget);
+    return source != nullptr && source->kind == lang::HirValueKind::Call &&
+                   receiver != nullptr &&
+                   isExpectedClass(frontend, receiver->info.type) &&
+                   target != nullptr && target->source != nullptr &&
+                   target->source->name().lexeme == "value"
+               ? source
+               : nullptr;
+  };
   std::size_t hirRanges = 0;
   bool exactHirPlans = true;
   for (const lang::HirFunctionInstance &function :
        frontend.hir.functionInstances()) {
+    if (!entryFunction(frontend, function.id))
+      continue;
     for (const lang::HirStatement &statement : function.body.statements) {
-      if (!statement.rangeIteration ||
-          !statement.rangeIteration->expectedPayloadProjection) {
+      if (!statement.rangeIteration)
         continue;
-      }
-      ++hirRanges;
       const lang::HirRangeIteration &range = *statement.rangeIteration;
-      const lang::HirValue *payload = function.body.findValue(range.source);
+      const lang::HirValue *payload = payloadSource(function.body, range);
+      if (payload == nullptr)
+        continue;
+      ++hirRanges;
       const lang::HirLoan *loan = function.body.findLoan(range.rangeLoan);
       const auto owner = std::find_if(function.body.bindings.begin(),
                                       function.body.bindings.end(),
@@ -15377,9 +15477,7 @@ int main() {
                                         return binding.id == range.owner;
                                       });
       exactHirPlans =
-          exactHirPlans && payload != nullptr &&
-          payload->kind == lang::HirValueKind::Call &&
-          payload->intrinsic == lang::IntrinsicKind::ExpectedValue &&
+          exactHirPlans && !range.ownsRangeTemporary &&
           payload->borrowOrigin == lang::BorrowOriginKind::Receiver &&
           payload->borrowAccess == lang::AccessMode::ReadOnly &&
           loan != nullptr && loan->access == lang::AccessMode::ReadOnly &&
@@ -15393,35 +15491,40 @@ int main() {
   std::size_t mirRanges = 0;
   bool exactMirPlans = true;
   const lang::MirBody *firstExpectedBody = nullptr;
+  lang::MirLoanId firstExpectedLoan = 0;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
+    if (!entryFunction(frontend, function.id))
+      continue;
     for (const lang::MirRangeIteration &range : function.body.rangeIterations) {
-      if (!range.expectedPayloadProjection) {
+      // The checked extraction is the value() call producing the range loan.
+      const lang::MirInstruction *producer = nullptr;
+      const lang::MirBlock *definitionBlock = nullptr;
+      for (const lang::MirBlock &block : function.body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.loan == range.rangeLoan &&
+              isExpectedMemberCall(frontend, instruction, "value")) {
+            producer = &instruction;
+            definitionBlock = &block;
+          }
+        }
+      }
+      if (producer == nullptr) {
         continue;
       }
       ++mirRanges;
       if (firstExpectedBody == nullptr) {
         firstExpectedBody = &function.body;
+        firstExpectedLoan = range.rangeLoan;
       }
       const lang::MirValue *payload =
-          function.body.findValue(range.expectedPayloadExtraction);
+          producer->result ? function.body.findValue(*producer->result)
+                           : nullptr;
       const lang::MirLoan *loan = function.body.findLoan(range.rangeLoan);
       const lang::MirPlace *sourcePlace =
           loan == nullptr ? nullptr : function.body.findPlace(loan->source);
-      const lang::MirInstruction *producer = nullptr;
-      if (payload != nullptr) {
-        for (const lang::MirBlock &block : function.body.blocks) {
-          const auto found =
-              std::find_if(block.instructions.begin(), block.instructions.end(),
-                           [&](const lang::MirInstruction &instruction) {
-                             return instruction.id == payload->definition;
-                           });
-          if (found != block.instructions.end()) {
-            producer = &*found;
-            break;
-          }
-        }
-      }
+      const lang::MirInstruction *receiverStage =
+          definingInstruction(function.body, producer->receiver->value);
       const std::size_t payloadRoots =
           payload == nullptr || loan == nullptr
               ? 0
@@ -15434,29 +15537,23 @@ int main() {
                              place.type == range.rangeType &&
                              place.sourceValue == payload->sourceValue;
                     });
-      const lang::MirBlock *definitionBlock =
-          payload == nullptr
-              ? nullptr
-              : function.body.findBlock(payload->definitionBlock);
       exactMirPlans =
           exactMirPlans && payload != nullptr && loan != nullptr &&
-          producer != nullptr && sourcePlace != nullptr &&
-          producer->kind == lang::MirInstructionKind::Call &&
-          producer->intrinsic == lang::IntrinsicKind::ExpectedValue &&
-          producer->result == range.expectedPayloadExtraction &&
-          producer->loan == range.rangeLoan && producer->receiver &&
-          producer->receiver->kind == lang::MirOperandKind::BorrowRead &&
-          producer->receiver->place == loan->source &&
+          sourcePlace != nullptr && !range.ownsRangeTemporary &&
+          receiverStage != nullptr &&
+          receiverStage->kind == lang::MirInstructionKind::CallInput &&
+          receiverStage->callInputRole == lang::MirCallInputRole::Receiver &&
+          receiverStage->operands.size() == 1 &&
+          receiverStage->operands.front().kind ==
+              lang::MirOperandKind::BorrowRead &&
+          receiverStage->operands.front().place == loan->source &&
           producer->borrowOrigin == lang::BorrowOriginKind::Receiver &&
           producer->borrowAccess == lang::AccessMode::ReadOnly &&
-          producer->localFailureSites.size() == 1 &&
-          producer->definedFailure.propagation ==
-              lang::FailurePropagationKind::None &&
-          definitionBlock != nullptr &&
           definitionBlock->terminator.kind == lang::MirTerminatorKind::Invoke &&
           definitionBlock->terminator.invokeInstruction == producer->id &&
           loan->kind == lang::MirLoanKind::CallResult && !loan->escapes &&
-          sourcePlace->type.kind == lang::SemanticType::Expected &&
+          loan->access == lang::AccessMode::ReadOnly &&
+          isExpectedClass(frontend, sourcePlace->type) &&
           sourcePlace->type.arguments.size() == 2 &&
           sourcePlace->type.arguments.front() == range.rangeType &&
           payloadRoots == 1;
@@ -15472,10 +15569,14 @@ int main() {
       const_cast<std::vector<lang::HirFunctionInstance> &>(
           invalidHir.functionInstances());
   for (lang::HirFunctionInstance &function : invalidHirFunctions) {
+    if (!entryFunction(frontend, function.id))
+      continue;
     for (lang::HirStatement &statement : function.body.statements) {
+      // A payload range borrows its named owner; reclassifying it as an
+      // owning temporary removes that semantic authorization.
       if (statement.rangeIteration &&
-          statement.rangeIteration->expectedPayloadProjection) {
-        statement.rangeIteration->expectedPayloadProjection = false;
+          payloadSource(function.body, *statement.rangeIteration) != nullptr) {
+        statement.rangeIteration->ownsRangeTemporary = true;
         removedHirAuthorization = true;
         break;
       }
@@ -15492,18 +15593,18 @@ int main() {
 
   lang::MirBody missingExtraction =
       firstExpectedBody == nullptr ? lang::MirBody{} : *firstExpectedBody;
-  if (!missingExtraction.rangeIterations.empty()) {
-    const auto expected =
-        std::find_if(missingExtraction.rangeIterations.begin(),
-                     missingExtraction.rangeIterations.end(),
-                     [](const lang::MirRangeIteration &range) {
-                       return range.expectedPayloadProjection;
-                     });
-    if (expected != missingExtraction.rangeIterations.end()) {
-      expected->expectedPayloadExtraction = 0;
+  bool detachedExtraction = false;
+  for (lang::MirBlock &block : missingExtraction.blocks) {
+    for (lang::MirInstruction &instruction : block.instructions) {
+      // Detach the range loan from the checked value() call producing it.
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.loan == firstExpectedLoan) {
+        instruction.loan.reset();
+        detachedExtraction = true;
+      }
     }
   }
-  expect(firstExpectedBody != nullptr &&
+  expect(firstExpectedBody != nullptr && detachedExtraction &&
              !lang::verifyMirBody(missingExtraction).valid(),
          "MIR verification should reject an Expected range without its "
          "checked payload extraction");
@@ -15527,16 +15628,24 @@ public:
 };
 
 )";
-  const std::pair<std::string_view, std::string_view> invalidCases[] = {
-      {R"(void field_receiver(mut box& owner) {
+  // value() is an ordinary accessor, so a field receiver and a mutable
+  // payload loop follow the general range rules rather than a bounded form.
+  const auto generalRanges = lang::Frontend().analyze(
+      "general-expected-payload-range-loan.gti",
+      invalidPrefix + R"(void field_receiver(mut box& owner) {
   for (auto& byte : owner.value.value()) {}
-})",
-       "temporary storage that does not outlive the binding"},
-      {R"(void mutable_payload() {
+}
+void mutable_payload() {
   mut auto text = make_text();
-  for (mut auto& byte : text.value()) {}
-})",
-       "temporary storage that does not outlive the binding"},
+  for (mut auto& byte : text.value()) { byte = 'z'; }
+}
+int main() { return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(generalRanges.canGenerateCode(),
+         "field-receiver and mutable payload ranges use the general range "
+         "rules");
+  const std::pair<std::string_view, std::string_view> invalidCases[] = {
       {R"(void replace_owner() {
   mut auto text = make_text();
   for (auto& byte : text.value()) { text = make_text(); }
@@ -16313,8 +16422,8 @@ int main() {
          "a nested lambda should be able to copy an immutable value capture "
          "from its enclosing lambda environment");
 
-  const lang::FrontendResult expectedLambda =
-      lang::Frontend().analyze("expected-lambda.gti", R"(
+  const lang::FrontendResult expectedLambda = lang::Frontend().analyze(
+      "expected-lambda.gti", R"(
 int main() {
   auto calculate = [](bool fail) -> expected<int, std::string_view> {
     if (fail) { return unexpected("failed"); }
@@ -16324,13 +16433,21 @@ int main() {
   return result.value_or(0) - 1;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::string cpp20 =
       expectedLambda.canGenerateCode()
           ? gti_test::emitCppText(expectedLambda, lang::CppStandard::Cpp20)
           : std::string{};
+  // The result in the lambda signature is an ordinary class instance, so the
+  // backend must define it rather than rely on a built-in helper.
+  const auto lambdaResults =
+      concreteBackendSymbols(cpp20, "__gti_type_", "expected");
   expect(expectedLambda.canGenerateCode() &&
-             cpp20.find("struct unexpect_t {") != std::string::npos,
+             std::any_of(lambdaResults.begin(), lambdaResults.end(),
+                         [&](const std::string &name) {
+                           return cpp20.find("class " + name + " {") !=
+                                  std::string::npos;
+                         }),
          "backend support should account for types nested in lambda "
          "signatures");
 
@@ -17833,8 +17950,8 @@ int main() {
          "predicate instantiation should reject non-bool callable results "
          "before backend lowering");
 
-  const lang::FrontendResult valueResults =
-      lang::Frontend().analyze("callable-value-results.gti", R"(
+  const lang::FrontendResult valueResults = lang::Frontend().analyze(
+      "callable-value-results.gti", R"(
 T map<T, Operation>(T value, Operation operation) {
   return operation(std::move(value));
 }
@@ -17877,7 +17994,7 @@ int main() {
   return mapped + mapped_twice + object_result + advanced.read() - 18;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!valueResults.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valueResults.diagnostics) {
       std::cerr << "Unexpected callable-value diagnostic: "
@@ -18482,7 +18599,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v110 ") &&
+             mirDump.starts_with("mir-v112 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -18680,7 +18797,8 @@ int main() {
   expect(!parser.hadError(), "expected types and values should parse");
 
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "expected-values.gti", source, {standardLibraryPrelude()});
+      "expected-values.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "expected construction and observers should pass semantic checks");
 
@@ -18688,22 +18806,51 @@ int main() {
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
   for (const std::string *cpp : {&cpp23, &cpp20}) {
+    // Each of the three result types is an emitted instance of the prelude
+    // class, and unexpected() is its ordinary source factory.
+    const auto results =
+        concreteBackendSymbols(*cpp, "__gti_type_", "expected");
+    const auto defined = std::count_if(
+        results.begin(), results.end(), [&](const std::string &name) {
+          return cpp->find("class " + name + " {") != std::string::npos &&
+                 cpp->find("::__gti_program::" + name) != std::string::npos;
+        });
     expect(cpp->find("#include <expected>") == std::string::npos &&
                cpp->find("nonstd/expected.hpp") == std::string::npos &&
                cpp->find("::nonstd::") == std::string::npos &&
                cpp->find("std::expected<") == std::string::npos &&
-               cpp->find("::gti_internal::backend::expected<std::int32_t, "
-                         "std::string_view>") != std::string::npos &&
-               cpp->find("::gti_internal::backend::unexpected(") !=
-                   std::string::npos,
+               cpp->find("::gti_internal::backend::expected") ==
+                   std::string::npos &&
+               results.size() == 3 && defined == 3 &&
+               containsMangledFunction(*cpp, "::__gti_program::", "unexpected",
+                                       ""),
            "both C++ standards should lower expected values to GTI's own "
            "representation rather than a host or vendored library");
   }
-  expect(cpp23.find("return {};") != std::string::npos,
+  // A bare return constructs the void result through its zero-argument
+  // implicit constructor.
+  const lang::MirFunctionInstance *renderMir = nullptr;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    const lang::HirFunctionInstance *source =
+        frontend.hir.findFunctionInstance(function.id);
+    if (entryFunction(frontend, function.id) && source->source != nullptr &&
+        source->source->name().lexeme == "render")
+      renderMir = &function;
+  }
+  std::size_t emptySuccesses = 0;
+  if (renderMir != nullptr) {
+    for (const lang::MirBlock &block : renderMir->body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        emptySuccesses +=
+            instruction.kind == lang::MirInstructionKind::Construct &&
+            isExpectedClass(frontend, instruction.info.type) &&
+            instruction.operands.empty();
+  }
+  expect(emptySuccesses == 1,
          "a void success should still return its empty value");
 
-  auto invalidTokens = lexer.scan(R"(
-expected<int, void> invalid_error() { return 1; }
+  const std::string invalidSource = R"(
 expected<int, int> bad_success() { return "wrong"; }
 expected<int, int> bad_error() { return unexpected("wrong"); }
 expected<int, int> valid_result() { return 1; }
@@ -18716,17 +18863,47 @@ int main() {
   completion.value_or(0);
   return 0;
 }
-)");
+)";
+  auto invalidTokens = lexer.scan(invalidSource);
   lang::Parser invalidParser(std::move(invalidTokens));
   lang::Program invalidProgram = invalidParser.parse();
   expect(!invalidParser.hadError(),
          "invalid expected uses should remain semantic errors");
 
-  lang::SemanticVisitor invalidSemantic;
-  expect(!invalidSemantic.check(invalidProgram),
+  // The prelude declares the result class, so the analysis must load it.
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-expected-values.gti", invalidSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(!invalid.semanticValid,
          "invalid expected types, states, and observers should fail");
-  expect(invalidSemantic.errors().size() == 6,
+  expect(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                       [](const lang::Diagnostic &diagnostic) {
+                         return diagnostic.severity ==
+                                lang::DiagnosticSeverity::Error;
+                       }) == 5,
          "expected validation should produce focused diagnostics");
+
+  // A void error alternative is rejected by the general payload rule when the
+  // concrete result layout is formed, before any backend representation.
+  const lang::FrontendResult voidError = lang::Frontend().analyze(
+      "void-expected-error.gti",
+      "expected<int, void> invalid_error() { return 1; }\n"
+      "int main() { return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!voidError.semanticValid &&
+             std::any_of(voidError.diagnostics.begin(),
+                         voidError.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-S2067" &&
+                                  diagnostic.message.find("'void'") !=
+                                      std::string::npos;
+                         }) &&
+             std::none_of(voidError.diagnostics.begin(),
+                          voidError.diagnostics.end(),
+                          [](const lang::Diagnostic &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "a void error alternative is a semantic payload error");
 }
 
 void testFallibleBorrows() {
@@ -18744,7 +18921,8 @@ void testFallibleBorrows() {
     std::size_t returnLoans = 0;
     bool checkedRuntimePlace = false;
     for (const auto &function : nested.mir.functionInstances()) {
-      if (function.returnType.kind != lang::SemanticType::Expected)
+      if (!entryFunction(nested, function.id) ||
+          !isExpectedClass(nested, function.returnType))
         continue;
       for (const auto &loan : function.body.loans) {
         if (loan.kind != lang::MirLoanKind::Return || !loan.escapes)
@@ -18763,7 +18941,10 @@ void testFallibleBorrows() {
       }
       for (const auto &block : function.body.blocks) {
         for (const auto &instruction : block.instructions) {
-          if (instruction.kind != lang::MirInstructionKind::Borrow ||
+          // The success constructor stages its referent argument with the
+          // exact runtime place on the stored loan operand.
+          if ((instruction.kind != lang::MirInstructionKind::Borrow &&
+               instruction.kind != lang::MirInstructionKind::CallInput) ||
               instruction.operands.size() != 1 ||
               instruction.operands.front().kind != lang::MirOperandKind::Loan ||
               instruction.operands.front().place == 0)
@@ -18788,6 +18969,12 @@ void testFallibleBorrows() {
            "nested referent projection");
     bool checkedCopiedCarrier = false;
     for (const auto &constructor : nested.mir.constructorInstances()) {
+      // The prelude's result constructors also store references.
+      const lang::HirConstructorInstance *source =
+          nested.hir.findConstructorInstance(constructor.id);
+      if (source == nullptr ||
+          source->sourceUnit != nested.sourceGraph.entryUnit())
+        continue;
       for (const auto &loan : constructor.body.loans) {
         if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
             loan.storedField == 0)
@@ -18821,8 +19008,7 @@ void testFallibleBorrows() {
            "fallible nested-carrier and mutable-receiver results must reach "
            "the native backend");
   }
-  const auto shellEscape =
-      analyzeTrustedPreludeFixture("fallible-carrier-shell.gti", R"(
+  const std::string shellEscapeSource = R"(
 enum class Error { missing };
 struct View { int& item; View(int& item) : item(item) {} };
 struct Envelope {
@@ -18832,9 +19018,16 @@ struct Envelope {
 };
 expected<int&, Error> bad(Envelope owner) { return owner.shell; }
 int main() { return 0; }
-)");
+)";
+  const auto shellEscape = analyzeTrustedPreludeFixture(
+      "fallible-carrier-shell.gti", shellEscapeSource);
+  // A class carrier's return obeys the general complete-dependency rule; the
+  // shell field is not a caller-owned origin.
   expect(!shellEscape.canGenerateCode() &&
-             hasDiagnosticCode(shellEscape.diagnostics, "GTI-S2085"),
+             hasDiagnosticAt(shellEscape.diagnostics, "GTI-S2045",
+                             "gti-trusted-fallible-carrier-shell.gti",
+                             shellEscapeSource.find("shell; }"),
+                             "complete dependency set"),
          "fallible returns cannot substitute a same-typed local carrier field "
          "for its external referent");
   const lang::FrontendResult frontend =
@@ -18908,21 +19101,35 @@ int main() {
              lang::verifyMirProgram(frontend.mir).valid(),
          "receiver-, parameter-, and global-tied fallible borrows should "
          "reach verified MIR, including local copy, move, and forwarding");
+  std::size_t scalarExtractions = 0;
   for (const auto &loan : frontend.semantics.loans()) {
     const auto *call = dynamic_cast<const lang::Call *>(loan.origin);
     const auto *projection =
         call == nullptr ? nullptr : frontend.semantics.findCall(*call);
-    if (projection != nullptr &&
-        projection->intrinsic == lang::IntrinsicKind::ExpectedValue &&
+    // value() is an ordinary member of the prelude class.
+    const lang::FunctionInfo *member =
+        projection == nullptr
+            ? nullptr
+            : frontend.semantics.findFunction(projection->function);
+    const lang::ClassTypeInfo *owner =
+        member == nullptr || member->ownerClass == 0
+            ? nullptr
+            : frontend.semantics.findClassType(member->ownerClass);
+    if (owner != nullptr && owner->qualifiedName == "expected" &&
+        projection->declaration != nullptr &&
+        projection->declaration->name().lexeme == "value" &&
         projection->returnType.kind == lang::SemanticType::Reference &&
         projection->returnType.arguments.size() == 1 &&
         projection->returnType.arguments.front().kind ==
             lang::SemanticType::Int32) {
+      ++scalarExtractions;
       expect(loan.storedDependency == 0,
              "extracting a scalar fallible borrow retains the external "
              "referent, not a physical shell dependency on its carrier");
     }
   }
+  expect(scalarExtractions == 1,
+         "the fixture retains one scalar fallible-borrow extraction");
 
   std::size_t fallibleFunctions = 0;
   std::size_t escapingReturnLoans = 0;
@@ -18941,8 +19148,8 @@ int main() {
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
     const lang::SemanticType &type = function.returnType;
-    if (type.kind != lang::SemanticType::Expected ||
-        type.arguments.size() != 2 ||
+    if (!entryFunction(frontend, function.id) ||
+        !isExpectedClass(frontend, type) || type.arguments.size() != 2 ||
         type.arguments.front().kind != lang::SemanticType::Reference) {
       continue;
     }
@@ -18955,6 +19162,8 @@ int main() {
   }
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
+    if (!entryFunction(frontend, function.id))
+      continue;
     for (const lang::MirBlock &block : function.body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         const lang::MirFunctionInstance *target =
@@ -18962,7 +19171,7 @@ int main() {
                 ? frontend.mir.findFunctionInstance(*instruction.functionTarget)
                 : nullptr;
         if (target == nullptr || !target->mayRaiseDefinedFailure ||
-            target->returnType.kind != lang::SemanticType::Expected ||
+            !isExpectedClass(frontend, target->returnType) ||
             target->returnType.arguments.size() != 2 ||
             target->returnType.arguments.front().kind !=
                 lang::SemanticType::Reference ||
@@ -19024,19 +19233,40 @@ int main() {
   const std::string cpp23 = gti_test::emitCppText(frontend);
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
-  expect(
-      cpp23.find("::gti_internal::backend::borrowed_expected<std::int32_t") !=
-              std::string::npos &&
-          cpp20.find(
-              "::gti_internal::backend::borrowed_expected<std::int32_t") !=
-              std::string::npos &&
-          cpp23.find("expected<std::int32_t &") == std::string::npos &&
-          cpp23.find(" = *__gti_mir_loan_") != std::string::npos &&
-          cpp23.find("construct_representation_at(__gti_mir_out_result, "
-                     "*__gti_mir_loan_") != std::string::npos,
-      "both native standards should use GTI's private pointer-backed "
-      "fallible-borrow carrier and initialize passive or owning-error "
-      "representations from a verified loan");
+  // The checked-reference profile keeps its success in an ordinary payload
+  // alternative, natively a rebindable wrapper rather than a reference member.
+  const auto pointerBacked = [](const std::string &cpp) {
+    return cpp.find("std::reference_wrapper<const std::int32_t> "
+                    "__gti_field_0") != std::string::npos &&
+           cpp.find("expected<std::int32_t &") == std::string::npos &&
+           cpp.find("::gti_internal::backend::borrowed_expected") ==
+               std::string::npos;
+  };
+  // Each success construction, with a passive or an owning error, consumes
+  // the verified Stored loan of its referent; failures carry no borrow.
+  std::size_t verifiedSuccesses = 0;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (!entryFunction(frontend, function.id))
+      continue;
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::SemanticType &type = instruction.info.type;
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            !isExpectedClass(frontend, type) || type.arguments.size() != 2 ||
+            type.arguments.front().kind != lang::SemanticType::Reference ||
+            !instruction.loan)
+          continue;
+        const lang::MirLoan *loan = function.body.findLoan(*instruction.loan);
+        verifiedSuccesses +=
+            loan != nullptr && loan->kind == lang::MirLoanKind::Stored;
+      }
+    }
+  }
+  expect(pointerBacked(cpp23) && pointerBacked(cpp20) && verifiedSuccesses == 5,
+         "both native standards should use GTI's private pointer-backed "
+         "fallible-borrow carrier and initialize passive or owning-error "
+         "representations from a verified loan");
 
   const lang::FrontendResult liveConflict =
       analyzeTrustedPreludeFixture("fallible-borrow-live-conflict.gti", R"(
@@ -19082,19 +19312,22 @@ int main() {
                            "derived from temporary storage"),
          "a fallible borrow must not outlive a temporary receiver");
 
-  const lang::FrontendResult missingOwner =
-      analyzeTrustedPreludeFixture("fallible-borrow-local-escape.gti", R"(
+  const std::string missingOwnerSource = R"(
 enum class lookup_errc { missing };
 expected<int&, lookup_errc> invalid() {
   int local = 7;
   return local;
 }
 int main() { return 0; }
-)");
+)";
+  const lang::FrontendResult missingOwner = analyzeTrustedPreludeFixture(
+      "fallible-borrow-local-escape.gti", missingOwnerSource);
+  // The local is not a caller-owned origin of the returned carrier.
   expect(!missingOwner.canGenerateCode() &&
-             hasDiagnostic(missingOwner.diagnostics,
-                           "requires either one exact global/static storage "
-                           "origin or exactly one read-only reference"),
+             hasDiagnosticAt(missingOwner.diagnostics, "GTI-S2045",
+                             "gti-trusted-fallible-borrow-local-escape.gti",
+                             missingOwnerSource.find("local;"),
+                             "complete dependency set"),
          "a local referent must not escape through a fallible borrow");
 
   const lang::FrontendResult ambiguousOwner =
@@ -19139,17 +19372,35 @@ int main() {
                           forbiddenStorageSource.find("result; }"),
                           "fallible and other non-nominal carriers cannot be "
                           "stored as fields") &&
-          hasDiagnosticAt(forbiddenStorage.diagnostics, "GTI-S2045",
-                          forbiddenStorageFile,
-                          forbiddenStorageSource.find("result) {}"),
-                          "Function parameters cannot nest borrowed state") &&
           hasDiagnosticAt(
               forbiddenStorage.diagnostics, "GTI-S2027", forbiddenStorageFile,
               forbiddenStorageSource.find(
                   "expected<int&", forbiddenStorageSource.find("auto lambda")),
               "Lambda return types cannot carry borrowed state"),
-      "fallible borrows should remain local return values rather than "
-      "escaping through fields, globals, parameters, or lambdas");
+      "fallible borrows should not escape through fields, globals, or "
+      "lambdas");
+  // A by-value parameter is an ordinary carrier input: it retains the
+  // caller's dependency for the call, and an error state carries no borrow.
+  const lang::FrontendResult carrierParameter =
+      analyzeTrustedPreludeFixture("fallible-borrow-parameter.gti", R"(
+enum class lookup_errc { missing };
+int read(expected<int&, lookup_errc> result) {
+  return result.has_value() ? result.value() : 0;
+}
+int direct() {
+  expected<int&, lookup_errc> result = unexpected(lookup_errc::missing);
+  return result.has_value() ? 1 : 0;
+}
+int main() {
+  mut int owner = 5;
+  expected<int&, lookup_errc> found = owner;
+  int seen = read(found);
+  owner = 6;
+  return seen + direct() - 5;
+}
+)");
+  expect(carrierParameter.canGenerateCode(),
+         "a fallible borrow may be passed by value and formed from an error");
 
   const std::string unsupportedSource = R"(
 enum class lookup_errc { missing };
@@ -19158,10 +19409,6 @@ expected<int&, lookup_errc> propagate(int& value) { return ?borrow(value); }
 int fallback(int& value) {
   expected<int&, lookup_errc> result = value;
   return result.value_or(value);
-}
-int direct_error() {
-  expected<int&, lookup_errc> result = unexpected(lookup_errc::missing);
-  return 0;
 }
 int main() { return 0; }
 )";
@@ -19173,9 +19420,7 @@ int main() { return 0; }
       countDiagnosticCode(unsupportedOperations.diagnostics, "GTI-S2086") ==
           0 &&
       hasDiagnostic(unsupportedOperations.diagnostics,
-                    "does not provide 'value_or'") &&
-      hasDiagnostic(unsupportedOperations.diagnostics,
-                    "cannot be initialized directly from 'unexpected'");
+                    "Unknown member 'value_or'");
   if (!unsupportedContract) {
     for (const lang::Diagnostic &diagnostic :
          unsupportedOperations.diagnostics) {
@@ -19185,9 +19430,8 @@ int main() { return 0; }
     }
   }
   expect(unsupportedContract,
-         "unsupported fallible-borrow fallback and direct "
-         "error construction should fail semantically rather than in MIR or "
-         "native C++");
+         "an unsupported fallible-borrow fallback should fail semantically "
+         "rather than in MIR or native C++");
 }
 
 void testExpectedPropagationOperator() {
@@ -19243,22 +19487,24 @@ int main() {
   std::size_t propagationValues = 0;
   std::size_t copyingPropagations = 0;
   std::size_t movingPropagations = 0;
+  // Prefix ? runs the std::tryable conformance: a test of the operand, then
+  // its value or its residual, which constructs the enclosing return value.
   const auto inspectBody = [&](const lang::HirBody &body) {
     for (const lang::HirValue &value : body.values) {
-      if (value.kind != lang::HirValueKind::ExpectedPropagation) {
+      if (value.kind != lang::HirValueKind::Propagation) {
         continue;
       }
       ++propagationValues;
-      const lang::HirExpectedPropagationPlan *plan =
-          value.expectedPropagation ? &*value.expectedPropagation : nullptr;
+      const lang::HirPropagationPlan *plan =
+          value.propagation ? &*value.propagation : nullptr;
       expect(value.source != nullptr && value.fullExpression != 0 &&
                  value.operation == lang::TokenKind::QUESTION &&
-                 plan != nullptr && plan->operand != 0 &&
-                 plan->successExtraction != 0 && plan->errorExtraction != 0 &&
-                 plan->errorValue != 0 && plan->unexpected != 0,
+                 plan != nullptr && plan->operand != 0 && plan->test != 0 &&
+                 plan->output != 0 && plan->residual != 0 &&
+                 plan->residualReturn != 0,
              "HIR propagation should retain its source, full-expression, "
              "branch extractions, and unexpected return value");
-      if (plan != nullptr && plan->moves) {
+      if (plan != nullptr && plan->consumesOperand) {
         ++movingPropagations;
       } else {
         ++copyingPropagations;
@@ -19267,7 +19513,8 @@ int main() {
   };
   for (const lang::HirFunctionInstance &function :
        frontend.hir.functionInstances()) {
-    inspectBody(function.body);
+    if (entryFunction(frontend, function.id))
+      inspectBody(function.body);
   }
   for (const lang::HirLambda &lambda : frontend.hir.lambdaInstances()) {
     inspectBody(lambda.body);
@@ -19364,11 +19611,17 @@ int main() { return manual_extract(false) - 44; }
   if (manualExtractMir != nullptr) {
     for (const lang::MirBlock &block : manualExtractMir->body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
+        // The consuming value() member receives the moved result by value.
+        const lang::MirInstruction *stage =
+            isExpectedMemberCall(manualExtraction, instruction, "value")
+                ? definingInstruction(manualExtractMir->body,
+                                      instruction.receiver->value)
+                : nullptr;
         manualExtractionConsumesValue =
             manualExtractionConsumesValue ||
-            (instruction.intrinsic == lang::IntrinsicKind::ExpectedValue &&
-             instruction.receiver &&
-             instruction.receiver->kind == lang::MirOperandKind::Value);
+            (stage != nullptr &&
+             stage->kind == lang::MirInstructionKind::CallInput &&
+             stage->callInputKind == lang::HirCallInputKind::MoveValue);
       }
     }
   }
@@ -19410,12 +19663,13 @@ int main() { return manual_extract(false) - 44; }
   const std::string cpp23 = gti_test::emitCppText(frontend);
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
-  expect(cpp23.find(".has_value()") != std::string::npos &&
-             cpp23.find("::gti_internal::backend::unexpected(") !=
-                 std::string::npos &&
-             cpp20.find(".has_value()") != std::string::npos &&
-             cpp20.find("::gti_internal::backend::unexpected(") !=
-                 std::string::npos,
+  // The branches call the selected std::tryable conformance functions.
+  const auto checkedBranches = [](const std::string &cpp) {
+    return containsMangledFunction(cpp, "::", "has_value", "(") &&
+           containsMangledFunction(cpp, "::", "take_value", "") &&
+           containsMangledFunction(cpp, "::", "take_residual", "");
+  };
+  expect(checkedBranches(cpp23) && checkedBranches(cpp20),
          "both C++ backends should emit checked propagation branches instead "
          "of delegating the operator to C++");
 
@@ -19458,8 +19712,13 @@ int main() { return 0; }
       !invalid.canGenerateCode() &&
       countDiagnosticCode(invalid.diagnostics, "GTI-S2086") == 4 &&
       hasDiagnostic(invalid.diagnostics, "expected<T, E>") &&
-      hasDiagnostic(invalid.diagnostics, "function or lambda") &&
-      hasDiagnostic(invalid.diagnostics, "exact enclosing error type") &&
+      hasDiagnostic(invalid.diagnostics, "cannot be initialized from it") &&
+      hasDiagnostic(invalid.diagnostics,
+                    "no implicit constructor taking exactly that residual") &&
+      // The prelude's result class cannot gain a constructor from this
+      // program, so the hint converts the failure instead.
+      hasDiagnosticHint(invalid.diagnostics, "Convert the operand's failure") &&
+      !hasDiagnosticHint(invalid.diagnostics, "Declare one 'implicit") &&
       hasDiagnosticHint(invalid.diagnostics, "std::move(result)");
   if (!invalidContract) {
     for (const lang::Diagnostic &diagnostic : invalid.diagnostics) {
@@ -20720,9 +20979,9 @@ int main() {
   return 0;
 }
 )";
-  const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-mutable-temporary-receivers.gti",
-                               invalidSource, {standardLibraryPrelude()});
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-mutable-temporary-receivers.gti", invalidSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(
       !invalid.semanticValid &&
           hasDiagnostic(invalid.diagnostics,
@@ -21335,8 +21594,11 @@ int main() {
   const auto rejected =
       [](std::string_view name, std::string_view source,
          const std::vector<std::filesystem::path> &preludes = {}) {
-        return lang::Frontend().analyze(std::string(name), std::string(source),
-                                        preludes);
+        // The prelude includes <std/meta>, so it needs the library root.
+        return lang::Frontend().analyze(
+            std::string(name), std::string(source), preludes, {},
+            preludes.empty() ? std::vector<std::filesystem::path>{}
+                             : std::vector{standardLibraryRoot()});
       };
   const lang::FrontendResult mutableReference =
       rejected("mutable-temporary-argument.gti", R"(
@@ -21358,6 +21620,8 @@ int main() { Report& alias = Report(); return 0; }
          "a local reference binding should not gain lifetime extension");
 
   const std::vector<std::filesystem::path> prelude{standardLibraryPrelude()};
+  // An explicitly moved whole local now binds a read-only parameter as a
+  // full-expression temporary, as an explicitly moved receiver does.
   const lang::FrontendResult explicitMove =
       rejected("moved-temporary-argument.gti", R"(
 class Report { public: Report() {} };
@@ -21369,8 +21633,23 @@ int main() {
 }
 )",
                prelude);
-  expect(!explicitMove.canGenerateCode() &&
-             hasDiagnosticCode(explicitMove.diagnostics, "GTI-S2017"),
+  expect(explicitMove.canGenerateCode() &&
+             lang::verifyMirProgram(explicitMove.mir).valid(),
+         "an explicitly moved local should bind a read-only parameter as a "
+         "call-scoped temporary");
+  const lang::FrontendResult explicitMutableMove =
+      rejected("moved-mutable-temporary-argument.gti", R"(
+class Report { public: Report() {} };
+void update(mut Report& report) {}
+int main() {
+  mut Report report = Report();
+  update(std::move(report));
+  return 0;
+}
+)",
+               prelude);
+  expect(!explicitMutableMove.canGenerateCode() &&
+             hasDiagnosticCode(explicitMutableMove.diagnostics, "GTI-S2017"),
          "an explicit move from named storage should not count as fresh");
 
   const lang::FrontendResult compound =
@@ -22220,9 +22499,9 @@ int main() {
   return direct + read(std::move(ready).value()) - 7;
 }
 )";
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("cleanup-owning-temporary-arguments.gti", source,
-                               {standardLibraryPrelude()});
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cleanup-owning-temporary-arguments.gti", source,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected cleanup-temporary diagnostic: "
@@ -22329,9 +22608,9 @@ int main() {
           producer->kind == lang::MirInstructionKind::Construct) {
         directTransfers += transfer ? 1 : 0;
       }
+      // The owning extraction is the prelude class's consuming value().
       if (producer != nullptr &&
-          producer->kind == lang::MirInstructionKind::Call &&
-          producer->intrinsic == lang::IntrinsicKind::ExpectedValue) {
+          isExpectedMemberCall(frontend, *producer, "value")) {
         expectedTransfers += transfer ? 1 : 0;
       }
     }
@@ -22343,8 +22622,8 @@ int main() {
          "the C++ backend should emit both verified transfers without "
          "inventing cleanup storage");
 
-  const lang::FrontendResult rejected =
-      lang::Frontend().analyze("cleanup-owning-named-copy.gti", R"(
+  const lang::FrontendResult rejected = lang::Frontend().analyze(
+      "cleanup-owning-named-copy.gti", R"(
 class cleanup_t {
 public:
   cleanup_t() {}
@@ -22359,7 +22638,7 @@ int main() {
   return 0;
 }
 )",
-                               {standardLibraryPrelude()});
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!rejected.canGenerateCode() &&
              hasDiagnosticCode(rejected.diagnostics, "GTI-S2018"),
          "a named move-only lvalue should remain rejected as a deleted "
@@ -22405,9 +22684,9 @@ int main() {
   return counter.value == 1 && counter.seen && flags[0] && flags[1] ? 0 : 1;
 }
 )";
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("expression-join-assignment-places.gti",
-                               accepted, {standardLibraryPrelude()});
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "expression-join-assignment-places.gti", accepted,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected expression-join diagnostic: " << diagnostic.message
               << '\n';
@@ -22431,9 +22710,9 @@ int main() {
   return view.value;
 }
 )";
-  const lang::FrontendResult rejected =
-      lang::Frontend().analyze("expression-join-assignment-conflict.gti",
-                               conflicting, {standardLibraryPrelude()});
+  const lang::FrontendResult rejected = lang::Frontend().analyze(
+      "expression-join-assignment-conflict.gti", conflicting,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t assignment = conflicting.find("seen = armed && ready");
   const auto conflict =
       std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),

@@ -46,11 +46,44 @@ void check(const std::string &name, const std::string &source, bool definite,
       std::cerr << item.code << ": " << item.message << '\n';
   }
 }
+// The audit resolves the exact provenance and reports nothing, in any mode.
+void checkClean(const std::string &name, const std::string &source) {
+  for (const auto mode :
+       {lang::RawPointerAuditMode::Off, lang::RawPointerAuditMode::Warn,
+        lang::RawPointerAuditMode::Strict}) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.rawPointerAudit = mode;
+    const auto result =
+        lang::Frontend(options).analyze("raw-certainty.gti", source);
+    if (result.semanticValid && result.diagnostics.empty())
+      continue;
+    ++failures;
+    std::cerr << "FAIL: " << name
+              << " mode=" << lang::rawPointerAuditModeName(mode) << '\n';
+    for (const auto &item : result.diagnostics)
+      std::cerr << item.code << ": " << item.message << '\n';
+  }
+}
 } // namespace
 
 int main() {
-  check("implicit return construction retains unresolved raw-field origins",
-        R"gti(
+  check("empty-return construction retains unresolved raw result fields", R"(
+struct Address {
+  const int* pointer = nullptr;
+  implicit Address() : pointer(nullptr) {}
+};
+Address make_address() { return; }
+int main() {
+  auto address = make_address();
+  unsafe { return *address.pointer; }
+}
+)",
+        false, "GTI-S2103");
+  // An implicit return construction publishes its exact raw-field origin:
+  // the live local reaches the access, so there is nothing to report.
+  checkClean("implicit return construction resolves raw-field origins",
+             R"gti(
 struct Handle {
   const int* pointer = nullptr;
   implicit Handle(const int* input) : pointer(input) {}
@@ -62,8 +95,7 @@ int inspect() {
   unsafe { return *result.pointer; }
 }
 int main() { return 0; }
-)gti",
-        false, "GTI-S2103");
+)gti");
   const std::string start = R"(
 int inspect(bool choice) {
   int live = 1;
@@ -92,11 +124,20 @@ int inspect(bool choice) {
             "*pointer; }" +
             end,
         false);
-  check("independent call result input fallback",
-        "const int* independent(const int* unused, const int* live) { return "
-        "live; }\n" +
+  // The exact source summary selects the returned input, so the expired
+  // unused argument cannot reach the access; returning it is still found.
+  checkClean("exact call summary selects its returned input",
+             "const int* independent(const int* unused, const int* live) { "
+             "return live; }\n" +
+                 start +
+                 "const int* selected = independent(pointer, &live); unsafe { "
+                 "return *selected; }" +
+                 end);
+  check("exact call summary returns the expired input",
+        "const int* independent(const int* live, const int* expired) { "
+        "return expired; }\n" +
             start +
-            "const int* selected = independent(pointer, &live); unsafe { "
+            "const int* selected = independent(&live, pointer); unsafe { "
             "return *selected; }" +
             end,
         false);

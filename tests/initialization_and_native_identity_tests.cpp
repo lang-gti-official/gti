@@ -401,14 +401,16 @@ int main() { Buffer buffer = 64; return buffer.capacity; }
            "a constructor without 'implicit' must not construct a "
            "declaration, and the error must say how to construct");
   }
-  // `implicit` marks only an ordinary constructor callable with one explicit
-  // argument, with a source body and no unsafe obligation.
+  // `implicit` marks only an ordinary constructor callable with zero or one
+  // explicit argument, with a source body and no unsafe obligation.
   rejected("struct Pair { implicit Pair(int a, int b) {} };\n"
            "int main() { return 0; }\n",
            "GTI-S2121");
-  rejected("struct Empty { implicit Empty() {} };\n"
-           "int main() { return 0; }\n",
-           "GTI-S2121");
+  expect(analyze("struct Empty { implicit Empty() {} };\n"
+                 "Empty finish() { return; }\n"
+                 "int main() { auto value = finish(); return 0; }\n")
+             .canGenerateCode(),
+         "implicit empty construction opts a source class into bare return");
   rejected("struct Same { int value = 0; Same() {} implicit Same(Same& other) "
            "{} };\n"
            "int main() { return 0; }\n",

@@ -1028,10 +1028,13 @@ private:
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
-    bool deferredConstexprSelection = false;
+    bool deferredGenericFlow = false;
     // A synthetic early return needs its own complete result evidence;
     // explicit ReturnStmt facts alone cannot describe the callable's result.
     bool unknownImplicitResultReturn = false;
+    // The complete result sets of synthetic early returns that have that
+    // evidence, in addition to the body's explicit ReturnStmt facts.
+    std::vector<SemanticBorrowDependencySet> implicitResultReturns;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
@@ -1363,10 +1366,10 @@ private:
     AccessModifier enclosingAccess = AccessModifier::Public;
     std::unordered_map<std::string, ClassId> nestedTypes;
     ClassId exactSpecializationPrimary = 0;
-    // Disjoint signature receiver definitions share a lookup name, not a
+    // Disjoint source definitions share a lookup name, not a
     // concrete class identity. The first registered definition owns the list.
-    ClassId signatureFamilyPrimary = 0;
-    std::vector<ClassId> signatureFamilyMembers;
+    ClassId definitionFamilyPrimary = 0;
+    std::vector<ClassId> definitionFamilyMembers;
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
@@ -1639,6 +1642,9 @@ private:
     ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
     Token location;
     std::string detail;
+    // A failure inside a compiler-trusted library body is anchored at the
+    // user's evaluation site; this keeps the library location for a note.
+    std::optional<Token> libraryLocation;
 
     [[nodiscard]] explicit operator bool() const { return value.has_value(); }
   };
@@ -1809,15 +1815,28 @@ private:
                 bool structural = false) const;
 
   void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
-  [[nodiscard]] bool
-  conditionalReferenceReturn(const SemanticType &result,
-                             std::span<const SemanticType> parameters) const;
+  [[nodiscard]] bool conditionalReferenceReturn(
+      const SemanticType &result, std::span<const SemanticType> parameters,
+      const SemanticType &receiver = SemanticType::Unknown) const;
   // Normalize one already checked return expression before end-of-body
   // summary publication. Failure is unknown/invalid, never an empty proof.
   // The caller still enforces ordinary child-loan escape and availability.
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteReturnBorrow(const FunctionInfo &function,
                                  const SemanticBorrowDependencySet &complete);
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteBorrow(const FunctionInfo &function,
+                           std::span<const Parameter> parameters,
+                           ReceiverMutability receiverMutability,
+                           const SemanticBorrowDependencySet &complete);
+  void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
+  std::optional<FunctionBorrowDependencySummary>
+  completeConstructorBorrow(const ResolvedConstructionInfo &construction,
+                            const SourceSpan &site);
+  std::optional<FunctionBorrowDependencySummary> completeBorrowQuery(
+      const InstanceAnalysisKey &key, const SemanticType &result,
+      std::span<const SemanticType> parameters, const Token &name,
+      const SourceSpan &site, const ConstructorDecl *constructor = nullptr);
   std::optional<FunctionBorrowDependencySummary> completeFunctionReturnBorrow(
       const CallableCandidate &function,
       const std::vector<SemanticType> &typeArguments,
@@ -1826,13 +1845,14 @@ private:
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   instantiateCompleteCallBorrow(const Call &call,
                                 const ResolvedCallInfo &resolved,
-                                const FunctionBorrowDependencySummary &summary);
+                                const FunctionBorrowDependencySummary &summary,
+                                bool *noNormalResult = nullptr);
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   instantiateCompleteBorrowArguments(
       const ResolvedCallInfo &resolved,
       const FunctionBorrowDependencySummary &summary,
       std::span<const ExprPtr *const> arguments,
-      const ExprPtr *receiver = nullptr);
+      const ExprPtr *receiver = nullptr, bool *noNormalResult = nullptr);
 
   // MIR currently materializes both runtime `if` successors even when the
   // condition is a literal. Loan endpoint selection must therefore use the
@@ -1926,6 +1946,13 @@ private:
 
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
+
+  [[nodiscard]] std::optional<std::size_t>
+  ownerlessTextForwardingParameter(const ExprPtr &expression) const;
+  [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
+  void recordOwnerlessTextCall(const Call &call,
+                               const CallableCandidate &target);
+  void finalizeOwnerlessTextContracts();
 
   [[nodiscard]] std::vector<
       std::pair<std::size_t, const ConstructorInitializer *>>
@@ -2726,12 +2753,12 @@ private:
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren);
 
-  [[nodiscard]] static bool tryInferTypeArguments(
+  [[nodiscard]] bool tryInferTypeArguments(
       const SemanticType &pattern, const SemanticType &argument,
       const std::vector<GenericParameterInfo> &parameters,
       GenericSubstitution &substitution, const ExprPtr *expression = nullptr,
       GenericParameterId *conflictingParameter = nullptr,
-      bool *conflictingValueParameter = nullptr);
+      bool *conflictingValueParameter = nullptr) const;
 
   [[nodiscard]] bool tryInstantiateFunction(
       const CallableCandidate &candidate,
@@ -3195,6 +3222,14 @@ private:
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
       std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
+
+  void selectConstructorCallArguments(
+      const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments,
+      std::vector<AnalyzedCallArgument> arguments, const Token &paren,
+      bool requireExactNullParameter, bool contextualConstruction,
+      std::vector<const ConstructorInfo *> *candidateProbe);
 
   void analyzeExpectedMemberCall(const Call &call, const Get &member,
                                  const SemanticType &expected,
@@ -3762,8 +3797,9 @@ private:
   [[nodiscard]] SemanticType
   selectExactClassSpecialization(SemanticType type) const;
 
-  [[nodiscard]] ClassId selectSignatureClassDefinition(
-      ClassId id, const std::vector<SemanticType> &arguments) const;
+  [[nodiscard]] ClassId
+  selectClassDefinition(ClassId id,
+                        const std::vector<SemanticType> &arguments) const;
 
   [[nodiscard]] static bool
   isConcreteExactSpecializationType(const SemanticType &type);
@@ -4154,6 +4190,10 @@ private:
   // Whether the construction's closed effects were open and recording stopped.
   [[nodiscard]] bool
   recordProgramConstructionEffects(const Expr &site,
+                                   const ResolvedConstructionInfo &construction,
+                                   std::size_t suppliedArguments);
+  [[nodiscard]] bool
+  recordProgramConstructionEffects(const SourceSpan &site,
                                    const ResolvedConstructionInfo &construction,
                                    std::size_t suppliedArguments);
 
@@ -5018,7 +5058,8 @@ private:
   [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
   rawProducedFields(const Expr &expression,
                     const std::vector<RawResultField> *fields = nullptr,
-                    const RawInvocation *invocation = nullptr);
+                    const RawInvocation *invocation = nullptr,
+                    const ResolvedConstructionInfo *contextual = nullptr);
   [[nodiscard]] std::shared_ptr<RawResultQuery>
   rawResultQuery(const Call &call, const ResolvedCallInfo &resolved);
   [[nodiscard]] std::shared_ptr<RawResultQuery>
@@ -5027,6 +5068,7 @@ private:
   rawConstructorResultQuery(const ResolvedConstructionInfo &resolved);
   void runRawResultQuery(const std::shared_ptr<RawResultQuery> &query);
   void recordRawResult(const ExprPtr &expression);
+  void recordEmptyReturnRawResult(const ReturnStmt &statement);
   void recordRawConstructorResult(const ConstructorDecl &constructor);
   void
   collectRawResultFields(const std::vector<ProjectedRawPointerOrigins> &fields,
@@ -5469,6 +5511,25 @@ private:
   // They do not introduce another owner: every binding refers into this one
   // object, and resetRequestState() is its only public-entry reset operation.
   struct RequestSessionState {
+    struct OwnerlessTextCallUse {
+      const FunctionDecl *caller = nullptr;
+      FunctionId callee = 0;
+      std::size_t parameter = 0;
+      SemanticType type = SemanticType::Unknown;
+      std::optional<std::size_t> forwardedParameter;
+      // The forwarded formal's type in the analysis that recorded this use.
+      // A concrete instance evaluates only uses recorded against its own
+      // signature, not those of the open body or a sibling instance.
+      SemanticType callerFormal = SemanticType::Unknown;
+      const ExprPtr *argument = nullptr;
+      bool ownerless = false;
+      bool diagnosed = false;
+    };
+    struct OwnerlessTextCallableUse {
+      FunctionId target = 0;
+      Token location;
+      bool diagnosed = false;
+    };
     struct MutableLocalCandidate {
       SymbolId symbol = 0;
       Token keyword;
@@ -5484,6 +5545,8 @@ private:
     std::vector<SemanticDiagnostic> diagnostics;
     SemanticModel semanticModel;
     SemanticCatalog catalog;
+    std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
+    std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
     std::unordered_map<const Expr *, const ParameterDefault *>

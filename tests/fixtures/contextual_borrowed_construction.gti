@@ -1,0 +1,35 @@
+#include <std/panic>
+
+struct Missing {};
+enum ViewState<T> { reference(T& value), absent };
+class View<T> {
+  mut ViewState<T> state;
+public:
+  implicit View(T& value) : state(ViewState<T>::reference(value)) {}
+  implicit View(Missing missing) : state(ViewState<T>::absent) {}
+  T& value() {
+    switch (this.state) {
+    case ViewState<T>::reference(auto& value): return value;
+    case ViewState<T>::absent: std::panic("empty view");
+    }
+  }
+  bool has_value() {
+    switch (this.state) {
+    case ViewState<T>::reference: return true;
+    case ViewState<T>::absent: return false;
+    }
+  }
+};
+View<int> read(int& owner, bool fail) {
+  if (fail) return Missing();
+  return owner;
+}
+int main() {
+  int owner = 42;
+  View<int> local = owner;
+  View<int> absent = Missing();
+  auto returned = read(owner, false);
+  auto failed = read(owner, true);
+  if (absent.has_value() || failed.has_value()) return 1;
+  return local.value() + returned.value() - 84;
+}

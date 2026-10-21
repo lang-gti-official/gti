@@ -183,7 +183,7 @@ std::optional<CheckedIntegerValue> evaluateDefinedIntegerBinary(
     IntegerArithmeticMode mode) {
   if (!validCheckedIntegerDomain(domain) || !checkedIntegerFits(left, domain) ||
       !checkedIntegerFits(right, domain) ||
-      mode == IntegerArithmeticMode::CheckedResult) {
+      mode == IntegerArithmeticMode::OverflowPredicate) {
     return std::nullopt;
   }
 

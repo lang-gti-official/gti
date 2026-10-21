@@ -1,0 +1,59 @@
+// expected remains global prelude vocabulary, implemented by ordinary classes
+// over payload enums. No experimental header or namespace is required.
+#include <std/string>
+#include <std/meta>
+
+enum parse_error { missing };
+
+// The mapper's exact signature remains visible through ordinary source helper
+// forwarding; the unrelated overload is not selected by C++ code generation.
+int describe_error(parse_error error) { return 7; }
+bool describe_error(bool value) { return value; }
+
+constexpr expected<int, parse_error> parse(bool present) {
+  if (!present) return unexpected(parse_error::missing);
+  return 42;
+}
+
+expected<void, parse_error> require(bool present) {
+  if (!present) return unexpected(parse_error::missing);
+  return;
+}
+
+expected<int, parse_error> read(bool present) {
+  ?require(present);
+  return ?parse(present);
+}
+
+// The declared conformance covers this entire class family, so a generic
+// caller need not restate tryable for an already-known result shape.
+expected<T, E> forward_result<T, E>(expected<T, E> result) {
+  return ?std::move(result);
+}
+
+expected<int&, parse_error> lookup(int& owner, bool present) {
+  if (!present) return unexpected(parse_error::missing);
+  return owner;
+}
+
+static_assert(std::meta::type<expected<int, parse_error>>().is_class());
+static_assert(parse(true).value() == 42);
+
+int main() {
+  int increment = 1;
+  auto mapped = forward_result(read(true)).transform([&increment](int value) -> int {
+    return value + increment;
+  });
+  if (mapped.value() != 43 || read(false).has_value()) return 1;
+  auto described = read(false).transform_error([](parse_error error) -> std::string {
+    return std::string("missing input");
+  });
+  if (described.has_value() || described.error() != "missing input") return 2;
+  auto numbered = read(false).transform_error(describe_error);
+  if (numbered.has_value() || numbered.error() != 7) return 4;
+  int owner = 7;
+  int& observed = lookup(owner, true).expect("owner required");
+  // The reference retains owner, not the temporary result shell. A local
+  // owner's reference cannot escape its scope or outlive that owner.
+  return observed == 7 ? 0 : 3;
+}

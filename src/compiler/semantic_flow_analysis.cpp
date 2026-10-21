@@ -644,19 +644,24 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
 auto SemanticVisitor::Impl::recordProgramConstructionEffects(
     const Expr &site, const ResolvedConstructionInfo &construction,
     std::size_t suppliedArguments) -> bool {
+  return recordProgramConstructionEffects(tokenSpan(expressionToken(site)),
+                                          construction, suppliedArguments);
+}
+
+auto SemanticVisitor::Impl::recordProgramConstructionEffects(
+    const SourceSpan &span, const ResolvedConstructionInfo &construction,
+    std::size_t suppliedArguments) -> bool {
   recordProgramConstructorDefaultArgumentEffects(
-      programConstructor(construction.constructor), suppliedArguments,
-      tokenSpan(expressionToken(site)));
+      programConstructor(construction.constructor), suppliedArguments, span);
   if (construction.constructedType.kind != SemanticType::Class ||
       construction.constructedType.classId == 0) {
     return false;
   }
   if (hasOpenProgramCleanupShape(construction.constructedType)) {
-    addUnknownProgramEffect(site, "a generic construction has no closed "
+    addUnknownProgramEffect(span, "a generic construction has no closed "
                                   "program-storage effect summary");
     return true;
   }
-  const SourceSpan span = tokenSpan(expressionToken(site));
   if (construction.generatedDefault || construction.constructor == 0) {
     recordProgramDefaultConstructionEffects(construction.constructedType, span);
   } else {
@@ -2108,6 +2113,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         switch (intrinsic) {
         case IntrinsicKind::Panic:
         case IntrinsicKind::FailEmptyOwner:
+        case IntrinsicKind::FailInactiveValue:
+        case IntrinsicKind::FailInactiveError:
           anchor(token);
           addFailureOutcome(operation,
                             intrinsicTerminalFailureOutcome(intrinsic)->code,
@@ -2205,6 +2212,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ThreadHandleEmpty:
         case IntrinsicKind::ThreadSpawn:
         case IntrinsicKind::ThreadJoinable:
+        case IntrinsicKind::ThreadResultTake:
         case IntrinsicKind::AtomicLoad:
         case IntrinsicKind::AtomicWait:
         case IntrinsicKind::AtomicNotifyOne:
@@ -2327,9 +2335,9 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::IntegerSaturatingAdd:
         case IntrinsicKind::IntegerSaturatingSubtract:
         case IntrinsicKind::IntegerSaturatingMultiply:
-        case IntrinsicKind::IntegerCheckedAdd:
-        case IntrinsicKind::IntegerCheckedSubtract:
-        case IntrinsicKind::IntegerCheckedMultiply:
+        case IntrinsicKind::IntegerAddOverflows:
+        case IntrinsicKind::IntegerSubtractOverflows:
+        case IntrinsicKind::IntegerMultiplyOverflows:
         case IntrinsicKind::None:
         case IntrinsicKind::Count:
           break;
@@ -2926,12 +2934,18 @@ auto SemanticVisitor::Impl::finalizeAdvisoryDiagnostics() -> void {
 }
 
 auto SemanticVisitor::Impl::analyze(const ExprPtr &expr) -> SemanticType {
-  return expr ? analyze(*expr) : SemanticType::Unknown;
+  return analyze(expr, OccurrenceRole::Reference | OccurrenceRole::Read);
 }
 
 auto SemanticVisitor::Impl::analyze(const ExprPtr &expr, OccurrenceRole roles)
     -> SemanticType {
-  return expr ? analyze(*expr, roles) : SemanticType::Unknown;
+  if (!expr)
+    return SemanticType::Unknown;
+  const auto result = analyze(*expr, roles);
+  if (exprAs<Get>(expr.get()))
+    if (const auto complete = completeBorrowDependencySet(expr))
+      semanticModel.recordBorrowDependencySet(*expr, *complete);
+  return result;
 }
 
 auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
@@ -3008,12 +3022,18 @@ auto SemanticVisitor::Impl::declarationConstructionApplies(
     return false;
   }
   // A union's initializer selects a member rather than a constructor, an
-  // abstract class has no complete object, and a borrow-carrying result needs
-  // the stored-borrow bookkeeping of a construction expression.
+  // abstract class has no complete object. Conditional borrowed results use
+  // a separately proved synthetic result, preserving the original argument.
   const ClassInfo &owner = classInfo(declaredType.classId);
-  if (owner.kind == ClassKind::Union || owner.abstract ||
-      typeTraits(declaredType).containsBorrowedState) {
+  if (owner.kind == ClassKind::Union || owner.abstract) {
     return false;
+  }
+  if (typeTraits(declaredType).containsBorrowedState) {
+    const auto inventory = storedReferenceInventory(declaredType);
+    if (!inventory ||
+        std::none_of(inventory->begin(), inventory->end(),
+                     [](const auto &path) { return !path.conditions.empty(); }))
+      return false;
   }
   // An initializer typed by its destination has no type of its own with which
   // to select a constructor.
@@ -3126,9 +3146,24 @@ auto SemanticVisitor::Impl::analyzeDeclarationConversion(
 auto SemanticVisitor::Impl::contextualConstructionRawFields(
     const Expr &initializer, const SemanticType &type)
     -> std::vector<ProjectedRawPointerOrigins> {
-  // The selected constructor or conversion operator may store any address it
-  // receives or creates, and no query of its body is recorded here: every raw
-  // field is unresolved.
+  // An ordinary source constructor selected for a contextual construction is
+  // queried like any other constructor call: the written expression is its
+  // single actual argument, and the constructor body's recorded raw fields
+  // name which parameter (or fresh address) each stored pointer came from.
+  if (const auto *contextual =
+          rawAuditEnabled()
+              ? semanticModel.findContextualConstruction(initializer)
+              : nullptr;
+      contextual != nullptr && contextual->constructor != 0 &&
+      contextual->kind == ConstructorKind::Ordinary &&
+      contextual->declaration != nullptr &&
+      contextual->declaration->body() != nullptr &&
+      contextual->constructedType == type &&
+      contextual->parameterTypes.size() == 1 &&
+      !containsOpenTypeParameter(type))
+    return rawProducedFields(initializer, nullptr, nullptr, contextual);
+  // A conversion operator or an unqueryable constructor may store any address
+  // it receives or creates: every raw field stays unresolved.
   std::vector<ProjectedRawPointerOrigins> fields;
   for (auto path : rawPointerFieldPaths(type)) {
     mergeRawPointerFields(
@@ -5898,6 +5933,27 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   for (std::size_t index = common; index < call.arguments().size(); ++index) {
     analyze(call.arguments()[index]);
   }
+  // A class whose own stored references are guarded by alternatives is not
+  // yet an enum payload: the selected alternative would nest one guarded set
+  // inside another, which verified MIR does not compose. Unconditional
+  // borrowed classes, direct references and enum payloads remain supported.
+  for (std::size_t index = 0; index < common; ++index) {
+    const auto &field = enumerator.payloadTypes[index];
+    if (field.kind != SemanticType::Class)
+      continue;
+    const auto inventory = storedReferenceInventory(field);
+    if (!inventory ||
+        std::none_of(inventory->begin(), inventory->end(),
+                     [](const auto &path) { return !path.conditions.empty(); }))
+      continue;
+    report(expressionToken(call.arguments()[index]),
+           "Payload field type '" + typeSpelling(field) +
+               "' conditionally retains references; a class carrying a "
+               "guarded dependency set cannot be an enum payload yet.",
+           "GTI-S2067");
+    currentType = enumerator.symbol.type;
+    return;
+  }
   // A payload constructor evaluates its fields in the same ordered input
   // region as an ordinary call. In particular, retaining an earlier reference
   // cannot permit a later argument to mutate or move that referent.
@@ -6521,8 +6577,11 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
   const bool payloadEnum = info != nullptr && payloadEnumType(info->type);
+  const bool callable =
+      info != nullptr && (info->type.kind == SemanticType::Lambda ||
+                          info->type.kind == SemanticType::FunctionItem);
   if (info == nullptr || info->category != ValueCategory::Value ||
-      (info->type.kind != SemanticType::Class && !payloadEnum)) {
+      (info->type.kind != SemanticType::Class && !payloadEnum && !callable)) {
     return result;
   }
   result.type = info->type;
@@ -6530,7 +6589,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  if (!payloadEnum) {
+  if (!payloadEnum && !callable) {
     const ClassInfo *record = classInfo(info->type);
     if (record == nullptr || (record->kind != ClassKind::Class &&
                               record->kind != ClassKind::Struct)) {
@@ -6538,7 +6597,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       return result;
     }
   }
-  if (info->traits.containsBorrowedState) {
+  if (info->traits.containsBorrowedState && !callable) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
     return result;
   }
@@ -6546,6 +6605,26 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  if (callable) {
+    const auto *lambda = exprAs<Lambda>(producer);
+    const auto *declaration =
+        lambda ? semanticModel.findLambda(*lambda) : nullptr;
+    const auto *item = semanticModel.findFunctionItemSelection(*producer);
+    result.eligible =
+        (declaration && info->type.kind == SemanticType::Lambda &&
+         declaration->id == info->type.lambdaId &&
+         declaration->capability == CallableInvocationCapability::Read &&
+         (!info->traits.containsBorrowedState ||
+          !semanticModel.findCaptureBorrowDependencies(*producer).empty())) ||
+        (item && info->type.kind == SemanticType::FunctionItem &&
+         item->type == info->type && item->function != 0 && item->declaration &&
+         item->capability == CallableInvocationCapability::Read &&
+         !info->traits.containsBorrowedState);
+    result.failure = result.eligible
+                         ? FreshTemporaryValueFailure::None
+                         : FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
   }
   if (payloadEnum) {
@@ -6726,7 +6805,8 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
       receiver ? semanticModel.findExpression(*receiver) : nullptr;
   return info != nullptr && info->category == ValueCategory::Value &&
          info->type.kind == SemanticType::Class && info->traits.movable &&
-         !info->traits.containsBorrowedState;
+         (!info->traits.containsBorrowedState ||
+          completeBorrowDependencySet(receiver).has_value());
 }
 
 auto SemanticVisitor::Impl::receiverModeForObject(
@@ -7435,7 +7515,7 @@ auto SemanticVisitor::Impl::reinitializePlace(const SemanticPlace &place)
 auto SemanticVisitor::Impl::reportUnavailablePlace(
     const Token &use, const ProjectedValueState &state,
     const SemanticPlace *place) -> void {
-  if (loanFlow.deferredConstexprSelection) {
+  if (loanFlow.deferredGenericFlow) {
     return;
   }
   std::string name = place != nullptr && place->receiver ? "this"
@@ -7499,7 +7579,7 @@ auto SemanticVisitor::Impl::analyzeProjectionBase(const ExprPtr &expression)
 auto SemanticVisitor::Impl::requireInitializedReceiver(const Token &location)
     -> void {
   if (currentReceiverMutability == ReceiverMutability::Consuming ||
-      loanFlow.deferredConstexprSelection) {
+      loanFlow.deferredGenericFlow) {
     return;
   }
   const Symbol *receiver = receiverStateSymbol();
@@ -7537,7 +7617,7 @@ auto SemanticVisitor::Impl::packRequiresMove(const SemanticType &type) const
 auto SemanticVisitor::Impl::reportUnavailableValue(const Token &use,
                                                    const Symbol &symbol)
     -> void {
-  if (loanFlow.deferredConstexprSelection) {
+  if (loanFlow.deferredGenericFlow) {
     return;
   }
   report(use,
@@ -8555,6 +8635,28 @@ auto SemanticVisitor::Impl::recordRawConstructorResult(
                          constructor.parameters(), parameterTypes, true);
 }
 
+auto SemanticVisitor::Impl::recordEmptyReturnRawResult(
+    const ReturnStmt &statement) -> void {
+  if (!rawAuditEnabled())
+    return;
+  const auto query = requestSession.collectingRawResult;
+  const auto *function = currentFunctionInfo();
+  if (!query || !function || function->id != query->function ||
+      lambdaDepth != 0)
+    return;
+  // A default constructor may create arbitrary addresses. Until its body is
+  // queried, absence of a source argument must not imply proven-safe fields.
+  std::vector<ProjectedRawPointerOrigins> fields;
+  for (auto path : rawPointerFieldPaths(currentReturnType))
+    mergeRawPointerFields(
+        fields,
+        {{std::move(path),
+          {{.addressSite = tokenSpan(statement.keyword()),
+            .sourceResultQuery = std::numeric_limits<std::size_t>::max()}}}});
+  collectRawResultFields(fields, function->bodyDeclaration()->parameters(),
+                         function->parameterTypes, false);
+}
+
 auto SemanticVisitor::Impl::collectRawResultFields(
     const std::vector<ProjectedRawPointerOrigins> &fields,
     const std::vector<Parameter> &parameters,
@@ -8895,17 +8997,22 @@ auto SemanticVisitor::Impl::runRawResultQuery(
 
 auto SemanticVisitor::Impl::rawProducedFields(
     const Expr &expression, const std::vector<RawResultField> *suppliedFields,
-    const RawInvocation *invocation)
+    const RawInvocation *invocation, const ResolvedConstructionInfo *contextual)
     -> std::vector<ProjectedRawPointerOrigins> {
   if (!rawAuditEnabled())
     return {};
-  const auto *call = exprAs<Call>(&expression);
-  const auto *direct = exprAs<DirectInitializer>(&expression);
+  // A contextual construction's only written argument is the expression
+  // itself; it is never a call or direct initializer of the constructed type.
+  const auto *call = contextual ? nullptr : exprAs<Call>(&expression);
+  const auto *direct =
+      contextual ? nullptr : exprAs<DirectInitializer>(&expression);
   const auto *resolved = invocation ? &invocation->resolved
                          : call     ? semanticModel.findCall(*call)
                                     : nullptr;
-  const auto *construction =
-      invocation ? nullptr : semanticModel.findConstruction(expression);
+  const auto *construction = invocation ? nullptr
+                             : contextual
+                                 ? contextual
+                                 : semanticModel.findConstruction(expression);
   const auto type = construction ? construction->constructedType
                     : resolved   ? resolved->returnType
                                  : semanticModel.typeOf(expression);
@@ -8936,6 +9043,12 @@ auto SemanticVisitor::Impl::rawProducedFields(
       : call     ? ResolvedCallArguments(*call, resolved)
       : direct   ? ResolvedCallArguments(direct->arguments())
                  : ResolvedCallArguments{};
+  const std::size_t argumentCount = contextual ? 1 : arguments.size();
+  const auto actualArgument = [&](std::size_t index) -> const Expr * {
+    if (contextual)
+      return index == 0 ? &expression : nullptr;
+    return index < arguments.size() ? arguments[index].get() : nullptr;
+  };
   const auto &defaults = construction ? construction->defaultArguments
                                       : resolved->defaultArguments;
   std::vector<ProjectedRawPointerOrigins> result;
@@ -8951,11 +9064,11 @@ auto SemanticVisitor::Impl::rawProducedFields(
     std::vector<RawPointerOrigin> origins;
     for (const auto &source : field.origins) {
       const Expr *actual = nullptr;
-      if (source.parameter && *source.parameter < arguments.size())
-        actual = arguments[*source.parameter].get();
+      if (source.parameter && *source.parameter < argumentCount)
+        actual = actualArgument(*source.parameter);
       else if (source.parameter &&
-               *source.parameter - arguments.size() < defaults.size())
-        actual = defaults[*source.parameter - arguments.size()];
+               *source.parameter - argumentCount < defaults.size())
+        actual = defaults[*source.parameter - argumentCount];
       else if (source.receiver && invocation)
         actual = invocation->receiver;
       else if (source.receiver && call)
@@ -9050,6 +9163,26 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
     return {};
   if (const auto *call = exprAs<Call>(&expression)) {
     const auto intrinsic = resolvedIntrinsicKind(*call);
+    // A statically selected source call whose result query completed has an
+    // exact origin summary: its produced fields name every pointer the result
+    // can carry, so the receiver and arguments are not possible origins.
+    // Only a producing context may demand that query: a collecting worker
+    // (includeProduced == false) must not re-enter its own family.
+    const auto *resolved = semanticModel.findCall(*call);
+    const auto exactQuery =
+        includeProduced && resolved != nullptr &&
+                resolved->intrinsic == IntrinsicKind::None &&
+                resolved->dispatch == CallDispatch::Static &&
+                !semanticModel.findLambdaCall(*call) &&
+                !semanticModel.findDeferredCallableCall(*call)
+            ? rawResultQuery(*call, *resolved)
+            : nullptr;
+    if (exactQuery && exactQuery->complete && exactQuery->valid) {
+      std::vector<RawPointerOrigin> result;
+      for (const auto &field : rawProducedFields(expression))
+        mergeRawPointerOrigins(result, field.origins);
+      return result;
+    }
     if (intrinsic == IntrinsicKind::ExpectedValue ||
         intrinsic == IntrinsicKind::ExpectedError ||
         intrinsic == IntrinsicKind::ExpectedValueOr ||
@@ -10524,12 +10657,17 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
     case IntrinsicKind::IntegerSaturatingAdd:
     case IntrinsicKind::IntegerSaturatingSubtract:
     case IntrinsicKind::IntegerSaturatingMultiply:
-    case IntrinsicKind::IntegerCheckedAdd:
-    case IntrinsicKind::IntegerCheckedSubtract:
-    case IntrinsicKind::IntegerCheckedMultiply:
+    case IntrinsicKind::IntegerAddOverflows:
+    case IntrinsicKind::IntegerSubtractOverflows:
+    case IntrinsicKind::IntegerMultiplyOverflows:
     case IntrinsicKind::EnumUnderlyingValue:
     case IntrinsicKind::ObjectSize:
     case IntrinsicKind::ObjectAlignment:
+    // A terminal failure never returns, so it cannot access a raw pointee.
+    case IntrinsicKind::Panic:
+    case IntrinsicKind::FailEmptyOwner:
+    case IntrinsicKind::FailInactiveValue:
+    case IntrinsicKind::FailInactiveError:
       return;
     case IntrinsicKind::RestoringSwap:
     case IntrinsicKind::RestoringExchange:
@@ -12048,7 +12186,9 @@ auto SemanticVisitor::Impl::baseTypeOf(
     if (const std::optional<ClassId> id =
             resolveClassPath(type.name, fromScope)) {
       const ClassInfo &owner = classInfo(*id);
-      if (!owner.declaration->genericArgumentPatterns().empty()) {
+      if (!owner.declaration->genericArgumentPatterns().empty() ||
+          !owner.definitionFamilyMembers.empty() ||
+          owner.definitionFamilyPrimary != 0) {
         std::vector<SemanticType> arguments;
         for (const TypeRef &argument : type.arguments) {
           arguments.push_back(typeOf(argument, fromScope));

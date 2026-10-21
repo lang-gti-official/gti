@@ -1,0 +1,50 @@
+#include <std/string>
+
+// A readonly element may iterate a range reached through a mutable reference
+// returned by a call: the hidden range family shares that call's mutable
+// loan while every alias it binds stays readonly.
+class Cursor {
+  mut int32_t current;
+public:
+  Cursor(int32_t value) : current(value) {}
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current += 1; }
+  bool operator!=(Cursor& other) { return this.current != other.current; }
+};
+
+class Range {
+  int32_t first;
+  int32_t last;
+public:
+  Range(int32_t first, int32_t last) : first(first), last(last) {}
+  Cursor begin() { return Cursor(this.first); }
+  Cursor end() { return Cursor(this.last); }
+};
+
+mut Range& pick_range(mut Range& range) { return range; }
+mut std::string& pick_text(mut std::string& text) { return text; }
+
+int32_t sum(mut Range& range) {
+  mut int32_t total = 0;
+  for (auto& value : pick_range(range)) {
+    total += value;
+  }
+  return total;
+}
+
+int32_t count(mut std::string& text) {
+  mut int32_t bytes = 0;
+  for (auto& byte : pick_text(text)) {
+    bytes += 1;
+  }
+  return bytes;
+}
+
+int main() {
+  mut Range range{1, 4};
+  mut std::string text = std::string("abc");
+  if (sum(range) != 6 || count(text) != 3) {
+    return 1;
+  }
+  return 0;
+}

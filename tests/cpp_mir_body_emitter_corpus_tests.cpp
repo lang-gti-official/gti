@@ -367,9 +367,12 @@ void testGeneralTextStepMatchesProductionEmission() {
                std::string::npos)) {
         loanBodies = true;
       }
-      if (emission.text.find("checked_add") != std::string::npos ||
-          emission.text.find("checked_sub") != std::string::npos ||
-          emission.text.find("checked_mul") != std::string::npos) {
+      if (emission.text.find("integer_add_overflow_flag") !=
+              std::string::npos ||
+          emission.text.find("integer_subtract_overflow_flag") !=
+              std::string::npos ||
+          emission.text.find("integer_multiply_overflow_flag") !=
+              std::string::npos) {
         checkedIntrinsicBodies = true;
       }
       directControlFlowBodies =
@@ -416,9 +419,8 @@ void testGeneralTextStepMatchesProductionEmission() {
            "the corpus should emit at least one wrapping/saturating intrinsic "
            "helper call from verified MIR");
     expect(checkedIntrinsicBodies,
-           "the corpus should emit at least one checked-result intrinsic "
-           "helper call from verified MIR now that Expected sums joined the "
-           "signature boundary (0.183.0)");
+           "the corpus should emit at least one overflow-query helper call "
+           "from verified MIR while source code owns checked-result policy");
     expect(generalBodies >= 30,
            "the corpus should keep exercising the migrated per-body families");
   }

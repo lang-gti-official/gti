@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""A cleanup-free conditional result of a member call or input-consuming call."""
+"""A cleanup-free conditional result of a member, input-consuming or callable
+value call."""
 
 import pathlib
 
@@ -26,8 +27,8 @@ def cleanup_free_call_cases(name="conditional_cleanup_free_call_result"):
     # with cleanup is destroyed at the end of its full expression, a moved
     # argument with cleanup inside its callee, and a borrowed one at scope
     # exit.
-    shapes = trace(4897, -45, -47, -48, -46, 2641,
-                   17004, -148, -147, -146, -145, 4756)
+    shapes = trace(4897, -45, -47, -48, -46, 3794,
+                   17004, -148, -147, -146, -145, 6212)
     # A failing callee in an arm leaves no result, and cleanup destroys only
     # what was constructed before it.
     expected = [

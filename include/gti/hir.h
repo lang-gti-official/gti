@@ -256,8 +256,10 @@ struct HirValue {
   // Checked source control-flow contracts, retained independently of the
   // backend's private status-returning failure convention.
   bool neverReturns = false;
+  std::optional<SemanticNoNormalBorrowResultProof> noNormalBorrowResultProof;
   bool tracksCaller = false;
   std::optional<CallerLocationOrigin> callerLocation;
+  std::optional<SemanticCallerLocationProof> callerLocationProof;
   std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
@@ -441,6 +443,12 @@ struct HirContextualConstruction {
   std::optional<SemanticContextualConstructionProof> constructionProof;
 };
 
+struct HirEmptyReturnConstruction {
+  const ReturnStmt *source = nullptr;
+  HirValueId value = 0;
+  std::optional<SemanticEmptyReturnConstructionProof> constructionProof;
+};
+
 struct HirBody {
   PlaceDomain placeDomain;
   std::vector<HirBinding> bindings;
@@ -450,6 +458,7 @@ struct HirBody {
   std::vector<HirValue> values;
   std::vector<HirDirectInitialization> directInitializations;
   std::vector<HirContextualConstruction> contextualConstructions;
+  std::vector<HirEmptyReturnConstruction> emptyReturnConstructions;
   // Source expressions that semantics aliased to another expression (a
   // reflected field access and the projection it denotes): the source shares
   // the aliased expression's value without a value of its own.
@@ -627,6 +636,8 @@ struct HirFunctionInstance {
   std::vector<CompileTimeValue> valueArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ownerlessTextParameters;
+  std::optional<SemanticOwnerlessTextContractProof> ownerlessTextContractProof;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
@@ -726,6 +737,7 @@ struct HirConstructorInstance {
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowParameters;
+  std::optional<FunctionBorrowDependencySummary> completeBorrow;
   std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;
@@ -1015,6 +1027,10 @@ struct HirLoweringScope {
       completeDeclarations;
   bool omitLibraryOnlyBodies = false;
   std::vector<SourceUnitId> trustedUnits;
+  // Diagnostic paths of compiler-trusted units. An error inside a generic
+  // instance located in one of them is reported at the first request from
+  // other code, with the library location kept as related information.
+  std::vector<std::string> trustedSources;
 };
 
 class HirLowerer {

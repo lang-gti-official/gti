@@ -80,6 +80,16 @@ Checked<int> make(int id, int value, int failure) {
 
 Done check(int failure) { return Done(failure); }
 
+Flag flag_of(int value, int failure) { return Flag(value, failure); }
+
+// A receiver borrowed for a call stays staged across `?` in its argument.
+class Total {
+public:
+  mut int sum;
+  Total() : sum(0) {}
+  void add(int value) mut { this.sum += value; }
+};
+
 Status successes() {
   int first = ?make(1, 10, 0);
   Checked<int> held = make(2, 20, 0);
@@ -89,6 +99,15 @@ Status successes() {
   Flag flag{5, 0};
   int twice = ?flag + ?flag;
   std::println(std::to_string(twice));
+  // `?` in a conditional arm or on the right of `||` runs only when reached.
+  int arm = flag.value > 0 ? ?flag_of(7, 0) : 0;
+  bool either = arm < 0 || ?flag_of(1, 0) > 0;
+  std::println(std::to_string(arm + (either ? 100 : 0)));
+  mut Total total{};
+  for (mut int index = 1; index < 3; index++) {
+    total.add(?flag_of(index, 0));
+  }
+  std::println(std::to_string(total.sum));
   return Status(0);
 }
 
@@ -100,6 +119,20 @@ Status early(int phase) {
     std::println(std::to_string(total));
   }
   ?check(phase == 3 ? 4 : 0);
+  if (phase == 4 || phase == 5) {
+    // A residual from a conditional arm or from the right of `||` returns
+    // before the enclosing expression completes.
+    int arm = phase == 4 ? ?flag_of(1, 6) : 0;
+    bool either = arm > 0 || ?flag_of(2, 9) > 0;
+    std::println(std::to_string(arm + (either ? 1 : 0)));
+  }
+  if (phase == 6) {
+    // A residual in an argument returns before the staged receiver's call.
+    mut Total total{};
+    total.add(?flag_of(1, 0));
+    total.add(?flag_of(2, 11));
+    std::println(std::to_string(total.sum));
+  }
   int second = ?make(4, 40, 7);
   std::println(std::to_string(first + second));
   return Status(0);

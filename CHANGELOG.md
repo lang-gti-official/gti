@@ -9,6 +9,115 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.449.0 — Source-defined `expected`, class profiles and ownerless text forwarding
+
+### `expected` is an ordinary source class
+
+- `expected<T, E>` and `unexpected(error)` are now written in GTI in the
+  implicit prelude, as ordinary classes over payload enums. They stay global
+  and need no include, and the API is unchanged: `has_value()`, `bool`
+  conversion, `value()`, `error()`, `value_or`, `expect`, `transform`,
+  `transform_error`, `and_then`, prefix `?`, and the owned, `void`, `T&`, `T*`
+  and `const T*` success forms. Hover, completion and go-to-definition use
+  the prelude declarations.
+- Range-for over `value()` and `error()` follows the ordinary range rules.
+  `for (auto& byte : result.value())` now also works when `result` is a field
+  or a reference parameter, `for (mut auto& byte : result.value())` edits a
+  `mut` result's payload in place, `error()` can be iterated, and
+  `make_result().value()` iterates the moved payload. These were
+  `error[GTI-S2017]` or `error[GTI-S2045]` before.
+- Mapper mistakes use ordinary diagnostics, and `GTI-S2097` is retired. An
+  `and_then` mapper returning a different error type reports
+  `error[GTI-S2029]` at the call's closing parenthesis, and a mapper taking
+  the wrong number of arguments reports `error[GTI-S2005]`. A
+  `transform_error` mapper returning `void` or a reference is still rejected,
+  through the member's own instantiation (`error[GTI-S2000]` or
+  `error[GTI-S2022]`).
+
+### Compatibility notes for `expected`
+
+- A raw-pointer error type such as `expected<int32_t, const int32_t*>` is no
+  longer accepted (`error[GTI-S2056]`, pointing into the prelude's error
+  storage). Raw-pointer success types such as `expected<T*, E>` still work.
+- A `std::string_view` or `c_string` error or success must be ownerless text,
+  such as a string literal. `return unexpected(input.view());` for a caller's
+  `std::string& input` was accepted by 0.448.4 and is now `error[GTI-S2045]`;
+  return an owned `std::string` error instead. A success view of caller-owned
+  text was an internal compiler error (`GTI-B0001`) and now reports
+  `error[GTI-S2045]`.
+- On a `mut` result, `value()` and `error()` now select the mutable accessor,
+  as they do for any class with a read-only and a `mut` overload. A view taken
+  from one call therefore conflicts with a second call in the same expression,
+  as in `r.error().path.view() != "p" || r.error().code != 1`, and nested
+  range-for loops over the same `mut` result conflict too (`error[GTI-S2017]`).
+  Declare the result without `mut` when it is only read.
+- A return that needs two implicit conversions, such as
+  `return std::string("tea");` from a function returning
+  `expected<expected<std::string, E>, E>`, is now `error[GTI-S2003]`.
+  Construct the inner result explicitly.
+- Optimized code that uses `expected` can run slower than in 0.448.4. Some
+  optimizer proofs and shared exit paths the built-in type allowed are not yet
+  recovered for the source class; that work is tracked as RT-12.
+
+### Class profiles and empty returns
+
+- A class family can define separate profiles for `void`, reference and
+  raw-pointer arguments next to its ordinary definition, such as
+  `class Packet<T, E>`, `class Packet<void, E>`, `class Packet<T&, E>` and
+  `class Packet<const T*, E>`. Each profile has its own members and layout,
+  and selection does not depend on declaration order. Overlapping profiles are
+  rejected.
+- An `implicit` constructor may take zero explicit arguments, and a bare
+  `return;` in a function returning a class selects it, as
+  `expected<void, E>` does for a successful empty return.
+- A `for concept` block for a whole class family, such as `C<Wrapper<T>>`,
+  also proves `C<Wrapper<U>>` inside generic bodies.
+- `std::meta::type<T>` adds `is_reference()` and `is_void()`.
+
+### Text views passed through helpers
+
+- A helper that stores or forwards a text parameter into a text field is now
+  valid on its own. Each call must pass ownerless text, such as a string
+  literal; a call passing a view of a dynamic string reports
+  `error[GTI-S2045]`, with the helper's parameter as related information.
+  Previously the helper itself was rejected.
+- Returning a view of a local string inside an error result, which 0.448.4
+  accepted and which dangled at run time
+  ([#234](https://github.com/lang-gti-official/gti/issues/234)), is now
+  `error[GTI-S2045]`.
+
+### Borrowing
+
+- `std::move(local)` of a whole local or parameter can be passed to a
+  read-only `T&` parameter. The moved value lives until the end of the
+  enclosing expression, and the local counts as moved afterwards.
+- A fresh lambda, an explicitly moved lambda local or a selected function item
+  can be passed to a read-only `F&` parameter for the duration of the call.
+- A user-defined reference carrier, such as a class with a `T&` field or a
+  payload enum with a reference alternative, can be returned from a free or
+  static function that borrows a global or static variable.
+- Consuming one read-only carrier, fresh or moved, no longer conflicts with
+  another carrier still reading the same owner.
+- A read-only range-for over a call returning `mut T&`, such as
+  `for (auto& value : pick(range))`, now compiles.
+
+### Constant evaluation
+
+- Payload enums work in `constexpr` code when every possible field has a
+  supported type: construction, `switch`, copying, assignment and consuming
+  methods, including inside source classes. `constexpr` methods and operators
+  may have a consuming `&&` receiver.
+
+### Diagnostics
+
+- `error[GTI-S2018]` for a by-value argument whose copy is deleted adds the
+  hint "Pass the argument with std::move(...) when this call should transfer
+  ownership." when the type can be moved.
+- `error[GTI-S2029]` names the constrained type as written, such as
+  `type 'expected<int32_t, bool>'`.
+- A recursive by-value layout reached through another invalid type reports
+  `error[GTI-S2082]` once instead of again at each containing type.
+
 ## 0.448.4 — Moved projections, move-only payloads, array-element switches and staged borrows
 
 ### No `mut` warning for moved fields and elements

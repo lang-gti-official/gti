@@ -58,6 +58,25 @@ void replace_through_cursor(mut Owner& target) {
   *cursor = make_owner(19);
 }
 
+// A cleanup-free result replaces its referent through the same cursor shape:
+// the returned value stages in representation-only storage and the two-phase
+// reference activates immediately before the commit.
+class PointCursor {
+  mut Point& target;
+public:
+  PointCursor(mut Point& target) : target(target) {}
+  mut Point& operator*() mut { return this.target; }
+};
+Point make_numbered(int32_t value) {
+  if (value < 0) { return Point(0); }
+  return Point(value);
+}
+void replace_point_through_cursor(mut Point& target) {
+  mut PointCursor cursor{target};
+  *cursor = make_numbered(21);
+  *cursor = make_numbered(23);
+}
+
 int main() {
   mut Point point{1};
   fresh(point);
@@ -74,6 +93,8 @@ int main() {
     if (alias.value != 9) return 5;
   }
   if (point.value != 9) return 6;
+  replace_point_through_cursor(point);
+  if (point.value != 23) return 18;
   mut std::string name{"old"};
   text(name);
   if (name != "new") return 7;

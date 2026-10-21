@@ -333,7 +333,7 @@ workflow determine task scope and integration.
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
 | `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0; library-only instance reuse in 0.420.0; library-only instance bodies omitted from editor HIR in 0.421.0; trusted prefix preamble in 0.423.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Editor snapshots reuse validated library-only concrete instance analyses, no longer lower library-only instance bodies, and resume from a preamble of the standard-library prefix analysed once per include graph (089 per-edit 470 to about 80 ms; exit measure met). Remaining: the adoption copy (about 17 ms per edit). See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
-| `RT-2` through `RT-11` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
+| `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
 | Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. Further goals include patterns over built-in type constructors and signature-level borrow-origin contracts, so `expected` can move onto the same protocol; and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
@@ -2990,6 +2990,13 @@ rescheduling the completed cutover.
 - **State/role:** complete bounded systems-readiness integration for portable
   byte-input parsers and serializers; `M-OWN-02`, `M-LIFE-01`, and
   `L-RANGE-01` remain its foundation.
+- **Superseded (2026-10-20):** `expected` is now a source-defined prelude
+  class whose `value()` and `error()` are ordinary accessors returning
+  receiver-tied references. The client and the shapes listed as non-goals
+  below (fields, reference parameters, mutable payload traversal, `error()`
+  ranges) now follow the general range and borrow rules; the compiler-trusted
+  `ExpectedValue` extraction no longer participates. See
+  [ranges over `expected` payloads](../language/ranges.md#ranges-over-expected-payloads).
 - **Named client:** iterate the owned string returned by
   `std::fread(...).value()` without moving it out of the named
   `expected<std::string, std::io_errc>` solely to satisfy the ownership model.
@@ -8999,6 +9006,93 @@ every prerequisite in the release matrix below is complete.
 The release phase owns the following explicit acceptance matrix. These are
 requirements to implement and verify, not permission to drop old behavior:
 
+Ownerless text forwarding is a remaining general-language prerequisite. The
+current constructor rule permits a literal-backed by-value text field but
+rejects an ordinary helper forwarding its text parameter into that constructor.
+The production migration exposes this in generic result factories; it is not
+evidence that a dynamic view can safely be retained without its owner.
+
+The proposed extension infers a conditional ownerless-text input obligation:
+it applies when the exact formal type is a text view, and does not constrain an
+unrelated owning or scalar instantiation. Ground storage obligations propagate
+through exact selected calls to a declaration-order-independent fixed point.
+An uncalled helper may then be valid with that obligation, whereas every
+dynamic or unknown caller must fail. Imported declarations, generic instances,
+function values, erased callables, and export boundaries must preserve the
+obligation or reject unsupported contract erasure. A literal caller cannot
+specialize the meaning of a reusable generic body.
+
+Ownerless output is a separate proof: a getter may return a by-value text field
+without borrowing its wrapper only when the field's storage invariant and the
+actual returned producer establish that fact. Unknown provenance is not an
+empty dependency set. HIR must preserve the source-selected contracts and MIR
+must independently verify storage, forwarding, and return witnesses; clearing
+a borrowed-state bit is never sufficient. Acceptance requires unrelated source
+wrappers, reverse-order/imported/generic forwarding, dynamic and dangling
+rejections, and omitted/substituted-proof mutations. In particular, the old
+compiler's acceptance of a local string view returned inside an error result
+(issue 234) must not be preserved. Full retained dynamic-view fields remain a
+different goal requiring explicit owner dependency representation.
+
+The borrowed-wrapper prerequisite remains in progress. Its general rule is a
+source class retaining a complete, alternative-guarded external dependency set
+through one nominal field, not an exception for `expected`. All retained paths
+and alternative guards must share that field prefix; projection removes that
+prefix from every obligation or declines the projection. Constructor summaries
+currently require an empty source body and exact typed initializers. Sibling
+borrowed fields and arbitrary post-initialization dependency replacement need
+their own general composition proof, not selective dropping of dependencies.
+
+Constructor publication must be explicit in MIR: initialize the exact field
+from the checked value, publish its entire origin/access/guard group into an
+escaping Stored field group while the producer remains live, then retire the
+producer group. Independently reconstruct and compare every normal exit with
+that field publication. An empty alternative requires known-empty typed
+evidence and must not invent an owner loan. Consuming reference extraction may
+retain only an external referent; receiver-owned storage cannot escape the
+consumed shell. The reference profile reads the selected field while consuming
+the wrapper; it does not require moving an enum subfield out separately.
+
+Focused work has established a compiling/running empty-wrapper case and an
+independent constructor-publication checker with mutations for missing or
+substituted origins, guards, access, field initialization and publication.
+The nonempty nongeneric wrapper now passes full semantic/MIR verification,
+including consuming external-reference extraction and implicit shared copying.
+Native integration remains in progress: consuming receivers must use ordinary
+ordered call-input stages, not a backend scheduling exception. Open generic
+receiver selections defer only their dependent switch until concrete instance
+analysis; they do not manufacture complete facts from symbolic inventories.
+The concrete instance must establish the full origin/access/guard proof and
+reject dangling selections or mutation through a surviving copied view.
+Remaining acceptance includes malformed receiver/field/loan mutations, generic
+concrete-instance tests, native lifecycle runs and the release matrix below.
+Passing a standalone summary checker or MIR verification is not evidence that
+the whole release matrix is complete.
+
+The enum constant-execution prerequisite now passes its focused compiler and
+native differential tests: exact alternatives, class-contained enum fields,
+read-only/mutable observations, consuming extraction, transient owning payloads
+and persistent passive constants use the verified MIR executor. Runtime-only
+payloads remain valid runtime instantiations of generic constexpr declarations.
+Example 168 demonstrates the same enum-backed source class at compile time and
+runtime. These results do not yet validate the production expected cutover or
+introduce persistent reference constants.
+
+Combinator compatibility remains an explicit integration goal. The source draft
+uses ordinary value/void invocation profiles and checked-reference mapper
+parameters; the named-callback owned/void API matrix reaches native execution. Fresh lambdas
+(including existing borrowing captures) and namespace function items still need
+general call-scoped temporary-reference admission with exact capture dependencies,
+non-escape, full-expression cleanup and invocation capability proofs. Do not
+replace a named callback's environment with an implicit ownership copy. The
+void-mapping native rejection was traced to loss of semantic class-definition
+family identity at callable-signature substitution. The lowered program now
+preserves that family identity, so the backend checks the already selected
+concrete profile without reimplementing source selection or changing object-type
+identity. The working branch now defines the source classes in the prelude
+to exercise production clients. This cutover remains unreleased until the
+compatibility, constructor publication and complete release matrix pass.
+
 1. **Storage and type-dependent surface:** source classes and private enums
    express owned, void-success and read-only-reference-success profiles.
    Choose general type projection/selection or disjoint generic-definition
@@ -9034,9 +9128,104 @@ requirements to implement and verify, not permission to drop old behavior:
    the production clients. A reference-class or void-profile prototype alone
    is not completion.
 
-No production migration or completed prerequisite verification is claimed by
-this planning record. Historical optional-release validation exceptions do not
-apply to this campaign.
+Production migration is in progress. The first implementation checkpoint extends
+ordinary class argument-pattern families to disjoint void/reference profiles and
+an ordinary type-parameter fallback. This lets a source carrier spell each
+profile's methods and storage directly, instead of introducing expected-specific
+type selection. The production cutover is staged on the implementation branch,
+not released. The remaining matrix above, including constexpr and cutover
+evidence, remains required.
+Historical optional-release validation exceptions do not apply to this campaign.
+
+The source API is now defined in `stdlib/prelude.gti` on the implementation
+branch; `stdlib/std/expected.gti` is a compatibility header. This preserves
+global availability without making ordinary includes transitive. Lexical
+reservations for `expected` and `unexpected`
+are removed there: ordinary class profiles, enum state, constructors and
+protocol conformance serve those global names. Legacy internal carrier paths
+still need retirement after production compatibility is established. Runnable
+example 169 and the production API fixture cover the public cutover; their
+registration does not itself establish passing release evidence.
+The next checkpoint has focused evidence for implicit borrowed-wrapper
+construction and fresh consuming reference relay: 24 native cases covering
+C++20/23, optimization levels, no-elision and sanitizers, plus independent
+constructor/dependency mutation and dangling/alias rejection tests. Ordinary
+call-result payload publication and fixed-array replacement now have focused
+proof tests and 40 native cases covering success, bounds/producer failure,
+cleanup and caller attribution. The source-class preflight suite also passes;
+its old builtin extraction shortcuts have been replaced by ordinary protocol,
+checked-access and loan-projection proof tests. This is not full-suite or
+release acceptance. Literal-backed text forwarding through storing generic
+factories, the complete API compatibility matrix, and scalar runtime
+performance remain open goals. The installed compiler's acceptance of a
+local-string-backed error view is recorded in issue #234 and must not be
+preserved as compatibility.
+Parallel prerequisite work extends complete dependency proofs through a class's
+enum field and executes payload enums in verified-MIR constant queries. The
+initial field projection requires every dependency and alternative guard to
+belong to that field; it does not silently discard sibling obligations.
+Arithmetic migration removes another carrier dependency: private integer
+operations expose overflow facts, while source numeric code constructs the
+public result. Final source cutover, complete compatibility, proof and
+performance validation remain pending; a compiling prototype is not release
+evidence. Ordinary one-value return construction is coordinated with PR #231;
+successful empty returns additionally need a general explicit constructor opt-in.
+That implementation now binds selection of a zero-explicit-argument `implicit`
+constructor to the exact bare return statement and semantic snapshot. HIR must
+retain that proof, selected defaults and one full-expression cleanup schedule;
+it must not manufacture a source expression or treat missing raw-address origins
+as safe. Focused access, ambiguity, unsafe-contract, cleanup and malformed-proof
+validation remains in progress.
+
+**Release outcome (2026-10-20, 0.449.0).** The source class is the production
+`expected`. The general gaps it exposed are closed in semantics and verified
+MIR, each with a user-defined fixture: complete dependency sets that name
+static storage, consuming carriers that keep their dependencies' access,
+residual `?` returns with complete sets, read-only ranges over mutable call
+results, reflected contextual construction, and terminal failures that are
+inert in the raw audit. By owner decision the optimizer proofs and exit sharing
+it lost are re-baselined as recovery-pending under `RT-12`. Remaining
+follow-ups:
+
+- Retire the built-in Expected path: `SemanticType::Expected`, the
+  `IntrinsicKind::Expected*` and `MirOperation::Unexpected` operations, the
+  M-OWN-04 `expectedPayloadExtraction` route and the backend's Expected
+  representation. No source program reaches them.
+- Dynamic text in results: a `std::string_view` or `c_string` alternative
+  must be ownerless, so `unexpected(input.view())` over a caller's string is
+  rejected (`GTI-S2045`), although the built-in carrier tracked that borrow.
+  Restoring it needs retained dynamic-view fields with explicit owner
+  dependencies, not an `expected` exception.
+- Raw-pointer error alternatives (`expected<T, const U*>`) are rejected
+  (`GTI-S2056` inside the prelude's error storage). Supporting them needs a
+  raw-pointer error-storage profile or a general rule for constructor-initialized
+  generic raw-pointer fields; the built-in carrier allowed them.
+- Use-based receiver access: an overloaded read-only/mutable accessor on a
+  `mut` receiver selects the mutable overload even for a read-only use, so a
+  concurrent read of the same carrier conflicts where the built-in place
+  access did not.
+- Diagnostics: `GTI-S2029` hints name `std::detail` helpers and `for concept`
+  blocks; callable-class mappers report `GTI-S2023` three times; mapper arity
+  errors cascade `GTI-S2023` with `GTI-S2005`; a reference-returning
+  `transform` mapper gets a misleading `GTI-S2017`; a `void` or reference
+  `transform_error` mapper and an `expected<T, void>` error type cascade
+  through the prelude's instantiation; contextual-return copies report the
+  constructor argument's `GTI-S2018` rather than a return-copy `GTI-S2003`;
+  `std::detail::unexpected_value` appears in user-facing types, and a
+  nested-carrier payload error points into the prelude.
+- Nested conditional carriers: a class field or enum payload whose type is
+  another conditionally borrowed class, and a conditional reference relayed
+  through a field, element or dereference of another value, are rejected in
+  semantics. Supporting them needs a composed receiver-prefix proof in both MIR
+  verifiers. The same gap already makes
+  `for (auto& item : borrowed.bag.elements())`, and a method call on an
+  `auto&` binding of an unconditional borrowed-class payload, internal errors
+  on 0.448.4.
+- MIR checks assignments to static text storage but does not yet re-verify
+  global text initializers.
+- Several emitter-independence tests now accept combined admission
+  (`analyze(...).ready()` together with `supportsFailureBodyText`); restore
+  per-check independence once the source class's bodies allow it.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
@@ -9221,11 +9410,23 @@ apply to this campaign.
   a passive result. Example 153 demonstrates scratch allocation and destruction.
   Independent step/depth, allocation-count and live-storage bounds fail closed.
   No AST allocation/destructor interpreter or public-name exceptions are added.
+- **Payload enum/source-wrapper execution (production expected campaign):**
+  Extend the canonical MIR constant profile to exact active payload enums,
+  source-class fields, borrowed observations and consuming receivers. Transient
+  owner payloads must follow the ordinary selected-variant cleanup recipe;
+  persistent constants remain passive. Constructor fields require explicit
+  canonical publication stages. Focused `testConstexprPayloadEnums`, all 26
+  constexpr compiler cases and `constexpr_payload_enum_runtime` pass with the
+  optimized host compiler, including malformed variant/publication checks,
+  mutable and read-only observations, consuming receiver cleanup, C++20/23
+  O0/O1/O2/O3 differential execution and sanitizer/no-elide checks. Complete
+  production-cutover compatibility and release gates remain pending. No AST
+  payload interpreter is introduced.
 - **Remaining scope:** Stored references, shared/virtual/recursive owning
   cleanup, raw-memory/provider allocation protocols,
   in-place constructor targets without an explicit canonical field-write schedule,
-  payload enums, unions, inherited aggregates,
-  consuming receivers, and polymorphism remain
+  unions, inherited aggregates,
+  and polymorphism remain
   excluded. Do not widen exact qualified specialization into partial specialization as a
   side effect.
 - **Initial exit gate:** met by positive/negative identity and limit tests plus

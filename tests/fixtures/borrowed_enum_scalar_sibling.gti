@@ -1,0 +1,22 @@
+enum ObservationState { reference(int& value), absent };
+class Envelope {
+  mut ObservationState state;
+  int checked;
+public:
+  Envelope(int& value, int divisor)
+      : state(ObservationState::reference(value)), checked(12 / divisor) {}
+  Envelope(int divisor)
+      : state(ObservationState::absent), checked(12 / divisor) {}
+  int inspect() {
+    switch (this.state) {
+    case ObservationState::reference(auto& value): return value + this.checked;
+    case ObservationState::absent: return this.checked;
+    }
+  }
+};
+int main() {
+  int owner = 42;
+  auto value = Envelope(owner, 2);
+  auto empty = Envelope(3);
+  return value.inspect() + empty.inspect() - 52;
+}

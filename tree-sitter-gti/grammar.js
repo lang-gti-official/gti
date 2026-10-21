@@ -33,7 +33,6 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "double",
   "else",
   "enum",
-  "expected",
   "extern",
   "export",
   "false",
@@ -82,7 +81,6 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "uint32",
   "uint64",
   "unsafe",
-  "unexpected",
   "using",
   "void",
   "virtual",
@@ -99,6 +97,8 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.generic_argument_profile_clause, $.generic_parameter],
+    [$.generic_argument_profile_clause, $._qualified_identifier],
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
     [$._base_type, $.numeric_conversion],
     [$.generic_function, $.user_type],
@@ -842,6 +842,18 @@ module.exports = grammar({
         ">",
       ),
 
+    generic_argument_profile_clause: ($) =>
+      seq(
+        "<",
+        repeat(seq(field("pattern", $.identifier), ",")),
+        field("pattern", choice(
+          "void",
+          seq(optional("mut"), $.identifier, $.reference_declarator),
+        )),
+        repeat(seq(",", field("pattern", $.type))),
+        ">",
+      ),
+
     generic_parameter: ($) =>
       choice(
         seq(
@@ -950,7 +962,6 @@ module.exports = grammar({
     _base_type: ($) =>
       choice(
         $.primitive_type,
-        $.expected_type,
         $.native_function_type,
         $.user_type,
         "auto",
@@ -983,8 +994,6 @@ module.exports = grammar({
         "bool",
         "char",
       ),
-
-    expected_type: ($) => seq("expected", "<", $.type, ",", $.type, ">"),
 
     native_function_type: ($) =>
       seq(
@@ -1442,7 +1451,6 @@ module.exports = grammar({
         $.generic_scoped_identifier,
         $.literal,
         $._qualified_identifier,
-        $.unexpected_expression,
         $.numeric_conversion,
         $.lambda_expression,
         $.layout_query_expression,
@@ -1458,9 +1466,6 @@ module.exports = grammar({
 
     unsafe_expression: ($) =>
       seq("unsafe", "{", field("value", $.expression), "}"),
-
-    unexpected_expression: ($) =>
-      seq("unexpected", "(", field("error", $._expression_not_comma), ")"),
 
     numeric_conversion: ($) =>
       seq(
@@ -1594,6 +1599,7 @@ function classDeclaration($, kind) {
         optional(choice(
           field("type_parameters", $.generic_parameter_clause),
           field("type_patterns", $.generic_signature_pattern_clause),
+          field("type_patterns", $.generic_argument_profile_clause),
         )),
       ),
       seq(

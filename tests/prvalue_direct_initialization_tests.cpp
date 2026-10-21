@@ -340,10 +340,11 @@ int main() {
           R"(class Lens { int& value; public: Lens(int& value) : value(value) {} };
                Lens bad() { int local = 4; return Lens(Lens(local)); }
                int main() { return 0; })"}) {
+    const std::filesystem::path standardLibrary =
+        std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
     const auto negative = lang::Frontend().analyze(
-        "invalid-fresh-result.gti", source,
-        {std::filesystem::path(__FILE__).parent_path().parent_path() /
-         "stdlib/prelude.gti"});
+        "invalid-fresh-result.gti", source, {standardLibrary / "prelude.gti"},
+        {}, {standardLibrary});
     expect(!negative.semanticValid &&
                std::any_of(negative.diagnostics.begin(),
                            negative.diagnostics.end(),

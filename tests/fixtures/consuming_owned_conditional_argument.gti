@@ -1,0 +1,32 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int id;
+public:
+  Token(int id) : id(id) {}
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.id); }
+};
+class Box {
+  mut std::unique_ptr<Token> owner;
+public:
+  Box(std::unique_ptr<Token> value) : owner(std::move(value)) {}
+  std::unique_ptr<Token> release() && { return std::move(this.owner); }
+};
+struct Receiver {
+  mut int total = 0;
+  void accept(std::unique_ptr<Token> token, int value) mut {
+    this.total += value;
+    std::println("accepted");
+  }
+};
+int divide(int value) { return 12 / value; }
+int main(int argc, std::vector<std::string> args) {
+  mut Receiver receiver{};
+  Box box{std::make_unique<Token>(7)};
+  receiver.accept(std::move(box).release(), divide(argc == 2 ? 0 : 1));
+  std::println(receiver.total);
+  return 0;
+}

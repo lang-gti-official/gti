@@ -391,7 +391,32 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                          return resultType(resultType, value.info.type);
                        });
   };
+  // The compatibility walker does not model a payload enum's active
+  // alternative, so a body holding one requires the MIR profile. A type that
+  // only names an enum, such as a reflected payload-field metaobject, does not.
+  const auto payloadValues = [&](const MirBody &body) {
+    const auto payload = [&](const SemanticType &type) {
+      return type.kind == SemanticType::Enum &&
+             mir.program.findPayloadEnum(type) != nullptr;
+    };
+    return payload(body.returnType) ||
+           std::any_of(
+               body.places.begin(), body.places.end(),
+               [&](const auto &place) { return payload(place.type); }) ||
+           std::any_of(
+               body.values.begin(), body.values.end(),
+               [&](const auto &value) { return payload(value.info.type); });
+  };
   const bool requiresMir =
+      std::any_of(
+          mir.program.functionInstances().begin(),
+          mir.program.functionInstances().end(),
+          [&](const auto &function) { return payloadValues(function.body); }) ||
+      std::any_of(mir.program.constructorInstances().begin(),
+                  mir.program.constructorInstances().end(),
+                  [&](const auto &constructor) {
+                    return payloadValues(constructor.body);
+                  }) ||
       !mir.program.destructorInstances().empty() ||
       std::any_of(
           mir.program.functionInstances().begin(),
@@ -403,8 +428,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
             };
             return function.constexprFunction &&
                    function.definitionKind == MirDefinitionKind::Source &&
-                   (function.receiverMutability ==
-                        ReceiverMutability::Mutable ||
+                   (function.receiverMutability !=
+                        ReceiverMutability::ReadOnly ||
                     function.returnType == SemanticType::Void ||
                     mutableReference(function.returnType) ||
                     std::any_of(function.parameterTypes.begin(),
@@ -494,10 +519,21 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       }
     }
   }
-  return result ? ConstexprEvaluation{.value = std::move(result.value),
-                                      .location = callSite}
-                : constexprFailure(location, result.failure,
-                                   std::move(result.detail));
+  if (result)
+    return ConstexprEvaluation{.value = std::move(result.value),
+                               .location = callSite};
+  // Library internals are not the user's to fix: a failure executed inside a
+  // compiler-trusted unit is reported at the evaluation site that required
+  // it, with the library location kept as a note (the same policy as
+  // concrete-instance diagnostics).
+  auto failure =
+      constexprFailure(location, result.failure, std::move(result.detail));
+  if (!location.lexeme.empty() && isCompilerTrustedRequester(location) &&
+      !isCompilerTrustedRequester(callSite)) {
+    failure.libraryLocation = location;
+    failure.location = callSite;
+  }
+  return failure;
 }
 
 } // namespace lang

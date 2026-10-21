@@ -1,0 +1,30 @@
+#include <std/panic>
+
+enum Observed { ready(int& owner), missing };
+class Observation {
+  mut Observed state;
+public:
+  Observation(int& owner) : state(Observed::ready(owner)) {}
+  Observation() : state(Observed::missing) {}
+  int& view() {
+    switch (this.state) {
+    case Observed::ready(auto& owner): return owner;
+    case Observed::missing: std::panic("missing observation");
+    }
+  }
+};
+
+int inspect_unknown(Observation& unknown) {
+  auto absent = Observation();
+  return absent.view();
+}
+
+int inspect_present(int& owner) {
+  auto present = Observation(owner);
+  return present.view();
+}
+
+int main() {
+  auto absent = Observation();
+  return absent.view();
+}

@@ -727,6 +727,36 @@ const SemanticAnalysisSeal &SemanticModel::analysisSeal() const {
   return base == nullptr ? semanticAnalysisSeal : base->analysisSeal();
 }
 
+std::optional<SemanticCallerLocationProof>
+SemanticModel::callerLocationProof(const Expr &expression) const {
+  const auto *origin = findCallerLocation(expression);
+  if (origin == nullptr)
+    return std::nullopt;
+  return SemanticCallerLocationProof(expression, *origin,
+                                     analysisSeal().programSnapshot);
+}
+
+std::optional<SemanticOwnerlessTextContractProof>
+SemanticModel::ownerlessTextContractProof(
+    const FunctionDecl &declaration) const {
+  const auto *function = findFunction(declaration);
+  if (!function || !function->bodyDeclaration())
+    return std::nullopt;
+  return SemanticOwnerlessTextContractProof(*function,
+                                            analysisSeal().programSnapshot);
+}
+
+std::optional<SemanticNoNormalBorrowResultProof>
+SemanticModel::noNormalBorrowResultProof(const Call &call) const {
+  const auto *selected = findCall(call);
+  if (!selected || !selected->noNormalBorrowResult ||
+      selected->intrinsic != IntrinsicKind::None || !selected->function ||
+      selected->dispatch != CallDispatch::Static || !selected->neverReturns)
+    return std::nullopt;
+  return SemanticNoNormalBorrowResultProof(call, *selected,
+                                           analysisSeal().programSnapshot);
+}
+
 const RawReferenceAssertionInfo *
 SemanticModel::findRawReferenceAssertion(const Expr &expression) const {
   const auto found = rawReferenceAssertions.find(&expression);
@@ -2014,6 +2044,7 @@ void SemanticModel::clear() {
   constructions.clear();
   contextualConstructions.clear();
   contextualConstructionSites.clear();
+  emptyReturnConstructions.clear();
   collections.clear();
   protocolConcepts.clear();
   tryablePropagations.clear();
@@ -2766,11 +2797,11 @@ void SemanticModel::recordPayloadPattern(const Expr &expression,
 
 void SemanticModel::record(const Call &call, ResolvedCallInfo info) {
   if (const FunctionInfo *target = findFunction(info.function)) {
-    info.neverReturns = target->neverReturns;
+    info.neverReturns = target->neverReturns || info.noNormalBorrowResult;
     info.tracksCaller = target->tracksCaller;
   } else if (intrinsicTerminalFailureOutcome(info.intrinsic)) {
     info.neverReturns = true;
-    info.tracksCaller = info.intrinsic == IntrinsicKind::Panic;
+    info.tracksCaller = intrinsicTracksCaller(info.intrinsic);
   }
   suppressedInheritedCalls.erase(&call);
   calls.insert_or_assign(&call, std::move(info));
@@ -2963,6 +2994,32 @@ void SemanticModel::recordContextualConstruction(const Expr &initializer,
 void SemanticModel::forgetContextualConstruction(const Expr &initializer) {
   contextualConstructions.erase(&initializer);
   contextualConstructionSites.erase(&initializer);
+}
+
+void SemanticModel::recordEmptyReturnConstruction(const ReturnStmt &statement,
+                                                  ResolvedConstructionInfo info,
+                                                  bool unsafeConstruction) {
+  noteConstruction(info.declaration);
+  emptyReturnConstructions.insert_or_assign(
+      &statement, EmptyReturnConstruction{std::move(info), unsafeConstruction});
+  SemanticFullExpression expression{.order = fullExpressionOrder.size() + 1,
+                                    .statement = &statement};
+  auto &expressions = statementFullExpressions[&statement];
+  if (expressions.empty()) {
+    expressions.push_back(expression);
+    fullExpressionOrder.push_back(std::move(expression));
+  }
+}
+
+std::optional<SemanticEmptyReturnConstructionProof>
+SemanticModel::emptyReturnConstructionProof(const ReturnStmt &statement) const {
+  const auto found = emptyReturnConstructions.find(&statement);
+  if (found == emptyReturnConstructions.end())
+    return base == nullptr ? std::nullopt
+                           : base->emptyReturnConstructionProof(statement);
+  return SemanticEmptyReturnConstructionProof(
+      statement, found->second.construction, analysisSeal().programSnapshot,
+      found->second.unsafeConstruction);
 }
 
 void SemanticModel::record(const ConstructorInitializer &initializer,
@@ -3594,15 +3651,15 @@ integerArithmeticIntrinsic(IntrinsicKind intrinsic) {
   case IntrinsicKind::IntegerSaturatingMultiply:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
                                       IntegerArithmeticMode::Saturating};
-  case IntrinsicKind::IntegerCheckedAdd:
+  case IntrinsicKind::IntegerAddOverflows:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Add,
-                                      IntegerArithmeticMode::CheckedResult};
-  case IntrinsicKind::IntegerCheckedSubtract:
+                                      IntegerArithmeticMode::OverflowPredicate};
+  case IntrinsicKind::IntegerSubtractOverflows:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Subtract,
-                                      IntegerArithmeticMode::CheckedResult};
-  case IntrinsicKind::IntegerCheckedMultiply:
+                                      IntegerArithmeticMode::OverflowPredicate};
+  case IntrinsicKind::IntegerMultiplyOverflows:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
-                                      IntegerArithmeticMode::CheckedResult};
+                                      IntegerArithmeticMode::OverflowPredicate};
   default:
     return std::nullopt;
   }

@@ -1,4 +1,4 @@
-// INVALID: value_or is unavailable on expected<T&, E> (expected.md:111).
+// INVALID: expected<T&, E> declares no value_or member (expected.md).
 enum class errc { missing };
 class Table {
   int value_ = 3;

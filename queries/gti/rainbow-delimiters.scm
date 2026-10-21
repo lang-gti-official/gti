@@ -58,10 +58,6 @@
   "<" @delimiter
   ">" @delimiter) @container
 
-(expected_type
-  "<" @delimiter
-  ">" @delimiter) @container
-
 (type_argument_clause
   "<" @delimiter
   ">" @delimiter) @container
@@ -163,10 +159,6 @@
   ")" @delimiter) @container
 
 (pack_fold_expression
-  "(" @delimiter
-  ")" @delimiter) @container
-
-(unexpected_expression
   "(" @delimiter
   ")" @delimiter) @container
 

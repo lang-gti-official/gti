@@ -182,9 +182,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // IntegerSaturatingAdd
     harmless(), // IntegerSaturatingSubtract
     harmless(), // IntegerSaturatingMultiply
-    harmless(), // IntegerCheckedAdd
-    harmless(), // IntegerCheckedSubtract
-    harmless(), // IntegerCheckedMultiply
+    harmless(), // IntegerAddOverflows
+    harmless(), // IntegerSubtractOverflows
+    harmless(), // IntegerMultiplyOverflows
     // StorageBoundsCheck: a pure comparison over two staged scalars whose
     // only effect is the defined-failure trap on an out-of-bounds index.
     MirEffectTraits{.mayTrap = true},
@@ -254,6 +254,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsUnknownMemory = true},
     // ThreadJoin: synchronization metadata supplies the join barrier.
     MirEffectTraits{},
+    // ThreadResultTake: moves the joined result out of the handle.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .movesValue = true,
+                    .initializesValue = true},
     // ThreadAutoJoin: synchronization metadata supplies the join barrier.
     MirEffectTraits{},
     // AtomicLoad: synchronization metadata supplies the read barrier.
@@ -290,6 +295,8 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .invokesRuntime = true,
                     .mayTrap = true},          // Panic
     MirEffectTraits{.mayTrap = true},          // FailEmptyOwner
+    MirEffectTraits{.mayTrap = true},          // FailInactiveValue
+    MirEffectTraits{.mayTrap = true},          // FailInactiveError
     MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
     // Promotion consumes the unique owner. Exhaustion aborts before cleanup;
     // successful publication does not execute the pointee's source body.
@@ -597,9 +604,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-saturating-add",
     "integer-saturating-subtract",
     "integer-saturating-multiply",
-    "integer-checked-add",
-    "integer-checked-subtract",
-    "integer-checked-multiply",
+    "integer-add-overflows",
+    "integer-subtract-overflows",
+    "integer-multiply-overflows",
     "storage-bounds-check",
     "optional-storage-has-value",
     "optional-storage-construct",
@@ -629,6 +636,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-spawn",
     "thread-joinable",
     "thread-join",
+    "thread-result-take",
     "thread-auto-join",
     "atomic-load",
     "atomic-store",
@@ -648,6 +656,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "require-container-argument",
     "panic",
     "fail-empty-owner",
+    "fail-inactive-value",
+    "fail-inactive-error",
     "shared-owner-empty",
     "shared-owner-from-unique",
     "shared-owner-clone",

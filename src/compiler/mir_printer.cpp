@@ -274,7 +274,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v110 valid=" << program.valid() << '\n';
+    output << "mir-v112 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -593,6 +593,12 @@ public:
         type(instance.parameterTypes[index]);
         output << '}';
       }
+      output << "] ownerless-text-parameters=[";
+      for (std::size_t index = 0;
+           index < instance.ownerlessTextParameters.size(); ++index) {
+        separator(index);
+        output << instance.ownerlessTextParameters[index];
+      }
       output << "] explicit-return-borrow="
              << instance.explicitReturnBorrowOrigin
              << " return-borrow=" << number(instance.returnBorrowOrigin) << ':'
@@ -723,7 +729,18 @@ public:
         separator(index);
         output << instance.borrowParameters[index];
       }
-      output << "] definition=";
+      output << "] complete-borrow=";
+      if (!instance.completeBorrow) {
+        output << "unknown";
+      } else {
+        borrowFields(instance.completeBorrow->dependencies);
+        output << " alternatives=[";
+        for (const auto &alternative :
+             instance.completeBorrow->possibleAlternatives)
+          borrowConditions(alternative.conditions);
+        output << ']';
+      }
+      output << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
         output << "source";
@@ -820,7 +837,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v90\n";
+    output << "mir-body-v91\n";
     body(value, 0);
   }
 
@@ -1006,6 +1023,8 @@ private:
             output << "aggregate:"
                    << static_cast<unsigned int>(constantValue.value->kind)
                    << ':' << constantValue.value->identity << ':';
+            if (constantValue.value->kind == ConstantAggregateKind::PayloadEnum)
+              output << "variant=" << constantValue.value->variant << ':';
             if (constantValue.value->exactType) {
               type(*constantValue.value->exactType);
             } else {
@@ -1245,8 +1264,10 @@ private:
         separator(path);
         output << field.resultFields[path];
       }
-      output << "];origin=" << number(field.origin) << ':' << field.parameter
-             << ";source=[";
+      output << "];origin=" << number(field.origin) << ':' << field.parameter;
+      if (field.globalRoot != 0)
+        output << ";global=" << field.globalRoot;
+      output << ";source=[";
       for (std::size_t path = 0; path < field.sourceFields.size(); ++path) {
         separator(path);
         output << field.sourceFields[path];
@@ -1649,6 +1670,7 @@ private:
     output << " function-pointer-lambda=";
     optional(value.functionPointerLambdaTarget);
     output << " noreturn=" << value.neverReturns
+           << " no-normal-borrow-result=" << value.noNormalBorrowResult
            << " track-caller=" << value.tracksCaller
            << " caller-site=" << value.callerLocationSite
            << " forward-caller=" << value.forwardsCallerLocation

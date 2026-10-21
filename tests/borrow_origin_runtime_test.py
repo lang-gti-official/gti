@@ -14,6 +14,7 @@ if __name__ == "__main__":
              "borrow_nested_map", "a59-readonly-ref-into-mut-nested-container",
              "a59-map-at-then-element-ref", "borrow_projected_parameter_return",
              "borrow_direct_projected_return", "borrow_static_return_alternative",
+             "borrowed_enum_fields", "borrowed_enum_generic_fields",
              "borrow_stored_view_return")
     # The original map is deliberately empty: compilation must succeed, but
     # its checked at() call must retain the defined missing-key failure.

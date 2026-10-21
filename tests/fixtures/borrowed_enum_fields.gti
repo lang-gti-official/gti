@@ -1,0 +1,107 @@
+#include <std/panic>
+
+enum Slot { present(int& value), absent(int reason) };
+
+class Reading {
+  mut Slot slot;
+public:
+  Reading(int& value) : slot(Slot::present(value)) {}
+  Reading() : slot(Slot::absent(7)) {}
+  int& view() {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("missing reading");
+    }
+  }
+  bool empty() {
+    switch (this.slot) {
+    case Slot::present: return false;
+    case Slot::absent: return true;
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("missing reading");
+    }
+  }
+};
+
+[[borrowed_from(owner)]] Reading read(int& owner, bool absent) {
+  if (absent) return Reading();
+  return Reading(owner);
+}
+
+int& relay(int& owner) {
+  return read(owner, false).take();
+}
+
+// A generic carrier, and the plain one, forward a stored reference out of a
+// by-value nested parameter; a reference accessor reads the forwarded referent.
+enum MaybeRef<T> { some(T value), none(int code) };
+
+class Holder<T> {
+  mut MaybeRef<T&> state;
+public:
+  Holder(T& value) : state(MaybeRef<T&>::some(value)) {}
+  Holder(int code, bool missing) : state(MaybeRef<T&>::none(code)) {}
+  T& get() {
+    switch (this.state) {
+    case MaybeRef<T&>::some(auto& value): return value;
+    case MaybeRef<T&>::none: std::panic("missing value");
+    }
+  }
+  bool empty() {
+    switch (this.state) {
+    case MaybeRef<T&>::some: return false;
+    case MaybeRef<T&>::none: return true;
+    }
+  }
+};
+
+struct View {
+  int& item;
+  View(int& item) : item(item) {}
+};
+
+struct Envelope {
+  View view;
+  Envelope(View view) : view(view) {}
+};
+
+Holder<int> forward_nested(Envelope owner, bool present) {
+  if (!present) return Holder<int>(4, true);
+  return Holder<int>(owner.view.item);
+}
+
+Reading forward_reading(Envelope owner) { return Reading(owner.view.item); }
+
+// A member stores its receiver's own field in the carrier's payload.
+class Meter {
+  mut int value;
+public:
+  Meter(int value) : value(value) {}
+  Reading reading(bool absent) {
+    if (absent) return Reading();
+    return Reading(this.value);
+  }
+};
+
+int main() {
+  int owner = 42;
+  auto value = read(owner, false);
+  auto missing = read(owner, true);
+  mut auto consumed = read(owner, false);
+  int& retained = std::move(consumed).take();
+  Meter meter{9};
+  auto own = meter.reading(false);
+  auto none = meter.reading(true);
+  int nested = 13;
+  Envelope envelope{View(nested)};
+  auto held = forward_nested(envelope, true);
+  auto gone = forward_nested(envelope, false);
+  auto plain = forward_reading(envelope);
+  return value.view() == 42 && missing.empty() && retained == 42 &&
+         relay(owner) == 42 && own.view() == 9 && none.empty() &&
+         held.get() == 13 && gone.empty() && plain.view() == 13 ? 0 : 1;
+}

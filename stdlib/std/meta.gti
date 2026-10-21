@@ -172,6 +172,10 @@ public:
   constexpr bool is_bool() { return gti_internal::meta_type_kind<T>() == uint64_t(8); }
   constexpr bool is_char() { return gti_internal::meta_type_kind<T>() == uint64_t(9); }
   constexpr bool is_text() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
+  /// Whether T is a checked reference (the access mode is not changed).
+  constexpr bool is_reference() { return gti_internal::meta_type_kind<T>() == uint64_t(11); }
+  /// Whether T denotes absence of a result, rather than an object type.
+  constexpr bool is_void() { return gti_internal::meta_type_kind<T>() == uint64_t(17); }
   /// The number of instance fields when `T` is a struct or class, else 0.
   constexpr uint64_t field_count() { return gti_internal::meta_field_count<T>(); }
   /// The number of `[[attribute]]` applications on the declaration of `T`.

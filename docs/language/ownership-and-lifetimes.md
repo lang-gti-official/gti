@@ -440,10 +440,12 @@ owned value at its written argument position, begins one read loan, evaluates
 later arguments, invokes the selected callable, ends the loan immediately
 afterward, and retains the value's drop obligation until the enclosing
 full-expression boundary. A by-value exact overload remains preferred because
-this borrowed form is a fallback viability tier. The permission does not apply
-to `mut T&`, local or stored bindings, explicit moves, compound or native
-producers, borrowed-state values, or a callable result that can retain the
-loan.
+this borrowed form is a fallback viability tier. An explicit
+`std::move(local)` of a whole local or parameter is admitted the same way: the
+moved value becomes a temporary owned by the enclosing full expression, and the
+local is moved on every later path. The permission does not apply to `mut T&`,
+local or stored bindings, moves of a projection, compound or native producers,
+borrowed-state values, or a callable result that can retain the loan.
 
 A concrete payload-enum construction with copyable, movable, trivial-drop
 value traits and no stored borrows supports the same ordinary call-only
@@ -495,9 +497,9 @@ The success path publishes the referent together with the receiver, argument,
 or global owner dependency; an `unexpected(E)` path publishes no loan. A local
 complete result is itself a carrier of that dependency, and `value()` creates
 a child read loan rather than copying `T`. Copying, moving, or forwarding the
-complete carrier preserves the one dependency. Fields, globals, parameters,
-lambda returns, mutable reference payloads, and multiple-owner results remain
-outside this bounded form. See [Expected values](expected.md#fallible-borrows).
+complete carrier preserves the one dependency, including a by-value
+parameter. Fields, globals, lambda returns, mutable reference payloads, and
+multiple-owner results remain outside this bounded form. See [Expected values](expected.md#fallible-borrows).
 
 Under the default single-threaded execution profile, a free function or static
 method may instead return `T&` or `mut T&` from one exact namespace-global or
@@ -535,6 +537,16 @@ global borrow earlier. The concurrent execution profile does not admit this
 unsynchronized mutable process-wide storage: its existing `GTI-S2060` rule
 requires immutable, share-capable globals/statics until an atomic, mutex, or
 guard contract provides synchronization.
+
+The same exact global or static place may be the origin of a
+reference-bearing source carrier, such as a class with a reference field or a
+payload enum with a reference alternative. A free or static function may return
+a carrier whose complete dependency set names that place: for example, a
+`lookup<int32_t&> find_global()` that returns `global_value` through an
+`implicit` constructor, or `slot::item(global_value)`. Each call creates a
+checked loan against that storage rather than against a parameter or local. A
+reference-free alternative still carries no dependency, and the single-threaded
+profile and same-path rules above still apply.
 
 Retaining a borrow from a move-only receiver prevents moving or replacing that
 receiver and calling its mutable methods while the semantic loan remains live.
@@ -701,16 +713,15 @@ field access, replacement, and calls, retaining each intermediate borrow until
 its dependent child ends. Empty intermediate owners retain checked failure
 and ordinary cleanup, including an already staged replacement value.
 
-General retained nested owner projections remain outside this checkpoint. In
-particular, a borrow reached through `expected<owner, E>.value()` may be
-consumed immediately within the same full expression, but it cannot be stored
-or returned through another helper. The one bounded exception is a read-only
-range sourced by exact `value()` on a named local or by-value parameter. That
-loop retains a shared loan rooted in the complete `expected`, allows nested
-read-only traversal, and blocks owner movement, replacement, mutation, and
-drop until every loop exit ends the range loan. It does not authorize a
-standalone payload reference, field/global receiver, mutable payload range, or
-escaping element.
+A borrow reached through an owner stored inside a result follows the same
+rules. `value()` returns a reference tied to its receiver, and an owning
+handle's checked pointee is storage the receiver contains, so
+`DirectPayload& payload = *opened.value();` may be retained in a local, or
+returned from a function whose result borrows from a read-only
+`expected<std::unique_ptr<DirectPayload>, E>& opened` parameter. Replacing,
+moving or mutating the `expected` while that reference is live is rejected.
+Ranges over `value()` and `error()` use the general range rules; see
+[ranges over `expected` payloads](ranges.md#ranges-over-expected-payloads).
 
 Reference globals, nested references, and references over fixed arrays or
 compiler-private owner handles remain unavailable to ordinary source. A
@@ -1742,7 +1753,8 @@ spelling. Finite nested enum payloads and fixed arrays of supported payload
 elements retain these construction and cleanup obligations. Passive native
 records and unions may be payloads when their C ABI layout is validated.
 Polymorphic enum callable transport, direct owning-enum lambda capture, arrays
-whose elements are directly owning enums, stored-reference class owners, unsupported
+whose elements are directly owning enums, payloads that are themselves
+stored-reference class owners, unsupported
 compiler-private payloads, native-layout owners containing owning enum fields,
 and polymorphic bases remain diagnosed rather than inventing indirect cleanup
 state.
@@ -1760,6 +1772,58 @@ factories establish that complete fact through their return expressions; a bare
 declaration or missing dependency metadata does not establish an empty proof.
 A shared-reference enum may be copied when its other fields permit copying. An exclusive-reference field makes
 the complete enum move-only, including when nested in another enum.
+
+A source class can retain that conditional dependency set in a field. The
+current structural slice requires every retained dependency and alternative
+guard to share one exact field prefix; selecting the field removes that prefix
+from the whole set, never just the convenient subset. That field holds the
+payload enum itself: a field whose type is another conditionally borrowed
+class, such as a `Holder` storing an `expected<int&, E>`, is not yet supported
+(`GTI-S2045`), and neither is an enum payload whose type is such a class
+(`GTI-S2067`); classes with unconditional reference fields remain valid
+payloads. A reference selected from a conditional carrier is
+relayed only from a named local, parameter or temporary carrier, not through a
+field, element or dereference of another value (`GTI-S2045`). A free function
+whose carrier result could borrow from more than one eligible parameter is
+ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
+reference return. Empty-body constructors
+establish the result from their exact field initializers, including a proved
+reference-free alternative. A missing proof is not an empty alternative.
+Implicit copying remains conditional on all fields being copyable; copying a
+shared-reference wrapper retains the same external owners, while moving a
+wrapper does not move those owners. A consuming method may return a selected
+external reference after retiring the wrapper, but cannot return a reference
+to the wrapper's own storage.
+
+An implicit constructor uses the same complete dependency proof in variable
+initialization and return conversion. The original expression remains the
+constructor input; the constructed result carries a distinct checked set.
+A fresh wrapper can also be consumed immediately, and an ordinary reference
+return can relay the extracted external reference. The temporary's mutable
+shell loan retains its producer's complete stored group through invocation;
+retiring that shell does not retire the caller's referent. Consuming a fresh or
+explicitly moved wrapper does not upgrade its dependencies either: a read-only
+dependency stays read-only, so another wrapper may keep reading the same owner
+while one is consumed. A relay must still
+obey its own parameter-origin/access contract and cannot escape a local owner
+or permit mutation while a returned shared reference remains live.
+
+A reference accessor on a statically known reference-free alternative can
+still be called when its checked body has no normal result for that
+alternative. The compiler preserves the call's failure or nontermination;
+it does not invent a referent or reject the call merely because no owner can
+be supplied. This is an input-specific fact, not a `noreturn` property of the
+accessor: calls on reference-bearing alternatives retain their ordinary
+checked result. Unknown dependency information is insufficient to establish
+this fact. Reference initialization, nested call arguments and reference
+returns stop at the terminal call without publishing a reference.
+
+An open generic receiver may not yet have a complete conditional inventory.
+Only its dependent enum switch is deferred to concrete instance analysis;
+every requested instance must establish the exact inventory and recheck the
+selection, return and lifetime rules. Unrelated nondependent errors remain
+diagnosed at the declaration. This is not permission to infer an external
+owner from an incomplete type.
 
 Selecting a direct reference field proves the active tag and retains all of
 that field's possible external owners. Consuming the enum retires its old

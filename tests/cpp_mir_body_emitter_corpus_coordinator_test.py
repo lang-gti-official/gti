@@ -265,7 +265,7 @@ def protocol_cases() -> tuple[ProtocolCase, ...]:
         ProtocolCase(
             "checked_intrinsic_witness",
             agreement=with_field(BASE_AGREEMENT, "checked_intrinsic", 0),
-            expected_fragment="no longer includes a checked-result intrinsic",
+            expected_fragment="no longer includes a overflow-query intrinsic",
         ),
         ProtocolCase(
             "loan_witness",

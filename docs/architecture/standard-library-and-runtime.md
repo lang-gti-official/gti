@@ -570,7 +570,15 @@ prefix type name grants compiler authority.
 
 Numeric input in `<std/charconv>` keeps integer grammar, radix selection,
 overflow checking, consumed-byte offsets, and output publication in ordinary
-GTI. Integer accumulation uses the exact-width checked arithmetic capabilities;
+GTI. Integer accumulation uses exact-width overflow predicates and wrapping
+arithmetic. The primitive returns only whether the mathematical operation exceeds
+the operand domain; it does not construct a result carrier or choose an error.
+`<std/numeric>` owns checked-result construction and `arithmetic_errc` in source.
+The native predicate uses the same overflow builtin or portable mathematical
+check as checked integer execution; source success paths use defined wrapping
+arithmetic, whose value is exact when overflow was excluded. MIR constant
+execution uses the shared exact-width arithmetic evaluator for the same fact.
+This keeps result storage independent of native `expected` representations;
 negative accumulation admits the signed minimum without overflowing its
 positive magnitude. Binary32 and binary64 conversion use the bounded
 `gti_rt_parse_f32_v1`/`gti_rt_parse_f64_v1` C ABI over a non-retained counted

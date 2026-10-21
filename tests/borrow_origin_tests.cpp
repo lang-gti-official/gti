@@ -304,7 +304,12 @@ void checkReferents() {
                 "representation admission rejects forged borrow publication");
           }
         }
-    if (std::string(relative) != "fixtures/fallible_borrow.gti")
+    // A reference selected through an accessor call relays that call's loan
+    // without an address operand; only a direct local publication has an
+    // address to forge. The runtime test checks these referents.
+    const std::string_view name = relative;
+    if (name != "fixtures/fallible_borrow.gti" &&
+        !name.starts_with("coverage/reproducers/a25-"))
       expect(checked != 0,
              "fixture exercises exact local reference publication");
   }
@@ -500,6 +505,12 @@ void checkDirectProjectedReturnOrigins() {
       if (!executedAddress)
         continue;
       for (unsigned mutation = 0; mutation != 3; ++mutation) {
+        // A binding place's symbol names its source binding, which is formal
+        // root evidence only where a returned reference publishes the
+        // address; a carrier's dependency is proved by binding identity.
+        if (mutation == 2 &&
+            function.returnType.kind != lang::SemanticType::Reference)
+          continue;
         auto malformed = frontend.mir;
         auto &body = const_cast<lang::MirFunctionInstance *>(
                          malformed.findFunctionInstance(function.id))

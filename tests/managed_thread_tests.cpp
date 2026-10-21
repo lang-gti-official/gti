@@ -468,7 +468,8 @@ int main() {
              cpp20.find("managed_thread_spawn_value<"
                         "__gti_thread_task_adapter, std::int32_t>") !=
                  std::string::npos &&
-             cpp20.find("managed_thread_take_join_result<") !=
+             cpp20.find(".stash_result(") != std::string::npos &&
+             cpp20.find(".template take_result<std::int32_t>()") !=
                  std::string::npos &&
              cpp23.find("gti_rt_thread_join_value_v2") != std::string::npos &&
              cpp23.find("managed_thread_abandon_join_result(") !=
@@ -535,14 +536,13 @@ int main() {
         continue;
       }
       const lang::MirInstruction &instruction = block.instructions.back();
+      // A typed join reports a status on its Invoke; the worker's result
+      // stays in the handle for the separate take.
       foundClassJoinInvoke =
           foundClassJoinInvoke ||
           (instruction.id == block.terminator.invokeInstruction &&
            instruction.intrinsic == lang::IntrinsicKind::ThreadJoin &&
-           instruction.info.type.kind == lang::SemanticType::Expected &&
-           instruction.info.type.arguments.size() == 2 &&
-           instruction.info.type.arguments.front().kind ==
-               lang::SemanticType::Class &&
+           instruction.info.type == lang::SemanticType::Int32 &&
            instruction.definedFailure.propagation ==
                lang::FailurePropagationKind::TaskJoin);
     }
@@ -559,11 +559,32 @@ int main() {
       lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
   const std::string cpp23 =
       lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+  bool foundClassTake = false;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(frontend.mir)) {
+    const lang::MirBody *body = lang::findMirBody(frontend.mir, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        foundClassTake =
+            foundClassTake ||
+            (instruction.intrinsic == lang::IntrinsicKind::ThreadResultTake &&
+             instruction.info.type.kind == lang::SemanticType::Class &&
+             instruction.definedFailure.empty() &&
+             instruction.synchronization.kind ==
+                 lang::SynchronizationOperationKind::None);
+      }
+    }
+  }
+  expect(foundClassTake,
+         "the class result should move out of the joined handle through one "
+         "failure-free take");
   expect(cpp20.find("managed_thread_spawn_value<") != std::string::npos &&
-             cpp20.find("managed_thread_take_join_result<") !=
-                 std::string::npos &&
-             cpp23.find("mir_expected_value_move_v1") != std::string::npos,
-         "both C++ standards should place, join, and extract a class result "
+             cpp20.find(".stash_result(") != std::string::npos &&
+             cpp23.find(".template take_result<") != std::string::npos,
+         "both C++ standards should place, join, and take a class result "
          "without default construction");
 }
 

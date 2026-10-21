@@ -1,0 +1,39 @@
+#include <std/panic>
+#include <std/string>
+
+enum ReadingState<T, E> { ready(T value), failed(E error) };
+class GenericReading<T, E> {
+  mut ReadingState<T&, E> state;
+public:
+  GenericReading(T& owner) : state(ReadingState<T&, E>::ready(owner)) {}
+  GenericReading(E error, bool failed) : state(ReadingState<T&, E>::failed(std::move(error))) {}
+  bool empty() {
+    switch (this.state) {
+    case ReadingState<T&, E>::ready: return false;
+    case ReadingState<T&, E>::failed: return true;
+    }
+  }
+  T& view() {
+    switch (this.state) {
+    case ReadingState<T&, E>::ready(auto& value): return value;
+    case ReadingState<T&, E>::failed: std::panic("missing reading");
+    }
+  }
+  T& take() && {
+    switch (this.state) {
+    case ReadingState<T&, E>::ready(auto& value): return value;
+    case ReadingState<T&, E>::failed: std::panic("missing reading");
+    }
+  }
+};
+
+int main() {
+  int owner = 42;
+  auto original = GenericReading<int, int>(owner);
+  GenericReading<int, int> copied = original;
+  mut auto moved = GenericReading<int, std::string>(owner);
+  int& retained = std::move(moved).take();
+  auto absent = GenericReading<int, std::string>(std::string("absent"), true);
+  return original.view() == 42 && copied.view() == 42 &&
+      retained == 42 && absent.empty() ? 0 : 1;
+}

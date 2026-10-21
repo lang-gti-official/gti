@@ -75,8 +75,11 @@ site ID, and whether the enclosing tracked function forwards its incoming token.
 `MirBody::hasCallerLocation` must agree with its concrete function declaration.
 `FailureMetadata` binds caller anchors separately from actual detector origins;
 the artifact descriptor admits the union of genuine detector outcomes and the
-explicit-panic outcome at caller anchors. A caller anchor does not invent a
-local failure or make a failure-free wrapper fallible.
+bounded caller-tracked terminal outcomes at caller anchors: explicit panic,
+inactive success access, and inactive error access. A caller anchor does not
+invent a local detector or make a failure-free wrapper fallible. Inline and
+cold record publication both select that same verified caller token; the
+detected category and detail remain those of the exact intrinsic.
 
 The trusted `Panic` intrinsic reads one text view and is terminal, caller-tracked,
 and a conservative optimizer barrier. At detection it selects the caller token
@@ -85,9 +88,10 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v110`, `mir-body-v90`).
+instruction, body, and caller-assignment facts (`mir-v112`, `mir-body-v91`).
 
-The first caller-token consumer is panic. This does not change
+Caller-token consumers are panic and the identity-bound inactive-result
+failure operations used by source result classes. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
 tracking through native function pointers, or implement a call stack.
 
@@ -137,6 +141,11 @@ completes, whether MIR retargeted the producer there or arms the slot's
 obligation on its `Invoke` success edge. Argument and receiver borrows of the
 slot therefore read the produced value, and the post-merge drop retires only a
 slot that its operand produced.
+Consuming method receiver preparation also designates that same materialized
+root. A move-value receiver `CallInput` does not introduce a second owning
+constant snapshot: field moves in the callee retire the caller's exact selected
+paths, and subsequent receiver-shell cleanup skips those moved fields. Ordinary
+by-value argument transport remains independent.
 Entry string-view dependencies are backed by immutable constant bytes.
 Checked read-only and mutable reference parameters, automatic bindings, and
 returned projections use verified MIR loans. An executor-local location retains
@@ -168,6 +177,24 @@ and exact underlying integer domain. `EnumConstant`, exact-type comparisons and
 enumerator switch labels execute here, including enum locals, record fields and
 array elements in mutable builders. Value reads of resolved enumerators lower
 to constants; explicit place formation and source borrowing rules are unchanged.
+A constructor whose text field publishes through the constructor record,
+without an explicit `Initialize`, still executes in this profile: the field
+takes its initializer's exact SSA value when the body completes, and the object
+keeps declaration field order. The compatibility walker is required only when
+an executed body holds a payload-enum place or value; a type that merely names
+a payload enum, such as a reflected field metaobject, does not force the MIR
+profile.
+Payload enums retain their exact concrete type, active variant and ordered
+active fields in immutable constant aggregates. Existing `PayloadConstruct`,
+`PayloadExtract` and switch MIR execute their ordinary verified selection rules;
+there is no payload-enum AST interpreter. Constant argument checking validates
+the exact variant and every active field recursively. Checked observations use
+executor-local locations including the variant and field index, so an inactive
+or moved field cannot be read. Consuming receivers own their incoming snapshot;
+active enum cleanup follows the canonical selected-variant recipe, including
+transient exclusive owners. Neither stored references nor live allocations may
+persist in constants. These operations share the existing work and lifetime
+limits and cannot fall back to AST execution.
 Passive Expected/Unexpected values share the immutable typed aggregate
 representation: exact wrapper type, active state and one exact payload (none
 for void success). Construction, state tests, extraction, eager `value_or`,
@@ -325,7 +352,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v110`/`mir-body-v90`,
+The combined deterministic serialization is currently `mir-v112`/`mir-body-v91`,
 with `lowered-program-v22` declaration metadata. Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
@@ -361,7 +388,7 @@ permit unconditional result initialization. MIR independently rejects missing
 failure edges and malformed result activation.
 
 Function rows retain optional declaration-relative complete result dependency
-contracts. For the initial known-empty enum slice, MIR independently validates
+contracts. MIR independently validates
 each declared alternative's exact concrete type, tag and dependency-free
 payload layout, then reconstructs facts at every reachable normal return. The
 actual alternatives must be covered by the declaration contract; additional
@@ -384,7 +411,63 @@ every case is a distinct no-normal-result state, never a complete empty result.
 The utility only handles typed guard/domain relationships. Semantic analysis
 and MIR must independently establish the actual argument origins and supplier
 states; neither shares an origin interpreter or trusts the other's attached
-facts. Nonempty call substitution remains an integration prerequisite.
+facts. Nonempty call substitution preserves the complete guarded external
+dependency group rather than selecting one representative origin.
+
+A complete mapping may name static storage: its origin is `Global`, with the
+storage symbol in `globalRoot`, and its source path is built from that
+storage's own type. A capture-free `Symbol` place is that storage even in the
+provisional program, which is lowered before its initialization plan exists.
+A carrier whose contract names a global borrows the global's storage-typed
+place, not a place typed as the carrier. The per-input returned-field checks
+skip `Global` mappings, which have no call input; the global-origin check and
+the complete-set flow verify them. A mapping may also name caller storage that
+contains the referent, such as an accessor receiver, an owned element buffer or
+an owning handle's checked pointee, provided that storage is reached without a
+stored reference and stores none itself. A dereference through a class ends
+that path. Published dependencies keep a `CallResult` accessor as their parent
+together with its exact source, as reference loan facts do; a parentless
+referent names the exact input place, either the reference argument's place or
+a by-value carrier's `Stored` sources. Dependency transport compares sources
+structurally: distinct place ids with one root, binding, symbol, capture,
+temporary, value, loan, projection path, type and access are one source, as
+when two calls through one reference formal each create a dereference place.
+
+Constructor rows also retain complete result contracts. For a conditional
+borrowed field, verification requires the exact `Initialize` destination and
+operand, its independently reconstructed complete value fact, and a distinct
+escaping Stored field group published after initialization. Publication must
+preserve every origin, access, path and guard before retiring the producer's
+group. The published field group remains active at every normal constructor
+exit. Known-empty alternatives require positive typed evidence and publish no
+manufactured loan. The current source constructor slice uses an empty body
+and one common nominal field prefix; unrelated sibling obligations cannot be
+dropped during projection.
+
+A consuming receiver transfers its complete stored group through the ordinary
+ordered call-input stages. A reference result may outlive the consumed shell
+only when the independently checked callee contract derives it from the
+retained external owners. Exact receiver entry identity and access, selected
+alternative proof, group transfer and retirement remain separate requirements;
+a receiver-owned origin cannot escape its destroyed shell.
+Initializing a distinct direct field of the same exact non-union record does
+not erase the retained field's complete fact. This separation is proved from
+the concrete record and its declared field identities, not merely unequal
+projection labels. Whole-object writes, unknown roots, union overlap and
+unproved indirect projections retain conservative invalidation.
+
+Program schema 111/body 91 also carries a call-local excluded-normal-result
+flag for direct reference-result calls. This is distinct from a declaration's
+`noreturn` contract: the callee can return normally for other inputs. Semantics
+must establish that every supplier in the callee's complete normal-return
+contract is excluded by these exact inputs; HIR retains the source-bound
+selection proof. MIR independently reconstructs that exclusion from the
+verified callee summary and the actual incoming dependency groups before
+allowing a call with no result loan. Missing or unknown input facts cannot
+establish exclusion. The call retains its effects and failure continuation,
+while its normal continuation is unreachable. It cannot publish a result,
+invent an empty reference dependency, or form later argument/receiver stages
+after that terminal evaluation.
 
 Program schema 110 also preserves whether a function's resolved
 `borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
@@ -520,7 +603,7 @@ scalar-enum defaults. This also applies to enum pack places synthesized while
 lowering constructor arguments or loans. The existing semantic boundary for
 owning payload enums inside by-value packs remains unchanged.
 
-The combined serialization is `mir-v110`/`lowered-program-v22`, preserving
+The combined serialization is `mir-v112`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
 Each class alias row carries its primary semantic declaration identity and exact
 concrete type. The independent detached verifier rejects omitted, duplicated,
@@ -557,6 +640,12 @@ dependency survives through full-expression destruction of owned fields.
 Independent verification rejects missing dependencies, changed permissions,
 forged shell authority and owner-loan retirement before cleanup. Shared-only
 and mixed carriers use one schedule rather than a separate passive exception.
+A temporary carrier borrowed only by argument-role `CallArgument` loans may
+be consumed once those loans end; loan flow still rejects an earlier move. A
+temporary borrowed by a receiver stage or a call result keeps the drop-only
+rule. A copied carrier argument relays the binding's retained `Stored` group as
+the parent of a scalar reference result, and lowering maps a `Parameter` entry
+loan's complete dependency to the key-matched place under its referent.
 Borrowed-result operators keep their ordinary value receiver stage. When their
 result protects the receiver's own storage, lowering and independent verification
 select the exact producer-owned temporary and its full-expression drop, retaining
@@ -675,6 +764,18 @@ actual prepared operands; matching caller/callee field maps alone are not
 proof. Reordered and multi-owner inputs preserve their individual paths and
 permissions. The native backend erases this proven publication without
 changing the existing field construction or rollback schedule.
+A fresh payload enum stored in a source-class field follows the same rule:
+its exact `PayloadConstruct`, field `Initialize`, escaping `Stored` publication,
+and immediate producer-loan retirement preserve the entire conditional
+dependency group. The native enum value already carries the selected reference
+payload. Publication emits no separate pointer and never reads an inactive
+alternative to reconstruct provenance.
+When another alternative owns cleanup, constructor staging may use the enum's
+private inactive native state: it has no active payload and therefore no borrow
+or cleanup to observe. Containing classes qualify only through recursive exact
+field empty-state checks; direct reference fields do not qualify. This is a
+construction-only representation facility, not a source default constructor,
+assignment permission, or substitute for field publication and rollback proofs.
 The child formal itself may receive a fresh ordinary constructor result.
 Origin replay peels its exact prepared input and follows the selected field
 through that result's executable constructor before reaching an enclosing
@@ -1760,6 +1861,22 @@ method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
 operand retains both the external owner loan and the separately verified
 runtime field/dereference place, never the carrier shell's address.
+
+`verifyOwnerlessTextContracts` independently derives every ownerless text
+input contract. A write to a text field, to a text element of an array reached
+through a field, to a payload-enum text field, or any other checked text
+assignment outside local storage needs an operand whose source is known: a
+string or null literal (including `nullptr` for a `c_string` field), an
+ownerless field projection, unprojected static text storage, a temporary or
+block parameter whose every incoming value is known, or a formal parameter.
+A formal becomes a requirement of its function. Requirements propagate to a
+fixed point through calls and constructions and must equal the semantic
+`ownerlessTextParameters` exactly. Virtual, override or native dispatch,
+function items, lambdas and native exports cannot carry a nonempty
+requirement. Local text bindings and local text arrays are not field storage
+and may hold dynamic text. Static text storage counts as ownerless because
+semantics admits only ownerless initializers and stores into it; MIR checks
+assignments to it but does not yet re-verify global initializers.
 
 Plain and fallible reference returns share the exact runtime-alias selection
 for a reference parameter's entry loan. If a local alias stores an accessor's
@@ -3529,7 +3646,17 @@ over range entry. A by-value Expected parameter remains native parameter
 storage; the backend may transfer it into its MIR binding and defer its final
 drop to native parameter scope only when that exact verified range relation is
 present. No other Expected call-result loan receives this representation
-permission.
+permission. Since `expected` became a source-defined prelude class, no source
+program reaches this extraction: `result.value()` is an ordinary receiver-tied
+call result in the general plans above. The route remains only until the
+built-in Expected representation is removed.
+
+A read-only plan may share a mutable parent. When the range expression is a
+call returning `mut T&`, the plan's range loan is that call's mutable result
+loan, and the element-owner and element loans may name that loan directly
+instead of a read-only child. Verification still requires the declared
+element access to be read-only in that case, and a mutable element access
+requires a mutable range loan.
 
 Verification requires semantic, HIR, and MIR access modes to agree; a mutable
 element loan must be a non-escaping child of the exact mutable range parent.
@@ -3671,6 +3798,17 @@ declaration-only producer/target, borrowed state, an escaping result,
 producer/input reordering, premature or missing loan ending, and a missing,
 duplicate or unconditional post-merge drop. The backend therefore consumes a
 complete schedule rather than relying on C++ reference lifetime rules.
+
+Fresh read-only callable arguments extend that same schedule with exact
+`Closure` and `FunctionItem` producers, not an implicit owning copy. A closure
+containing borrowed captures must have its own producer-published `Stored`
+dependency group. Its `CallArgument` shell retains that exact group as
+`storedDependency`; independent closure verification still proves every capture
+identity, selected origin, access and parent dependency. The shell loan ends
+after the call, while captured dependencies survive until the full-expression
+closure cleanup finishes. Missing, substituted or prematurely ended capture
+dependencies are invalid MIR. The ordinary confined callable contract and
+invocation capability checks remain required independently of materialization.
 
 An ordinary enum observer and the generated `has_value` observation for
 source-defined propagation use the same schedule. Their materialization may be the

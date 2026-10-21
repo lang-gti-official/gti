@@ -24,8 +24,18 @@ Listener<F> listen<F>(F callback) {
 
 int twice(int value) { return value * 2; }
 
+// A fresh callable can be borrowed by one confined invocation. Its captures
+// remain borrowed until that full expression ends; nothing is retained here.
+int sample_fresh<F>(F& callback, int value) {
+  int result = callback(value);
+  return result;
+}
+
 int main() {
   int offset = 3;
+  if (sample_fresh([&offset](int value) -> int { return value + offset; }, 4) != 7)
+    return 4;
+  if (sample_fresh(twice, 4) != 8) return 5;
   auto read = [&offset](int value) -> int { return value + offset; };
   std::function_ref<int(int)> view{read};
   if (sample(view) != 7) return 1;

@@ -621,6 +621,14 @@ MIR drop identities; accepting a new consumer does not relax those obligations.
 
 ## Transient constexpr allocation and destruction
 
+`compiler_constexpr` includes `testConstexprPayloadEnums`: generic active
+alternatives, source-class nesting, observation, replacement, consuming methods,
+transient owners, deterministic budgets and malformed active-variant rejection.
+`constexpr_payload_enum_runtime` compares the same required constants with
+native O0/O1/O2/O3 execution under C++20/C++23 plus ASan/UBSan and disabled
+elision. These supplement the existing constexpr result/allocation gates;
+their registration is not a claim that integration validation has passed.
+
 `compiler_constexpr` includes direct canonical-MIR and required semantic-query
 coverage for exclusive scalar/class allocation, nested source-defined owners,
 destructors, moves, reset/swap, expected propagation and concrete pack entry

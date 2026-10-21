@@ -128,7 +128,7 @@ int main() { checked(true); return 0; }
       if (!value.tracksCaller)
         continue;
       ++hirCalls;
-      for (unsigned mutation = 0; mutation != 3; ++mutation) {
+      for (unsigned mutation = 0; mutation != 6; ++mutation) {
         auto malformed = result.hir;
         auto *changed = const_cast<lang::HirFunctionInstance *>(
             malformed.findFunctionInstance(function.id));
@@ -141,6 +141,20 @@ int main() { checked(true); return 0; }
           call.neverReturns = !call.neverReturns;
         if (mutation == 2)
           ++call.callerLocation->line;
+        if (mutation == 3)
+          call.callerLocationProof.reset();
+        if (mutation == 4)
+          call.source = nullptr;
+        if (mutation == 5) {
+          const lang::HirValue *other = nullptr;
+          for (const auto &candidate : result.hir.functionInstances())
+            for (const auto &item : candidate.body.values)
+              if (item.callerLocationProof && item.source != value.source)
+                other = &item;
+          check(other != nullptr, "another tracked source occurrence exists");
+          if (other != nullptr)
+            call.callerLocationProof = other->callerLocationProof;
+        }
         check(!lang::verifyHirProgramPlans(result.semantics, malformed).valid(),
               "HIR independently retains declaration and source contracts");
       }

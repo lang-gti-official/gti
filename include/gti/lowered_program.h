@@ -217,6 +217,7 @@ struct LoweredClassDeclaration {
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
   ClassKind kind = ClassKind::Class;
+  ClassId definitionFamilyPrimary = 0;
   ClassId exactSpecializationPrimary = 0;
   std::vector<SemanticType> exactTypeArguments;
   std::vector<CompileTimeValue> exactValueArguments;

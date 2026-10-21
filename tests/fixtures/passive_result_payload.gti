@@ -1,0 +1,29 @@
+#include <std/string>
+#include <std/vector>
+struct Report {
+  int code;
+  Report(int code) : code(code) {}
+};
+Report plain() { return Report(7); }
+Report checked(int divisor) { return Report(12 / divisor); }
+enum Content { value(Report report) };
+struct Envelope {
+  Content content;
+  Envelope(int divisor) : content(Content::value(checked(divisor))) {}
+  int code() {
+    switch (this.content) {
+    case Content::value(auto& report): return report.code;
+    }
+  }
+};
+struct Guard { ~Guard() { std::println(9); } };
+int main(int argc, std::vector<std::string> args) {
+  Guard guard{};
+  Content first = Content::value(plain());
+  switch (first) {
+  case Content::value(auto& report): std::println(report.code); break;
+  }
+  Envelope second{argc == 1 ? 1 : 0};
+  std::println(second.code());
+  return 0;
+}

@@ -767,6 +767,7 @@ struct MirInstruction {
   // carry this field. It is not a runtime argument or a borrow origin.
   std::optional<SemanticType> objectLayoutType;
   bool neverReturns = false;
+  bool noNormalBorrowResult = false;
   bool tracksCaller = false;
   std::optional<CallerLocationOrigin> callerLocation;
   FailureSiteId callerLocationSite = 0;
@@ -1186,6 +1187,12 @@ struct MirTemporaryMaterialization {
 findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                                 HirValueId sourceValue);
 
+// An explicit move of a whole binding publishes its value into one exact
+// value-rooted temporary, whose obligation the enclosing full expression owns.
+[[nodiscard]] MirTemporaryMaterialization
+findMirMovedTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                     HirValueId sourceValue);
+
 // An uncarried borrowed class temporary keeps its exact producer's Stored
 // owner dependency until its full-expression value obligation is retired.
 // This derives lifetime authority from existing identities, not a second
@@ -1399,6 +1406,7 @@ struct MirFunctionInstance {
   std::optional<HirClassInstanceId> owner;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ownerlessTextParameters;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
@@ -1522,6 +1530,7 @@ struct MirConstructorInstance {
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowParameters;
+  std::optional<FunctionBorrowDependencySummary> completeBorrow;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;

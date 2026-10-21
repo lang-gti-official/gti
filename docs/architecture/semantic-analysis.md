@@ -116,7 +116,7 @@ default-argument rules are therefore shared rather than restated. In this
 contextual mode, selection considers only constructors whose
 `ConstructorInfo::implicitConstruction` records a valid `implicit` modifier;
 declaration collection rejects the modifier on copy/move policies, packs and
-constructors that cannot take exactly one explicit argument (`GTI-S2121`), and
+constructors that cannot take zero or one explicit arguments (`GTI-S2121`), and
 the parser rejects it beside `unsafe`.
 `SemanticModel::recordContextualConstruction` keeps the selection and its site
 beside the initializer's own expression, call and construction records, which
@@ -141,6 +141,16 @@ range-element bindings, reference fields, unions, abstract classes,
 borrow-carrying declared types, or initializers typed by their destination
 (brace lists, contextually typed calls and function names). Reference returns,
 calls and assignment never consult it.
+
+Bare class-valued returns use the same constructor selector with zero explicit
+inputs and the implicit-only filter. They do not create a fake expression:
+`SemanticEmptyReturnConstructionProof` binds the exact `ReturnStmt`, selected
+construction and semantic snapshot. Concrete generic models issue their own
+proof. HIR carries it in `HirEmptyReturnConstruction`, verifies the exact target,
+defaults, statement result and full-expression root, and emits an ordinary
+constructor call with the usual failure/cleanup behavior. Instance-delta resets
+clear these records. Unknown raw-address fields stay unknown rather than
+becoming trusted because the return had no written argument.
 
 ## Conversion operators
 
@@ -746,12 +756,33 @@ enum slice collects every structurally reachable explicit return and demands
 callee bodies before transporting their facts. Concrete generic result queries
 reuse ordinary instance analysis in isolated workers keyed by declaration and
 exact owner/type/value arguments. Recursive or unavailable evidence stays
-unknown, including an unproved synthetic residual return from `?`; a callable
-with no normal return does not obtain a vacuous empty contract. Explicit
+unknown; a callable with no normal return does not obtain a vacuous empty
+contract. The synthetic residual return of a prefix `?` contributes its
+selected conversion's complete set, with no dependency and the constructor's
+alternatives as guards; only a conversion without a complete construction
+contract leaves `loanFlow.unknownImplicitResultReturn` set. Explicit
 unknown entries shadow base-model facts during concrete reanalysis. These
 contracts carry typed alternative inventories and declaration-relative mappings,
 never callee-local loan/place IDs. Guarded nonempty mappings remain a separate
 completion step with ordinary lifetime/escape obligations unchanged.
+
+A mapping's `BorrowedFieldOrigin` is an argument, the receiver, or static
+storage (`Global`, naming the storage symbol in `globalRoot`). A free or static
+function's return origin is `Global` when every dependency names the same
+global path. A global dependency lives in the shared loan-flow place domain, as
+`BorrowOriginPlace` loans do; a snapshot-only domain would make it may-alias
+every local. A mapping may name caller storage that contains the referent
+(an accessor receiver, an owned element buffer, or an owning handle's checked
+pointee) when that storage is reached without a stored reference and stores
+none itself. A reference returned by an ordinary call reborrows its declared
+origin: construction instantiation unwraps plain `Argument`/`Receiver`
+reborrows to the caller's place. A local carrier's `StoredValue` loan relays its
+external referent to an escaping return, but the chain must still reach
+caller-owned entry authority, and `isParameterDerivedBorrow` accepts a complete
+scalar set rooted at the parameter. A consuming method on a fresh or moved
+carrier production uses the production's own access, as a fresh-temporary
+receiver does, so consuming a read-only carrier claims no exclusive access to
+its owners.
 
 Dependent generic type defaults retain their resolved symbolic semantic type.
 Only while resolving that default, constraints on open type arguments defer;

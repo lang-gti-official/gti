@@ -7129,18 +7129,23 @@ def test_expected_success_ownership_diagnostic(executable, root):
                       "params": {"textDocument": {"uri": uri, "languageId": "gti",
                                                   "version": 1, "text": source}}})
         errors = publication(1)
-        assert sum(item.get("code") == "GTI-S2003" for item in errors) == 1, errors
+        # The result is constructed by its source class's implicit
+        # constructor, so copying the named owner into that constructor's
+        # by-value parameter is the general deleted-copy error.
+        assert sum(item.get("code") == "GTI-S2018" for item in errors) == 1, errors
         diagnostic = next((item for item in errors
-                           if item.get("code") == "GTI-S2003"), None)
+                           if item.get("code") == "GTI-S2018"), None)
         assert diagnostic is not None, errors
         offset = source.index("return text") + len("return ")
         assert diagnostic["range"] == {
             "start": lsp_position(source, offset),
             "end": lsp_position(source, offset + 4)}, diagnostic
         assert diagnostic["message"].startswith(
-            "Cannot return 'text' by copy because type 'std::string' is move-only."), diagnostic
+            "Constructor argument 1 would call the deleted copy constructor "
+            "of 'std::string'."), diagnostic
         assert diagnostic["data"]["hints"] == [
-            "Use 'return std::move(text);' to transfer ownership."]
+            "Pass the argument with std::move(...) when this call should "
+            "transfer ownership."]
         assert "fixes" not in diagnostic["data"]
         session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
                       "params": {"textDocument": {"uri": uri, "version": 2},
@@ -13228,12 +13233,15 @@ int main() {
 
 
 def test_constructor_text_storage_tooling(executable, root):
+    # Storing a view formal makes it an ownerless-text requirement of `store`;
+    # the caller that passes owner-dependent text is the one rejected.
     source = '''#include <std/string>
 struct Label {
   std::string_view text;
   Label(std::string_view input) : text(input) {}
 };
-void store(std::string_view dynamic) { /*😀*/ Label label{dynamic}; }
+void store(std::string_view dynamic) { Label label{dynamic}; }
+void call() { std::string owned = std::string("x"); /*😀*/ store(owned.view()); }
 '''
     path = root / "constructor-text-storage.gti"
     path.write_text(source, encoding="utf-8")
@@ -13254,15 +13262,13 @@ void store(std::string_view dynamic) { /*😀*/ Label label{dynamic}; }
             and message["params"].get("version") == 1)["params"]
         diagnostic = next(item for item in published["diagnostics"]
                           if item.get("code") == "GTI-S2045")
-        offset = source.index("dynamic};")
-        assert diagnostic["range"] == {
-            "start": lsp_position(source, offset),
-            "end": lsp_position(source, offset + len("dynamic")),
-        }, diagnostic
-        assert "stores it in a field" in diagnostic["message"], diagnostic
-        assert any("ownerless argument" in item["message"]
+        argument = source.index("owned.view()")
+        assert diagnostic["range"]["start"]["line"] == lsp_position(source, argument)["line"], diagnostic
+        assert lsp_position(source, argument)["character"] <= diagnostic["range"]["start"]["character"], diagnostic
+        assert "requiring ownerless text input" in diagnostic["message"], diagnostic
+        assert any("requires ownerless text" in item["message"]
                    for item in diagnostic.get("relatedInformation", [])), diagnostic
-        fixed = source.replace("label{dynamic}", 'label{"literal"}')
+        fixed = source.replace("store(owned.view())", 'store("literal")')
         session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
                       "params": {"textDocument": {"uri": uri, "version": 2},
                                  "contentChanges": [{"text": fixed}]}})
@@ -13276,12 +13282,14 @@ void store(std::string_view dynamic) { /*😀*/ Label label{dynamic}; }
 
 
 def test_temporary_argument_borrow_tooling(executable, root):
+    # A moved local may bind a read-only reference as a full-expression
+    # temporary, but never a mutable one.
     invalid_source = (
         "class Report {\n"
         "public:\n"
         "  Report() {}\n"
         "};\n"
-        "int inspect(Report& report) { return 1; }\n"
+        "int inspect(mut Report& report) { return 1; }\n"
         "int choose(Report& report) { return 1; }\n"
         "int choose(Report report) { return 2; }\n"
         "int main() {\n"

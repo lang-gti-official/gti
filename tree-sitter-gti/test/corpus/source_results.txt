@@ -1,0 +1,170 @@
+==================
+Source result names are ordinary class and function identifiers
+==================
+
+class expected<T, E> {
+  T value;
+public:
+  expected(T input) : value(input) {}
+  T& get() { return this.value; }
+};
+
+class expected<void, E> {
+public:
+  expected() {}
+};
+
+error_box<E> unexpected<E>(E error) {
+  return error_box<E>(error);
+}
+
+expected<int, bool> load() {
+  return unexpected(true);
+}
+
+int ordinary_identifiers() {
+  int expected = 1;
+  int unexpected = 2;
+  return expected + unexpected;
+}
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)))
+    (class_body
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier))
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (identifier)))))
+        (block))
+      (method_declaration
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier))))))))
+  (class_declaration
+    (identifier)
+    (generic_argument_profile_clause
+      (type
+        (user_type
+          (identifier))))
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause)
+        (block))))
+  (function_declaration
+    (type
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier))))))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (generic_function
+              (identifier)
+              (type_argument_clause
+                (type
+                  (user_type
+                    (identifier)))))
+            (argument_list
+              (primary_expression
+                (identifier))))))))
+  (function_declaration
+    (type
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (primitive_type))
+          (type
+            (primitive_type)))))
+    (identifier)
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list
+              (primary_expression
+                (literal
+                  (boolean_literal)))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (return_statement
+        (initializer_expression
+          (binary_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier))))))))

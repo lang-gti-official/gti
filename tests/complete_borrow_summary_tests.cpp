@@ -7,13 +7,18 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 
 namespace lang {
 struct MirProgramTestAccess {
   static auto &functions(MirProgram &program) { return program.functions; }
   static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
+  static auto &constructors(MirProgram &program) {
+    return program.constructors;
+  }
 };
 } // namespace lang
 
@@ -150,6 +155,248 @@ int main() {
         return function.id;
     return lang::HirFunctionInstanceId{0};
   };
+  {
+    std::ifstream input(root /
+                        "tests/fixtures/borrowed_enum_scalar_sibling.gti");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto result = analyze(source);
+    expect(result.canGenerateCode(),
+           "disjoint scalar field initialization retains the exact conditional "
+           "borrowed field, including its known-empty alternative");
+    for (const auto &constructor : result.mir.constructorInstances()) {
+      if (!constructor.completeBorrow)
+        continue;
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed = lang::MirProgramTestAccess::constructors(
+            malformed)[constructor.id - 1];
+        auto borrowed =
+            std::find_if(changed.body.places.begin(), changed.body.places.end(),
+                         [](const auto &place) {
+                           return place.root == lang::MirPlaceRootKind::This &&
+                                  place.projections.size() == 1 &&
+                                  place.type.kind == lang::SemanticType::Enum;
+                         });
+        bool altered = false;
+        if (borrowed != changed.body.places.end())
+          for (auto &block : changed.body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == lang::MirInstructionKind::Initialize &&
+                  instruction.destination &&
+                  changed.body.findPlace(*instruction.destination)->type ==
+                      lang::SemanticType::Int32) {
+                if (mutation == 0)
+                  instruction.destination = borrowed->id;
+                else
+                  borrowed->projections.front().field = 0;
+                altered = true;
+              }
+        expect(altered && !lang::verifyMirProgram(malformed).valid(),
+               "disjoint sibling proof rejects overlapping writes and forged "
+               "field identities");
+      }
+    }
+  }
+  {
+    std::ifstream input(root /
+                        "tests/fixtures/contextual_borrowed_construction.gti");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto result = analyze(source);
+    if (!result.canGenerateCode()) {
+      const auto dump = std::filesystem::temp_directory_path() /
+                        "gti-contextual-borrow-proof.mir";
+      std::ofstream(dump) << lang::MirPrinter().print(result.mir);
+      std::cerr << "Contextual borrow proof MIR: " << dump << '\n';
+    }
+    bool contextual = false;
+    for (const auto &function : result.hir.functionInstances())
+      for (const auto &entry : function.body.contextualConstructions) {
+        const auto *value = function.body.findValue(entry.value);
+        if (!value || !value->info.traits.containsBorrowedState)
+          continue;
+        contextual = true;
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto malformed = result.hir;
+          auto *changed = const_cast<lang::HirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          auto *constructed = const_cast<lang::HirValue *>(
+              changed->body.findValue(entry.value));
+          auto *argument = const_cast<lang::HirValue *>(
+              changed->body.findValue(constructed->operands.front()));
+          if (mutation == 0)
+            constructed->borrowDependencies.reset();
+          else if (mutation == 1)
+            constructed->borrowDependencies =
+                lang::SemanticBorrowDependencySet{};
+          else if (mutation == 2)
+            constructed->borrowOrigin = lang::BorrowOriginKind::Receiver;
+          else
+            constructed->operands.front() = constructed->id;
+          expect(argument &&
+                     !lang::verifyHirProgramPlans(result.semantics, malformed)
+                          .valid(),
+                 "contextual borrowed result preserves its separately sealed "
+                 "input, complete dependencies and constructor selection");
+        }
+      }
+    expect(contextual,
+           "unrelated source wrappers use contextual borrowed construction");
+    for (const auto &rejected :
+         {"View<int> dangling() { int local = 3; return local; }",
+          "int conflict() { mut int owner = 3; View<int> view = owner; owner = "
+          "4; return view.value(); }"}) {
+      const auto invalid = lang::Frontend().analyze(
+          root / "tests/contextual-borrow-rejection.gti", source + rejected,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(!invalid.canGenerateCode() &&
+                 std::none_of(invalid.diagnostics.begin(),
+                              invalid.diagnostics.end(),
+                              [](const auto &diagnostic) {
+                                return diagnostic.code == "GTI-B0001";
+                              }),
+             "contextual borrowing rejects dangling owners and live owner "
+             "writes in semantics");
+    }
+  }
+  {
+    std::ifstream input(root /
+                        "tests/fixtures/borrowed_enum_no_normal_result.gti");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto result = analyze(source);
+    bool found = false;
+    for (const auto &function : result.hir.functionInstances())
+      for (const auto &value : function.body.values)
+        if (value.noNormalBorrowResultProof) {
+          for (int mutation = 0; mutation < 6; ++mutation) {
+            auto malformed = result.hir;
+            auto *changed = const_cast<lang::HirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &call = *std::find_if(changed->body.values.begin(),
+                                       changed->body.values.end(),
+                                       [&](const auto &candidate) {
+                                         return candidate.id == value.id;
+                                       });
+            if (mutation == 0)
+              call.noNormalBorrowResultProof.reset();
+            if (mutation == 1)
+              call.source = nullptr;
+            if (mutation == 2)
+              call.neverReturns = false;
+            if (mutation == 3)
+              call.borrowDependencies = lang::SemanticBorrowDependencySet{};
+            if (mutation == 4)
+              const_cast<lang::HirFunctionInstance *>(
+                  malformed.findFunctionInstance(*call.functionTarget))
+                  ->typeArguments.push_back(lang::SemanticType::Int32);
+            if (mutation == 5)
+              const_cast<lang::HirFunctionInstance *>(
+                  malformed.findFunctionInstance(*call.functionTarget))
+                  ->parameterTypes.push_back(lang::SemanticType::Int32);
+            expect(!lang::verifyHirProgramPlans(result.semantics, malformed)
+                        .valid(),
+                   "excluded normal result requires exact semantic proof " +
+                       std::to_string(mutation));
+          }
+        }
+    for (const auto &function : result.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.noNormalBorrowResult) {
+            found = true;
+            expect(instruction.neverReturns && !instruction.result &&
+                       !instruction.loan,
+                   "excluded reference-result domain publishes no result");
+            for (int mutation = 0; mutation < 5; ++mutation) {
+              auto malformed = result.mir;
+              auto &changed = lang::MirProgramTestAccess::functions(
+                  malformed)[function.id - 1];
+              auto &instructions =
+                  changed.body.blocks[block.id - 1].instructions;
+              auto &call =
+                  *std::find_if(instructions.begin(), instructions.end(),
+                                [&](const auto &candidate) {
+                                  return candidate.id == instruction.id;
+                                });
+              if (mutation == 0)
+                call.noNormalBorrowResult = false;
+              if (mutation == 1)
+                call.neverReturns = false;
+              if (mutation == 2)
+                call.result = changed.body.values.front().id;
+              if (mutation == 3)
+                call.borrowFields.clear();
+              if (mutation == 4)
+                for (auto &continuation : changed.body.blocks)
+                  if (continuation.terminator.kind ==
+                      lang::MirTerminatorKind::Unreachable)
+                    continuation.terminator = {
+                        .kind = lang::MirTerminatorKind::Return};
+              expect(!lang::verifyMirProgram(malformed).valid(),
+                     "excluded normal result rejects absent proof, publication "
+                     "or continuation " +
+                         std::to_string(mutation));
+            }
+          }
+    expect(found, "known missing alternative has a call-local terminal proof");
+    const auto unknownId = functionId(result, "inspect_unknown");
+    const auto presentId = functionId(result, "inspect_present");
+    const auto *unknown = result.mir.findFunctionInstance(unknownId);
+    const auto *present = result.mir.findFunctionInstance(presentId);
+    expect(unknown && present,
+           "terminal proof includes unknown-input and normal-result controls");
+    if (unknown && !unknown->parameterBindings.empty()) {
+      auto malformed = result.mir;
+      auto &changed =
+          lang::MirProgramTestAccess::functions(malformed)[unknownId - 1];
+      const auto incoming = std::find_if(
+          changed.body.places.begin(), changed.body.places.end(),
+          [&](const auto &place) {
+            return place.root == lang::MirPlaceRootKind::Binding &&
+                   place.binding == changed.parameterBindings.front() &&
+                   place.projections.empty();
+          });
+      bool substituted = false;
+      if (incoming != changed.body.places.end())
+        for (auto &block : changed.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.kind != lang::MirInstructionKind::CallInput ||
+                instruction.callInputRole != lang::MirCallInputRole::Receiver ||
+                instruction.operands.size() != 1 || !instruction.result)
+              continue;
+            // Keep the exact receiver type and valid caller-owned storage,
+            // but replace the known-empty input by a parameter whose active
+            // alternative is unknown. The optional witness is omitted so
+            // exclusion must fail on independently reconstructed flow.
+            instruction.operands.front() = {
+                .kind = lang::MirOperandKind::BorrowRead,
+                .place = incoming->id,
+                .type = incoming->type};
+            const_cast<lang::MirValue *>(
+                changed.body.findValue(*instruction.result))
+                ->borrowDependencies.reset();
+            substituted = true;
+          }
+      expect(substituted && !lang::verifyMirProgram(malformed).valid(),
+             "unknown actual input cannot retain an excluded-result claim");
+    }
+    if (present) {
+      bool normal = false;
+      for (const auto &block : present->body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.functionTarget) {
+            const auto *target =
+                result.mir.findFunctionInstance(*instruction.functionTarget);
+            if (target &&
+                target->returnType.kind == lang::SemanticType::Reference)
+              normal = !instruction.noNormalBorrowResult &&
+                       !instruction.neverReturns && !target->neverReturns &&
+                       instruction.loan != 0;
+          }
+      expect(normal,
+             "the same accessor retains an ordinary checked normal result");
+    }
+  }
   {
     const auto result = analyze(R"gti(
 #include <std/panic>
@@ -511,6 +758,164 @@ int main() { return 0; }
                "alternative owners");
       }
     }
+  }
+  {
+    // Static storage is its own origin: the contract names the global, not an
+    // argument, and the verifier rejects a lost, substituted or strengthened
+    // global from the provisional program onward.
+    const auto result = analyze(R"gti(
+enum Slot { item(int& value), empty };
+int global_value = 19;
+Slot borrow_global(bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(global_value);
+}
+bool occupied(Slot value) {
+  switch (value) {
+  case Slot::item: return true;
+  case Slot::empty: return false;
+  }
+}
+int main() { auto value = borrow_global(true); return occupied(value) ? 0 : 1; }
+)gti");
+    const auto id = functionId(result, "borrow_global");
+    const auto *function = result.mir.findFunctionInstance(id);
+    const bool globalContract =
+        function && function->completeReturnBorrow &&
+        function->completeReturnBorrow->dependencies.size() == 1 &&
+        function->completeReturnBorrow->dependencies.front().origin ==
+            lang::BorrowOriginKind::Global &&
+        function->completeReturnBorrow->dependencies.front().globalRoot != 0;
+    expect(result.canGenerateCode() && globalContract,
+           "global-borrowing carrier names its static storage origin");
+    if (result.canGenerateCode() && globalContract) {
+      for (int mutation = 0; mutation < 4; ++mutation) {
+        auto malformed = result.mir;
+        auto &dependency =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1]
+                .completeReturnBorrow->dependencies.front();
+        if (mutation == 0)
+          dependency.globalRoot = 0;
+        else if (mutation == 1)
+          dependency.globalRoot += 1000;
+        else if (mutation == 2) {
+          dependency.origin = lang::BorrowOriginKind::Argument;
+          dependency.globalRoot = 0;
+        } else
+          dependency.access = lang::AccessMode::Mutable;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "global summary rejects a lost, substituted or strengthened "
+               "static origin " +
+                   std::to_string(mutation));
+      }
+      for (const auto level :
+           {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+        const auto optimized = lang::OptimizationPipeline().run(
+            {.hir = result.hir, .mir = result.mir, .level = level});
+        expect(optimized.valid(),
+               "optimizer preserves the global result contract");
+      }
+    }
+  }
+  {
+    // Two calls through one reference formal each name its referent by
+    // their own place. A moved carrier's set may name either of those equal
+    // paths, but never a structurally different source.
+    const auto result = analyze(R"gti(
+enum lookup_state<T> { found(T payload), missing };
+class lookup<T> {
+  mut lookup_state<T> state;
+public:
+  implicit lookup(T value) : state(lookup_state<T>::found(std::move(value))) {}
+};
+class lookup<T&> {
+  mut lookup_state<T&> state;
+public:
+  implicit lookup(T& value) : state(lookup_state<T&>::found(value)) {}
+  T take_or(T fallback) && {
+    switch (this.state) {
+    case lookup_state<T&>::found(auto& value): return value;
+    case lookup_state<T&>::missing: return fallback;
+    }
+  }
+};
+lookup<int&> find(int& owner) { return owner; }
+int twice(int& owner) {
+  auto first = find(owner);
+  auto second = find(owner);
+  int moved = std::move(second).take_or(0);
+  return std::move(first).take_or(0) + moved;
+}
+int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
+)gti");
+    expect(result.canGenerateCode(),
+           "equal dependency paths through distinct places are one source");
+    if (result.canGenerateCode()) {
+      const auto id = functionId(result, "twice");
+      const auto *function = result.mir.findFunctionInstance(id);
+      std::size_t substituted = 0;
+      for (const auto &value : function->body.values) {
+        if (!value.borrowDependencies ||
+            value.borrowDependencies->dependencies.empty())
+          continue;
+        const auto *source = function->body.findPlace(
+            value.borrowDependencies->dependencies.front().source);
+        if (!source || source->root != lang::MirPlaceRootKind::Binding ||
+            source->projections.empty())
+          continue;
+        const auto root = std::find_if(
+            function->body.places.begin(), function->body.places.end(),
+            [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Binding &&
+                     place.binding == source->binding &&
+                     place.projections.empty();
+            });
+        if (root == function->body.places.end())
+          continue;
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[id - 1];
+        changed.body.values[value.id - 1]
+            .borrowDependencies->dependencies.front()
+            .source = root->id;
+        ++substituted;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a dependency cannot substitute a structurally different "
+               "source");
+      }
+      expect(substituted != 0,
+             "two-carrier fixture exercises dependency source identity");
+    }
+  }
+  {
+    // A readonly element may iterate a range whose hidden family shares a
+    // call's mutable loan, but a forged mutable element is still rejected.
+    std::ifstream input(
+        root / "tests/fixtures/readonly_range_over_mutable_result.gti");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto result = analyze(source);
+    expect(result.canGenerateCode(),
+           "readonly elements iterate mutable reference call results");
+    std::size_t forged = 0;
+    if (result.canGenerateCode())
+      for (const char *name : {"sum", "count"}) {
+        const auto id = functionId(result, name);
+        const auto *function = result.mir.findFunctionInstance(id);
+        if (!function)
+          continue;
+        for (const auto &range : function->body.rangeIterations) {
+          if (range.elementAccess != lang::AccessMode::ReadOnly)
+            continue;
+          auto malformed = result.mir;
+          lang::MirProgramTestAccess::functions(malformed)[id - 1]
+              .body.rangeIterations[range.id - 1]
+              .elementAccess = lang::AccessMode::Mutable;
+          ++forged;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "a mutable element needs its own mutable range authority");
+        }
+      }
+    expect(forged == 2, "both readonly range shapes are forged");
   }
   const std::string token = "enum Token { empty, item(int value) };\n";
   const std::string leaf = "Token leaf() { return Token::empty; }\n";
@@ -1363,6 +1768,230 @@ int main() { return 0; }
                "guard, access, parent or availability " +
                    std::to_string(mutation));
       }
+    }
+  }
+  {
+    std::ifstream fixture(root /
+                          "tests/fixtures/borrowed_enum_generic_fields.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "generic borrowed class fixture exists");
+    const auto result = analyze(source);
+    expect(result.canGenerateCode(), "concrete generic borrowed classes prove "
+                                     "shared copy and owned-error extraction");
+  }
+  {
+    std::ifstream fixture(root / "tests/fixtures/borrowed_enum_fields.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "borrowed class fixture exists");
+    const auto result = analyze(source);
+    if (!result.canGenerateCode()) {
+      const auto log = std::filesystem::temp_directory_path() /
+                       "gti-borrowed-class-proof.mir";
+      std::ofstream output(log);
+      lang::MirPrinter().print(result.mir, output);
+      std::cerr << "Borrowed class proof MIR: " << log << '\n';
+    }
+    if (result.semanticValid) {
+      std::size_t tested = 0;
+      const auto ctorProofFailed =
+          [](const lang::MirVerificationResult &checked) {
+            return std::any_of(
+                checked.errors.begin(), checked.errors.end(),
+                [](const auto &error) {
+                  return error.message.find(
+                             "complete constructor dependency summary lacks") !=
+                         std::string::npos;
+                });
+          };
+      expect(!ctorProofFailed(lang::verifyMirProgram(result.mir)),
+             "constructor complete proof independently verifies exact "
+             "initialized fields");
+      for (const auto &constructor : result.mir.constructorInstances()) {
+        if (!constructor.completeBorrow ||
+            constructor.completeBorrow->dependencies.empty())
+          continue;
+        ++tested;
+        for (int mutation = 0; mutation < 10; ++mutation) {
+          auto malformed = result.mir;
+          auto &changed = lang::MirProgramTestAccess::constructors(
+              malformed)[constructor.id - 1];
+          if (mutation == 0)
+            changed.completeBorrow->dependencies.clear();
+          if (mutation == 1)
+            changed.completeBorrow->dependencies.front().parameter = 999;
+          if (mutation == 2)
+            changed.completeBorrow->dependencies.front()
+                .resultConditions.clear();
+          if (mutation == 3)
+            changed.completeBorrow->dependencies.front().access =
+                lang::AccessMode::Mutable;
+          if (mutation == 4)
+            for (auto &block : changed.body.blocks)
+              for (auto &instruction : block.instructions)
+                if (instruction.kind == lang::MirInstructionKind::Initialize)
+                  instruction.operands.clear();
+          if (mutation >= 5)
+            for (auto &loan : changed.body.loans) {
+              if (!loan.escapes || !loan.storedField)
+                continue;
+              if (mutation == 6)
+                loan.source = 0;
+              if (mutation == 7)
+                loan.conditions.clear();
+              if (mutation == 8)
+                loan.storedField = 0;
+              for (auto &block : changed.body.blocks)
+                for (auto &instruction : block.instructions)
+                  if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                      instruction.loan == loan.id) {
+                    if (mutation == 5)
+                      instruction.operands.clear();
+                    if (mutation == 9)
+                      instruction.operands.front().value = 0;
+                  }
+            }
+          expect(
+              ctorProofFailed(lang::verifyMirProgram(malformed)),
+              "borrowed constructor rejects absent/substituted origin, guard, "
+              "access, field initialization or exact publication " +
+                  std::to_string(mutation));
+        }
+      }
+      expect(tested != 0,
+             "borrowed constructor has an independently checked summary");
+    }
+    if (result.canGenerateCode()) {
+      std::size_t freshConsumingProofs = 0;
+      for (const auto &function : result.hir.functionInstances()) {
+        if (!function.source || function.source->name().lexeme != "relay")
+          continue;
+        const auto *original = result.mir.findFunctionInstance(function.id);
+        if (!original)
+          continue;
+        for (const auto &block : original->body.blocks)
+          for (const auto &input : block.instructions) {
+            if (input.kind != lang::MirInstructionKind::CallInput ||
+                input.callInputRole != lang::MirCallInputRole::Receiver ||
+                input.callInputKind !=
+                    lang::HirCallInputKind::MutableTemporaryBorrow ||
+                !input.info.traits.containsBorrowedState || !input.loan)
+              continue;
+            ++freshConsumingProofs;
+            for (int mutation = 0; mutation < 8; ++mutation) {
+              auto malformed = result.mir;
+              auto &body = lang::MirProgramTestAccess::functions(
+                               malformed)[function.id - 1]
+                               .body;
+              auto &shell = body.loans[*input.loan - 1];
+              const auto group = shell.storedDependency;
+              if (mutation == 0)
+                shell.storedDependency = 0;
+              if (mutation == 1)
+                shell.storedDependency = shell.id;
+              if (mutation == 2)
+                shell.source = 0;
+              if (mutation == 3)
+                shell.access = lang::AccessMode::ReadOnly;
+              if (mutation == 4)
+                body.loans[group - 1].designatedFields.clear();
+              if (mutation == 5)
+                body.loans[group - 1].conditions.clear();
+              if (mutation == 6)
+                body.loans[group - 1].parent = shell.id;
+              if (mutation == 7)
+                body.loans[group - 1].access = lang::AccessMode::Mutable;
+              expect(!lang::verifyMirProgram(malformed).valid(),
+                     "fresh consuming borrowed receiver preserves exact shell "
+                     "and stored dependency authority " +
+                         std::to_string(mutation));
+            }
+          }
+      }
+      expect(freshConsumingProofs == 1,
+             "ordinary reference relay consumes one fresh borrowed wrapper");
+      lang::HirFunctionInstanceId takeId = 0;
+      for (const auto &function : result.hir.functionInstances()) {
+        const auto *candidate = result.mir.findFunctionInstance(function.id);
+        if (function.source && function.source->name().lexeme == "take" &&
+            candidate &&
+            candidate->receiverMutability ==
+                lang::ReceiverMutability::Consuming &&
+            candidate->completeReturnBorrow)
+          takeId = function.id;
+      }
+      const auto *take = result.mir.findFunctionInstance(takeId);
+      expect(take && take->completeReturnBorrow,
+             "consuming borrowed wrapper has an external receiver contract");
+      if (take && take->completeReturnBorrow) {
+        for (int mutation = 0; mutation < 7; ++mutation) {
+          auto malformed = result.mir;
+          auto &changed =
+              lang::MirProgramTestAccess::functions(malformed)[takeId - 1];
+          for (auto &place : changed.body.places) {
+            if (place.root != lang::MirPlaceRootKind::This ||
+                !place.projections.empty())
+              continue;
+            if (mutation == 0)
+              place.key.reset();
+            if (mutation == 1 && place.key)
+              place.key->receiver = false;
+            if (mutation == 2)
+              place.foreignStorage = true;
+            if (mutation == 3)
+              place.access = lang::AccessMode::ReadOnly;
+          }
+          for (auto &loan : changed.body.loans) {
+            if (!loan.entry || loan.kind != lang::MirLoanKind::Stored)
+              continue;
+            if (mutation == 4)
+              loan.conditions.clear();
+            if (mutation == 5)
+              loan.designatedFields.clear();
+            if (mutation == 6)
+              loan.access = lang::AccessMode::Mutable;
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "consuming receiver requires exact domain, access and "
+                 "complete guarded entry " +
+                     std::to_string(mutation));
+        }
+      }
+      for (const auto &constructor : result.mir.constructorInstances()) {
+        if (!constructor.completeBorrow ||
+            constructor.completeBorrow->dependencies.empty())
+          continue;
+        auto malformed = result.mir;
+        auto &changed = lang::MirProgramTestAccess::constructors(
+            malformed)[constructor.id - 1];
+        const auto published = std::find_if(
+            changed.body.loans.begin(), changed.body.loans.end(),
+            [](const auto &loan) { return loan.escapes && loan.storedField; });
+        expect(published != changed.body.loans.end(),
+               "constructor publishes its field group");
+        if (published == changed.body.loans.end())
+          continue;
+        for (auto &block : changed.body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::EndBorrow)
+              instruction.loan = published->id;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "constructor cannot retire the published field group before "
+               "normal exit");
+      }
+    }
+    for (const std::string extra :
+         {"int& dangling_relay() { int local = 3; return relay(local); }",
+          "int alias_relay() { mut int owner = 3; int& view = relay(owner); "
+          "owner = 4; return view; }"}) {
+      const auto rejected = lang::Frontend().analyze(
+          root / "tests/reference-relay-rejection.gti", source + "\n" + extra,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(!rejected.canGenerateCode() &&
+                 std::none_of(
+                     rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-B0001"; }),
+             "reference relay rejects expired owner or mutable overlap in "
+             "semantics");
     }
   }
   return failures ? 1 : 0;

@@ -1,0 +1,137 @@
+#include <std/memory>
+
+enum Signal<T> { empty, value(T payload), error(int code) };
+enum Content<T> { value(T payload) };
+class Packet<T> {
+  mut Content<T> state;
+public:
+  constexpr Packet(T value) : state(Content<T>::value(std::move(value))) {}
+  constexpr bool has_value() {
+    switch (this.state) {
+    case Content<T>::value: return true;
+    }
+  }
+  constexpr T& value() {
+    switch (this.state) {
+    case Content<T>::value(auto& value): return value;
+    }
+  }
+  constexpr mut T& value() mut {
+    switch (this.state) {
+    case Content<T>::value(mut auto& value): return value;
+    }
+  }
+  constexpr T take() && {
+    switch (std::move(this.state)) {
+    case Content<T>::value(value): return std::move(value);
+    }
+  }
+};
+
+constexpr int payload_work() {
+  mut Signal<int> signal = Signal<int>::error(3);
+  signal = Signal<int>::value(42);
+  switch (signal) {
+  case Signal<int>::value(auto& value): return value;
+  case Signal<int>::empty: return 1;
+  case Signal<int>::error(code): return code;
+  }
+}
+constexpr int packet_work() {
+  Packet<int> packet{42};
+  return packet.has_value() ? packet.value() : 0;
+}
+constexpr int consumed_work() {
+  Packet<int> packet{42};
+  return std::move(packet).take();
+}
+constexpr int mutated_work() {
+  mut Packet<int> packet{40};
+  packet.value() += 2;
+  return packet.value();
+}
+constexpr int empty_work() {
+  Signal<int> signal = Signal<int>::empty;
+  switch (signal) {
+  case Signal<int>::empty: return 42;
+  case Signal<int>::value(value): return value;
+  case Signal<int>::error(code): return code;
+  }
+}
+struct Counter {
+  int value;
+  constexpr Counter(int value) : value(value) {}
+  constexpr int operator()() && { return this.value; }
+};
+constexpr int callable_work() { return Counter(42)(); }
+struct Point {
+  int x;
+  int y;
+  constexpr Point(int x, int y) : x(x), y(y) {}
+};
+constexpr int record_work() {
+  Packet<Point> packet{Point(40, 2)};
+  return packet.value().x + packet.value().y;
+}
+constexpr int owning_work() {
+  Packet<std::unique_ptr<int>> packet{std::make_unique<int>(42)};
+  auto owner = std::move(packet).take();
+  return *owner;
+}
+enum Twins<T> { values(T first, T second), absent };
+constexpr int twins_work() {
+  mut auto pair = Twins<std::unique_ptr<int>>::values(
+      std::make_unique<int>(20), std::make_unique<int>(22));
+  switch (std::move(pair)) {
+  case Twins<std::unique_ptr<int>>::values(first, second): return *first + *second;
+  case Twins<std::unique_ptr<int>>::absent: return 0;
+  }
+}
+constexpr Signal<int> freeze() { return Signal<int>::value(42); }
+class Profile<T, E> {};
+class Profile<void, E> {
+  Content<E> state;
+public:
+  constexpr Profile(E value) : state(Content<E>::value(value)) {}
+  constexpr E code() {
+    switch (this.state) {
+    case Content<E>::value(value): return value;
+    }
+  }
+};
+constexpr int profile_work() { return Profile<void, int>(42).code(); }
+// A generic constexpr declaration does not require every runtime payload to
+// have constexpr construction or cleanup.
+struct RuntimeOnly {
+  int value;
+  RuntimeOnly(int value) : value(value) {}
+  ~RuntimeOnly() {}
+};
+int runtime_only() {
+  Packet<RuntimeOnly> packet{RuntimeOnly(42)};
+  auto result = std::move(packet).take();
+  return result.value;
+}
+constexpr Signal<int> frozen = freeze();
+constexpr Packet<int> frozen_packet = Packet<int>(42);
+constexpr Packet<Point> frozen_record = Packet<Point>(Point(40, 2));
+static_assert(frozen_packet.value() == 42);
+static_assert(frozen_record.value().x == 40);
+static_assert(payload_work() == 42);
+static_assert(packet_work() == 42);
+static_assert(consumed_work() == 42);
+static_assert(mutated_work() == 42);
+static_assert(empty_work() == 42);
+static_assert(callable_work() == 42);
+static_assert(record_work() == 42);
+static_assert(owning_work() == 42);
+static_assert(twins_work() == 42);
+static_assert(Profile<void, int>(42).code() == 42);
+static_assert(profile_work() == 42);
+int main() {
+  return payload_work() == 42 && packet_work() == 42 &&
+         consumed_work() == 42 && mutated_work() == 42 && empty_work() == 42 &&
+         callable_work() == 42 &&
+         record_work() == 42 && owning_work() == 42 && twins_work() == 42 &&
+         runtime_only() == 42 && profile_work() == 42 ? 0 : 1;
+}

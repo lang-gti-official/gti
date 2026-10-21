@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace {
 int failures = 0;
@@ -53,10 +55,11 @@ void reject(const std::string &source, std::string_view code,
   expect(found->phase == lang::DiagnosticPhase::Semantics &&
              found->severity == lang::DiagnosticSeverity::Error,
          "transform diagnostic is a semantic error");
-  expect(std::any_of(found->hints.begin(), found->hints.end(),
-                     [&](const auto &text) {
-                       return text.find(hint) != std::string::npos;
-                     }),
+  expect(found->message.find(hint) != std::string::npos ||
+             std::any_of(found->hints.begin(), found->hints.end(),
+                         [&](const auto &text) {
+                           return text.find(hint) != std::string::npos;
+                         }),
          "diagnostic explains the applicable correction");
   expect(found->fixes.empty(), "ownership and mapper intent have no safe fix");
   expect(!related || !found->related.empty(),
@@ -71,10 +74,13 @@ void reject(const std::string &source, std::string_view code,
 void testDiagnostics() {
   const std::string producer =
       "expected<int, int> read() { return unexpected(1); }\n";
+  // transform_error is an ordinary consuming source member: the general
+  // consuming-receiver diagnostic anchors the call's closing parenthesis.
   reject(producer + "int map(int e) { return e; }\n"
                     "int main() { auto result = read();\n"
                     "  [[discard]] result.transform_error(map); return 0; }\n",
-         "GTI-S2018", "transform_error", "std::move");
+         "GTI-S2022", ")", "std::move");
+  // A function-item mapper is checked by the general function-item contract.
   for (const std::string declaration :
        {"int map(bool e) { return 1; }\n", "int map(int& e) { return e; }\n",
         "int map<T>(T e) { return 1; }\n",
@@ -82,53 +88,70 @@ void testDiagnostics() {
     reject(producer + declaration +
                "int main() { /* 😀 */ [[discard]] read().transform_error(map); "
                "return 0; }\n",
-           "GTI-S2097", "map", "non-generic namespace function", true);
+           "GTI-S2090", "map", "non-generic namespace-scope GTI function",
+           true);
   }
-  for (const std::string declaration :
-       {"void map(int e) {}\n",
-        "int global = 1; int& map(int e) { return global; }\n"}) {
-    reject(producer + declaration +
-               "int main() { [[discard]] read().transform_error(map); "
-               "return 0; }\n",
-           "GTI-S2097", "map", "movable owned");
-  }
+  // The mapped error must be movable: the member's own requirement rejects a
+  // void or reference result at the call.
+  // A void or reference mapper result cannot form the mapped error. The
+  // member's ordinary instantiation rejects it at the call; generic callers
+  // with an open error type stay valid, so no eager constraint is declared.
+  reject(producer + "void map(int e) {}\n"
+                    "int main() { [[discard]] read().transform_error(map); "
+                    "return 0; }\n",
+         "GTI-S2000", "transform_error", "void");
+  reject(producer + "int global = 1; int& map(int e) { return global; }\n"
+                    "int main() { [[discard]] read().transform_error(map); "
+                    "return 0; }\n",
+         "GTI-S2022", ")", "cannot return a reference");
   reject(producer + "int map(int e) { return e; }\n"
                     "bool map(int e) { return true; }\n"
                     "int main() { [[discard]] read().transform_error(map); "
                     "return 0; }\n",
-         "GTI-S2097", "map", "uniquely named", true);
+         "GTI-S2090", "map", "Use one non-generic namespace-scope GTI function",
+         true);
+  // The reference-success profile offers no transform_error member.
   reject("int map(int e) { return e; }\n"
          "expected<int&, int> read(int& value) { return value; }\n"
          "int main() { int value = 1; [[discard]] "
          "read(value).transform_error(map); return 0; }\n",
-         "GTI-S2097", "transform_error", "Fallible borrows");
+         "GTI-S2000", "transform_error", "Unknown member");
   const auto arity =
       analyze(producer + "int main() { [[discard]] "
                          "read().transform_error(); return 0; }\n");
+  // The general generic-call arity error owns a missing mapper; the only
+  // other error is the mapper's then-uninferable type parameter.
   expect(!arity.semanticValid &&
              std::count_if(arity.diagnostics.begin(), arity.diagnostics.end(),
                            [](const auto &diagnostic) {
                              return diagnostic.severity ==
                                     lang::DiagnosticSeverity::Error;
-                           }) == 1 &&
+                           }) <= 2 &&
              std::any_of(arity.diagnostics.begin(), arity.diagnostics.end(),
                          [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2097";
+                           return diagnostic.code == "GTI-S2005";
                          }),
-         "wrong mapper arity has one owning error rather than cascades");
-  for (const std::string lambda :
-       {"[](bool error) -> int { return 1; }",
-        "[](int& error) -> int { return error; }", "[]() -> int { return 1; }",
-        "[](int first, int second) -> int { return first; }"}) {
+         "wrong mapper arity reports the call's arity rather than cascades");
+  // A lambda mapper is invoked inside the member's instance; its errors are
+  // anchored at the requesting member call and noted inside the library.
+  for (const auto &[lambda, code, explanation] : std::initializer_list<
+           std::tuple<std::string, std::string_view, std::string_view>>{
+           {"[](bool error) -> int { return 1; }", "GTI-S2003",
+            "requires 'bool'"},
+           {"[](int& error) -> int { return error; }", "GTI-S2017",
+            "References"},
+           {"[]() -> int { return 1; }", "GTI-S2005", "expects 0 arguments"},
+           {"[](int first, int second) -> int { return first; }", "GTI-S2005",
+            "expects 2 arguments"}}) {
     reject(
         producer + "int main() { auto map = " + lambda +
             ";\n"
             "  /* 😀 */ [[discard]] read().transform_error(map); return 0; }\n",
-        "GTI-S2097", "map", "exact by-value");
+        code, "transform_error", explanation, true);
   }
   reject(producer + "int main() { auto map = [](int error) -> void {};\n"
                     "  [[discard]] read().transform_error(map); return 0; }\n",
-         "GTI-S2097", "map", "movable owned");
+         "GTI-S2000", "transform_error", "void");
   const auto movedCapture = analyze(producer + R"(
 struct Owner { ~Owner() {} };
 int main() {
@@ -193,33 +216,48 @@ int main() {
     return;
   expect(lang::verifyMirProgram(result.mir).valid(),
          "transform pipeline produces verified MIR");
+  const auto callee = [&](const lang::MirInstruction &instruction) {
+    return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget
+               ? result.hir.findFunctionInstance(*instruction.functionTarget)
+               : nullptr;
+  };
+  const auto named = [](const lang::HirFunctionInstance *function,
+                        std::string_view name) {
+    return function != nullptr && function->source != nullptr &&
+           function->source->name().lexeme == name;
+  };
   unsigned checked = 0;
   unsigned mutations = 0;
-  for (const auto &function : result.mir.functionInstances()) {
-    const auto *hir = result.hir.findFunctionInstance(function.id);
+  for (const auto &caller : result.mir.functionInstances()) {
+    const auto *hir = result.hir.findFunctionInstance(caller.id);
     if (!hir || !hir->source)
       continue;
     const auto &name = hir->source->name().lexeme;
     if (name != "transform" && name != "propagate" && name != "transform_void")
       continue;
     ++checked;
+    // transform_error is an ordinary prelude member: its state branch, mapper
+    // call and error wrapper are lowered in the selected instance's body.
+    const lang::MirFunctionInstance *transform = nullptr;
+    for (const auto &block : caller.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (named(callee(instruction), "transform_error"))
+          transform =
+              result.mir.findFunctionInstance(*instruction.functionTarget);
+    expect(transform != nullptr, "each caller selects transform_error");
+    if (transform == nullptr)
+      continue;
+    const auto &function = *transform;
     unsigned mapperCalls = 0;
     bool hasStateTest = false;
     bool hasErrorWrapper = false;
     for (const auto &block : function.body.blocks) {
+      hasStateTest |= block.terminator.kind == lang::MirTerminatorKind::Switch;
       for (const auto &instruction : block.instructions) {
-        hasStateTest |=
-            instruction.intrinsic == lang::IntrinsicKind::ExpectedHasValue ||
-            instruction.operation == lang::MirOperation::ExpectedHasValue;
-        hasErrorWrapper |=
-            instruction.operation == lang::MirOperation::Unexpected;
-        if (instruction.kind != lang::MirInstructionKind::Call ||
-            !instruction.functionTarget)
-          continue;
-        const auto *target =
-            result.hir.findFunctionInstance(*instruction.functionTarget);
-        if (!target || !target->source ||
-            target->source->name().lexeme != "map")
+        hasErrorWrapper |= named(callee(instruction), "unexpected");
+        const auto *target = callee(instruction);
+        if (!named(target, "map"))
           continue;
         ++mapperCalls;
         expect(block.id != function.body.entry,
@@ -278,35 +316,51 @@ int main() {
          "lambda mapper MIR verifies");
   expect(lang::verifyHirProgramPlans(result.semantics, result.hir).valid(),
          "eager lambda inputs retain the selected source order");
+  // A lambda mapper is an ordinary argument of the source member, staged
+  // before the call through its exact MIR call input.
   unsigned eagerPlans = 0;
-  for (const auto &function : result.hir.functionInstances()) {
-    for (const auto &value : function.body.values) {
-      if (value.conditionalInputs.empty())
-        continue;
-      ++eagerPlans;
-      for (unsigned mutation = 0; mutation < 5; ++mutation) {
-        auto malformed = result.hir;
-        auto *changed = const_cast<lang::HirFunctionInstance *>(
-            malformed.findFunctionInstance(function.id));
-        for (auto &candidate : changed->body.values) {
-          if (candidate.id != value.id)
-            continue;
-          if (mutation == 0)
-            candidate.conditionalInputs.clear();
-          else if (mutation == 1)
-            std::swap(candidate.conditionalInputs[0],
-                      candidate.conditionalInputs[1]);
-          else if (mutation == 2)
-            candidate.conditionalInputs[1] = 999999;
-          else if (mutation == 3)
-            candidate.conditionalInputs[1] = candidate.conditionalInputs[0];
-          else
-            candidate.kind = lang::HirValueKind::Grouping;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *target =
+            instruction.kind == lang::MirInstructionKind::Call &&
+                    instruction.functionTarget
+                ? result.hir.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        const auto &mapperType = instruction.operands.empty()
+                                     ? lang::SemanticType::Unknown
+                                     : instruction.operands.front().type;
+        if (!target || !target->source ||
+            target->source->name().lexeme != "transform_error" ||
+            instruction.operands.size() != 1 ||
+            mapperType.kind != lang::SemanticType::Reference ||
+            mapperType.arguments.size() != 1 ||
+            mapperType.arguments.front().kind != lang::SemanticType::Lambda)
+          continue;
+        const lang::MirInstruction *stage = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &candidate : candidateBlock.instructions)
+            if (candidate.kind == lang::MirInstructionKind::CallInput &&
+                candidate.result &&
+                *candidate.result == instruction.operands.front().value)
+              stage = &candidate;
+        if (!stage)
+          continue;
+        ++eagerPlans;
+        for (unsigned mutation = 0; mutation < 2; ++mutation) {
+          auto malformed = result.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &candidate : changedBlock.instructions) {
+              if (mutation == 0 && candidate.id == stage->id)
+                candidate.callInputIndex = 1;
+              if (mutation == 1 && candidate.id == instruction.id)
+                candidate.operands.clear();
+            }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "MIR rejects a misplaced or detached lambda mapper input");
         }
-        expect(
-            !lang::verifyHirProgramPlans(result.semantics, malformed).valid(),
-            "HIR rejects lost, reordered, missing, duplicated or misplaced "
-            "eager inputs");
       }
     }
   }
@@ -466,8 +520,10 @@ int main() {
             instruction.info.type.kind == lang::SemanticType::Lambda &&
             instruction.callInputRole == lang::MirCallInputRole::Receiver) {
           ++movedReceivers;
+          // transform_error takes its mapper as `F&`: the invocation borrows
+          // the moved environment, whose full-expression owner keeps cleanup.
           expect(instruction.callInputKind ==
-                         lang::HirCallInputKind::MoveValue &&
+                         lang::HirCallInputKind::ReadBorrow &&
                      instruction.lifecycle.empty() &&
                      !instruction.preparedParameterDrop,
                  "moved receiver staging aliases its full-expression owner "
@@ -559,42 +615,38 @@ int main() {
       expect(false, "owning transforms retain complete native representation");
     }
   }
-  unsigned temporaryReturns = 0;
-  unsigned errorReturns = 0;
+  // The result is an ordinary class value: each returning path retains its
+  // owning result until publication, including the residual of `?`.
+  const auto resultClass = [&](const lang::SemanticType &type) {
+    if (type.kind != lang::SemanticType::Class)
+      return false;
+    const auto *info = result.semantics.findClassType(type.classId);
+    return info && info->qualifiedName == "expected";
+  };
+  unsigned returnedResults = 0;
+  unsigned propagatedResults = 0;
   for (const auto &function : result.mir.functionInstances()) {
     const auto *hir = result.hir.findFunctionInstance(function.id);
     if (!hir || !hir->source ||
         (hir->source->name().lexeme != "returned" &&
          hir->source->name().lexeme != "propagated"))
       continue;
+    const bool propagated = hir->source->name().lexeme == "propagated";
     for (const auto &drop : function.body.dropObligations) {
-      if (drop.kind != lang::MirDropObligationKind::ReturnResult)
+      if (drop.kind != lang::MirDropObligationKind::ReturnResult ||
+          !resultClass(drop.dropType.type) ||
+          function.body.findPlace(drop.place) == nullptr)
         continue;
-      const auto *place = function.body.findPlace(drop.place);
-      if (!place)
-        continue;
-      if (drop.dropType.type.kind == lang::SemanticType::Unexpected)
-        ++errorReturns;
-      if (place->root != lang::MirPlaceRootKind::Temporary)
-        continue;
-      ++temporaryReturns;
-      for (unsigned mutation = 0; mutation < 4; ++mutation) {
+      ++(propagated ? propagatedResults : returnedResults);
+      for (unsigned mutation = 0; mutation < 3; ++mutation) {
         auto malformed = result.mir;
         auto *changed = const_cast<lang::MirFunctionInstance *>(
             malformed.findFunctionInstance(function.id));
         auto &body = changed->body;
         auto &returned = body.dropObligations[drop.id - 1];
         if (mutation == 0) {
-          for (auto &block : body.blocks)
-            for (auto &instruction : block.instructions)
-              if (instruction.kind == lang::MirInstructionKind::Move &&
-                  instruction.hirValue == drop.value &&
-                  instruction.operands.size() == 1 &&
-                  instruction.operands.front().place == drop.place)
-                instruction.operands.front().kind = lang::MirOperandKind::Copy;
-        } else if (mutation == 1) {
           returned.place = 0;
-        } else if (mutation == 2) {
+        } else if (mutation == 1) {
           returned.dropType.type = lang::SemanticType::Int32;
         } else {
           for (auto &block : body.blocks)
@@ -603,7 +655,7 @@ int main() {
               block.terminator.value->value = 0;
         }
         expect(!lang::verifyMirProgram(malformed).valid(),
-               "return transport rejects wrong move, place, type, or identity");
+               "return transport rejects wrong place, type, or identity");
         bool rejected = false;
         try {
           (void)gti_test::emitCpp(result, result.mir, malformed);
@@ -615,50 +667,66 @@ int main() {
       }
     }
   }
-  expect(temporaryReturns == 2 && errorReturns == 1,
+  expect(returnedResults == 1 && propagatedResults == 2,
          "direct and propagated owning returns retain unpublished cleanup");
+  // transform_error publishes either alternative by constructing the result
+  // in its own selected instance; each construction keeps its exact target
+  // and success handoff.
   unsigned publications = 0;
+  const lang::MirFunctionInstance *member = nullptr;
   for (const auto &function : result.mir.functionInstances()) {
     const auto *hir = result.hir.findFunctionInstance(function.id);
     if (!hir || !hir->source || hir->source->name().lexeme != "returned")
       continue;
-    for (const auto &block : function.body.blocks) {
-      for (const auto &instruction : block.instructions) {
-        const auto *place =
-            instruction.destination
-                ? function.body.findPlace(*instruction.destination)
-                : nullptr;
-        if (instruction.kind != lang::MirInstructionKind::Initialize ||
-            !place || place->root != lang::MirPlaceRootKind::Temporary ||
-            place->type.kind != lang::SemanticType::Expected)
-          continue;
-        ++publications;
-        for (unsigned mutation = 0; mutation < 2; ++mutation) {
-          auto malformed = result.mir;
-          auto *changed = const_cast<lang::MirFunctionInstance *>(
-              malformed.findFunctionInstance(function.id));
-          if (mutation == 0) {
-            changed->body.places[place->id - 1].type =
-                lang::SemanticType::Int32;
-          } else {
-            for (auto &candidateBlock : changed->body.blocks)
-              for (auto &candidate : candidateBlock.instructions)
-                if (candidate.id == instruction.id)
-                  candidate.lifecycle.clear();
-          }
-          expect(!lang::verifyMirProgram(malformed).valid(),
-                 "conditional publication rejects wrong slot type or erased "
-                 "handoff");
-          bool rejected = false;
-          try {
-            (void)gti_test::emitCpp(result, result.mir, malformed);
-          } catch (const std::exception &) {
-            rejected = true;
-          }
-          expect(rejected, "malformed conditional publication cannot emit C++");
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget)
+          if (const auto *target =
+                  result.hir.findFunctionInstance(*instruction.functionTarget);
+              target && target->source &&
+              target->source->name().lexeme == "transform_error")
+            member =
+                result.mir.findFunctionInstance(*instruction.functionTarget);
+  }
+  expect(member != nullptr, "returned selects its transform_error instance");
+  if (member != nullptr) {
+    std::vector<lang::MirInstructionId> constructs;
+    for (const auto &block : member->body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorTarget && resultClass(instruction.info.type))
+          constructs.push_back(instruction.id);
+    publications = constructs.size();
+    for (std::size_t index = 0; index < constructs.size(); ++index)
+      for (unsigned mutation = 0; mutation < 2; ++mutation) {
+        auto malformed = result.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(member->id));
+        std::optional<lang::HirConstructorInstanceId> other;
+        for (auto &candidateBlock : changed->body.blocks)
+          for (auto &candidate : candidateBlock.instructions)
+            if (candidate.id == constructs[(index + 1) % constructs.size()])
+              other = candidate.constructorTarget;
+        for (auto &candidateBlock : changed->body.blocks)
+          for (auto &candidate : candidateBlock.instructions)
+            if (candidate.id == constructs[index]) {
+              if (mutation == 0)
+                candidate.lifecycle.clear();
+              else
+                candidate.constructorTarget = other;
+            }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "conditional publication rejects an erased handoff or "
+               "substituted alternative constructor");
+        bool rejected = false;
+        try {
+          (void)gti_test::emitCpp(result, result.mir, malformed);
+        } catch (const std::exception &) {
+          rejected = true;
         }
+        expect(rejected, "malformed conditional publication cannot emit C++");
       }
-    }
   }
   expect(publications == 2,
          "both conditional alternative publications mutated");

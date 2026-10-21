@@ -26,8 +26,16 @@ namespace {
 
 constexpr std::string_view artifactPrefix = "GTI-FAILURE-ARTIFACT-V1";
 constexpr std::string_view externalSourcePrefix = "GTI-EXTERNAL-SOURCE-V1";
-constexpr DefinedFailureOutcome callerPanicOutcome{
-    DefinedFailureCode::Panic, DefinedFailureDetail::ExplicitPanic};
+// Reporting-only admission for the identity-bound terminal operations that
+// implement track_caller. This does not add a local detector or permit a call
+// to raise any of these outcomes; independent operation proofs own that fact.
+constexpr std::array callerTrackedOutcomes{
+    DefinedFailureOutcome{DefinedFailureCode::Panic,
+                          DefinedFailureDetail::ExplicitPanic},
+    DefinedFailureOutcome{DefinedFailureCode::InvalidExpectedAccess,
+                          DefinedFailureDetail::ValueOnError},
+    DefinedFailureOutcome{DefinedFailureCode::InvalidExpectedAccess,
+                          DefinedFailureDetail::ErrorOnValue}};
 
 struct OriginKey {
   SourceUnitId sourceUnit = 0;
@@ -522,7 +530,9 @@ verifyFailureMetadata(const FailureMetadata &metadata) {
       report("caller location assignments do not exactly match the site table");
       break;
     }
-    admissions[assignment.site - 1].push_back(callerPanicOutcome);
+    auto &outcomes = admissions[assignment.site - 1];
+    outcomes.insert(outcomes.end(), callerTrackedOutcomes.begin(),
+                    callerTrackedOutcomes.end());
   }
   for (std::size_t index = 0; index < admissions.size(); ++index) {
     auto &outcomes = admissions[index];
@@ -654,7 +664,9 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
     auto &pending = reportingSites[key];
     pending.key = key;
     pending.line = origin.line;
-    pending.outcomes.push_back(callerPanicOutcome);
+    pending.outcomes.insert(pending.outcomes.end(),
+                            callerTrackedOutcomes.begin(),
+                            callerTrackedOutcomes.end());
     sortAndUniqueOutcomes(pending.outcomes);
   }
 

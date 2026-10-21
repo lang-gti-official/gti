@@ -71,6 +71,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "UnsignedResult",
       "Value",
       "__gti_invoke",
+      "__gti_small_source_inline",
       "__gti_mir_lambda_identity",
       "__gti_mir_source_result",
       "source_callable_result",
@@ -91,6 +92,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mir_failure_cleanup_scope_v1",
       "mir_incoming_failure_cleanup_v1",
       "mir_check_incoming_cleanup_failure_v1",
+      "mir_missing_drop_v1",
       "mir_terminate_cleanup_failure_v2",
       "primary",
       "secondary",
@@ -199,11 +201,11 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "callable_capability",
       "capacity",
       "capacity_",
-      "checked_add",
+      "integer_add_overflow_flag",
       "checked_index",
       "checked_initialized_index",
-      "checked_mul",
-      "checked_sub",
+      "integer_multiply_overflow_flag",
+      "integer_subtract_overflow_flag",
       "cleanup",
       "cleanup_task",
       "cleanup_result",
@@ -541,6 +543,12 @@ void writeCppSupportPreamble(std::ostream &output,
   writeCppBackendMacroIsolation(output);
   output << R"(
 
+#if defined(__OPTIMIZE__) && (defined(__GNUC__) || defined(__clang__))
+#define __gti_small_source_inline inline __attribute__((__always_inline__))
+#else
+#define __gti_small_source_inline inline
+#endif
+
 // The lifetime-slot template only transports this ABI record by pointer, so
 // the lowered translation unit needs the type name but not the definition.
 struct gti_failure_record_v2;
@@ -554,14 +562,14 @@ namespace gti_internal::backend {
 // Passive members retain trivial native special members and byte transport.
 template <typename... Values> union payload_union;
 template <> union payload_union<> {
-  payload_union() noexcept {}
+  constexpr payload_union() noexcept {}
   ~payload_union() = default;
 };
 template <typename Head, typename... Tail>
 union payload_union<Head, Tail...> {
   Head head;
   payload_union<Tail...> tail;
-  payload_union() noexcept {}
+  constexpr payload_union() noexcept {}
   payload_union(const payload_union &) = default;
   payload_union(payload_union &&) = default;
   payload_union &operator=(const payload_union &) = default;
@@ -571,7 +579,7 @@ union payload_union<Head, Tail...> {
   ~payload_union() noexcept {}
 
   template <std::size_t Index, typename... Args>
-  void construct(Args &&...args) {
+  constexpr void construct(Args &&...args) {
     if constexpr (Index == 0) {
       std::construct_at(std::addressof(head), std::forward<Args>(args)...);
     } else {
@@ -618,7 +626,7 @@ template <typename... Values> class payload_variant {
     }
   }
   template <std::size_t Index, typename... Args>
-  void construct(Args &&...args) {
+  constexpr void construct(Args &&...args) {
     static_assert(Index < sizeof...(Values));
     // Publish only after complete construction. If native construction throws,
     // no alternative is live; any active recursive tails contain no resource.
@@ -632,10 +640,10 @@ template <typename... Values> class payload_variant {
     tag_ = vacant;
   }
 public:
-  payload_variant() noexcept(std::is_nothrow_default_constructible_v<
+  constexpr payload_variant() noexcept(std::is_nothrow_default_constructible_v<
       std::tuple_element_t<0, std::tuple<Values...>>>) { construct<0>(); }
   template <std::size_t Index, typename... Args>
-  explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
+  constexpr explicit payload_variant(std::in_place_index_t<Index>, Args &&...args) {
     construct<Index>(std::forward<Args>(args)...);
   }
   payload_variant(const payload_variant &)
@@ -2121,6 +2129,19 @@ template <typename T>
   return success;
 }
 
+// An engaged semantic slot reaching native scope exit is either a verified
+// cleanup-emergency handoff or a missing MIR Drop. Preserve both checks, but
+// keep this exceptional path out of ordinary source wrapper inlining cost.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+inline void mir_missing_drop_v1() noexcept {
+  if (!mir_cleanup_emergency_abandonment())
+    storage_error("verified MIR lifetime slot escaped without Drop");
+}
+
 // A verified MIR body owns the lifetime of values stored here. Unlike a
 // normal C++ local or std::optional, this guard deliberately refuses to clean
 // up an engaged value from its destructor: every successful construction must
@@ -2139,16 +2160,14 @@ public:
     // A verified cleanup-emergency edge explicitly stopped source cleanup.
     // The private worker handoff only retires native stack frames; neither
     // representation policy may manufacture an omitted GTI Drop here.
-    if (mir_cleanup_emergency_abandonment()) {
-      return;
-    }
     if constexpr (DestroyRepresentationAtScopeExit) {
+      if (mir_cleanup_emergency_abandonment()) return;
       // Some GTI values need a non-trivial C++ representation even though MIR
       // assigns no semantic Drop here, or has already transferred the value.
       // End only that backend representation lifetime.
       destroy();
     } else {
-      storage_error("verified MIR lifetime slot escaped without Drop");
+      mir_missing_drop_v1();
     }
   }
 
@@ -3145,20 +3164,29 @@ public:
   thread_handle &operator=(const thread_handle &) = delete;
 
   thread_handle(thread_handle &&other) noexcept
-      : state_(std::exchange(other.state_, nullptr)) {}
+      : state_(std::exchange(other.state_, nullptr)),
+        pending_context_(std::exchange(other.pending_context_, nullptr)),
+        pending_take_(std::exchange(other.pending_take_, nullptr)),
+        pending_abandon_(std::exchange(other.pending_abandon_, nullptr)) {}
 
   thread_handle &operator=(thread_handle &&other) noexcept {
     if (this == &other) {
       return *this;
     }
-    if (state_ != nullptr) {
+    if (state_ != nullptr || pending_context_ != nullptr) {
       std::terminate();
     }
     state_ = std::exchange(other.state_, nullptr);
+    pending_context_ = std::exchange(other.pending_context_, nullptr);
+    pending_take_ = std::exchange(other.pending_take_, nullptr);
+    pending_abandon_ = std::exchange(other.pending_abandon_, nullptr);
     return *this;
   }
 
   ~thread_handle() {
+    // A typed join's result that the source wrapper did not take is still
+    // owned here; release it exactly once.
+    abandon_pending_result();
     if (mir_cleanup_emergency_abandonment()) {
       // Preserve mandatory-join ownership until the terminal report. This
       // does not detach or invoke the abandoned source join operation.
@@ -3187,8 +3215,48 @@ public:
     ::gti_runtime_detail::quarantine_managed_thread_state(&state_);
   }
 
+  // A successful typed join stores the worker's result here; the take
+  // operation then moves it out without default-constructing Result.
+  void stash_result(::gti_thread_value_join_result_v2 &joined) noexcept {
+    if (pending_context_ != nullptr || joined.result_context == nullptr ||
+        joined.take_result == nullptr || joined.abandon_result == nullptr) {
+      std::terminate();
+    }
+    pending_context_ = std::exchange(joined.result_context, nullptr);
+    pending_take_ = std::exchange(joined.take_result, nullptr);
+    pending_abandon_ = std::exchange(joined.abandon_result, nullptr);
+  }
+
+  template <typename Result> Result take_result() {
+    if (pending_context_ == nullptr || pending_take_ == nullptr) {
+      std::terminate();
+    }
+    mir_lifetime_slot<Result, true> result;
+    void *context = std::exchange(pending_context_, nullptr);
+    const auto take = std::exchange(pending_take_, nullptr);
+    pending_abandon_ = nullptr;
+    take(context, result.construction_address());
+    result.mark_constructed();
+    return result.take();
+  }
+
 private:
+  void abandon_pending_result() noexcept {
+    if (pending_context_ == nullptr) {
+      return;
+    }
+    void *context = std::exchange(pending_context_, nullptr);
+    const auto abandon = std::exchange(pending_abandon_, nullptr);
+    pending_take_ = nullptr;
+    if (abandon != nullptr) {
+      abandon(context);
+    }
+  }
+
   ::gti_thread_state_v1 *state_ = nullptr;
+  void *pending_context_ = nullptr;
+  ::gti_thread_result_take_v1 pending_take_ = nullptr;
+  ::gti_thread_result_abandon_v1 pending_abandon_ = nullptr;
 };
 
 template <typename Task> struct managed_thread_task_box final {
@@ -3484,37 +3552,6 @@ managed_thread_join_value(thread_handle &handle) noexcept {
     malformed_thread_runtime_result();
   }
   return result;
-}
-
-template <typename Result, typename Error>
-inline expected_result<Result, Error> managed_thread_take_join_result(
-    ::gti_thread_value_join_result_v2 &joined) {
-  if (joined.join.status == GTI_THREAD_JOIN_NOT_JOINABLE_V1) {
-    return make_unexpected_result(static_cast<Error>(2));
-  }
-  if (joined.join.status == GTI_THREAD_JOIN_FAILED_V1) {
-    return make_unexpected_result(static_cast<Error>(3));
-  }
-  if (joined.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {
-    // The paired MIR invoke edge immediately propagates the exact worker
-    // record. This unreachable value only gives the C++ local a total
-    // representation before that edge is emitted.
-    return make_unexpected_result(static_cast<Error>(3));
-  }
-  if (joined.join.status != GTI_THREAD_JOIN_OK_V1 ||
-      joined.result_context == nullptr || joined.take_result == nullptr ||
-      joined.abandon_result == nullptr) {
-    malformed_thread_runtime_result();
-  }
-  mir_lifetime_slot<Result, true> result;
-  void *context = std::exchange(joined.result_context, nullptr);
-  const auto take = std::exchange(joined.take_result, nullptr);
-  joined.abandon_result = nullptr;
-  take(context, result.construction_address());
-  result.mark_constructed();
-  expected_result<Result, Error> output{std::move(result.get())};
-  result.destroy();
-  return output;
 }
 
 inline void managed_thread_abandon_join_result(
@@ -4040,43 +4077,29 @@ inline constexpr Value saturating_mul(Value left, Value right) {
   return value;
 }
 )";
-  if (usesExpected) {
-    output << R"(
+  output << R"(
 
-template <typename Error, typename Value>
-inline constexpr expected_result<Value, Error> checked_add(Value left,
-                                                           Value right) {
+template <typename Value>
+inline constexpr bool integer_add_overflow_flag(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
   Value value{};
-  if (integer_add_overflows(left, right, &value)) {
-    return make_unexpected_result(Error{});
-  }
-  return value;
+  return integer_add_overflows(left, right, &value);
 }
 
-template <typename Error, typename Value>
-inline constexpr expected_result<Value, Error> checked_sub(Value left,
-                                                           Value right) {
+template <typename Value>
+inline constexpr bool integer_subtract_overflow_flag(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
   Value value{};
-  if (integer_subtract_overflows(left, right, &value)) {
-    return make_unexpected_result(Error{});
-  }
-  return value;
+  return integer_subtract_overflows(left, right, &value);
 }
 
-template <typename Error, typename Value>
-inline constexpr expected_result<Value, Error> checked_mul(Value left,
-                                                           Value right) {
+template <typename Value>
+inline constexpr bool integer_multiply_overflow_flag(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
   Value value{};
-  if (integer_multiply_overflows(left, right, &value)) {
-    return make_unexpected_result(Error{});
-  }
-  return value;
+  return integer_multiply_overflows(left, right, &value);
 }
 )";
-  }
   output << R"(
 
 template <typename Left, typename Right>

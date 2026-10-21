@@ -950,6 +950,8 @@ int main() {
              lang::verifyMirProgram(wrapperContainment.mir).valid(),
          "a generic argument alone must not invent a stored ownership edge");
 
+  // expected<T, E> is now an ordinary source class, so an owning payload-enum
+  // success alternative is structural generic containment, not a carrier error.
   const lang::FrontendResult resultContainment =
       analyzeWithPrelude("owning-payload-result-containment.gti", R"(
 class resource {
@@ -963,28 +965,10 @@ int main() {
   return 0;
 }
 )");
-  expect(!resultContainment.canGenerateCode() &&
-             hasCode(resultContainment, "GTI-S2067") &&
-             hasMessage(resultContainment, "Binding 'result'") &&
-             hasMessage(resultContainment, "result carrier") &&
-             hasHint(resultContainment, "ordinary class or struct"),
-         "direct enum alternatives in result carriers retain a structural "
-         "source diagnostic, rather than reaching backend admission");
-  expect(std::any_of(resultContainment.diagnostics.begin(),
-                     resultContainment.diagnostics.end(),
-                     [](const lang::Diagnostic &diagnostic) {
-                       return diagnostic.code == "GTI-S2067" &&
-                              std::filesystem::path(diagnostic.primary.source)
-                                      .filename() ==
-                                  "owning-payload-result-containment.gti" &&
-                              diagnostic.primary.line == 9 &&
-                              diagnostic.primary.end -
-                                      diagnostic.primary.start ==
-                                  std::string_view("result").size() &&
-                              diagnostic.fixes.empty();
-                     }),
-         "unsupported result containment points to the binding and does not "
-         "offer a policy-changing automatic fix");
+  expect(resultContainment.canGenerateCode() &&
+             lang::verifyMirProgram(resultContainment.mir).valid(),
+         "an owning payload enum is an ordinary success alternative of the "
+         "source result class");
 
   const lang::FrontendResult lambdaCapture =
       analyze("owning-payload-lambda-capture.gti", R"(

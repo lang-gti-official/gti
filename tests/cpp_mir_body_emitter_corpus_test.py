@@ -306,7 +306,7 @@ def main() -> int:
         failures.append("the corpus no longer covers 30 migrated bodies")
     for field, label in (
         ("intrinsic", "wrapping/saturating intrinsic"),
-        ("checked_intrinsic", "checked-result intrinsic"),
+        ("checked_intrinsic", "overflow-query intrinsic"),
         ("loan", "loan-erasure body"),
     ):
         if agreement_totals[field] != 1:

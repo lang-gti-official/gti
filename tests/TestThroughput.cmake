@@ -19,6 +19,10 @@ set(gti_heavy_case_suites
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     callable_return_type_runtime
+    borrowed_enum_field_cleanup_runtime
+    borrowed_enum_scalar_sibling_runtime
+    borrowed_enum_terminal_contexts_runtime
+    contextual_borrowed_construction_runtime
     enum_replacement_runtime
     enum_selector_runtime
     protected_member_runtime
