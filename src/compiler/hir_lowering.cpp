@@ -1832,10 +1832,14 @@ private:
             {diagnostic.primary,
              "This selected call requires the missing definition."});
         diagnostic.primary = *request;
-      } else if (origin && trustedSources.contains(diagnostic.primary.source) &&
+      } else if (origin && diagnostic.severity == DiagnosticSeverity::Error &&
+                 trustedSources.contains(diagnostic.primary.source) &&
                  !trustedSources.contains(origin->source)) {
         // Library internals are not the user's to fix: report where other
         // code first required this instance and keep the library location.
+        // A warning there, such as a raw-pointer audit finding, describes the
+        // library's own code and keeps its location; the audit policy then
+        // reports or drops it by that location.
         diagnostic.related.insert(diagnostic.related.begin(),
                                   {diagnostic.primary, libraryInstanceNote});
         diagnostic.primary = *origin;

@@ -1776,6 +1776,21 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
   // The open reanalysis further up the staging chain evaluates it.
   if (requestSession.assertionsOwnedUpChain)
     return;
+  // An assertion is compile-time evaluation and accesses no raw storage at
+  // run time, so it adds nothing to the raw-result summary being collected
+  // for the enclosing body (its calls would otherwise count as accesses).
+  struct RawResultSuspension {
+    RequestSessionState &session;
+    std::shared_ptr<RawResultQuery> query;
+    std::size_t observation;
+    ~RawResultSuspension() {
+      session.collectingRawResult = std::move(query);
+      session.rawAccessObservation = observation;
+    }
+  } rawResultSuspension{
+      requestSession,
+      std::exchange(requestSession.collectingRawResult, nullptr),
+      requestSession.rawAccessObservation};
   const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t diagnosticsBefore = diagnostics.size();
   // An assertion is the author's own statement, so it still reports when an
