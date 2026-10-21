@@ -76,6 +76,7 @@ if(Python3_Interpreter_FOUND)
     expected_conditional_assignment_runtime expected_conditional_arms_runtime
     expected_class_return_runtime expected_constructor_return_runtime expected_consuming_return_runtime
     mixed_constructor_parameter_runtime
+    moved_passive_constructor_field_runtime
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime
     reference_owned_field_replacement_runtime
