@@ -637,10 +637,10 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
 
 // A failure-free constructor whose owned formals cannot all publish natively
 // (a move after other initializer work, or after a copy of the same formal)
-// may still publish trivially dropped, borrow-free moves in MIR order: their
-// fields start from the passive empty state and the exact Move and Initialize
-// execute in the ordinary-form body, as the failure form stages them. Body
-// admission and the initializer-list spelling share this one proof.
+// may still publish its drop-free moves in MIR order: their fields start from
+// the passive empty state and the exact Move and its publication execute in
+// the ordinary-form body, as the failure form stages them. Body admission and
+// the initializer-list spelling share this one proof.
 [[nodiscard]] bool cppMirOrdinaryBodyStagedParameterMoves(
     const MirProgram &program, const MirConstructorInstance &constructor);
 

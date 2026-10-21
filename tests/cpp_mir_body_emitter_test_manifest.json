@@ -306,6 +306,10 @@
       "suite": "text"
     },
     {
+      "name": "testMovedViewAfterFormalRead",
+      "suite": "text"
+    },
+    {
       "name": "testMovedChainReturnConstruction",
       "suite": "text"
     },
