@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.450.0 — Conformance blocks over pointers and fixed-length arrays
+
+- A `for concept` block may now apply a raw pointer or a fixed-length array to
+  its parameters, as it applies a class template: `for <T> concept C<T*>`,
+  `for <T> concept C<const T*>` or `for <T> concept C<T[3]>`. A pointer's
+  access and an array's length are part of the pattern, so `T*` and `const T*`
+  are separate blocks, as are `T[3]` and `T[4]`. These used to be
+  `error[GTI-S2123]`. No package owns a built-in type, so such a block belongs
+  in the concept's package.
+- A block function can no longer declare a default argument
+  (`error[GTI-S2123]`): a concept's operations have none, so a concrete call
+  and a call through `requires` accept the same arguments.
+- A concrete `C<X>::name` now checks the selected block's constraints, as
+  `requires C<X>` and `C<X>::operation(...)` already did, so a type that fails
+  them reports `error[GTI-S2029]`.
+- Fix the formatter rewriting `expected<T, E>& value` as
+  `expected < T, E >& value` when `T` and `E` are generic or conformance-block
+  parameters. The same applied to any generic class declared in another file.
+  The regression came with 0.449.0, when `expected` became an ordinary class.
+
 ## 0.449.0 — Source-defined `expected`, class profiles and ownerless text forwarding
 
 ### `expected` is an ordinary source class
