@@ -958,30 +958,20 @@ void Frontend::appendParserDiagnostics(
 template <typename DiagnosticType>
 void Frontend::append(std::vector<Diagnostic> &destination,
                       const std::vector<DiagnosticType> &source) {
+  // A check that runs twice over the same syntax reports once. Any difference,
+  // such as another concrete substitution, keeps both reports.
+  std::unordered_multimap<std::size_t, std::size_t> byStart;
+  for (std::size_t index = 0; index < destination.size(); ++index)
+    byStart.emplace(destination[index].primary.start, index);
   for (const DiagnosticType &item : source) {
     Diagnostic diagnostic = item;
-    // An exact repeat reports once, as when one library instance fails at
-    // several internal sites for the same request; it keeps every location.
-    const auto same =
-        std::find_if(destination.begin(), destination.end(),
-                     [&](const Diagnostic &existing) {
-                       return existing.primary == diagnostic.primary &&
-                              existing.code == diagnostic.code &&
-                              existing.severity == diagnostic.severity &&
-                              existing.message == diagnostic.message;
-                     });
-    if (same == destination.end()) {
-      destination.push_back(std::move(diagnostic));
+    const auto [first, last] = byStart.equal_range(diagnostic.primary.start);
+    if (std::any_of(first, last, [&](const auto &entry) {
+          return destination[entry.second] == diagnostic;
+        }))
       continue;
-    }
-    for (RelatedDiagnostic &related : diagnostic.related) {
-      if (std::none_of(same->related.begin(), same->related.end(),
-                       [&](const RelatedDiagnostic &existing) {
-                         return existing.span == related.span &&
-                                existing.message == related.message;
-                       }))
-        same->related.push_back(std::move(related));
-    }
+    byStart.emplace(diagnostic.primary.start, destination.size());
+    destination.push_back(std::move(diagnostic));
   }
 }
 

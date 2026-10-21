@@ -77,8 +77,9 @@ struct SemanticConstraintFailure {
   // A matching block exists, but a concrete reference result does not retain
   // the protocol's declaration-relative origin contract.
   std::optional<Token> conformanceBorrowOperation;
-  // The concept's own documentation, which states what satisfies it.
-  std::optional<std::string> conceptDocumentation;
+  // What satisfies the failed concept, from the outermost concept in the
+  // failure that declares `[[unsatisfied("...")]]`.
+  std::optional<std::string> conceptExplanation;
 };
 
 class SemanticDiagnosticReporter {

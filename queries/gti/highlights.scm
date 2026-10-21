@@ -51,6 +51,9 @@
 (native_link_name_attribute
   attribute: (identifier) @attribute
   symbol: (string_literal) @string)
+(concept_attribute
+  attribute: (identifier) @attribute
+  explanation: (string_literal) @string)
 (enum_declaration
   name: (identifier) @type.definition)
 (enumerator

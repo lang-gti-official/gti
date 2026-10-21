@@ -9208,9 +9208,9 @@ follow-ups:
   semantics does not classify keep the `mut` preference: constructor and
   `operator()` arguments, compound-assignment operands and `->` member
   access.
-- Diagnostics: 0.453.0 merges exact repeats, explains a documented concept's
-  failures with its documentation, and names `std::unexpected_value`. Still
-  open:
+- Diagnostics: 0.453.0 merges repeated reports, adds the concept
+  `[[unsatisfied("...")]]` explanation, and names `std::unexpected_value`.
+  Still open:
   - a reference-returning `transform` mapper, a `void` or reference
     `transform_error` mapper and an `expected<T, void>` error type cascade
     through the prelude's instantiation. Rejecting them up front needs a

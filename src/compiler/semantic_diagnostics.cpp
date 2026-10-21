@@ -2,43 +2,9 @@
 
 #include "semantic_spelling.h"
 
-#include <algorithm>
 #include <functional>
-#include <string_view>
 
 namespace lang {
-
-namespace {
-
-// The first paragraph of a declaration's documentation, as one line.
-std::string documentationSummary(const std::optional<std::string> &markdown) {
-  if (!markdown)
-    return {};
-  std::string summary;
-  std::size_t start = 0;
-  while (start <= markdown->size()) {
-    const std::size_t end =
-        std::min(markdown->find('\n', start), markdown->size());
-    std::string_view line(markdown->data() + start, end - start);
-    while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
-      line.remove_prefix(1);
-    while (!line.empty() &&
-           (line.back() == ' ' || line.back() == '\t' || line.back() == '\r'))
-      line.remove_suffix(1);
-    if (line.empty()) {
-      if (!summary.empty())
-        break;
-    } else {
-      if (!summary.empty())
-        summary += ' ';
-      summary += line;
-    }
-    start = end + 1;
-  }
-  return summary;
-}
-
-} // namespace
 
 std::string
 SemanticDiagnosticReporter::typeSpelling(const SemanticType &type) const {
@@ -267,12 +233,12 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           {tokenSpan(*failure.conformanceBorrowOperation),
            "The required result-origin contract is declared here."});
     }
-    if (failure.missingConformance &&
-        !documentationSummary(failure.conceptDocumentation).empty()) {
-      // The concept's author states what satisfies it; its conformance
-      // blocks are how, not what the user must provide.
-      diagnostic.hints.push_back(
-          documentationSummary(failure.conceptDocumentation));
+    if (failure.conceptExplanation) {
+      // The concept's author states what satisfies it. For a concept with a
+      // body, conformance blocks are how a type does so, not what a caller
+      // must provide, so the statement replaces the block hint.
+      diagnostic.hints.insert(diagnostic.hints.begin(),
+                              *failure.conceptExplanation);
     } else if (failure.missingConformance) {
       const std::string name =
           failure.constraintName
