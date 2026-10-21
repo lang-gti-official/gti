@@ -1656,6 +1656,27 @@ int main() {
            "imported source-defined generic reference types format without "
            "recognizing a library name");
   }
+  // Generic parameters are type arguments too: an imported generic over them
+  // is a reference type, not a comparison, in functions and conformance
+  // blocks alike.
+  for (const auto &[input, want] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"bool count<T, E>(expected<T,E>& value){return value.has_value();}",
+            "bool count<T, E>(expected<T, E>& value) {\n"
+            "  return value.has_value();\n}\n"},
+           {"concept sized<C> { bool count(C& value); };\n"
+            "for <T, E> concept sized<Pair<T,E>> {\n"
+            "bool count(Pair<T,E>& value){return true;}\n};\n",
+            "concept sized<C> {\n  bool count(C& value);\n};\n"
+            "for <T, E> concept sized<Pair<T, E>> {\n"
+            "  bool count(Pair<T, E>& value) {\n    return true;\n  "
+            "}\n};\n"}}) {
+    const auto actual = lang::Formatter().format(input);
+    if (actual != want)
+      std::cerr << "Formatted output was:\n" << actual;
+    expect(actual == want && lang::Formatter().format(actual) == actual,
+           "an imported generic over generic parameters is a reference type");
+  }
   expect(lang::Formatter().format("bool test(){return expected<limit;}") ==
              "bool test() {\n  return expected < limit;\n}\n",
          "a source-defined result name is not an unconditional generic prefix");
