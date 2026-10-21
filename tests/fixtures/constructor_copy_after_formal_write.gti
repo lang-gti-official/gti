@@ -67,6 +67,16 @@ public:
   Assigned(mut int32_t seed) : first(seed = 5), second(seed) {}
 };
 
+// Moving the formal after the assignment is failure-free as well, and the
+// ordinary form moves it in body order after the write.
+class MovedAfterAssign {
+public:
+  int32_t first;
+  int32_t second;
+  MovedAfterAssign(mut int32_t seed)
+      : first(seed = 5), second(std::move(seed)) {}
+};
+
 // A field's constructor writes the formal through its reference parameter.
 class Writer {
 public:
@@ -260,6 +270,8 @@ int main(int argc, std::vector<std::string> argv) {
 
   Assigned assigned = Assigned(1);
   std::println(assigned.first * 10 + assigned.second);
+  MovedAfterAssign moved_after = MovedAfterAssign(1);
+  std::println(moved_after.first * 10 + moved_after.second);
 
   Built built = Built(1);
   std::println(built.writer.value * 10 + built.copy);
