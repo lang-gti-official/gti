@@ -290,8 +290,10 @@ raw indexing and arithmetic; adjacent members of separate carrier unions
 would not constitute one native pointer array. Union transport preserves bytes
 for the whole array without evaluating possibly expired elements. MIR still
 owns source bounds checks, place identity and array initialization/cleanup.
-Checked references to raw pointers remain outside the current language slice;
-the backend must not alias a native `T*` slot as a `raw_address<T>&`.
+A checked reference to a raw pointer names a `raw_address<T>` slot. Semantics
+rejects one to a native `T*` slot (a fixed pointer-array element or a native
+record or union field), so the backend never aliases a native `T*` as a
+`raw_address<T>&`.
 
 Failure-free passive C-compatible call results share one consumer proof for
 bare assignment, a single enum payload field, discard, and unchanged return.

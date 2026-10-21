@@ -6943,6 +6943,59 @@ auto SemanticVisitor::Impl::validateForeignStorageBorrow(
   return false;
 }
 
+auto SemanticVisitor::Impl::validateNativePointerSlotBorrow(
+    const ExprPtr &expression, const SemanticType &reference) -> bool {
+  if (reference.kind != SemanticType::Reference ||
+      reference.arguments.size() != 1 ||
+      reference.arguments.front().kind != SemanticType::RawPointer)
+    return true;
+  const Expr *slot = expression.get();
+  while (const auto *grouping = exprAs<Grouping>(slot))
+    slot = grouping->expression().get();
+  const auto typeOf = [&](const Expr *operand) {
+    const SemanticType *type =
+        operand == nullptr ? nullptr : semanticModel.findType(*operand);
+    if (type == nullptr)
+      return SemanticType(SemanticType::Unknown);
+    if (type->kind == SemanticType::Reference && type->arguments.size() == 1)
+      return type->arguments.front();
+    return *type;
+  };
+  // A fixed array's own elements, including the hidden range-for element of
+  // a fixed array, and the fields of a native record or union.
+  bool native = false;
+  if (const auto *index = exprAs<Index>(slot))
+    native = typeOf(index->object().get()).kind == SemanticType::Array;
+  else if (const auto *element = exprAs<Unary>(slot);
+           element != nullptr && element->oper().kind == TokenKind::STAR &&
+           element->rangeObject())
+    native = typeOf(element->rangeObject().get()).kind == SemanticType::Array;
+  else if (const auto *field = exprAs<Get>(slot)) {
+    // Through `.`, a raw `->` or an overloaded `operator->`.
+    SemanticType object = memberAccessObjectType(*field);
+    if (object.kind == SemanticType::Reference &&
+        object.arguments.size() == 1) {
+      SemanticType referent = object.arguments.front();
+      object = std::move(referent);
+    }
+    const ClassInfo *owner = classInfo(object);
+    native = owner != nullptr &&
+             (owner->cAbiRecord || owner->kind == ClassKind::Union);
+  }
+  if (!native)
+    return true;
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2056", DiagnosticPhase::Semantics, expressionToken(expression),
+      "A checked reference cannot name a raw pointer stored with native "
+      "layout, such as an element of a fixed pointer array or a field of a "
+      "native record or union.");
+  diagnostic.hints.emplace_back(
+      "Copy the pointer into a local and borrow that, or take the slot's "
+      "address as a pointer-to-pointer.");
+  diagnostics.emplace_back(std::move(diagnostic));
+  return false;
+}
+
 auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     std::span<const SemanticType> parameterTypes,
     std::span<const ExprPtr *> arguments, const Token &location,
@@ -6996,7 +7049,8 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     }
     const bool referenceParameter = parameter.kind == SemanticType::Reference;
     if (referenceParameter &&
-        !validateForeignStorageBorrow(*arguments[index])) {
+        (!validateForeignStorageBorrow(*arguments[index]) ||
+         !validateNativePointerSlotBorrow(*arguments[index], parameter))) {
       continue;
     }
     const ExpressionInfo *argumentInfo =

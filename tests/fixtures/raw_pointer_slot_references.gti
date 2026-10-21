@@ -1,0 +1,96 @@
+#include <std/memory>
+
+// A checked reference may name a GTI pointer slot: reading or reseating the
+// stored address through it is safe, while the pointee stays behind lexical
+// unsafe. Generic storage instantiated with a raw pointer uses the same rule.
+class Cursor {
+  mut const int32_t* current = nullptr;
+
+public:
+  Cursor(const int32_t* start) : current(start) {}
+
+  const int32_t*& get() { return this.current; }
+  mut const int32_t*& get() mut { return this.current; }
+};
+
+class Slot<T> {
+  mut T stored;
+
+public:
+  Slot(T stored) : stored(stored) {}
+
+  T& get() { return this.stored; }
+};
+
+class Gauge {
+public:
+  Gauge() = default;
+  virtual int32_t read() { return 2; }
+};
+
+// A value read through a call's reference result, used as a raw member
+// receiver or as an element index, is the loaded referent.
+class Picker {
+  mut std::size_t selected = 1;
+
+public:
+  std::size_t& index() { return this.selected; }
+};
+
+void point(mut const int32_t*& slot, int32_t& target) { slot = &target; }
+
+expected<int32_t, const int32_t*> fail(int32_t& code) {
+  return unexpected(&code);
+}
+
+expected<const int32_t*, int32_t> find(int32_t& value, bool ok) {
+  if (ok) {
+    return &value;
+  }
+  return unexpected(5);
+}
+
+expected<int32_t, int32_t> read(int32_t& value, bool ok) {
+  const int32_t* found = ?find(value, ok);
+  unsafe { return *found; }
+}
+
+int main() {
+  int32_t first = 3;
+  int32_t second = 4;
+  mut const int32_t* pointer = &first;
+  point(pointer, second);
+  const int32_t*& alias = pointer;
+  mut int32_t total = unsafe { *alias };
+
+  mut Cursor cursor = Cursor(&first);
+  cursor.get() = &second;
+  total += unsafe { *cursor.get() };
+
+  Slot<const int32_t*> slot = Slot<const int32_t*>(&first);
+  total += unsafe { *slot.get() };
+
+  mut auto failed = fail(first);
+  failed.error() = &second;
+  total += unsafe { *failed.error() };
+
+  mut auto found = find(first, true);
+  found.value() = &second;
+  total += unsafe { *found.value() };
+  if (read(first, false).error() != 5) {
+    return 1;
+  }
+  total += read(second, true).value();
+
+  auto owner = std::make_unique<const int32_t*>(&first);
+  total += unsafe { **owner };
+
+  mut Gauge gauge{};
+  expected<Gauge*, int32_t> located = &gauge;
+  total += unsafe { located.value()->read() };
+
+  int32_t values[2] = {5, 6};
+  Picker picker{};
+  total += values[picker.index()];
+  return total == 34 ? 0 : 2;
+}

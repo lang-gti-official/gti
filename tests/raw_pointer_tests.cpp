@@ -596,6 +596,38 @@ int main() { int32_t* local; return 0; }
              hasMessage(uninitialized, "explicit initializer"),
          "raw pointer locals and fields should never be indeterminate");
 
+  // The explicit-initializer rule applies to a field declared with a pointer
+  // type. A generic field that becomes a pointer in an instance is, like
+  // every field, initialized by each constructor.
+  const lang::FrontendResult genericField =
+      lang::Frontend().analyze("generic-raw-pointer-field.gti", R"(
+class Slot<T> {
+  mut T stored;
+public:
+  Slot(T stored) : stored(stored) {}
+};
+int main() {
+  mut int32_t value = 1;
+  Slot<int32_t*> slot = Slot<int32_t*>(&value);
+  return 0;
+}
+)");
+  expect(genericField.canGenerateCode(),
+         "a generic field instantiated as a raw pointer needs no declaration "
+         "initializer");
+  const lang::FrontendResult writtenGenericField =
+      lang::Frontend().analyze("generic-written-raw-pointer-field.gti", R"(
+class Slot<T> {
+  mut T* stored;
+public:
+  Slot(T* stored) : stored(stored) {}
+};
+int main() { return 0; }
+)");
+  expect(!writtenGenericField.canGenerateCode() &&
+             hasMessage(writtenGenericField, "explicit initializer"),
+         "a generic field declared with a pointer type keeps the rule");
+
   const lang::FrontendResult aliasDepth =
       lang::Frontend().analyze("nested-raw-pointer-alias.gti", R"(
 using Pointer = int32_t*;
@@ -622,17 +654,61 @@ int main() { int32_t* pointers[2] = {}; return 0; }
   expect(arrayOfPointers.canGenerateCode(),
          "fixed arrays of one-level raw pointers should remain supported");
 
+  // A checked reference names the pointer slot: reading or reseating through
+  // it is safe, while the pointee stays behind lexical unsafe.
   const lang::FrontendResult referencePointer =
       lang::Frontend().analyze("raw-pointer-reference.gti", R"(
+void point(mut const int32_t*& slot, int32_t& target) { slot = &target; }
 int main() {
-  int32_t* pointer = nullptr;
-  int32_t*& alias = pointer;
-  return 0;
+  int32_t value = 7;
+  mut const int32_t* pointer = nullptr;
+  point(pointer, value);
+  const int32_t*& alias = pointer;
+  unsafe { return *alias - 7; }
 }
 )");
-  expect(!referencePointer.canGenerateCode() &&
-             hasMessage(referencePointer, "raw pointers"),
-         "checked references to raw pointers should remain out of scope");
+  expect(referencePointer.canGenerateCode(),
+         "checked references may read and reseat a raw-pointer slot");
+  for (const auto &[source, code, message] :
+       std::vector<std::tuple<std::string, std::string, std::string>>{
+           {"int main() { mut int32_t* pointer = nullptr; int32_t*& alias = "
+            "pointer; alias = nullptr; return 0; }",
+            "GTI-S2002", "immutable binding"},
+           {"int main() { mut int32_t value = 1; mut int32_t* pointer = "
+            "&value; int32_t*& alias = pointer; return *alias; }",
+            "GTI-S2055", "unsafe"},
+           {"int main() { int32_t* pointer = nullptr; mut int32_t*& slot = "
+            "pointer; return 0; }",
+            "GTI-S2017", "mutable initializer"},
+           // Fixed pointer arrays and native records hold native pointer
+           // objects, not GTI pointer slots.
+           {"int main() { mut int32_t a = 1; int32_t* pointers[1] = {&a}; "
+            "int32_t*& first = pointers[std::size_t(0)]; return 0; }",
+            "GTI-S2056", "native layout"},
+           {"int main() { mut int32_t a = 1; int32_t* pointers[1] = {&a}; "
+            "for (auto& p : pointers) { unsafe { return *p; } } return 0; }",
+            "GTI-S2056", "native layout"},
+           {"void reset(mut int32_t*& slot) { slot = nullptr; } int main() { "
+            "mut int32_t a = 1; mut int32_t* pointers[1] = {&a}; "
+            "reset(pointers[std::size_t(0)]); return 0; }",
+            "GTI-S2056", "native layout"},
+           {"[[c_abi]] struct Pair { mut int32_t* left; }; extern \"C\" { "
+            "Pair make_pair(); } int main() { mut Pair pair = unsafe { "
+            "make_pair() }; int32_t*& left = pair.left; return 0; }",
+            "GTI-S2056", "native layout"},
+           {"[[c_abi]] struct Pair { mut int32_t* left; }; extern \"C\" { "
+            "Pair make_pair(); } int main() { mut Pair pair = unsafe { "
+            "make_pair() }; mut Pair* p = &pair; unsafe { int32_t*& left = "
+            "p->left; } return 0; }",
+            "GTI-S2056", "native layout"}}) {
+    const lang::FrontendResult rejected =
+        lang::Frontend().analyze("raw-pointer-reference-negative.gti", source);
+    expect(!rejected.canGenerateCode() && hasCode(rejected, code) &&
+               hasMessage(rejected, message),
+           "a pointer-slot reference keeps reference access and unsafe "
+           "pointee rules: " +
+               source);
+  }
 
   const lang::FrontendResult arrayDecay =
       lang::Frontend().analyze("raw-pointer-array-decay.gti", R"(

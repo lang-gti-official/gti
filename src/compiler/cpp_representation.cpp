@@ -770,9 +770,12 @@ std::string cppAccessQualifiedTypeSpelling(const SemanticType &type,
   if (access != AccessMode::ReadOnly)
     return spelling;
   // CString is spelled directly as const char*, rather than through a named
-  // value/alias type. Its reference borrows the pointer slot, not the bytes.
-  return type.kind == SemanticType::CString ? spelling + " const"
-                                            : "const " + spelling;
+  // value/alias type, and a raw pointer is spelled with its pointee. A
+  // reference to either borrows the pointer slot, not the pointee.
+  return type.kind == SemanticType::CString ||
+                 type.kind == SemanticType::RawPointer
+             ? spelling + " const"
+             : "const " + spelling;
 }
 
 std::string cppNativeTypeSpelling(const LoweredProgram &program,

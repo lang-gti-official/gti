@@ -5633,7 +5633,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       // The constexpr contract reports its more specific initializer error.
     } else if ((declaredType.kind == SemanticType::RawPointer ||
                 declaredType.kind == SemanticType::NativeFunction) &&
-               !passiveStorageField) {
+               !passiveStorageField && !(field && instanceClassContextActive)) {
       report(stmt.name(),
              declaredType.kind == SemanticType::NativeFunction
                  ? "Native function bindings and fields require an "
