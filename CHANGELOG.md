@@ -9,6 +9,30 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.451.0 — Read-only uses select read-only accessors
+
+- On a `mut` receiver, an accessor with a read-only form returning `T&` and a
+  `mut` form returning `mut T&` now selects the `mut` form only when its
+  result is used for mutation. Reading the result, binding it to a read-only
+  reference, copying it, passing it to a read-only or by-value parameter,
+  returning it, testing it, using it as an operand, or calling a read-only
+  member on it selects the read-only form, which borrows the receiver as
+  shared. This applies to methods, `operator[]` and `operator*` of any class,
+  including `std::vector`, `std::map` and `expected`.
+- Programs that were `error[GTI-S2017]` now compile. Examples:
+  - `r.error().path.view() != "p" || r.error().code != 1` on a `mut` result;
+  - nested read-only range-for loops over the same `mut` result;
+  - `auto& first = items[std::size_t(0)];` followed by
+    `int32_t second = items[std::size_t(1)];` while `first` is live, on a
+    `mut std::vector`.
+
+  This retires the 0.449.0 compatibility note about `mut` results.
+- Such reads no longer need a mutable receiver, so a `mut` local that is only
+  read through accessors now gets `warning[GTI-S2096]` (never used mutably).
+- A use the compiler does not classify still selects the `mut` form, as
+  before. Examples are a constructor argument and the right side of a
+  compound assignment.
+
 ## 0.450.0 — Conformance blocks over pointers and fixed-length arrays
 
 - A `for concept` block may now apply a raw pointer or a fixed-length array to

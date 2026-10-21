@@ -184,6 +184,37 @@ contextual conversion on its initializer or operand, in the map that holds a con
 target's program effect edge, so a condition's `operator bool` contributes to
 initializer-order effects like a declaration's conversion does.
 
+## Use-based accessor selection
+
+An accessor pair (a read-only overload returning `T&` and an otherwise exact
+`mut` overload returning `mut T&` to the same referent) is selected from the
+use of its result, as the language rule in
+[static semantics](../language/static-semantics.md#36-calls-and-overloads)
+states. The decision is made before the call is analyzed, because the call
+records its receiver loan and checks it against live borrows then; upgrading a
+read-only selection afterwards would skip the mutable-loan conflict check.
+
+The enclosing construct therefore supplies the use top-down. A `ResultUse` is
+keyed by the child expression's identity and lives in request-session state
+for the child's analysis (`ResultUseScope`), so no other expression can see
+it. It lists the projections applied to the result, innermost first (a field,
+a member call, an operator, or a `Bind` to declared target types such as each
+candidate's parameter at an argument's position), and the access the
+outermost use needs. Only the forms that can be or pass on an accessor result
+consult it (`consultsResultUse`): calls, field reads, subscripts, groupings,
+conditionals, unary operators and the comma. `accessorResultUse` walks the
+steps over the referent type: a member or operator whose overloads all have
+read-only receivers decides `ReadOnly`, one with only `mut` receivers decides
+`Mutable`, and another accessor pair continues to its own use. An unresolved
+step or a use no construct supplies is `Unknown`, which keeps the mutable
+preference, so a missing context can only reject a program the rule would
+accept, never accept an unsound one.
+
+Selection is the only change: the chosen overload's ordinary call, loan and
+borrow-origin facts flow through HIR and MIR unchanged, and MIR verification
+checks them as for any other call. Body-local state capture saves the use,
+and a lambda body starts without one.
+
 ## Native C scalar target facts
 
 `NativeCScalarKind` identifies a C declaration family independently of numeric

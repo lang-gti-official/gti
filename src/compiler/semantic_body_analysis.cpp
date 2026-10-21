@@ -129,6 +129,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   contextualInitializerExpression = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
+  contextualResultUse.reset();
   currentReceiverMutability = ReceiverMutability::ReadOnly;
   suppressedProjectedPlaceReads.clear();
   constructorDepth = 0;
@@ -3581,6 +3582,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .contextualInitializerExpression = contextualInitializerExpression,
       .contextualOperatorIntegerType = contextualOperatorIntegerType,
       .contextualCallableResult = contextualCallableResult,
+      .contextualResultUse = contextualResultUse,
       .currentReceiverMutability = currentReceiverMutability,
       .suppressedProjectedPlaceReads = std::move(suppressedProjectedPlaceReads),
       .constructorDepth = constructorDepth,
@@ -3627,6 +3629,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   contextualInitializerExpression = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
+  contextualResultUse.reset();
   currentReceiverMutability = ReceiverMutability::ReadOnly;
   suppressedProjectedPlaceReads.clear();
   constructorDepth = 0;
@@ -3675,6 +3678,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   contextualInitializerExpression = state.contextualInitializerExpression;
   contextualOperatorIntegerType = state.contextualOperatorIntegerType;
   contextualCallableResult = state.contextualCallableResult;
+  contextualResultUse = state.contextualResultUse;
   currentReceiverMutability = state.currentReceiverMutability;
   suppressedProjectedPlaceReads =
       std::move(state.suppressedProjectedPlaceReads);
@@ -6568,6 +6572,9 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  // How this call's result is used decides an accessor pair below; read it
+  // before any child analysis supplies its own contexts.
+  const std::optional<ResultUse> callUse = resultUseFor(expr);
   const bool immediateReceiver = immediateCallReceiver == &expr;
   struct RestoreImmediateReceiver {
     const Call *&slot;
@@ -6692,11 +6699,42 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
   const bool enclosingCallCallee = analyzingCallCallee;
   analyzingCallCallee = true;
-  const SemanticType calleeType = analyze(expr.callee());
+  SemanticType calleeType = SemanticType::Unknown;
+  {
+    // A member call's receiver is used through that member: a receiver that
+    // is itself an accessor call selects its form from the member's needs.
+    std::optional<ResultUseScope> receiverUse;
+    if (const auto *member = exprAs<Get>(expr.callee().get());
+        member != nullptr && member->access().kind != TokenKind::ARROW &&
+        consultsResultUse(member->object().get()))
+      receiverUse.emplace(
+          *this, member->object().get(),
+          prependResultUseStep({.kind = ResultUseStep::Kind::Member,
+                                .name = member->name().lexeme},
+                               callUse),
+          callUse ? callUse->top : ResultUseAccess::Unknown);
+    calleeType = analyze(expr.callee());
+  }
   analyzingCallCallee = enclosingCallCallee;
 
+  // An argument is used as the parameters at its position declare. Only an
+  // argument that can be an accessor's result needs them.
+  std::vector<std::optional<ResultUseStep>> argumentUses;
+  if ((calleeType == SemanticType::Function ||
+       calleeType.kind == SemanticType::Lambda ||
+       calleeType.kind == SemanticType::FunctionItem ||
+       calleeType.kind == SemanticType::NativeFunction) &&
+      std::any_of(expr.arguments().begin(), expr.arguments().end(),
+                  [](const ExprPtr &argument) {
+                    return consultsResultUse(argument.get());
+                  }))
+    argumentUses = argumentResultUses(
+        expr, calleeType,
+        calleeType != SemanticType::Function ? std::nullopt
+        : protocolTarget ? std::optional<Symbol>(protocolTarget->symbol)
+                         : resolveExpressionSymbol(expr.callee()));
   ContextualCallArguments argumentAnalysis =
-      analyzeContextualCallArguments(expr.arguments());
+      analyzeContextualCallArguments(expr.arguments(), argumentUses);
   std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
@@ -7387,20 +7425,49 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     });
   }
 
-  if (std::any_of(viable.begin(), viable.end(),
-                  [](const ViableOverload &candidate) {
-                    return candidate.function.ownerClass != 0 &&
-                           !candidate.function.staticMember &&
-                           candidate.function.receiverMutability ==
-                               ReceiverMutability::Mutable &&
-                           receiverModeAllowsMutation(candidate.receiverMode);
-                  })) {
-    std::erase_if(viable, [](const ViableOverload &candidate) {
-      return candidate.function.ownerClass != 0 &&
-             !candidate.function.staticMember &&
-             candidate.function.receiverMutability ==
-                 ReceiverMutability::ReadOnly;
-    });
+  const auto mutableForm = [](const ViableOverload &candidate) {
+    return candidate.function.ownerClass != 0 &&
+           !candidate.function.staticMember &&
+           candidate.function.receiverMutability ==
+               ReceiverMutability::Mutable &&
+           receiverModeAllowsMutation(candidate.receiverMode);
+  };
+  const auto readOnlyForm = [](const ViableOverload &candidate) {
+    return candidate.function.ownerClass != 0 &&
+           !candidate.function.staticMember &&
+           candidate.function.receiverMutability ==
+               ReceiverMutability::ReadOnly;
+  };
+  // An accessor pair returns `T&` from a read-only receiver and `mut T&`
+  // from a mutable one. A mutable receiver selects the mutable form only when
+  // the result's use needs mutation; a read-only use borrows the owner as
+  // shared, so other reads of it stay valid.
+  const auto readOnlyAccessor =
+      std::find_if(viable.begin(), viable.end(), [&](const auto &candidate) {
+        return readOnlyForm(candidate) &&
+               candidate.function.returnType.kind == SemanticType::Reference &&
+               candidate.function.returnType.referenceAccess ==
+                   AccessMode::ReadOnly;
+      });
+  const bool readOnlyAccessorUse =
+      callUse && readOnlyAccessor != viable.end() &&
+      std::any_of(viable.begin(), viable.end(),
+                  [&](const ViableOverload &candidate) {
+                    return mutableForm(candidate) &&
+                           candidate.function.returnType.kind ==
+                               SemanticType::Reference &&
+                           candidate.function.returnType.referenceAccess ==
+                               AccessMode::Mutable &&
+                           callExpressionType(candidate.function.returnType) ==
+                               callExpressionType(
+                                   readOnlyAccessor->function.returnType);
+                  }) &&
+      accessorResultUse(*callUse, readOnlyAccessor->function.returnType) ==
+          ResultUseAccess::ReadOnly;
+  if (readOnlyAccessorUse) {
+    std::erase_if(viable, mutableForm);
+  } else if (std::any_of(viable.begin(), viable.end(), mutableForm)) {
+    std::erase_if(viable, readOnlyForm);
   }
 
   std::vector<SemanticType> rankingArgumentTypes =
@@ -7778,6 +7845,15 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
 
 auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
     -> void {
+  // Each arm is the conditional's value and has its use. An arm keeps that
+  // use even when the other arm's type is expected of it.
+  const std::optional<ResultUse> use = resultUseFor(expr);
+  const auto armUse = [&](std::optional<ResultUseScope> &scope,
+                          const ExprPtr &arm) {
+    scope.emplace(*this, arm.get(),
+                  use ? use->steps : std::vector<ResultUseStep>{},
+                  use ? use->top : ResultUseAccess::Unknown);
+  };
   const SemanticType conditionType =
       analyzeExpectedCallableResult(expr.condition(), SemanticType::Bool);
   requireBool(expr.condition(), conditionType,
@@ -7792,24 +7868,30 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
   // semantic reanalysis. A discarded conditional keeps the existing void-call
   // requirement; unresolved must not silently stand for void in a value join.
   const bool inferredValue = contextualInitializerType.has_value();
+  std::optional<ResultUseScope> thenUse;
+  armUse(thenUse, expr.thenExpression());
   const SemanticType thenType =
       contextualType == SemanticType::Unknown && !inferredValue
           ? analyze(expr.thenExpression())
           : analyzeExpectedCallableResult(expr.thenExpression(), contextualType,
                                           contextualType ==
                                               SemanticType::Unknown);
+  thenUse.reset();
   const ScopeStack thenScopes = scopes;
 
   // An enclosing assignment may hold a place rooted in the current scopes.
   restoreScopeState(beforeBranches);
   const SemanticType elseExpectation =
       contextualType == SemanticType::Unknown ? thenType : contextualType;
+  std::optional<ResultUseScope> elseUse;
+  armUse(elseUse, expr.elseExpression());
   const SemanticType elseType =
       elseExpectation == SemanticType::Unknown && !inferredValue
           ? analyze(expr.elseExpression())
           : analyzeExpectedCallableResult(
                 expr.elseExpression(), elseExpectation,
                 elseExpectation == SemanticType::Unknown);
+  elseUse.reset();
   --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
@@ -7898,7 +7980,18 @@ auto SemanticVisitor::Impl::visitConversionExpr(const Conversion &expr)
     -> void {
   validateType(expr.targetType());
   const SemanticType targetType = typeOf(expr.targetType());
-  const SemanticType valueType = analyze(expr.value());
+  SemanticType valueType = SemanticType::Unknown;
+  {
+    // The value is read by a built-in conversion or used as the receiver of
+    // a conversion operator.
+    std::optional<ResultUseScope> use;
+    if (consultsResultUse(expr.value().get()))
+      use.emplace(*this, expr.value().get(),
+                  std::vector{operatorResultUseStep(
+                      conversionOperatorKind(targetType))},
+                  ResultUseAccess::ReadOnly);
+    valueType = analyze(expr.value());
+  }
   // A class value converts only through its own conversion operator to
   // exactly the target.
   if (analyzeExplicitConversion(expr, expr.value(), valueType, targetType,
@@ -8391,7 +8484,22 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
-  SemanticType objectType = analyzeProjectionBase(expr.object());
+  // A field read uses its object through that field. A member callee has no
+  // use of its own: its call keyed the receiver's use to the object.
+  SemanticType objectType = SemanticType::Unknown;
+  {
+    const std::optional<ResultUse> use = resultUseFor(expr);
+    std::optional<ResultUseScope> objectUse;
+    if (use && expr.access().kind != TokenKind::ARROW &&
+        consultsResultUse(expr.object().get()))
+      objectUse.emplace(
+          *this, expr.object().get(),
+          prependResultUseStep(
+              {.kind = ResultUseStep::Kind::Field, .name = expr.name().lexeme},
+              use),
+          use->top);
+    objectType = analyzeProjectionBase(expr.object());
+  }
   if (foldAttributeMemberRead(expr, objectType)) {
     return;
   }
@@ -8537,13 +8645,30 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
 auto SemanticVisitor::Impl::visitGroupingExpr(const Grouping &expr) -> void {
   if (expr.unsafeKeyword())
     enterUnsafeRegion(*expr.unsafeKeyword(), true);
-  currentType = analyze(expr.expression());
+  {
+    const ResultUseScope use(*this, expr.expression().get(),
+                             resultUseFor(expr));
+    currentType = analyze(expr.expression());
+  }
   if (expr.unsafeKeyword())
     leaveUnsafeRegion();
 }
 
 auto SemanticVisitor::Impl::visitIndexExpr(const Index &expr) -> void {
-  const SemanticType objectType = analyzeProjectionBase(expr.object());
+  // The object is used through operator[], whose own accessor pair follows
+  // this subscript's use.
+  const std::optional<ResultUse> use = resultUseFor(expr);
+  SemanticType objectType = SemanticType::Unknown;
+  {
+    std::optional<ResultUseScope> objectUse;
+    if (use && consultsResultUse(expr.object().get()))
+      objectUse.emplace(
+          *this, expr.object().get(),
+          prependResultUseStep(
+              operatorResultUseStep(OverloadedOperator::Subscript), use),
+          use->top);
+    objectType = analyzeProjectionBase(expr.object());
+  }
   const SemanticType indexType = analyze(expr.index());
   semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
   if (objectType.kind == SemanticType::RawPointer) {
@@ -8594,7 +8719,10 @@ auto SemanticVisitor::Impl::visitIndexExpr(const Index &expr) -> void {
         expr.bracket(), std::span<const SemanticType>(&indexType, 1),
         std::span<const ExprPtr>(&expr.index(), 1), false, std::nullopt,
         std::nullopt, false,
-        preferReadOnlySubscriptReceiverDepth != 0 && !mutableReferenceContext);
+        (preferReadOnlySubscriptReceiverDepth != 0 &&
+         !mutableReferenceContext) ||
+            readOnlyAccessorOperator(use, objectType,
+                                     OverloadedOperator::Subscript));
     currentType = selected ? callExpressionType(selected->returnType)
                            : SemanticType::Unknown;
     return;
@@ -9162,6 +9290,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const Expr *enclosingInitializerExpression = contextualInitializerExpression;
   const std::optional<ContextualCallableResult> enclosingCallableResult =
       contextualCallableResult;
+  std::optional<ResultUse> enclosingResultUse = contextualResultUse;
   scopes.clear();
   scopes.push_back(std::move(captureScope));
   currentReturnType = returnType;
@@ -9177,6 +9306,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;
   contextualCallableResult.reset();
+  contextualResultUse.reset();
   loopDepth = 0;
   switchDepth = 0;
   constructorDepth = 0;
@@ -9289,6 +9419,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   contextualInitializerType = enclosingInitializerType;
   contextualInitializerExpression = enclosingInitializerExpression;
   contextualCallableResult = enclosingCallableResult;
+  contextualResultUse = std::move(enclosingResultUse);
   analyzingCallCallee = enclosingAnalyzingCallCallee;
   loanFlow = std::move(enclosingLoanFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
@@ -10570,6 +10701,32 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
     }
     ++programStoragePlaceUseDepth;
   }
+  // A dereference passes its own use to the operand through operator*; the
+  // other value operators read their operand.
+  const std::optional<ResultUse> use = resultUseFor(expr);
+  std::optional<ResultUseScope> operandUse;
+  const std::optional<OverloadedOperator> readingOperation =
+      expr.oper().kind == TokenKind::BANG
+          ? std::optional(OverloadedOperator::ContextualBool)
+      : expr.oper().kind == TokenKind::MINUS
+          ? std::optional(OverloadedOperator::Minus)
+      : expr.oper().kind == TokenKind::PLUS
+          ? std::optional(OverloadedOperator::Plus)
+      : expr.oper().kind == TokenKind::TILDE
+          ? std::optional(OverloadedOperator::BitwiseNot)
+          : std::nullopt;
+  if (consultsResultUse(expr.right().get())) {
+    if (expr.oper().kind == TokenKind::STAR && use)
+      operandUse.emplace(
+          *this, expr.right().get(),
+          prependResultUseStep(
+              operatorResultUseStep(OverloadedOperator::Dereference), use),
+          use->top);
+    else if (readingOperation)
+      operandUse.emplace(*this, expr.right().get(),
+                         std::vector{operatorResultUseStep(*readingOperation)},
+                         ResultUseAccess::ReadOnly);
+  }
   const SemanticType rightType =
       mutating ? analyze(expr.right(), OccurrenceRole::Reference |
                                            OccurrenceRole::Read |
@@ -10580,6 +10737,7 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
                       ? analyzeExpectedCallableResult(expr.right(),
                                                       SemanticType::Bool)
                       : analyze(expr.right()));
+  operandUse.reset();
   if (expr.oper().kind == TokenKind::AMPERSAND) {
     requestSession.foreignAddressPlaces.resize(foreignAddressCount);
     --programStoragePlaceUseDepth;
@@ -10694,11 +10852,13 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       const std::optional<CallableCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Dereference, expr.right(), rightType,
           expr.oper(), {}, {}, false, std::nullopt, std::nullopt, false,
-          preferReadOnlySubscriptReceiverDepth != 0 &&
-              !(contextualInitializerType &&
-                contextualInitializerType->kind == SemanticType::Reference &&
-                contextualInitializerType->referenceAccess ==
-                    AccessMode::Mutable));
+          (preferReadOnlySubscriptReceiverDepth != 0 &&
+           !(contextualInitializerType &&
+             contextualInitializerType->kind == SemanticType::Reference &&
+             contextualInitializerType->referenceAccess ==
+                 AccessMode::Mutable)) ||
+              readOnlyAccessorOperator(use, rightType,
+                                       OverloadedOperator::Dereference));
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
     } else {
@@ -13838,6 +13998,18 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   while (const auto *grouping = exprAs<Grouping>(inferredExpression)) {
     inferredExpression = grouping->expression().get();
   }
+  // A reference binding, including a range's owner, needs the access it
+  // declares; a value binding copies its initializer. The loop's other
+  // hidden bindings keep the range protocol's own selections.
+  std::optional<ResultUseScope> initializerUse;
+  if (declaration.initializer() && !declaration.isRangeBinding() &&
+      !declaration.isRangeIterator() && !declaration.isRangeElementOwner())
+    initializerUse.emplace(*this, declaration.initializer().get(),
+                           std::vector<ResultUseStep>{},
+                           (type.reference || declaration.isRangeOwner()) &&
+                                   declaration.isMutable()
+                               ? ResultUseAccess::Mutable
+                               : ResultUseAccess::ReadOnly);
   // Only a conditional value join needs an unknown initializer context.
   // In particular, auto x{...} must retain its missing-constructed-type error;
   // Unknown there means recovery from an already-invalid explicit type.
@@ -13847,6 +14019,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
           ? analyzeInitializer(declaration.initializer(), SemanticType::Unknown)
           : analyzeExpectedCallableResult(declaration.initializer(),
                                           SemanticType::Unknown);
+  initializerUse.reset();
   if (ordinaryReference && declaration.initializer()) {
     if (declaration.isMutable())
       recordMutableBindingUse(declaration.initializer());

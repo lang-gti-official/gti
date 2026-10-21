@@ -9200,10 +9200,11 @@ follow-ups:
   (`GTI-S2056` inside the prelude's error storage). Supporting them needs a
   raw-pointer error-storage profile or a general rule for constructor-initialized
   generic raw-pointer fields; the built-in carrier allowed them.
-- Use-based receiver access: an overloaded read-only/mutable accessor on a
-  `mut` receiver selects the mutable overload even for a read-only use, so a
-  concurrent read of the same carrier conflicts where the built-in place
-  access did not.
+- Use-based receiver access is delivered in 0.451.0 for accessor pairs
+  ([rule](../language/static-semantics.md#36-calls-and-overloads)). Uses that
+  semantics does not classify keep the `mut` preference: constructor and
+  `operator()` arguments, compound-assignment operands and `->` member
+  access.
 - Diagnostics: `GTI-S2029` hints name `std::detail` helpers and `for concept`
   blocks; callable-class mappers report `GTI-S2023` three times; mapper arity
   errors cascade `GTI-S2023` with `GTI-S2005`; a reference-returning
