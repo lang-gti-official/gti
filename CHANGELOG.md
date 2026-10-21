@@ -19,9 +19,9 @@ for what minor and patch releases mean.
   parameter to a `mut` reference of a function or a constructor, assign it
   (`seed = 5`, `seed += 5`, `++seed`), run a lambda capturing it with
   `[mut &seed]`, or call a `mut` method on it or change one of its fields.
-  Integers, enums, raw pointers, fixed arrays and copyable structs were
-  affected, in generic classes too. A copy taken before the change, or of a
-  parameter nothing changes, was already correct.
+  Integers, enums, raw pointers and copyable structs were affected, in
+  generic classes too. A copy taken before the change, or of a parameter
+  nothing changes, was already correct.
 - A constructor can now copy a struct into a field from a reference
   parameter, as in `Holder(Point& point) : point(point) {}`, or copy a
   changed struct parameter beside a moved one. Both stopped with
