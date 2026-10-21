@@ -1522,6 +1522,16 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
   };
+  // A fresh value whose text field received dynamic text carries that owner
+  // dependency itself; its type stays dependency-free (L-OWN-02).
+  const auto textDependentType = [&](const SemanticType &candidate) {
+    return candidate.kind == SemanticType::Class &&
+           !typeTraits(candidate).containsBorrowedState;
+  };
+  if (const auto *construction = semanticModel.findConstruction(expr);
+      construction != nullptr && construction->dependentTextPublication &&
+      textDependentType(type))
+    return textDependentValueInfo(std::move(type));
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
     if (borrowedTextType(type) && sourceInfo != nullptr &&
@@ -1529,6 +1539,10 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return ownerDependentTextInfo(type, sourceInfo->category,
                                     sourceInfo->access);
     }
+    if (textDependentType(type) && sourceInfo != nullptr &&
+        sourceInfo->traits.containsBorrowedState)
+      return textDependentValueInfo(type, sourceInfo->category,
+                                    sourceInfo->access);
     return sourceInfo == nullptr
                ? expressionInfo(std::move(type))
                : expressionInfo(std::move(type), sourceInfo->category,
@@ -1578,6 +1592,17 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return ownerDependentTextInfo(type, ValueCategory::Place,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
+    }
+    // A local binding that retains a dependent text value (L-OWN-02). A
+    // reference binding's loan is its referent's, not a text dependency.
+    if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
+        symbol->retainedLoan != 0 && symbol->variableDeclaration != nullptr) {
+      const auto *binding =
+          semanticModel.findBinding(*symbol->variableDeclaration);
+      if (binding != nullptr && binding->traits.containsBorrowedState)
+        return textDependentValueInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
     }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
@@ -1723,6 +1748,20 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
     }
+    // A text field that a dependent value's owner dependency designates
+    // holds that owner's dynamic text (L-OWN-02). Its other fields stay
+    // ownerless.
+    if (borrowedTextType(type) && member != nullptr && objectInfo != nullptr &&
+        get.access().kind != TokenKind::ARROW &&
+        isTextDependentValue(*objectInfo)) {
+      const auto fields = textDependentFields(*get.object());
+      if (std::find(fields.begin(), fields.end(),
+                    symbolForDeclaration(member->symbol.declaration)) !=
+          fields.end())
+        return ownerDependentTextInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
@@ -1753,6 +1792,14 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
         return expressionInfo(std::move(type), ValueCategory::Place,
                               callableResult->referenceAccess);
       }
+    }
+    // Moving a dependent text value transfers its owner dependency.
+    if (textDependentType(type) && call.arguments().size() == 1 &&
+        resolvedIntrinsicKind(call) == IntrinsicKind::Move) {
+      const ExpressionInfo *sourceInfo =
+          semanticModel.findExpression(*call.arguments().front());
+      if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+        return textDependentValueInfo(std::move(type));
     }
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
@@ -2447,6 +2494,19 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (!directInitialization && (exprAs<Call>(&expr) || construction))
     applyRawCallWrites(expr);
   ExpressionInfo info = classifyExpression(expr, result);
+  // A field read, a grouping and a move keep a dependent text value inside
+  // the body that created it (L-OWN-02).
+  if (isTextDependentValue(info))
+    noteTextDependentValue(expr);
+  if (const auto *get = exprAs<Get>(&expr);
+      get != nullptr && result != SemanticType::Function)
+    consumeTextDependentValue(get->object());
+  else if (const auto *group = exprAs<Grouping>(&expr))
+    consumeTextDependentValue(group->expression());
+  else if (const auto *call = exprAs<Call>(&expr);
+           call != nullptr && call->arguments().size() == 1 &&
+           resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+    consumeTextDependentValue(call->arguments().front());
   if (semanticModel.findOperator(expr) == nullptr && isNumeric(result)) {
     const auto compound = [&](TokenKind token, const ExprPtr &right) {
       if (token != TokenKind::EQUAL) {

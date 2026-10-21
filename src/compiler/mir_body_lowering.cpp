@@ -7099,6 +7099,7 @@ private:
     call.borrowAccess = value.borrowAccess;
     call.borrowArguments = value.borrowArguments;
     call.borrowFields = value.borrowFields;
+    call.dependentTextPublication = value.dependentTextPublication;
     call.borrowPlace = value.borrowPlace;
     call.restoresReferenceResult = value.restoresReferenceResult;
     call.restoredBorrowFields = value.restoredBorrowFields;
@@ -8133,6 +8134,7 @@ private:
     construct.borrowAccess = value.borrowAccess;
     construct.borrowArguments = value.borrowArguments;
     construct.borrowFields = value.borrowFields;
+    construct.dependentTextPublication = value.dependentTextPublication;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
       MirLoanId parent = 0;
       // A cleanup-bound adapter constructed through a checked readonly

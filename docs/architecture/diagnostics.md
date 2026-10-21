@@ -649,7 +649,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   mechanical fix because that changes aliasing and API semantics.
   Owner-dependent `std::string_view` and `c_string` values use this same family
   for unsupported storage and escape; mutation or movement of their source
-  owner while live remains `GTI-S2017`.
+  owner while live remains `GTI-S2017`. A class or struct value whose text
+  field holds such a view (`L-OWN-02`) is reported at each use outside its
+  creating body: an argument, receiver, return, capture, reference, assignment
+  or storage. A second owner is reported at its argument. A class with a
+  destructor, a base or virtual methods keeps the ownerless field
+  diagnostic, with a hint naming that reason.
 - `GTI-S2019` owns invalid payloads of declaration-bound private storage.
   Optional storage requires move construction and excludes void,
   references and raw-pointer payloads. This boundary does not require move

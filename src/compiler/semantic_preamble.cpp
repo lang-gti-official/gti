@@ -209,6 +209,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
   finalizeOwnerlessTextContracts();
+  finalizeTextDependentValues();
   discoverOwnedCallableValueParameters();
   validateOnceCallableForwardings();
   validateOwnedCallableArguments();

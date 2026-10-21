@@ -1605,7 +1605,8 @@ private:
     borrowOriginPlace(value.borrowPlace);
     output << " borrow-fields=";
     borrowFields(value.borrowFields);
-    output << " restores-reference=" << value.restoresReferenceResult
+    output << " dependent-text=" << value.dependentTextPublication
+           << " restores-reference=" << value.restoresReferenceResult
            << " restored-fields=";
     restoredFields(value.restoredBorrowFields);
     output << " operation=" << name(value.operation) << " literal=";

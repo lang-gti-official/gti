@@ -2381,6 +2381,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                 selected.constructor->declaration->parameters(),
                 arguments.size());
   recordDefaultArgumentDependencies(defaultArguments);
+  std::vector<BorrowedFieldOrigin> textOrigins;
   if (selected.constructor != nullptr) {
     for (const auto &[index, initializer] : ownerlessTextConstructorInputs(
              constructedType, selected.constructor->declaration,
@@ -2414,6 +2415,35 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       // instantiation is analyzed; no reusable caller obligation was proved.
       if (conditionalText)
         continue;
+      // The fresh value's text field carries this argument's read-only owner
+      // dependency, as a reference field carries its referent's (L-OWN-02).
+      // A class whose fields other code reads keeps the ownerless rule.
+      bool restrictedOwner = false;
+      if (!potentialPackView && !contextualConstruction &&
+          index < arguments.size()) {
+        auto dependencies = textFieldInitializerDependencies(
+            constructedType, *initializer, *argument);
+        restrictedOwner =
+            !dependencies.empty() && !textPublicationOwner(constructedType);
+        if (restrictedOwner)
+          dependencies.clear();
+        if (!dependencies.empty() && !textOrigins.empty()) {
+          // Phase 1 of L-OWN-02 publishes one owner per value.
+          report(expressionToken(*argument),
+                 "A value can hold dynamic text from one owner; this "
+                 "argument would add a second owner dependency.",
+                 "GTI-S2045");
+          continue;
+        }
+        if (!dependencies.empty()) {
+          textOrigins.push_back(
+              {.resultFields = dependencies.front().designatedFields,
+               .origin = BorrowOriginKind::Argument,
+               .parameter = index,
+               .access = AccessMode::ReadOnly});
+          continue;
+        }
+      }
       reportOwnerDependentTextStorage(
           *argument, "passed to a constructor that stores it in a field");
       diagnostics.back().related.push_back(
@@ -2421,6 +2451,11 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
            "This initializer stores the view by value and requires an "
            "ownerless argument."});
       diagnostics.back().hints.clear();
+      if (restrictedOwner)
+        diagnostics.back().hints.emplace_back(
+            "A class with a destructor, a base class or virtual methods keeps "
+            "its text fields ownerless, because that code reads them outside "
+            "the body that created the value.");
       diagnostics.back().hints.emplace_back(
           "Pass a literal-backed value, store owned text instead, or use a "
           "checked reference field to retain the view and its owner.");
@@ -2535,6 +2570,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "default arguments.",
                "GTI-S2045");
     }
+  }
+  if (!textOrigins.empty()) {
+    // The construction publishes its argument's owner as a stored value
+    // dependency at the text field, as a one-reference carrier does. The
+    // retained loan, not a complete dependency set, carries it, exactly as
+    // for a dynamic view binding.
+    resolved.borrowOrigin = BorrowOriginKind::Argument;
+    resolved.borrowArgument = textOrigins.front().parameter;
+    resolved.borrowAccess = AccessMode::ReadOnly;
+    resolved.borrowFields = std::move(textOrigins);
+    resolved.dependentTextPublication = true;
   }
   if (emptyReturn != nullptr) {
     if (currentProgramEffectOwner.valid())
@@ -4420,13 +4466,33 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
 
 auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const SemanticType &type, const ExprPtr &initializer) -> void {
+  const auto *initializerInfo =
+      initializer ? semanticModel.findExpression(*initializer) : nullptr;
+  const bool textDependentValue = type.kind == SemanticType::Class &&
+                                  initializerInfo != nullptr &&
+                                  isTextDependentValue(*initializerInfo);
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
-      type.kind != SemanticType::CString) {
+      type.kind != SemanticType::CString && !textDependentValue) {
     report(expressionToken(initializer),
            "Borrowed state cannot be nested inside another stored value in "
            "the current lifetime model.",
            "GTI-S2045");
+    return;
+  }
+  if (textDependentValue) {
+    // A dependent text value is a by-value descriptor: its own storage needs
+    // no stability, but each owner it designates must be a checked place.
+    const auto dependencies = storedBorrowDependencies(initializer);
+    if (dependencies.empty() ||
+        std::any_of(dependencies.begin(), dependencies.end(),
+                    [](const SemanticLoanDependency &dependency) {
+                      return dependency.place.root == 0 &&
+                             !dependency.place.receiver;
+                    }))
+      report(expressionToken(initializer),
+             "A value holding dynamic text must name its text's owner.",
+             "GTI-S2045");
     return;
   }
   // A complete producer fact can prove that this value has no external
