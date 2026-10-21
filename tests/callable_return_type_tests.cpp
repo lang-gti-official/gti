@@ -225,6 +225,35 @@ struct Holder<F> { std::meta::callable_return_type<F> value; };
 int main() { Holder<int> holder{}; return 0; }
 )",
            "GTI-S2023", "Callable return-type reflection requires");
+  {
+    // A call whose instantiated signature reflects a callable class's result
+    // names no result type. It is rejected once, at the call, instead of
+    // every later use treating the unresolved query as an ordinary type.
+    const std::string source = R"(
+#include <std/meta>
+std::meta::callable_return_type<F> apply<F>(F& fn) { return fn(1); }
+struct Mapper { int operator()(int value) { return value; } };
+int main() { Mapper mapper{}; return apply(mapper); }
+)";
+    const auto result = analyze(source);
+    const std::size_t paren = source.find("(mapper)") + 7;
+    const std::size_t declaration = source.find("apply<F>");
+    expect(!result.canGenerateCode() && result.diagnostics.size() == 1 &&
+               result.diagnostics.front().code == "GTI-S2023" &&
+               result.diagnostics.front().message.find(
+                   "does not select an overloaded operator()") !=
+                   std::string::npos &&
+               result.diagnostics.front().primary.start == paren &&
+               result.diagnostics.front().primary.end == paren + 1 &&
+               result.diagnostics.front().related.size() == 1 &&
+               result.diagnostics.front().related.front().span.start ==
+                   declaration &&
+               result.diagnostics.front().related.front().message ==
+                   "The selected function's signature reflects its "
+                   "callable's result.",
+           "an unsupported callable-result query in a call's signature is "
+           "one error at the call");
+  }
   rejected(R"(
 #include <std/meta>
 F escape<F>(F& fn) { return fn; }

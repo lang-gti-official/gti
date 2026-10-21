@@ -71,6 +71,59 @@ void reject(const std::string &source, std::string_view code,
          "invalid source must not escape into backend diagnostics");
 }
 
+// As reject, and the diagnostic is the program's only error, led by `first`.
+void rejectOnly(const std::string &source, std::string_view code,
+                std::string_view anchor, std::string_view first) {
+  const auto result = analyze(source);
+  const auto errors = std::count_if(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [](const auto &diagnostic) {
+        return diagnostic.severity == lang::DiagnosticSeverity::Error;
+      });
+  expect(errors == 1 && (result.diagnostics.front().message == first ||
+                         (!result.diagnostics.front().hints.empty() &&
+                          result.diagnostics.front().hints.front() == first)),
+         "the rejected mapper is one error, led by its explanation");
+  reject(source, code, anchor, first);
+}
+
+// A void mapper result reports exactly the member's assertion and the result
+// type's assertion, both at the requesting member name with their library
+// locations as notes.
+void rejectVoidMapper(const std::string &source) {
+  const auto result = analyze(source);
+  const std::size_t start = source.rfind("transform_error");
+  const auto atCall = [&](const lang::Diagnostic &diagnostic,
+                          std::string_view message) {
+    return diagnostic.code == "GTI-S2079" && diagnostic.message == message &&
+           diagnostic.primary.start == start &&
+           diagnostic.primary.end == start + 15 &&
+           std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                       [](const lang::RelatedDiagnostic &related) {
+                         return related.message ==
+                                "Reported inside this library instance.";
+                       });
+  };
+  const auto reports = [&](std::string_view message) {
+    return std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                         [&](const lang::Diagnostic &diagnostic) {
+                           return atCall(diagnostic, message);
+                         }) == 1;
+  };
+  const bool reported =
+      !result.canGenerateCode() && result.diagnostics.size() == 2 &&
+      reports("Static assertion failed. A 'transform_error' mapper must "
+              "return an error value, not 'void'.") &&
+      reports("Static assertion failed. An 'expected' error type cannot be "
+              "'void'.");
+  if (!reported) {
+    std::cerr << "Unexpected void-mapper diagnostics for:\n" << source;
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(reported, "a void mapper result reports its two assertions only");
+}
+
 void testDiagnostics() {
   const std::string producer =
       "expected<int, int> read() { return unexpected(1); }\n";
@@ -91,19 +144,23 @@ void testDiagnostics() {
            "GTI-S2090", "map", "non-generic namespace-scope GTI function",
            true);
   }
-  // The mapped error must be movable: the member's own requirement rejects a
-  // void or reference result at the call.
-  // A void or reference mapper result cannot form the mapped error. The
-  // member's ordinary instantiation rejects it at the call; generic callers
-  // with an open error type stay valid, so no eager constraint is declared.
-  reject(producer + "void map(int e) {}\n"
-                    "int main() { [[discard]] read().transform_error(map); "
-                    "return 0; }\n",
-         "GTI-S2000", "transform_error", "void");
-  reject(producer + "int global = 1; int& map(int e) { return global; }\n"
-                    "int main() { [[discard]] read().transform_error(map); "
-                    "return 0; }\n",
-         "GTI-S2022", ")", "cannot return a reference");
+  // A reference-returning mapper would make the consuming member return a
+  // borrow; the selected signature is rejected once, naming its result.
+  rejectOnly(producer + "int global = 1; int& map(int e) { return global; }\n"
+                        "int main() { [[discard]] read().transform_error(map); "
+                        "return 0; }\n",
+             "GTI-S2022", ")",
+             "A consuming method cannot return a reference or tracked "
+             "borrowed state; this call returns 'expected<int32_t, "
+             "int32_t&>'.");
+  // A void mapper result fails the member's own assertion, which then is all
+  // its instance reports, and the result type's assertion: two statements at
+  // the call instead of the instance's cascade. Assertions are per concrete
+  // instance, so generic callers whose mapper result is still open stay
+  // valid.
+  rejectVoidMapper(producer + "void map(int e) {}\n"
+                              "int main() { [[discard]] "
+                              "read().transform_error(map); return 0; }\n");
   reject(producer + "int map(int e) { return e; }\n"
                     "bool map(int e) { return true; }\n"
                     "int main() { [[discard]] read().transform_error(map); "
@@ -149,9 +206,9 @@ void testDiagnostics() {
             "  /* 😀 */ [[discard]] read().transform_error(map); return 0; }\n",
         code, "transform_error", explanation, true);
   }
-  reject(producer + "int main() { auto map = [](int error) -> void {};\n"
-                    "  [[discard]] read().transform_error(map); return 0; }\n",
-         "GTI-S2000", "transform_error", "void");
+  rejectVoidMapper(producer +
+                   "int main() { auto map = [](int error) -> void {};\n"
+                   "  [[discard]] read().transform_error(map); return 0; }\n");
   const auto movedCapture = analyze(producer + R"(
 struct Owner { ~Owner() {} };
 int main() {

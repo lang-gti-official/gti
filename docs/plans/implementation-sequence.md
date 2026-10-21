@@ -9216,15 +9216,24 @@ follow-ups:
   access.
 - Diagnostics: 0.453.0 merges repeated reports, adds the concept
   `[[unsatisfied("...")]]` explanation, and names `std::unexpected_value`.
-  Still open:
-  - a reference-returning `transform` mapper, a `void` or reference
-    `transform_error` mapper and an `expected<T, void>` error type cascade
-    through the prelude's instantiation. Rejecting them up front needs a
-    class-level `static_assert` over `std::meta::type<E>()`, which currently
-    crashes the compiler, or negated constraints;
-  - contextual-return copies report the constructor argument's `GTI-S2018`
-    rather than a return-copy `GTI-S2003`;
-  - a nested-carrier payload error points into the prelude.
+  Done in 0.453.3, each reported at the program's own code: a reference
+  mapper result is one `GTI-S2022` naming the consuming member's result, a
+  callable-class mapper is one `GTI-S2023`, each profile's class assertion
+  rejects a `void` error type as the instance's only error (`GTI-S2079`), a
+  contextual-return copy reports the return's own `GTI-S2003`, and an
+  overloaded operator's library instance is re-anchored at the operator, so
+  the nested-carrier payload error points at the user's assignment. A `void`
+  `transform_error` mapper reports two assertions, the member's and the
+  `void` error type's, instead of eight errors. `requires` clauses on the
+  mapper results were rejected: GTI proves a requirement in generic callers,
+  so a caller whose mapper returns its own type parameter would need
+  `std::movable` it never stated. Still open: `expected<void, void>`,
+  `expected<T&, void>` and `?` over an `expected<T, void>` fail earlier, in
+  the caller's own ownership checks (`GTI-S2022`, `GTI-S2045`, `GTI-S2086`),
+  because the instance's traits already make it immovable before its
+  assertion is evaluated. Reporting the assertion there needs type traits to
+  treat an already-diagnosed `void` member as neutral, which belongs to the
+  ownership-trait rules, not to `expected`.
 - Nested conditional carriers: a class field or enum payload whose type is
   another conditionally borrowed class, and a conditional reference relayed
   through a field, element or dereference of another value, are rejected in
