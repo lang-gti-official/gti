@@ -112,6 +112,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   instanceClassContextActive = false;
   instanceAnalysisActive = false;
   instanceBaseModel = nullptr;
+  reanalysisBase = nullptr;
   currentFunctionDeclaration = nullptr;
   currentProgramEffectOwner = {};
   programEffects.clear();
@@ -120,6 +121,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();
+  requestSession.assertingClassInstances.reset();
   requestSession.collectingRawResult.reset();
   requestSession.rawAccessObservation = 0;
   requestSession.hasCThreadRequirements = false;
@@ -196,6 +198,9 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - finalizationStart)
             .count());
   }
+  // A staged worker copied the model part way through the analysis; the
+  // concrete requests that follow stage against the completed model.
+  stagedWorker = {};
   lateDemandReady = trustedBodies == TrustedBodyAnalysis::Reachable;
   return !hadError();
 }
@@ -602,12 +607,27 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
                                    classValueArguments)) {
     return scope.finish();
   }
-  analyzeConcreteClassStaticAssertions(classType->declaration->members());
+  const SemanticType concreteType =
+      SemanticType::classType(classId, classTypeArguments, classValueArguments);
+  // A constant an assertion requires may need this same instance's concrete
+  // facts (reflecting on its own fields, constructing it), so staging can
+  // reanalyse the instance in a nested worker. The enclosing evaluation owns
+  // the assertions' outcome and an assertion yields no value, so the nested
+  // reanalysis supplies the instance's facts without evaluating them again.
+  if (!requestSession.assertingClassInstances)
+    requestSession.assertingClassInstances =
+        std::make_shared<std::vector<SemanticType>>();
+  std::vector<SemanticType> &asserting =
+      *requestSession.assertingClassInstances;
+  if (std::find(asserting.begin(), asserting.end(), concreteType) ==
+      asserting.end()) {
+    asserting.push_back(concreteType);
+    analyzeConcreteClassStaticAssertions(classType->declaration->members());
+    asserting.pop_back();
+  }
   if (const auto *primary =
           semanticModel.findClassLifecycle(*classType->declaration)) {
     auto concrete = *primary;
-    const SemanticType concreteType = SemanticType::classType(
-        classId, classTypeArguments, classValueArguments);
     concrete.traits = typeTraits(concreteType);
     if (concrete.defaultConstructor == SpecialMemberStatus::Generated)
       concrete.defaultConstructor =
