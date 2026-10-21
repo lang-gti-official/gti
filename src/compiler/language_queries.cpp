@@ -191,6 +191,10 @@ SignaturePrinter::conceptSignature(const SymbolRecord &symbol,
   if (declaration == nullptr) {
     return result;
   }
+  if (declaration->explanation()) {
+    result = "[[unsatisfied(" + declaration->explanation()->literal.lexeme +
+             ")]] " + result;
+  }
 
   result += '<';
   for (std::size_t index = 0; index < declaration->typeParameters().size();

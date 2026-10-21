@@ -9208,15 +9208,17 @@ follow-ups:
   semantics does not classify keep the `mut` preference: constructor and
   `operator()` arguments, compound-assignment operands and `->` member
   access.
-- Diagnostics: `GTI-S2029` hints name `std::detail` helpers and `for concept`
-  blocks; callable-class mappers report `GTI-S2023` three times; mapper arity
-  errors cascade `GTI-S2023` with `GTI-S2005`; a reference-returning
-  `transform` mapper gets a misleading `GTI-S2017`; a `void` or reference
-  `transform_error` mapper and an `expected<T, void>` error type cascade
-  through the prelude's instantiation; contextual-return copies report the
-  constructor argument's `GTI-S2018` rather than a return-copy `GTI-S2003`;
-  `std::detail::unexpected_value` appears in user-facing types, and a
-  nested-carrier payload error points into the prelude.
+- Diagnostics: 0.453.0 merges repeated reports, adds the concept
+  `[[unsatisfied("...")]]` explanation, and names `std::unexpected_value`.
+  Still open:
+  - a reference-returning `transform` mapper, a `void` or reference
+    `transform_error` mapper and an `expected<T, void>` error type cascade
+    through the prelude's instantiation. Rejecting them up front needs a
+    class-level `static_assert` over `std::meta::type<E>()`, which currently
+    crashes the compiler, or negated constraints;
+  - contextual-return copies report the constructor argument's `GTI-S2018`
+    rather than a return-copy `GTI-S2003`;
+  - a nested-carrier payload error points into the prelude.
 - Nested conditional carriers: a class field or enum payload whose type is
   another conditionally borrowed class, and a conditional reference relayed
   through a field, element or dereference of another value, are rejected in

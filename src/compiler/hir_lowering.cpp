@@ -1813,6 +1813,11 @@ private:
     output.program.classes[index].destructor = enqueueDestructor(snapshot.id);
   }
 
+  // Keeps a library-internal location once its diagnostic is re-anchored
+  // where other code required the instance.
+  static constexpr const char *libraryInstanceNote =
+      "Reported inside this library instance.";
+
   void appendInstanceDiagnostics(std::vector<Diagnostic> diagnostics,
                                  const std::optional<SourceSpan> &site,
                                  const std::optional<SourceSpan> &origin) {
@@ -1821,6 +1826,7 @@ private:
       const bool missingDefinition =
           diagnostic.code ==
           diagnosticDescriptor(DiagnosticId::MissingFunctionDefinition).code;
+      bool reanchored = false;
       if (missingDefinition && request && diagnostic.primary != *request) {
         diagnostic.related.push_back(
             {diagnostic.primary,
@@ -1830,10 +1836,10 @@ private:
                  !trustedSources.contains(origin->source)) {
         // Library internals are not the user's to fix: report where other
         // code first required this instance and keep the library location.
-        diagnostic.related.insert(
-            diagnostic.related.begin(),
-            {diagnostic.primary, "Reported inside this library instance."});
+        diagnostic.related.insert(diagnostic.related.begin(),
+                                  {diagnostic.primary, libraryInstanceNote});
         diagnostic.primary = *origin;
+        reanchored = true;
       }
       if (site && (!missingDefinition || diagnostic.primary != *site)) {
         diagnostic.related.push_back(
@@ -1843,8 +1849,36 @@ private:
         diagnostic.related.push_back(
             {*origin, "First required by this non-generic use."});
       }
-      output.diagnostics.push_back(std::move(diagnostic));
+      if (!reanchored || !mergeLibraryReport(diagnostic))
+        output.diagnostics.push_back(std::move(diagnostic));
     }
+  }
+
+  // Re-anchoring moves each internal failure of a library request to the site
+  // that required it. Reports that then differ only in their library
+  // locations are one error, which keeps each location.
+  [[nodiscard]] bool mergeLibraryReport(const Diagnostic &diagnostic) {
+    const auto libraryNote = [](const RelatedDiagnostic &related) {
+      return related.message == libraryInstanceNote;
+    };
+    const auto withoutLibraryNotes = [&](Diagnostic report) {
+      std::erase_if(report.related, libraryNote);
+      return report;
+    };
+    const Diagnostic shared = withoutLibraryNotes(diagnostic);
+    for (Diagnostic &existing : output.diagnostics) {
+      if (existing.primary != diagnostic.primary ||
+          existing.code != diagnostic.code ||
+          withoutLibraryNotes(existing) != shared)
+        continue;
+      const auto notes = std::find_if_not(existing.related.begin(),
+                                          existing.related.end(), libraryNote);
+      if (std::find(existing.related.begin(), notes,
+                    diagnostic.related.front()) == notes)
+        existing.related.insert(notes, diagnostic.related.front());
+      return true;
+    }
+    return false;
   }
 
   void retainInstanceSymbols(const SemanticModel &model) {

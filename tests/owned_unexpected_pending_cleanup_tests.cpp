@@ -2,7 +2,7 @@
 
 namespace {
 
-// expected<T, E> and unexpected(e)'s std::detail::unexpected_value<E> are the
+// expected<T, E> and unexpected(e)'s std::unexpected_value<E> are the
 // prelude's ordinary source classes.
 bool isClassNamed(const lang::FrontendResult &frontend,
                   const lang::SemanticType &type, std::string_view name) {

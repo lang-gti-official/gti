@@ -201,9 +201,12 @@ type-alias-declaration = "using" IDENTIFIER "=" [ "mut" ] type ";" ;
 
 native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
 
-concept-declaration    = "concept" IDENTIFIER
+concept-declaration    = [ concept-explanation ] "concept" IDENTIFIER
                          "<" concept-parameter-list ">"
                          ( "=" constraint-expression | concept-body ) ";" ;
+concept-explanation    = "[[" "unsatisfied" "(" STRING_LITERAL ")" "]]" ;
+(* The explanation is nonempty and the declaration's only attribute.
+   Compiler-bound concepts take none. *)
 
 concept-body           = "{" { concept-member } "}" ;
 concept-member         = "typename" IDENTIFIER ";"

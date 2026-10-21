@@ -200,6 +200,27 @@ token; it does not promise to underline an entire compound expression.
 The compiler and LSP publish the same structured explanation and do not offer
 an automatic edit that invents an implementation or changes ownership.
 
+A concept's author can state what satisfies it with
+`[[unsatisfied("...")]]` before the declaration:
+
+```gti
+[[unsatisfied("A readable type has 'int read()'.")]]
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+```
+
+Every unsatisfied requirement on `readable` then shows that text as the first
+`help:` line of its `GTI-S2029`. The text adds to the structured explanation
+above; the failed requirement, concrete application and related locations
+remain. For a concept with a body, it replaces the generic hint about
+`for concept` blocks, which say how a type satisfies the concept rather than
+what a caller must provide. When concepts nest, the concept that the failed
+requirement names explains it. Concepts it is defined through explain the
+failure only when it has no text of its own. A `///` documentation comment
+never changes a diagnostic.
+
+The text is one nonempty string literal and the declaration's only attribute.
+Compiler-bound concepts take none. Hover shows it with the declaration.
+
 This facility is independent of any public library name. It does not by itself
 reject a supported function's dynamic input at compile time. The source-defined
 formatter protocol uses the exact member signatures below, including mutable
