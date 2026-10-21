@@ -129,9 +129,6 @@ expected<void, Error> complete(bool fail) {
           !isExpected(passive, function.returnType))
         continue;
       ++checked;
-      expect(!lang::cppMirExpectedClassPlacementResult(passive.mir, passiveRows,
-                                                       function.returnType),
-             "cleanup-free error keeps the ordinary Expected result ABI");
       expect(admitted(passive.mir, passiveRows, function),
              "cleanup-free error propagation remains emit-ready");
     }

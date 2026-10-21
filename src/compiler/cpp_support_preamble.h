@@ -11,7 +11,6 @@ namespace lang {
 // the other fragments are emitted only when the lowered program requires them.
 struct CppSupportPreambleFeatures {
   CppStandard standard = CppStandard::Cpp23;
-  bool expected = false;
   bool storage = true;
   bool managedThreads = false;
   bool cThreads = false;

@@ -100,7 +100,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentDefaultArgumentRoot = nullptr;
   currentDefaultParameterNames.clear();
   analyzingCallCallee = false;
-  expectedPayloadRangeCandidate = nullptr;
   analyzingPackFoldElement = false;
   analyzingDependentConstantCondition = false;
   constantConditionGenericDependency = false;
@@ -2748,16 +2747,6 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
         "'mut T&', or use a read-only element reference.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  const auto *sourceCall =
-      stmt.ownerBinding() == nullptr
-          ? nullptr
-          : exprAs<Call>(stmt.ownerBinding()->initializer().get());
-  const ResolvedCallInfo *resolvedSource =
-      sourceCall == nullptr ? nullptr : semanticModel.findCall(*sourceCall);
-  const bool expectedPayloadProjection =
-      resolvedSource != nullptr &&
-      resolvedSource->intrinsic == IntrinsicKind::ExpectedValue &&
-      resolvedSource->borrowOrigin == BorrowOriginKind::Receiver;
   semanticModel.record(
       stmt, {.strategy = rangeType.kind == SemanticType::Array
                              ? RangeIterationStrategy::FixedArray
@@ -2790,7 +2779,6 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
                                 : 0,
              .ownsRangeTemporary = owner != nullptr &&
                                    owner->type.kind != SemanticType::Reference,
-             .expectedPayloadProjection = expectedPayloadProjection,
              .nonBorrowingEndpoint = nonBorrowingEndpoint,
              .materializesElementValue =
                  elementOwner != nullptr &&
@@ -3091,7 +3079,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       false, false,
       hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
   if (nestsBorrowedState(declaredReturnType) &&
-      !isFallibleBorrowType(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
            "Borrowed state cannot be nested in a function return type in "
@@ -4516,10 +4503,6 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       requireInitializedReceiver(stmt.keyword());
       return;
     }
-    if (isExpectedVoid(currentReturnType)) {
-      requireInitializedReceiver(stmt.keyword());
-      return;
-    }
     report(stmt.keyword(), "A value is required for this return type.");
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -5210,8 +5193,7 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
   SemanticType sourceType = initializerType;
   if (initializerType == SemanticType::Void ||
       initializerType == SemanticType::Function ||
-      initializerType.kind == SemanticType::TypeName ||
-      initializerType.kind == SemanticType::Unexpected) {
+      initializerType.kind == SemanticType::TypeName) {
     report(stmt.autoKeyword(),
            "Structured binding source must have a complete value type.",
            "GTI-S2048");
@@ -5497,19 +5479,6 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         "A direct owning payload-enum field is supported only in an ordinary "
         "non-polymorphic GTI class or struct; keep "
         "layout-constrained and compiler-owned shapes in separate bindings.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  } else if ((declaredType.kind == SemanticType::Expected ||
-              declaredType.kind == SemanticType::Unexpected) &&
-             containsOwningPayloadEnum(declaredType)) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
-        "Binding '" + stmt.name().lexeme + "' has type '" +
-            typeSpelling(declaredType) +
-            "', but direct owning payload-enum alternatives in a result "
-            "carrier are not supported in this containment slice.");
-    diagnostic.hints.emplace_back(
-        "Store the enum in an ordinary class or struct so the containing "
-        "value has an explicit structural lifecycle.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const SemanticBindingKind bindingKind =
@@ -6282,8 +6251,6 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
   }
   const SemanticType elementType = insert->parameterTypes.back();
   if (elementType == SemanticType::Void ||
-      elementType.kind == SemanticType::Expected ||
-      elementType.kind == SemanticType::Unexpected ||
       elementType.kind == SemanticType::Lambda ||
       elementType.kind == SemanticType::FunctionItem ||
       typeTraits(elementType).containsBorrowedState) {
@@ -7129,19 +7096,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         currentType = *result;
         return;
       }
-    }
-    if (objectType != nullptr && objectType->kind == SemanticType::Expected) {
-      if (hasExplicitGenericArguments) {
-        report(expr.paren(),
-               "Expected member functions do not take generic arguments.");
-      }
-      reportLoanPlaceConflict(
-          expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
-          "Expected member receiver overlaps a mutable borrow or child "
-          "reborrow that may still be live.");
-      analyzeExpectedMemberCall(expr, *member, *objectType, argumentTypes,
-                                expr.paren());
-      return;
     }
     if (objectType != nullptr && objectType->kind == SemanticType::Array) {
       if (hasExplicitGenericArguments) {
@@ -8587,25 +8541,6 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
       report(expr.name(),
              "Unknown std::string_view member '" + expr.name().lexeme + "'.",
              "GTI-S2035");
-      currentType = SemanticType::Unknown;
-    }
-    return;
-  }
-  if (objectType.kind == SemanticType::Expected) {
-    if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
-        expr.name().lexeme == "error" || expr.name().lexeme == "value_or" ||
-        expr.name().lexeme == "transform_error" ||
-        expr.name().lexeme == "transform" || expr.name().lexeme == "and_then" ||
-        expr.name().lexeme == "expect") {
-      if (!analyzingCallCallee) {
-        report(expr.name(),
-               "Function names must be called; function values are not "
-               "supported yet.");
-      }
-      currentType = SemanticType::Function;
-    } else {
-      report(expr.name(),
-             "Unknown expected member '" + expr.name().lexeme + "'.");
       currentType = SemanticType::Unknown;
     }
     return;
@@ -10562,73 +10497,7 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       currentType = SemanticType::Unknown;
       return;
     }
-    if (operandType.kind != SemanticType::Expected ||
-        operandType.arguments.size() != 2) {
-      currentType = analyzeTryablePropagation(expr, operandType);
-      return;
-    }
-    if (currentReturnType.kind != SemanticType::Expected ||
-        currentReturnType.arguments.size() != 2) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
-          "Error propagation is only available in a function or lambda "
-          "returning 'expected<U, E>'.");
-      diagnostic.hints.emplace_back(
-          "Return an expected type from this callable, or inspect "
-          "has_value(), value(), and error() explicitly.");
-      diagnostics.emplace_back(std::move(diagnostic));
-      currentType = SemanticType::Unknown;
-      return;
-    }
-
-    const SemanticType &valueType = operandType.arguments[0];
-    const SemanticType &errorType = operandType.arguments[1];
-    const SemanticType &returnErrorType = currentReturnType.arguments[1];
-    if (errorType != returnErrorType) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
-          "Error propagation requires the exact enclosing error type '" +
-              typeSpelling(returnErrorType) + "', but the operand uses '" +
-              typeSpelling(errorType) + "'.");
-      diagnostic.hints.emplace_back(
-          "Convert the error explicitly before applying '?'; propagation "
-          "does not perform implicit error conversion.");
-      diagnostics.emplace_back(std::move(diagnostic));
-      currentType = SemanticType::Unknown;
-      return;
-    }
-
-    const ExpressionInfo *operandInfo =
-        semanticModel.findExpression(*expr.right());
-    const bool moves =
-        operandInfo != nullptr && operandInfo->category == ValueCategory::Value;
-    const auto transferable = [&](const SemanticType &type) {
-      if (type == SemanticType::Void) {
-        return true;
-      }
-      const SemanticTypeTraits traits = typeTraits(type);
-      return moves ? traits.movable : traits.copyable;
-    };
-    const bool borrowedSuccess = isFallibleBorrowType(operandType);
-    if ((!borrowedSuccess && !transferable(valueType)) ||
-        !transferable(errorType)) {
-      const SemanticType &blocked =
-          !borrowedSuccess && !transferable(valueType) ? valueType : errorType;
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2086", DiagnosticPhase::Semantics, expr.oper(),
-          std::string("Error propagation cannot ") + (moves ? "move" : "copy") +
-              " the active '" + typeSpelling(blocked) + "' alternative.");
-      diagnostic.hints.emplace_back(
-          moves ? "Use a result whose value and error alternatives are "
-                  "movable."
-                : "Apply '?' to std::move(result) to consume a named "
-                  "move-only result explicitly.");
-      diagnostics.emplace_back(std::move(diagnostic));
-      currentType = SemanticType::Unknown;
-      return;
-    }
-
-    currentType = borrowedSuccess ? valueType.arguments.front() : valueType;
+    currentType = analyzeTryablePropagation(expr, operandType);
     return;
   }
   if (contextualOperatorIntegerType &&
@@ -10925,33 +10794,6 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
     return;
   }
   currentType = rightType;
-}
-
-auto SemanticVisitor::Impl::visitUnexpectedExpr(const Unexpected &expr)
-    -> void {
-  const SemanticType errorType = analyze(expr.error());
-  if (!isOwnershipAssignable(errorType, errorType, expr.error())) {
-    const ExpressionInfo *payload = semanticModel.findExpression(*expr.error());
-    const bool moving =
-        payload != nullptr && payload->category == ValueCategory::Value;
-    const auto *call = exprAs<Call>(expr.error().get());
-    const Token token = call != nullptr ? callableToken(call->callee())
-                                        : expressionToken(expr.error());
-    report(token,
-           "Cannot " + std::string(moving ? "move" : "copy") +
-               " error payload of type '" + typeSpelling(errorType) +
-               "' into unexpected: that construction is unavailable.",
-           "GTI-S2003");
-    if (!moving && typeTraits(errorType).movable) {
-      diagnostics.back().hints.emplace_back(
-          "Transfer the error with explicit std::move, or clone it when the "
-          "source must be preserved. For an expected observer, move the "
-          "carrier before calling error().");
-    }
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  currentType = SemanticType(SemanticType::Unexpected, {errorType});
 }
 
 auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
@@ -11518,17 +11360,6 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
                           return isSupportedConstexprType(
                               element, allowDependent, visiting, true);
                         }));
-  if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
-    return (type.arguments[0] == SemanticType::Void ||
-            isSupportedConstexprType(type.arguments[0], allowDependent,
-                                     visiting, transient)) &&
-           isSupportedConstexprType(type.arguments[1], allowDependent, visiting,
-                                    transient);
-  }
-  if (type.kind == SemanticType::Unexpected && type.arguments.size() == 1) {
-    return isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
-                                    transient);
-  }
   if (constantIntegerDomain(type).has_value() ||
       semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
       type == SemanticType::Char || type == SemanticType::StringView ||
@@ -11863,12 +11694,6 @@ auto SemanticVisitor::Impl::defaultConstexprValue(
     -> ConstantEvaluation {
   if (context.work->steps++ >= constexprExpressionStepLimit) {
     return {.failure = ConstantEvaluationFailure::ResourceLimit};
-  }
-  if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
-    if (type.arguments[0] == SemanticType::Void)
-      return makeConstantResult(type, true);
-    const auto value = defaultConstexprValue(type.arguments[0], context);
-    return value ? makeConstantResult(type, true, value.value) : value;
   }
   if (const std::optional<CheckedIntegerDomain> domain =
           constantIntegerDomain(type)) {
@@ -12221,15 +12046,6 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
 
   const SemanticType sourceType =
       constexprType(semanticModel.typeOf(source), context);
-  if (const auto *unexpected = exprAs<Unexpected>(&source)) {
-    const auto error =
-        evaluateConstexprExpression(unexpected->error(), context);
-    if (!error)
-      return error;
-    const auto result = makeConstantResult(sourceType, false, error.value);
-    return result ? constexprSuccess(source, *result.value, context)
-                  : constexprFailure(expressionToken(source), result.failure);
-  }
   if (const ResolvedOperatorInfo *operation =
           semanticModel.findOperator(source)) {
     // Selection belongs to ordinary semantics. Normalize only the source
@@ -12634,12 +12450,6 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
                                            initializer->arguments(),
                                            initializer->brace(), context);
     }
-    if (initializer->arguments().empty() &&
-        sourceType.kind == SemanticType::Expected) {
-      const auto result = defaultConstexprValue(sourceType, context);
-      return result ? constexprSuccess(source, *result.value, context)
-                    : constexprFailure(initializer->brace(), result.failure);
-    }
     if (initializer->arguments().size() != 1) {
       return constexprFailure(initializer->brace(),
                               ConstantEvaluationFailure::UnsupportedExpression);
@@ -12660,59 +12470,6 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
             semanticModel.findConstruction(*call)) {
       return evaluateConstexprConstruction(
           source, *construction, call->arguments(), call->paren(), context);
-    }
-    if (const auto *member = exprAs<Get>(call->callee().get())) {
-      const SemanticType objectType = semanticModel.typeOf(*member->object());
-      if (objectType.kind == SemanticType::Expected &&
-          objectType.arguments.size() == 2) {
-        ConstexprEvaluation object =
-            evaluateConstexprExpression(member->object(), context);
-        if (!object) {
-          return object;
-        }
-        const auto *selected = semanticModel.findCall(*call);
-        const auto intrinsic =
-            selected ? selected->intrinsic : IntrinsicKind::None;
-        const auto state = constantResultHasValue(*object.value);
-        if (!state)
-          return constexprFailure(member->name(), state.failure);
-        if (intrinsic == IntrinsicKind::ExpectedHasValue &&
-            call->arguments().empty())
-          return constexprSuccess(source, *state.value, context);
-        if ((intrinsic == IntrinsicKind::ExpectedValue ||
-             intrinsic == IntrinsicKind::ExpectedError) &&
-            call->arguments().empty()) {
-          const auto payload = constantResultPayload(
-              *object.value, intrinsic == IntrinsicKind::ExpectedValue);
-          return payload ? constexprSuccess(source, *payload.value, context)
-                         : constexprFailure(
-                               member->name(), payload.failure,
-                               "Constant evaluation cannot extract the "
-                               "inactive or void result alternative.");
-        }
-        if (intrinsic == IntrinsicKind::ExpectedValueOr &&
-            call->arguments().size() == 1) {
-          // Ordinary call arguments are eager even when the success is used.
-          ConstexprEvaluation fallback =
-              evaluateConstexprExpression(call->arguments().front(), context);
-          if (!fallback) {
-            return fallback;
-          }
-          const ConstantEvaluation converted =
-              std::get<bool>(*state.value)
-                  ? constantResultPayload(*object.value, true)
-                  : convertConstantToType(*fallback.value,
-                                          objectType.arguments[0]);
-          return converted ? constexprSuccess(source, *converted.value, context)
-                           : constexprFailure(
-                                 expressionToken(call->arguments().front()),
-                                 converted.failure);
-        }
-        return constexprFailure(
-            member->name(), ConstantEvaluationFailure::UnsupportedExpression,
-            "The bounded constexpr evaluator supports has_value(), "
-            "value(), error(), and value_or() for passive results.");
-      }
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
@@ -13704,9 +13461,6 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
   if (const auto *initializer = exprAs<ArrayInitializer>(expression)) {
     return anyTerminal(initializer->elements());
   }
-  if (const auto *unexpected = exprAs<Unexpected>(expression)) {
-    return expressionNeverReturns(unexpected->error().get());
-  }
   return false;
 }
 
@@ -13981,12 +13735,6 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
            "GTI-S2028");
   }
 
-  const Expr *enclosingExpectedPayloadRangeCandidate =
-      expectedPayloadRangeCandidate;
-  if (declaration.isRangeOwner() && !declaration.isMutable() &&
-      declaration.initializer()) {
-    expectedPayloadRangeCandidate = declaration.initializer().get();
-  }
   // A written reference establishes a loan, just like an explicit T& local.
   // Do not treat its initializer as an independent value read before ordinary
   // reference/reborrow validation records the actual access and dependency.
@@ -14026,7 +13774,6 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     --suppressLoanPlaceAccessDepth;
     --programStoragePlaceUseDepth;
   }
-  expectedPayloadRangeCandidate = enclosingExpectedPayloadRangeCandidate;
   SemanticType inferredType = initializerType;
   const ExpressionInfo *initializerInfo =
       declaration.initializer()
@@ -14060,8 +13807,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   }
   if (initializerType == SemanticType::Void ||
       initializerType == SemanticType::Function ||
-      initializerType.kind == SemanticType::TypeName ||
-      initializerType.kind == SemanticType::Unexpected) {
+      initializerType.kind == SemanticType::TypeName) {
     report(declaration.name(),
            "'auto' requires an initializer with a complete value type.",
            "GTI-S2028");

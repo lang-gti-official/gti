@@ -200,14 +200,6 @@ int main() {
   if (resultLayouts.canGenerateCode())
     expect(!gti_test::emitCppText(resultLayouts).empty(),
            "result and text layouts emit through verified MIR");
-  forged(
-      frontend.mir,
-      [](auto &i) {
-        i.objectLayoutType = lang::SemanticType(
-            lang::SemanticType::Expected,
-            {lang::SemanticType::Int32, lang::SemanticType::Void});
-      },
-      "incomplete result error representation rejected");
   rejected(prefix + "struct Ordinary { int value; };\n"
                     "constexpr uint64_t bytes = sizeof(Ordinary); int main() { "
                     "return 0; }",

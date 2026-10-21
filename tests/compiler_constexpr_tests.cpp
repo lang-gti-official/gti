@@ -3111,8 +3111,7 @@ void testConstexprResults() {
       for (const auto &instruction : block.instructions) {
         if (instruction.functionTarget != functionId("nested_result"))
           continue;
-        expect(lang::requiresMirFailureControlFlow(
-                   instruction, lang::MirFailureControlFlowPosition::None) &&
+        expect(lang::requiresMirFailureControlFlow(instruction) &&
                    block.terminator.kind == lang::MirTerminatorKind::Invoke &&
                    block.terminator.invokeInstruction == instruction.id,
                "nested passive result calls require success-only publication "
