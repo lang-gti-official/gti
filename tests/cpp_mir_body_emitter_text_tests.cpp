@@ -1540,23 +1540,30 @@ int main() {
   const lang::MirConstructorInstance *pair = nullptr;
   const lang::MirConstructorInstance *early = nullptr;
   const lang::MirConstructorInstance *line = nullptr;
+  std::size_t matches = 0;
+  const std::vector<lang::SemanticType> twoIntegers{lang::SemanticType::Int32,
+                                                    lang::SemanticType::Int32};
   for (const lang::MirConstructorInstance &constructor :
        frontend.mir.constructorInstances()) {
-    if (constructor.initializers.size() == 3) {
+    const auto &parameters = constructor.parameterTypes;
+    if (parameters == twoIntegers && constructor.initializers.size() == 3) {
       pair = &constructor;
-    } else if (constructor.parameterTypes.size() == 1 &&
-               constructor.parameterTypes.front() ==
-                   lang::SemanticType::Int32) {
+      ++matches;
+    } else if (parameters.size() == 1 &&
+               parameters.front() == lang::SemanticType::Int32 &&
+               constructor.initializers.size() == 2) {
       early = &constructor;
-    } else if (constructor.parameterTypes.size() == 1 &&
-               constructor.parameterTypes.front().kind ==
-                   lang::SemanticType::Class) {
+      ++matches;
+    } else if (parameters.size() == 1 &&
+               parameters.front().kind == lang::SemanticType::Class &&
+               constructor.initializers.size() == 2) {
       line = &constructor;
+      ++matches;
     }
   }
-  expect(pair != nullptr && early != nullptr && line != nullptr,
-         "the fixture keeps its Pair, Early and Line constructors");
-  if (pair == nullptr || early == nullptr || line == nullptr) {
+  expect(matches == 3 && pair != nullptr && early != nullptr && line != nullptr,
+         "the fixture keeps exactly its Pair, Early and Line constructors");
+  if (matches != 3 || pair == nullptr || early == nullptr || line == nullptr) {
     return;
   }
   const auto copiedInitializers =
