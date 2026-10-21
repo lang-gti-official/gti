@@ -63,14 +63,24 @@ int main() {
   expect(valid.canGenerateCode(),
          "ownerless constructor fields and checked view references stay valid");
 
+  // A local value may view a named local owner (L-OWN-02); the owner stays
+  // borrowed while it is live, and the value cannot leave the body.
+  const auto local =
+      analyze("int main() { std::string owner = std::string(\"abc\"); CLabel "
+              "saved{owner.c_string()}; Label label{owner.view()}; return "
+              "int(label.text.size()) - 3; }");
+  expect(local.canGenerateCode(),
+         "a local value may hold dynamic text from a named owner");
+  const auto mutated =
+      analyze("int main() { mut std::string owner = std::string(\"abc\"); "
+              "Label saved{owner.view()}; owner.clear(); return "
+              "int(saved.text.size()); }");
+  expect(!mutated.canGenerateCode() &&
+             hasDiagnosticCode(mutated.diagnostics, "GTI-S2017"),
+         "the owner of a value's dynamic text stays borrowed while it is live");
   const std::vector<std::string> invalid{
-      "int main() { mut std::string owner = std::string(\"abc\"); "
-      "Label saved{owner.view()}; owner.clear(); return "
-      "int(saved.text.size()); }",
       "Label escape() { std::string owner = std::string(\"abc\"); "
       "return Label(owner.view()); }",
-      "int main() { std::string owner = std::string(\"abc\"); CLabel "
-      "saved{owner.c_string()}; return 0; }",
       "void allocated(std::string_view input) { auto saved = "
       "std::make_unique<Label>(input); }",
       "struct Computed { std::string_view text; Computed(std::string& owner) : "

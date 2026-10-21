@@ -1,0 +1,60 @@
+// A value whose text field holds a view of a local owner carries that owner's
+// read-only dependency (L-OWN-02). A constructor that stores a text parameter
+// and a designated list publish it; copies alias it, a move transfers it, and
+// a field read yields a view of the same owner. An ownerless value of the same
+// type keeps every capability, including storage and method calls.
+#include <std/string>
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  uint64_t width() { return this.text.size(); }
+};
+
+struct Diag {
+  std::string_view text;
+  int line;
+};
+
+class Pair {
+public:
+  std::string_view first;
+  std::string_view second;
+  Pair(std::string_view first, std::string_view second)
+      : first(first), second(second) {}
+};
+
+mut std::string_view kept = "";
+void keep(Token token) { kept = token.text; }
+
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  std::println(token.text);
+  std::println(token.kind);
+
+  Diag diag{.text = input.view(), .line = 2};
+  std::println(diag.text);
+  std::println(diag.line);
+
+  Token copy = token;
+  Token moved = std::move(copy);
+  std::println(moved.text);
+
+  std::string_view head = token.text;
+  std::println(head.size());
+
+  // Only the published field depends on the owner; the other stays ownerless.
+  Pair pair = Pair(input.view(), "fixed");
+  std::println(pair.first);
+  std::println(pair.second);
+
+  // A token over a literal is ownerless and can leave this body.
+  Token literal = Token("literal", 1);
+  keep(literal);
+  std::println(kept);
+  std::println(literal.width());
+  return 0;
+}

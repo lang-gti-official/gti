@@ -2001,6 +2001,49 @@ private:
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
 
+  // A value of a class or payload enum whose type has no borrowed state but
+  // whose direct text field holds owner-dependent text (L-OWN-02). The
+  // dependency belongs to the value: its traits are the type's, made borrowed
+  // and non-assignable, as ownerDependentTextInfo does for a dynamic view.
+  [[nodiscard]] ExpressionInfo
+  textDependentValueInfo(SemanticType type,
+                         ValueCategory category = ValueCategory::Value,
+                         AccessMode access = AccessMode::ReadOnly) const;
+
+  // Whether `info` describes a value whose class type has no borrowed state
+  // but whose direct text field holds dynamic text.
+  [[nodiscard]] bool isTextDependentValue(const ExpressionInfo &info) const;
+  // The direct text fields that hold dynamic text in a dependent value that
+  // `expression` names: a carrier binding, a publishing construction, or a
+  // grouping or move of one.
+  [[nodiscard]] std::vector<SymbolId>
+  textDependentFields(const Expr &expression) const;
+  void noteTextDependentValue(const Expr &expression);
+  void consumeTextDependentValue(const ExprPtr &expression);
+  void finalizeTextDependentValues();
+
+  // Whether a construction of `type` may publish dynamic text into a direct
+  // text field: a class without borrowed state, bases or a destructor, so no
+  // code outside the creating body reads the field as ownerless text.
+  [[nodiscard]] bool textPublicationOwner(const SemanticType &type) const;
+
+  // Whether `field` names a direct text field of the class `type`.
+  [[nodiscard]] bool directTextField(const SemanticType &type,
+                                     SymbolId field) const;
+
+  // The sole named owner of a dynamic text argument, designating `field`.
+  // Empty when the argument is ownerless or its owner is not a named place.
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  textFieldOwnerDependency(const ExprPtr &argument, SymbolId field);
+
+  // The owner dependencies that `argument` contributes when a constructor
+  // stores it directly in the text field `initializer` names, re-rooted at
+  // that field. Empty when the argument is ownerless or has no nameable owner.
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  textFieldInitializerDependencies(const SemanticType &owner,
+                                   const ConstructorInitializer &initializer,
+                                   const ExprPtr &argument);
+
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
 
@@ -5660,6 +5703,14 @@ private:
       Token location;
       bool diagnosed = false;
     };
+    // A value holding dynamic text (L-OWN-02). Phase 1 keeps it in the body
+    // that creates it: a context that does so consumes it, and every other
+    // use is reported once at finalization.
+    struct TextDependentValueUse {
+      Token location;
+      bool consumed = false;
+      bool diagnosed = false;
+    };
     struct MutableLocalCandidate {
       SymbolId symbol = 0;
       Token keyword;
@@ -5677,6 +5728,8 @@ private:
     SemanticCatalog catalog;
     std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
+    std::vector<const Expr *> textDependentValueOrder;
+    std::unordered_map<const Expr *, TextDependentValueUse> textDependentValues;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
     std::unordered_map<const Expr *, const ParameterDefault *>
