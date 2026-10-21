@@ -516,9 +516,19 @@ void testSourceLiteralScalarSiblings() {
       expect(bindings &&
                  bindings->size() == (constructor.id == mixed->id ? 2u : 1u),
              "passive defaults preserve exact native move binding");
-      expect(emitter.supportsFailureBodyText(
-                 {.kind = lang::MirBodyKind::Constructor,
-                  .owner = constructor.id}),
+      // Moving the int payload cannot fail, so that instance uses the
+      // ordinary form; the owning string payload keeps the failure form.
+      const bool scalarPayload =
+          genericNode &&
+          constructor.parameterTypes ==
+              std::vector<lang::SemanticType>{lang::SemanticType::Int32};
+      expect(!scalarPayload || !constructor.mayRaiseDefinedFailure,
+             "a moved scalar payload is failure-free");
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = constructor.id};
+      expect(constructor.mayRaiseDefinedFailure
+                 ? emitter.supportsFailureBodyText(address)
+                 : emitter.supportsBodyText(address),
              "scalar and owning generic payloads preserve constructor "
              "representation beside source defaults");
       ++checked;
