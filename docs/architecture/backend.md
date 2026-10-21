@@ -3132,6 +3132,28 @@ not cross base construction, computations, later owned publication or failure
 edges. Native initialization realizes only that proved prefix; subsequent owned
 fields remain empty until their original MIR publication and rollback execute.
 
+The native member-initializer list reads a formal's entry value: the C++
+argument, or the prepared value published before the base. MIR reads the
+formal at its copy `Load`, after every instruction on a path into it. A copy
+therefore publishes natively only when none of that earlier code can change
+the formal's own storage. Copies and read-only borrows leave it intact. An
+assignment, initialization or drop of one of its places, a move, an address,
+a mutable borrow (a `mut` reference argument or receiver, or a `[mut &x]`
+capture) or a mutable loan can change it, there or later through the borrow.
+A place reached through a dereference belongs to another object.
+`Pair(mut int32_t seed) : first(bump(seed)), second(seed)` used to copy the
+unwritten argument this way. The owned-parameter move proof applies the same
+rule, and so does a record-published closure copy, which then has no route at
+all because a closure has no empty state. A copy kept out of the native list
+stays in MIR order. A scalar, enum, raw pointer or fixed array field starts
+from its passive empty state, and the exact `Load` and `Initialize` publish
+it. A cleanup-free class copy, whose `Load` and `Initialize` carry no
+lifecycle event and whose value owns no drop obligation or place, declares a
+transient at its `Load`; the `Initialize` moves the transient into the field,
+which starts from its native empty state. A class without that empty state
+stays outside the route. The same body-ordered class copy serves any copied
+place, such as the referent in `Holder(Point& point) : point(point)`.
+
 A closure copied from its by-value constructor parameter into a field, as in
 `Holder(F f) : callback(f)` instantiated with a lambda type, uses the same copy
 route. MIR stages no `Initialize` for a closure-typed field: the constructor
