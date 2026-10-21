@@ -257,6 +257,9 @@ struct HirValue {
   // Exact argument origins retained for composed owner-dependent values.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // The borrow facts above are this construction's dynamic text arguments
+  // published into direct text fields, not its constructor's summary.
+  bool dependentTextPublication = false;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;

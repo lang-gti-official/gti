@@ -768,13 +768,16 @@ private:
       return 0;
     }
     const ConstructorId identity = generatedBody ? 0 : construction.constructor;
+    // A dependent text publication is a call-site fact; it never forms the
+    // constructor's own borrow summary.
+    const bool summary = !construction.dependentTextPublication;
     if (const std::optional<std::size_t> existing =
             instanceIndex.findConstructor(identity, *owner,
                                           construction.typeArguments,
                                           construction.valueArguments)) {
       HirConstructorInstance &instance =
           output.program.constructors[*existing - 1];
-      if (construction.borrowOrigin != BorrowOriginKind::None) {
+      if (construction.borrowOrigin != BorrowOriginKind::None && summary) {
         instance.borrowOrigin = construction.borrowOrigin;
         instance.borrowParameter = construction.borrowArgument;
         instance.borrowParameters = construction.borrowArguments;
@@ -820,10 +823,12 @@ private:
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
          .parameterTypes = construction.parameterTypes,
-         .borrowOrigin = construction.borrowOrigin,
-         .borrowParameter = construction.borrowArgument,
+         .borrowOrigin =
+             summary ? construction.borrowOrigin : BorrowOriginKind::None,
+         .borrowParameter = summary ? construction.borrowArgument : 0,
          .borrowAccess = construction.borrowAccess,
-         .borrowParameters = construction.borrowArguments,
+         .borrowParameters = summary ? construction.borrowArguments
+                                     : std::vector<std::size_t>{},
          .instantiationSite = std::move(site)});
     instanceIndex.recordConstructor(identity, *owner,
                                     construction.typeArguments,
@@ -4503,6 +4508,7 @@ private:
         .borrowAccess = construction.borrowAccess,
         .borrowArguments = construction.borrowArguments,
         .borrowFields = construction.borrowFields,
+        .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
     const HirConstructorInstanceId target =
@@ -5021,6 +5027,7 @@ private:
         .borrowAccess = construction.borrowAccess,
         .borrowArguments = construction.borrowArguments,
         .borrowFields = construction.borrowFields,
+        .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
     if (construction.contextualBorrowDependencies) {
@@ -6300,6 +6307,7 @@ private:
       value.borrowArgument = construction->borrowArgument;
       value.borrowArguments = construction->borrowArguments;
       value.borrowFields = construction->borrowFields;
+      value.dependentTextPublication = construction->dependentTextPublication;
       value.borrowAccess = construction->borrowAccess;
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;

@@ -1209,6 +1209,164 @@ auto SemanticVisitor::Impl::ownerDependentTextInfo(SemanticType type,
   return info;
 }
 
+auto SemanticVisitor::Impl::textDependentValueInfo(SemanticType type,
+                                                   ValueCategory category,
+                                                   AccessMode access) const
+    -> ExpressionInfo {
+  // The value keeps its own ownership, copy and move capabilities: a copy
+  // aliases the read-only text dependency and a move transfers it. Replacing
+  // it would reseat the dependency, and no other thread may observe it.
+  ExpressionInfo info = expressionInfo(std::move(type), category, access);
+  info.traits.copyAssignable = false;
+  info.traits.moveAssignable = false;
+  info.traits.containsBorrowedState = true;
+  info.traits.transferCapable = false;
+  info.traits.shareCapable = false;
+  return info;
+}
+
+auto SemanticVisitor::Impl::isTextDependentValue(
+    const ExpressionInfo &info) const -> bool {
+  return info.type.kind == SemanticType::Class &&
+         info.traits.containsBorrowedState &&
+         !typeTraits(info.type).containsBorrowedState;
+}
+
+auto SemanticVisitor::Impl::textDependentFields(const Expr &expression) const
+    -> std::vector<SymbolId> {
+  if (const auto *group = exprAs<Grouping>(&expression))
+    return group->expression() ? textDependentFields(*group->expression())
+                               : std::vector<SymbolId>{};
+  if (const auto *call = exprAs<Call>(&expression);
+      call != nullptr && call->arguments().size() == 1 &&
+      resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+    return textDependentFields(*call->arguments().front());
+  std::vector<SymbolId> fields;
+  if (const auto *construction = semanticModel.findConstruction(expression);
+      construction != nullptr && construction->dependentTextPublication) {
+    for (const auto &mapping : construction->borrowFields)
+      fields.insert(fields.end(), mapping.resultFields.begin(),
+                    mapping.resultFields.end());
+    return fields;
+  }
+  const auto *variable = exprAs<Variable>(&expression);
+  const Symbol *symbol =
+      variable == nullptr ? nullptr : resolvedBorrowVariable(*variable);
+  const SemanticLoanInfo *loan =
+      symbol == nullptr || symbol->retainedLoan == 0
+          ? nullptr
+          : semanticModel.findLoan(symbol->retainedLoan);
+  if (loan == nullptr)
+    return fields;
+  fields = loan->designatedFields;
+  for (const auto &dependency : loan->additionalDependencies)
+    fields.insert(fields.end(), dependency.designatedFields.begin(),
+                  dependency.designatedFields.end());
+  return fields;
+}
+
+auto SemanticVisitor::Impl::noteTextDependentValue(const Expr &expression)
+    -> void {
+  const auto [entry, inserted] = requestSession.textDependentValues.try_emplace(
+      &expression, RequestSessionState::TextDependentValueUse{
+                       .location = expressionToken(expression)});
+  if (inserted)
+    requestSession.textDependentValueOrder.push_back(&expression);
+}
+
+auto SemanticVisitor::Impl::consumeTextDependentValue(const ExprPtr &expression)
+    -> void {
+  // A child is analyzed, and so noted, before the context that consumes it.
+  if (!expression)
+    return;
+  if (const auto found =
+          requestSession.textDependentValues.find(expression.get());
+      found != requestSession.textDependentValues.end())
+    found->second.consumed = true;
+}
+
+auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
+  for (const Expr *expression : requestSession.textDependentValueOrder) {
+    auto &use = requestSession.textDependentValues.at(expression);
+    if (use.consumed || use.diagnosed)
+      continue;
+    use.diagnosed = true;
+    const std::size_t before = diagnostics.size();
+    report(use.location,
+           "This value holds dynamic text from a local owner; it can "
+           "initialize a local binding, be moved or have its fields read, "
+           "but it cannot yet be passed, returned, captured or stored.",
+           "GTI-S2045");
+    if (diagnostics.size() > before)
+      diagnostics.back().hints.emplace_back(
+          "Store owned text such as a std::string instead to let the value "
+          "leave this function, or keep it local.");
+  }
+}
+
+auto SemanticVisitor::Impl::textPublicationOwner(const SemanticType &type) const
+    -> bool {
+  const ClassInfo *owner = classInfo(type);
+  return owner != nullptr && !typeTraits(type).containsBorrowedState &&
+         storedReferencePaths(type).empty() && !owner->destructor &&
+         owner->bases.empty() && !owner->polymorphic;
+}
+
+auto SemanticVisitor::Impl::directTextField(const SemanticType &type,
+                                            SymbolId field) const -> bool {
+  const ClassInfo *owner = classInfo(type);
+  if (owner == nullptr || field == 0 || typeTraits(type).containsBorrowedState)
+    return false;
+  return std::any_of(
+      owner->fields.begin(), owner->fields.end(), [&](const FieldInfo &entry) {
+        const auto member =
+            entry.declaration == nullptr
+                ? owner->members.end()
+                : owner->members.find(entry.declaration->name().lexeme);
+        // The designation was recorded with the field's tooling symbol.
+        if (member == owner->members.end() ||
+            symbolForDeclaration(member->second.symbol.declaration) != field)
+          return false;
+        const auto fieldType =
+            substituteType(member->second.symbol.type, classSubstitution(type));
+        return fieldType.kind == SemanticType::StringView ||
+               fieldType.kind == SemanticType::CString;
+      });
+}
+
+auto SemanticVisitor::Impl::textFieldInitializerDependencies(
+    const SemanticType &owner, const ConstructorInitializer &initializer,
+    const ExprPtr &argument) -> std::vector<SemanticLoanDependency> {
+  const ClassInfo *info = classInfo(owner);
+  if (info == nullptr || initializer.target.name.segments.size() != 1)
+    return {};
+  const auto member = info->members.find(initializer.target.name.last().lexeme);
+  if (member == info->members.end())
+    return {};
+  const SymbolId field = toolingSymbolFor(member->second.symbol);
+  if (!directTextField(owner, field))
+    return {};
+  return textFieldOwnerDependency(argument, field);
+}
+
+auto SemanticVisitor::Impl::textFieldOwnerDependency(const ExprPtr &argument,
+                                                     SymbolId field)
+    -> std::vector<SemanticLoanDependency> {
+  auto dependencies = storedBorrowDependencies(argument);
+  // A dynamic view has exactly one external owner; the field designation is
+  // what the stored value adds to it.
+  if (dependencies.size() != 1 ||
+      !dependencies.front().designatedFields.empty() ||
+      !dependencies.front().conditions.empty() ||
+      (dependencies.front().place.root == 0 &&
+       !dependencies.front().place.receiver))
+    return {};
+  auto &dependency = dependencies.front();
+  dependency.designatedFields = {field};
+  dependency.access = AccessMode::ReadOnly;
+  return dependencies;
+}
+
 auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
     const ExprPtr &expression) const -> bool {
   const ExpressionInfo *info =
@@ -4748,6 +4906,44 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     if (const auto *direct = exprAs<DirectInitializer>(expression.get()))
       return storedBorrowDependencies(direct->arguments().front());
   }
+  if (const auto *construction = semanticModel.findConstruction(*expression);
+      construction != nullptr && construction->dependentTextPublication) {
+    // Each published text field designates its argument's sole owner. A
+    // designated list names its inputs in field order.
+    const auto *call = exprAs<Call>(expression.get());
+    const auto *direct = exprAs<DirectInitializer>(expression.get());
+    const auto *arguments = call != nullptr     ? &call->arguments()
+                            : direct != nullptr ? &direct->arguments()
+                                                : nullptr;
+    const auto argument = [&](std::size_t parameter) -> const ExprPtr * {
+      if (arguments == nullptr)
+        return nullptr;
+      if (construction->designatedArguments.empty())
+        return parameter < arguments->size() ? &(*arguments)[parameter]
+                                             : nullptr;
+      if (parameter >= construction->designatedArguments.size())
+        return nullptr;
+      const auto found = std::find_if(
+          arguments->begin(), arguments->end(), [&](const ExprPtr &written) {
+            return written.get() ==
+                   construction->designatedArguments[parameter];
+          });
+      return found == arguments->end() ? nullptr : &*found;
+    };
+    std::vector<SemanticLoanDependency> dependencies;
+    for (const auto &mapping : construction->borrowFields) {
+      const ExprPtr *input = argument(mapping.parameter);
+      if (input == nullptr)
+        return {};
+      auto sources = storedBorrowDependencies(*input);
+      if (sources.size() != 1 || !sources.front().designatedFields.empty())
+        return {};
+      sources.front().designatedFields = mapping.resultFields;
+      sources.front().access = AccessMode::ReadOnly;
+      dependencies.push_back(std::move(sources.front()));
+    }
+    return dependencies;
+  }
   if (const ResolvedConstructionInfo *construction =
           semanticModel.findConstruction(*expression);
       construction != nullptr &&
@@ -7665,9 +7861,17 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // binding; unknown/missing evidence must still take the checked path.
       return;
     }
+    // A dependent text value designates its text fields' owners through the
+    // construction or carrier it was produced from (L-OWN-02).
+    const auto textDependencies =
+        !complete && info != nullptr && isTextDependentValue(*info)
+            ? storedBorrowDependencies(expression)
+            : std::vector<SemanticLoanDependency>{};
     const auto dependencies =
         complete
             ? std::span<const SemanticLoanDependency>(complete->dependencies)
+        : !textDependencies.empty()
+            ? std::span<const SemanticLoanDependency>(textDependencies)
             : semanticModel.findBorrowDependencies(*expression);
     if (!dependencies.empty()) {
       // A named shared copy preserves the complete dependency group; it is
@@ -7683,6 +7887,19 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       const auto *retained = copied && copied->retainedLoan != 0
                                  ? semanticModel.findLoan(copied->retainedLoan)
                                  : nullptr;
+      // A copy of a dependent text value aliases its owner dependency, as a
+      // copied dynamic view does: both bindings carry the one loan.
+      if (copied && retained && !textDependencies.empty() &&
+          copied->bindingKind == SemanticBindingKind::LocalVariable &&
+          copied->valueState == ValueState::Available &&
+          copied->type == carrier->type &&
+          retained->kind == SemanticLoanKind::StoredValue && !retained->entry &&
+          !retained->lifecycleBound &&
+          loanFlow.records.contains(retained->id)) {
+        attachLoanCarrier(retained->id, *carrier, carrierSymbol, false);
+        semanticModel.recordBindingLoan(binding, retained->id);
+        return;
+      }
       if (copied && retained && complete && copied->completeBorrowSet &&
           copied->bindingKind == SemanticBindingKind::LocalVariable &&
           copied->valueState == ValueState::Available &&

@@ -1103,6 +1103,11 @@ add_test(NAME moved_passive_constructor_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/moved_passive_constructor_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(moved_passive_constructor_field_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME view_fields_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/view_fields_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(view_fields_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME declaration_owned_defaults_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"
@@ -1271,6 +1276,9 @@ add_test(NAME complete_borrow_summaries COMMAND gti_complete_borrow_summary_test
 add_executable(gti_ownerless_text_contracts_tests ownerless_text_contracts_tests.cpp)
 target_link_libraries(gti_ownerless_text_contracts_tests PRIVATE gti_compiler)
 add_test(NAME ownerless_text_contracts COMMAND gti_ownerless_text_contracts_tests)
+add_executable(gti_view_field_tests view_field_tests.cpp)
+target_link_libraries(gti_view_field_tests PRIVATE gti_compiler)
+add_test(NAME view_fields COMMAND gti_view_field_tests)
 add_executable(gti_reference_payload_semantic_tests reference_payload_semantic_tests.cpp)
 target_link_libraries(gti_reference_payload_semantic_tests PRIVATE gti_compiler)
 add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests)

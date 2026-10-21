@@ -1277,6 +1277,10 @@ struct ResolvedConstructionInfo {
   // argument. Its synthetic result therefore needs distinct complete facts;
   // never overwrite the argument's expression type, place or dependencies.
   std::optional<SemanticBorrowDependencySet> contextualBorrowDependencies;
+  // The borrow facts above publish this call's dynamic text arguments into
+  // direct text fields. They describe the call, not the constructor, which
+  // stores ownerless text at its other call sites.
+  bool dependentTextPublication = false;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
   // Exact same-type fresh-result initialization names the existing result
