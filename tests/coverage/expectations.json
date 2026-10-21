@@ -285,7 +285,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:275: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stderr": "<std/memory>:271: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         },
         {

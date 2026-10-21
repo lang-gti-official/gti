@@ -1,0 +1,82 @@
+#include <std/string>
+#include <std/vector>
+
+// An accessor pair returns `T&` from a read-only receiver and `mut T&` from a
+// mutable one. On a mutable receiver, a use that only reads the result selects
+// the read-only form and borrows the owner as shared, so other reads of the
+// same owner stay valid while that result is live. A use that may mutate
+// selects the `mut` form.
+class Shelf {
+  mut std::vector<int32_t> items;
+  mut int32_t hits;
+
+public:
+  Shelf() : items(std::vector<int32_t>()), hits(0) {
+    this.items.push_back(1);
+    this.items.push_back(2);
+  }
+
+  std::vector<int32_t>& get() { return this.items; }
+  mut std::vector<int32_t>& get() mut { return this.items; }
+  int32_t& operator[](std::size_t index) { return this.items[index]; }
+  mut int32_t& operator[](std::size_t index) mut { return this.items[index]; }
+  int32_t& operator*() { return this.hits; }
+  mut int32_t& operator*() mut { return this.hits; }
+};
+
+class Report {
+public:
+  mut std::string path;
+  mut int32_t code;
+
+  Report(std::string path, int32_t code) : path(std::move(path)), code(code) {}
+};
+
+int32_t total(std::vector<int32_t>& values) { return int32_t(values.size()); }
+void grow(mut std::vector<int32_t>& values) { values.push_back(3); }
+expected<int32_t, Report> failed() {
+  return unexpected(Report(std::string("p"), 1));
+}
+
+int32_t reads(mut Shelf& shelf) {
+  std::vector<int32_t>& held = shelf.get();
+  mut int32_t sum = int32_t(held.size()) + total(shelf.get());
+  int32_t& first = shelf[std::size_t(0)];
+  int32_t second = shelf[std::size_t(1)];
+  for (auto& left : shelf.get()) {
+    for (auto& right : shelf.get()) {
+      sum += left * right;
+    }
+  }
+  if (shelf.get().empty() || *shelf != 0) {
+    return -1;
+  }
+  return sum + first + second + int32_t(held.size());
+}
+
+int32_t writes(mut Shelf& shelf) {
+  shelf.get().push_back(3);
+  grow(shelf.get());
+  shelf[std::size_t(0)] = 5;
+  {
+    mut int32_t& counter = *shelf;
+    counter += 2;
+  }
+  for (mut auto& value : shelf.get()) {
+    value += 1;
+  }
+  return int32_t(shelf.get().size()) + *shelf + shelf[std::size_t(0)];
+}
+
+int main() {
+  mut Shelf shelf = Shelf();
+  if (reads(shelf) != 18 || writes(shelf) != 12) {
+    return 1;
+  }
+  mut auto result = failed();
+  if (result.error().path.view() != "p" || result.error().code != 1) {
+    return 2;
+  }
+  result.error().code = 3;
+  return result.error().code == 3 ? 0 : 3;
+}

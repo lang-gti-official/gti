@@ -33,7 +33,8 @@ def main():
         ("2\n1\n", read_sites[1], "member_access"),
         ("1\n", mut_sites[1], "member_access"),
         ("3\n1\n", mut_sites[1], "member_access"),
-        ("3\n1\n", mut_sites[0], "dereference"),
+        # A read-only reference to `*owner` selects the read-only operator*.
+        ("3\n1\n", read_sites[0], "dereference"),
     ]
     with tempfile.TemporaryDirectory(prefix="gti-owner-access-") as temporary:
         for mode, flags in modes:

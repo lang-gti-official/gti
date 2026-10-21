@@ -17,10 +17,11 @@ if __name__ == "__main__":
              "borrowed_enum_fields", "borrowed_enum_generic_fields",
              "borrow_stored_view_return")
     # The original map is deliberately empty: compilation must succeed, but
-    # its checked at() call must retain the defined missing-key failure.
+    # its checked at() call must retain the defined missing-key failure. The
+    # reproducer only reads the row, so it selects the read-only at().
     map_lines = (root.parent / "stdlib/std/map.gti").read_text().splitlines()
     at_line = next(index for index, line in enumerate(map_lines)
-                   if "mut V& at(K& key) mut" in line)
+                   if line.strip() == "V& at(K& key) {")
     missing_line = next(index + 1 for index in range(at_line, len(map_lines))
                         if "gti_internal::require_key" in map_lines[index])
     cases = {name: [((), (0, "2\n", ""))] for name in names[1:3]}
