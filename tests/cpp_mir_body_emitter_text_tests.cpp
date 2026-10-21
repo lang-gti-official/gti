@@ -1426,8 +1426,11 @@ int main() {
            "drop-free");
   }
 
-  // A moved view still carries a loan of its caller's text: moving it after
-  // fallible work stays outside this route.
+  // A moved text view or C string carries only its caller's entry loan. Its
+  // by-value field keeps ownerless text, so the move publishes no dependency
+  // and MIR stages no Initialize: the constructor record publishes the exact
+  // Move. The failure form keeps each Move in its verified body after the
+  // ledger and the checked remainder.
   const lang::FrontendResult view =
       analyzeWithStandardLibrary("cpp-mir-moved-view-field.gti", R"(
 #include <std/string>
@@ -1443,14 +1446,17 @@ public:
 class Label {
 public:
   Ledger ledger;
+  bool odd;
   std::string_view name;
-  Label(std::string_view name, int32_t divisor)
-      : ledger(Ledger(1, divisor)), name(std::move(name)) {}
+  c_string tag;
+  Label(std::string_view name, c_string tag, int32_t divisor)
+      : ledger(Ledger(1, divisor)), odd(divisor % 2 == 1),
+        name(std::move(name)), tag(std::move(tag)) {}
 };
 
 int main() {
-  Label label = Label("abc", 1);
-  return label.name.size() == 3 ? 0 : 1;
+  Label label = Label("abc", "t", 1);
+  return label.name.size() == 3 && label.odd ? 0 : 1;
 }
 )");
   expect(view.canGenerateCode(),
@@ -1458,24 +1464,330 @@ int main() {
   if (!view.canGenerateCode()) {
     return;
   }
-  const lang::CppMirBodyEmissionMap viewMap(buildRows(view, view.mir));
-  std::size_t viewConstructors = 0;
+  const lang::MirConstructorInstance *label = nullptr;
   for (const lang::MirConstructorInstance &constructor :
        view.mir.constructorInstances()) {
-    if (ownedInitializers(constructor) != 1 ||
-        constructor.parameterTypes.empty() ||
-        constructor.parameterTypes.front().kind !=
+    if (ownedInitializers(constructor) == 2 &&
+        !constructor.parameterTypes.empty() &&
+        constructor.parameterTypes.front().kind ==
             lang::SemanticType::StringView) {
+      label = &constructor;
+    }
+  }
+  expect(label != nullptr && !label->body.failureRecords.empty() &&
+             !lang::cppMirOwnedParameterFieldBindings(view.mir, *label),
+         "text moves recorded after fallible work are not native publications");
+  if (label == nullptr) {
+    return;
+  }
+  lang::SymbolId nameField = 0;
+  for (const lang::MirConstructorInitializer &initializer :
+       label->initializers) {
+    if (initializer.targetType.kind == lang::SemanticType::StringView) {
+      nameField = initializer.field;
+    }
+  }
+  std::size_t recordMoves = 0;
+  for (const lang::MirBlock &block : label->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Move &&
+          lang::mirRecordPublishedConstructorInitializer(
+              view.mir, label->body, label->id, instruction) != nullptr) {
+        ++recordMoves;
+      }
+    }
+  }
+  expect(nameField != 0 && recordMoves == 2 &&
+             std::none_of(label->body.loans.begin(), label->body.loans.end(),
+                          [](const lang::MirLoan &loan) {
+                            return loan.storedField != 0;
+                          }),
+         "each text field publishes from its constructor record, with no "
+         "Stored loan for either field");
+  const lang::CppMirBodyEmissionMap viewMap(buildRows(view, view.mir));
+  const lang::MirBodyAddress labelAddress{
+      .kind = lang::MirBodyKind::Constructor, .owner = label->id};
+  expect(lang::CppMirBodyEmitter(view.mir, viewMap)
+             .supportsFailureBodyText(labelAddress),
+         "the failure form keeps moved text views in its verified body");
+
+  std::string viewText;
+  try {
+    viewText = gti_test::emitCpp(view).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("moved text views after a fallible sibling "
+                              "should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::size_t labelStart = viewText.find(
+      "Label::Label(::gti_internal::backend::mir_failure_constructor_tag_v1<");
+  const std::size_t labelEnd = labelStart == std::string::npos
+                                   ? labelStart
+                                   : viewText.find("\n  }\n", labelStart);
+  const std::string labelBody =
+      labelEnd == std::string::npos
+          ? std::string()
+          : viewText.substr(labelStart, labelEnd - labelStart);
+  const auto labelCount = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = labelBody.find(needle); at != std::string::npos;
+         at = labelBody.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  const std::size_t labelRemainder = labelBody.find("mir_checked_remainder_v1");
+  const std::size_t nameMove =
+      labelBody.find("(*this).name = std::move(__gti_mir_v_");
+  const std::size_t tagMove =
+      labelBody.find("(*this).tag = std::move(__gti_mir_v_");
+  expect(labelCount("std::move(__gti_mir_arg_") == 0 &&
+             labelCount(" = std::move(__gti_mir_p_") == 2 &&
+             labelCount("mir_rollback_field_v1(") == 1 &&
+             labelRemainder != std::string::npos &&
+             nameMove != std::string::npos && tagMove != std::string::npos &&
+             labelBody.find("::__gti_program::Ledger(") < labelRemainder &&
+             labelRemainder < nameMove && nameMove < tagMove,
+         "the failure-form constructor publishes each moved text field in "
+         "MIR order after the ledger");
+
+  // Borrowed state must be the formal's own entry loan, which only ends: it
+  // may neither feed a derived loan nor publish into the field.
+  const auto refusesForged = [&](const auto &forge) {
+    lang::MirProgram mutated = view.mir;
+    bool forged = false;
+    for (const auto &constructor : mutated.constructorInstances()) {
+      if (constructor.id == label->id) {
+        forged =
+            forge(const_cast<lang::MirConstructorInstance &>(constructor).body);
+      }
+    }
+    return forged && !lang::CppMirBodyEmitter(mutated, viewMap)
+                          .supportsFailureBodyText(labelAddress);
+  };
+  expect(refusesForged([](lang::MirBody &body) {
+           for (lang::MirPlace &place : body.places) {
+             if (place.root == lang::MirPlaceRootKind::Binding &&
+                 place.type.kind == lang::SemanticType::StringView) {
+               place.traits.containsBorrowedState = false;
+               return true;
+             }
+           }
+           return false;
+         }),
+         "a moved view whose formal does not carry its borrowed state is not "
+         "body-staged");
+  expect(refusesForged([](lang::MirBody &body) {
+           lang::MirLoanId entry = 0;
+           for (const lang::MirLoan &loan : body.loans) {
+             const lang::MirPlace *source = body.findPlace(loan.source);
+             if (loan.entry && source != nullptr &&
+                 source->type.kind == lang::SemanticType::StringView) {
+               entry = loan.id;
+             }
+           }
+           if (entry == 0) {
+             return false;
+           }
+           lang::MirLoan derived = *body.findLoan(entry);
+           derived.id = body.loans.size() + 1;
+           derived.entry = false;
+           derived.parent = entry;
+           body.loans.push_back(derived);
+           return true;
+         }),
+         "a loan derived from the moved view's entry loan is not body-staged");
+  expect(refusesForged([&](lang::MirBody &body) {
+           for (lang::MirLoan &loan : body.loans) {
+             const lang::MirPlace *source = body.findPlace(loan.source);
+             if (loan.entry && source != nullptr &&
+                 source->type.kind == lang::SemanticType::StringView) {
+               loan.storedField = nameField;
+               return true;
+             }
+           }
+           return false;
+         }),
+         "an entry loan that publishes into the moved view's field is not "
+         "body-staged");
+
+  // A user-defined carrier with a reference field retains its dependency in
+  // the field: the move publishes a Stored loan, and the native class has no
+  // empty representation for the body to fill later, because its reference
+  // must be bound when the object is constructed. Moving it after fallible
+  // work therefore stays outside the body-staged route, as copying it does.
+  const lang::FrontendResult carrier =
+      analyzeWithStandardLibrary("cpp-mir-moved-carrier-field.gti", R"(
+#include <std/utility>
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+class Cursor {
+public:
+  int32_t& current;
+  Cursor(int32_t& value) : current(value) {}
+};
+
+class Holder {
+public:
+  Ledger ledger;
+  Cursor cursor;
+  Holder(Cursor cursor, int32_t divisor)
+      : ledger(Ledger(1, divisor)), cursor(std::move(cursor)) {}
+};
+
+int main() {
+  int32_t value = 3;
+  Holder holder = Holder(Cursor(value), 1);
+  return holder.cursor.current == 3 ? 0 : 1;
+}
+)");
+  expect(carrier.canGenerateCode(),
+         "the moved-carrier-field fixture should pass the frontend");
+  if (!carrier.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap carrierMap(buildRows(carrier, carrier.mir));
+  std::size_t carrierConstructors = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       carrier.mir.constructorInstances()) {
+    if (ownedInitializers(constructor) != 1 ||
+        constructor.parameterTypes.size() != 2) {
       continue;
     }
-    ++viewConstructors;
-    expect(
-        !lang::CppMirBodyEmitter(view.mir, viewMap)
-             .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
-                                       .owner = constructor.id}),
-        "a moved borrowed carrier after fallible work is not drop-free");
+    ++carrierConstructors;
+    expect(std::any_of(constructor.body.loans.begin(),
+                       constructor.body.loans.end(),
+                       [](const lang::MirLoan &loan) {
+                         return loan.kind == lang::MirLoanKind::Stored &&
+                                loan.storedField != 0;
+                       }) &&
+               !lang::CppMirBodyEmitter(carrier.mir, carrierMap)
+                    .supportsFailureBodyText(
+                        {.kind = lang::MirBodyKind::Constructor,
+                         .owner = constructor.id}),
+           "a moved carrier that retains its dependency after fallible work "
+           "stays outside the body-staged route");
   }
-  expect(viewConstructors == 1, "the view fixture keeps its constructor");
+  expect(carrierConstructors == 1, "the carrier fixture keeps its constructor");
+}
+
+void testMovedViewAfterFormalRead() {
+  // Earlier initializers read the view formal, as a receiver and as a call
+  // argument, and no record can fail. The native member-initializer list
+  // would move the formal before those reads run in the body, so the owned
+  // proof refuses it; the failure form keeps the reads and the move in MIR
+  // order. A sibling that does not name the formal keeps the native move.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-view-after-read.gti", R"(
+#include <std/string>
+#include <std/utility>
+
+uint64_t measure(std::string_view text) { return text.size(); }
+
+class Sized {
+public:
+  uint64_t length;
+  uint64_t measured;
+  std::string_view name;
+  Sized(std::string_view name)
+      : length(name.size()), measured(measure(name)), name(std::move(name)) {}
+};
+
+class Flagged {
+public:
+  bool small;
+  std::string_view name;
+  Flagged(std::string_view name, int32_t tag)
+      : small(tag < 10), name(std::move(name)) {}
+};
+
+int main() {
+  Sized sized = Sized("abc");
+  Flagged flagged = Flagged("de", 4);
+  return sized.length == 3 && sized.measured == 3 && flagged.small &&
+                 flagged.name.size() == 2
+             ? 0
+             : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved-view-after-read fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *sized = nullptr;
+  const lang::MirConstructorInstance *flagged = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (constructor.parameterTypes.empty() ||
+        constructor.parameterTypes.front().kind !=
+            lang::SemanticType::StringView ||
+        constructor.initializers.empty() ||
+        !constructor.initializers.back().ownedParameter) {
+      continue;
+    }
+    if (constructor.parameterTypes.size() == 1 &&
+        constructor.initializers.size() == 3) {
+      sized = &constructor;
+    } else if (constructor.parameterTypes.size() == 2 &&
+               constructor.parameterTypes.back() == lang::SemanticType::Int32 &&
+               constructor.initializers.size() == 2) {
+      flagged = &constructor;
+    }
+  }
+  const auto flaggedBindings =
+      flagged == nullptr
+          ? std::nullopt
+          : lang::cppMirOwnedParameterFieldBindings(frontend.mir, *flagged);
+  expect(sized != nullptr && sized->body.failureRecords.empty() &&
+             sized->mayRaiseDefinedFailure &&
+             !lang::cppMirOwnedParameterFieldBindings(frontend.mir, *sized),
+         "a move recorded after reads of its formal is not a native "
+         "publication");
+  expect(flaggedBindings && flaggedBindings->size() == 1,
+         "a move after a sibling that does not name the formal stays native");
+  if (sized == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(
+                 {.kind = lang::MirBodyKind::Constructor, .owner = sized->id}),
+         "the failure form keeps the reads and the move in its verified body");
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a view moved after reads of it should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::size_t start = text.find(
+      "Sized::Sized(::gti_internal::backend::mir_failure_constructor_tag_v1<");
+  const std::size_t end =
+      start == std::string::npos ? start : text.find("\n  }\n", start);
+  const std::string body = end == std::string::npos
+                               ? std::string()
+                               : text.substr(start, end - start);
+  const std::size_t read = body.find(".size();");
+  const std::size_t move = body.find(" = std::move(__gti_mir_p_");
+  const std::size_t publish = body.find("(*this).name = std::move(");
+  expect(body.find("std::move(__gti_mir_arg_") == std::string::npos &&
+             body.find("std::string_view __gti_mir_p_") != std::string::npos &&
+             read != std::string::npos && move != std::string::npos &&
+             publish != std::string::npos && read < move && move < publish,
+         "the formal is read through its body alias before MIR moves it into "
+         "the field");
+  expect(text.find("Sized::Sized(std::string_view") == std::string::npos,
+         "only the failure form is defined for the reading constructor");
 }
 
 void testInlineCapturingLiteralAsAlgorithmArgument() {
@@ -7760,6 +8072,7 @@ constexpr NamedTest kTests[] = {
      testMovedClosureFieldInFallibleConstructor},
     {"testMovedPassiveFieldAfterFallibleSibling",
      testMovedPassiveFieldAfterFallibleSibling},
+    {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",
