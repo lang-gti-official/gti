@@ -133,10 +133,6 @@ fixed-width GTI numeric behavior. Private `llvm::APInt` and `llvm::APFloat`
 computations implement those GTI-owned contracts. Integer overflow, zero
 division/modulo, invalid shifts, out-of-range conversions, or any uncertain
 outcome keep the checked operation rather than becoming a host C++ constant.
-Explicit checked-result add/subtract/multiply instead fold to a GTI-owned
-expected-state constant containing either the exact integer or the selected
-out-of-range error. That operation is non-trapping; it does not weaken the
-failure effects of ordinary checked operators.
 Binary32 and binary64 literals, unary and binary arithmetic, mixed-width and
 mixed integer/floating operations, comparisons, and numeric conversions may
 fold only to the exact retained `BinaryFloat` bit pattern in the selected
@@ -981,22 +977,16 @@ ordering, a mutating copy and an actual user-destructor control exercise these
 rules with independent proof replay. This supplies no raw initialized-element
 coverage or returned raw-backed element envelope.
 
-The same drop classification admits a structurally passive result shell:
-every `expected`/`unexpected` alternative is a scalar or an ordinary generated
-scalar-field record (with `void` allowed only as the success alternative).
-Nested result shells recurse with a 1,024-node budget. User destructors,
-borrowed payloads, owning capabilities and unsupported layouts still fail
-closed. This does not expand generated copy/move admission. Shared effects
-retain the drop's storage/lifecycle operation and never mark it removable.
-
-For such a passive drop, an unprojected, non-borrowing local binding with an
-exact owning initialization is independent of ordinary receiver-owned fields.
+For a structurally passive drop, an unprojected, non-borrowing local binding
+with an exact owning initialization is independent of ordinary receiver-owned
+fields.
 The optimizer can retain those non-byte field values while retiring the local
 storage; it does not keep pending result correlations, pointer-region facts,
 or arbitrary aliases. Initially available inputs retain the separate exact
-by-value formal rule. The scoped `Counter` regression checks both void and
-record results, while a result carrying a custom destructor still performs its
-native mutation and reports the later arithmetic overflow.
+by-value formal rule. The scoped `Counter` regression's void and record result
+controls are recovery-pending under RT-12 since `expected` became a source
+class; a result carrying a custom destructor still performs its native mutation
+and reports the later arithmetic overflow.
 
 Exact readonly source members may also return a still-current ordinary owned
 integer field. The interpreter records its typed receiver-relative path only
@@ -1055,29 +1045,6 @@ postcondition is absent. Opaque calls retain their barriers. No instruction,
 failure edge or cleanup schedule is removed by these summary rules: even a
 net-zero update cannot erase an overflowing intermediate operation. Independent
 canonical replay derives the relation again; O0 remains transformation-free.
-
-Fallible source-call summaries may partition ordinary owned scalar-field
-postconditions by the returned result alternative. The first structural
-observer profile is MIR's two-alternative `expected` result: a successful
-payload/void return and an `unexpected` return are distinct exits. Forwarding
-an already summarized result retains its alternatives; an unknown result joins
-both possibilities. No public library identity supplies these facts. Checked
-reference arguments and receivers map exact owned paths to the caller's
-canonical field roots, including a reference-taking forwarding helper.
-
-A fresh independent local result shell and its loads can retain that guarded
-relation. `ExpectedHasValue` on the still-current result publishes only the
-selected alternative's fields, with call/branch evidence. At joins, unknown
-results lose the relation; common alternatives join their field envelopes.
-This is bounded to 64 result identities and 64 fields per alternative, with
-excess facts omitted. Writes (including exact indexed writes), moves, drops,
-structural construction and unknown/native/synchronizing effects retire the
-pending memory correlation conservatively. An earlier status value cannot
-restore a field after mutation. This profile does not transport payload values,
-allocation freshness, initialized-region coverage, or other sum representations.
-The unrelated `Ticket` regression covers success/error forwarding and stale
-results after direct, source-call and native mutations. Forged safety metadata
-is independently rejected; O0 operations and failure scheduling are unchanged.
 
 CFG argument transfer snapshots every incoming fact before publishing any
 destination block parameter. This includes integer intervals, loaded/field

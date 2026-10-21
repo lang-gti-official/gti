@@ -14303,9 +14303,8 @@ void testCleanupFreeConstructorFieldFailure() {
           continue;
         ++checkedFields;
         expect(!instruction.successResultDrop &&
-                   lang::requiresMirFailureControlFlow(
-                       instruction, lang::MirFailureControlFlowPosition::None),
-               "a cleanup-free constructor needs an edge at every position");
+                   lang::requiresMirFailureControlFlow(instruction),
+               "a cleanup-free constructor needs a failure edge");
         expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
                    block.terminator.invokeInstruction == instruction.id,
                "failure must precede cleanup-free field publication");

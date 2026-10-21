@@ -147,14 +147,6 @@ public:
     }
     case SemanticType::Lambda:
       return "lambda";
-    case SemanticType::Expected:
-      if (type.arguments.size() == 2) {
-        return "expected<" + print(type.arguments[0]) + ", " +
-               print(type.arguments[1]) + ">";
-      }
-      return "expected";
-    case SemanticType::Unexpected:
-      return unaryType("unexpected", type);
     }
     return "unknown";
   }

@@ -132,13 +132,6 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction);
                                                    const MirLoan &parameter,
                                                    MirPlaceId place);
 
-// Checked expected-reference extraction retains the external owner's identity,
-// not the carrier's storage. Ordinary loan flow separately proves availability.
-[[nodiscard]] bool
-fallibleReferenceOwnerTransport(const MirBody &body,
-                                const MirInstruction &instruction,
-                                const MirLoan &extracted);
-
 // Publish an exact runtime alias of an entry-reference dependency. A unique,
 // dominating initializer chain must establish its typed address, and the return
 // expression must identify the selected alias. Shared by verification and
