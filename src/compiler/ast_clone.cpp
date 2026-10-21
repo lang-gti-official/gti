@@ -323,11 +323,6 @@ private:
       return std::make_unique<Unary>(tok(node.oper()), expr(node.right()),
                                      expr(node.rangeObject()));
     }
-    case ExprKind::Unexpected: {
-      const auto &node = static_cast<const Unexpected &>(expression);
-      return std::make_unique<Unexpected>(tok(node.keyword()),
-                                          expr(node.error()));
-    }
     case ExprKind::Variable: {
       const auto &node = static_cast<const Variable &>(expression);
       if (node.patternAuto() && node.patternReference()) {

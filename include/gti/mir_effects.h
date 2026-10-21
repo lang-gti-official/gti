@@ -54,9 +54,9 @@ isMirStructuralFinalAddressConstruction(const MirProgram &program,
 [[nodiscard]] bool
 isMirStructuralValueTransfer(const MirProgram &program,
                              const MirInstruction &instruction);
-// Generated scalar records and recursively passive result alternatives can
-// retire their own storage without executing user/runtime cleanup. This does
-// not prove their storage is disjoint from any other place.
+// Generated scalar records can retire their own storage without executing
+// user/runtime cleanup. This does not prove their storage is disjoint from any
+// other place.
 [[nodiscard]] bool isMirStructuralValueDrop(const MirProgram &program,
                                             const MirInstruction &instruction);
 [[nodiscard]] MirEffectTraits effects(const MirInstruction &instruction);

@@ -181,11 +181,6 @@ struct ResolvedRangeIterationInfo {
   FunctionId incrementFunction = 0;
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
-  // The range source is the checked active-value projection of one named
-  // local or by-value expected<T, E>. The range loan still protects the
-  // complete expected root; this flag preserves the bounded projection
-  // identity without admitting a general retained nested reference.
-  bool expectedPayloadProjection = false;
   // The selected zero-argument read-only endpoint returns a value with no
   // retained reference or stored-owner dependency. This permits MIR to park a
   // fresh hidden mutable cursor while evaluating that exact endpoint.
@@ -401,12 +396,8 @@ enum class IntrinsicKind {
   FunctionPointerInvoke,
   StringViewSize,
   StringViewEmpty,
-  ExpectedValue,
-  ExpectedError,
-  ExpectedValueOr,
   ArrayRangeBegin,
   ArraySize,
-  ExpectedHasValue,
   ThreadHandleEmpty,
   ThreadSpawn,
   ThreadJoinable,
@@ -1450,30 +1441,8 @@ struct RawReferenceAssertionInfo {
   SemanticType ownerReference = SemanticType::Unknown;
 };
 
-enum class ExpectedCombinatorKind {
-  TransformError,
-  Transform,
-  AndThen,
-  Expect
-};
-
-// One exact consuming expected<T, E> mapper. Expected is a
-// language type, but the mapped alternative is still computed by an ordinary
-// GTI function or lambda whose exact identity remains authoritative through
-// lowering. Mapping selects exactly one mapper/lambda and retains its type.
-// Expect instead retains the exact message type and selects the shared Panic
-// intrinsic on its failure arm; it has no mapper target.
-struct ExpectedCombinatorInfo {
-  ExpectedCombinatorKind kind = ExpectedCombinatorKind::TransformError;
-  SemanticType sourceType = SemanticType::Unknown;
-  SemanticType resultType = SemanticType::Unknown;
-  SemanticType mapperType = SemanticType::Unknown;
-  FunctionId mapper = 0;
-  LambdaId lambda = 0;
-};
-
-// Prefix `?` through the standard `std::tryable` protocol concept, for an
-// operand other than built-in `expected`. The operand is evaluated once and
+// Prefix `?` through the standard `std::tryable` protocol concept. The
+// operand is evaluated once and
 // transported like a by-value argument; `test`, `output` and `residual` are
 // ordinary calls of the selected conformance block's has_value, take_value
 // and take_residual functions. The residual initializes the enclosing
@@ -2497,8 +2466,6 @@ public:
   findPayloadPattern(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
-  [[nodiscard]] const ExpectedCombinatorInfo *
-  findExpectedCombinator(const Call &call) const;
   [[nodiscard]] const ResolvedCollectionInfo *
   findCollection(const ArrayInitializer &initializer) const;
   [[nodiscard]] const ProtocolConceptSpelling *
@@ -2549,8 +2516,8 @@ public:
   [[nodiscard]] bool isFreshClassResult(const Expr &expression) const;
   // A comma expression with no selected operator.
   [[nodiscard]] const Binary *builtinComma(const Expr &expression) const;
-  // A class or Expected value grouping or comma, or a selected fresh-result
-  // construction wrapper.
+  // A class value grouping or comma, or a selected fresh-result construction
+  // wrapper.
   [[nodiscard]] const Expr *
   directInitializationSource(const Expr &expression) const;
 
@@ -2861,7 +2828,6 @@ private:
                             ResolvedPayloadPatternInfo info);
 
   void record(const Call &call, ResolvedCallInfo info);
-  void recordExpectedCombinator(const Call &call, ExpectedCombinatorInfo info);
   void recordCollection(const ArrayInitializer &initializer,
                         ResolvedCollectionInfo info);
   void recordProtocolConcept(ConceptId id, ProtocolConceptSpelling spelling);
@@ -3067,7 +3033,6 @@ private:
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Expr *, RawReferenceAssertionInfo>
       rawReferenceAssertions;
-  std::unordered_map<const Call *, ExpectedCombinatorInfo> expectedCombinators;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
       nativeFunctionConversions;
   std::unordered_map<const Expr *, FunctionItemSelectionInfo>

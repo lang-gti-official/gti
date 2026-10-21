@@ -80,7 +80,6 @@ enum class HirValueKind {
   DirectInitializer,
   DereferenceSet,
   PlaceSet,
-  ExpectedPropagation,
   Propagation,
   MemberAccess,
   Grouping,
@@ -99,7 +98,6 @@ enum class HirValueKind {
   This,
   MemberSet,
   Unary,
-  Unexpected,
   Variable,
 };
 
@@ -207,16 +205,6 @@ struct HirPackExpansionElement {
   HirCallInputKind kind = HirCallInputKind::Value;
 };
 
-struct HirExpectedPropagationPlan {
-  HirValueId operand = 0;
-  HirValueId successExtraction = 0;
-  HirValueId successValue = 0;
-  HirValueId errorExtraction = 0;
-  HirValueId errorValue = 0;
-  HirValueId unexpected = 0;
-  bool moves = false;
-};
-
 // Prefix `?` through `std::tryable`. Every step is an ordinary call of the
 // selected conformance block's function, in the operand's full expression.
 // `test` borrows the operand; `output` and `residual` each consume it on
@@ -286,12 +274,7 @@ struct HirValue {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
-  std::optional<HirExpectedPropagationPlan> expectedPropagation;
   std::optional<HirPropagationPlan> propagation;
-  // Eager call inputs evaluated in source order before a synthesized branch.
-  // Unlike branch operands these retain their full-expression cleanup on both
-  // paths, including when the conditional mapper is never invoked.
-  std::vector<HirValueId> conditionalInputs;
   // Evaluations that must complete in order before this value begins, such
   // as a comma's left operand. Their results are discarded; they share the
   // enclosing full-expression lifetime, not a nested scope.
@@ -391,7 +374,6 @@ struct HirRangeIteration {
   FunctionId incrementFunction = 0;
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
-  bool expectedPayloadProjection = false;
   bool nonBorrowingEndpoint = false;
   bool materializesElementValue = false;
 

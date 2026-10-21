@@ -128,13 +128,11 @@ MirOptimizationCoverage optimizationCoverage(MirOperation operation) {
   case MirOperation::PointerDifference:
     return barrier("raw-memory/escape effects; no pointer range proof");
   case MirOperation::EnumConstant:
-  case MirOperation::ExpectedHasValue:
   case MirOperation::Closure:
   case MirOperation::NativeCallback:
   case MirOperation::FunctionItem:
   case MirOperation::PayloadConstruct:
   case MirOperation::PayloadExtract:
-  case MirOperation::Unexpected:
   case MirOperation::Comma:
     return supported("effects and use-def; scalar interpretation overdefined");
   case MirOperation::Count:
@@ -209,12 +207,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::PolymorphicStorageReset:
   case IntrinsicKind::StringViewSize:
   case IntrinsicKind::StringViewEmpty:
-  case IntrinsicKind::ExpectedValue:
-  case IntrinsicKind::ExpectedError:
-  case IntrinsicKind::ExpectedValueOr:
   case IntrinsicKind::ArrayRangeBegin:
   case IntrinsicKind::ArraySize:
-  case IntrinsicKind::ExpectedHasValue:
   case IntrinsicKind::ThreadHandleEmpty:
   case IntrinsicKind::ThreadJoinable:
   case IntrinsicKind::MutexGuardActive:
