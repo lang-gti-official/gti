@@ -9,6 +9,33 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.452.0 — Checked references to raw pointers
+
+- A checked reference may now name a raw-pointer slot. `T*&` and `const T*&`
+  read the stored address, and `mut T*&` or `mut const T*&` may reseat it, as
+  in `void point(mut const int32_t*& slot, int32_t& target) { slot = &target; }`.
+  Dereferencing the stored pointer still requires `unsafe`. These were
+  `error[GTI-S2056]`.
+- Raw-pointer errors work again: `expected<T, const U*>` and
+  `expected<T, U*>` accept `unexpected(&owner)`, `?`, the mappers and
+  `error()`, which returns a checked reference to the stored pointer. This
+  retires the 0.449.0 compatibility note about raw-pointer error types.
+- Raw-pointer successes such as `expected<T*, E>` now use the ordinary
+  accessors. `value()` returns a checked reference to the stored pointer, so a
+  `mut` result can be reseated with `result.value() = &other;`.
+- Generic code that returns `T&` now works when `T` is a raw pointer, so
+  `*owner` of a `std::unique_ptr<int32_t*>` reads the stored pointer.
+- A generic field whose type parameter becomes a raw pointer, such as
+  `mut E payload;` with `E = const int32_t*`, no longer needs a declaration
+  initializer. As for any field, each constructor must initialize it.
+- A reference still cannot name a pointer stored with native layout: an
+  element of a fixed pointer array, including `for (auto& p : pointers)`, or a
+  field of a `[[c_abi]]` record or union (`error[GTI-S2056]`). Copy the
+  pointer instead, as `for (auto p : pointers)` does.
+- Fix indexing a fixed array with an index that a call returns by reference,
+  as in `values[picker.index()]` where `index()` returns `std::size_t&`. The
+  read used the wrong element. It now uses the returned index.
+
 ## 0.451.0 — Read-only uses select read-only accessors
 
 - On a `mut` receiver, an accessor with a read-only form returning `T&` and a

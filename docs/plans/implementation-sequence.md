@@ -9196,10 +9196,13 @@ follow-ups:
   rejected (`GTI-S2045`), although the built-in carrier tracked that borrow.
   Restoring it needs retained dynamic-view fields with explicit owner
   dependencies, not an `expected` exception.
-- Raw-pointer error alternatives (`expected<T, const U*>`) are rejected
-  (`GTI-S2056` inside the prelude's error storage). Supporting them needs a
-  raw-pointer error-storage profile or a general rule for constructor-initialized
-  generic raw-pointer fields; the built-in carrier allowed them.
+- Raw-pointer error alternatives are delivered in 0.452.0 through checked
+  references to pointer slots
+  ([rule](../language/raw-pointers.md#type-and-binding-model)), which also
+  retired the separate raw-pointer success profiles. A reference to a
+  native-layout pointer slot (a fixed pointer-array element or a native
+  record or union field) is still rejected; supporting it needs a reference
+  representation for native `T*` objects next to `raw_address<T>`.
 - Use-based receiver access is delivered in 0.451.0 for accessor pairs
   ([rule](../language/static-semantics.md#36-calls-and-overloads)). Uses that
   semantics does not classify keep the `mut` preference: constructor and

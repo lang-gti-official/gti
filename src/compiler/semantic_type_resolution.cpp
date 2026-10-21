@@ -4674,12 +4674,6 @@ auto SemanticVisitor::Impl::validateReferenceReferent(const SemanticType &type,
     return;
   }
   const SemanticType &referencedType = type.arguments.front();
-  if (referencedType.kind == SemanticType::RawPointer) {
-    report(site,
-           "References to raw pointers are not supported in the initial "
-           "raw-pointer model.",
-           "GTI-S2056");
-  }
   if (referencedType == SemanticType::Void) {
     report(site, "References cannot refer to void.", "GTI-S2017");
   }
@@ -4731,7 +4725,8 @@ auto SemanticVisitor::Impl::isPublicBaseConversion(
 auto SemanticVisitor::Impl::validateReferenceBinding(
     const SemanticType &reference, const SemanticType &initializerType,
     const ExprPtr &initializer) -> void {
-  if (!validateForeignStorageBorrow(initializer)) {
+  if (!validateForeignStorageBorrow(initializer) ||
+      !validateNativePointerSlotBorrow(initializer, reference)) {
     return;
   }
   if (reference.arguments.size() != 1) {
@@ -5211,7 +5206,8 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
   if (analyzeRawReferenceReturn(value)) {
     return;
   }
-  if (!validateForeignStorageBorrow(value)) {
+  if (!validateForeignStorageBorrow(value) ||
+      !validateNativePointerSlotBorrow(value, reference)) {
     return;
   }
   if (isBorrowedCarrierReference(reference)) {

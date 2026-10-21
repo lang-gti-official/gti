@@ -298,17 +298,16 @@ the referent and the same owner dependency described above. Other alternatives
 carrying checked borrowed state remain outside this operation; the error must
 be movable and owned.
 
-A raw-pointer success, `expected<T*, E>` or `expected<const T*, E>`, is
-observed by value: `value()`, `value_or` and `expect` return the pointer
-itself, because GTI has no checked reference to a raw pointer. Copying the
-pointer neither moves nor aliases its pointee, and every dereference remains an
-ordinary `unsafe` operation. Raw pointers are not constant values, so these
-results are runtime-only.
-
-A raw-pointer error alternative, such as `expected<T, const U*>`, is not
-currently supported. The source error storage has no raw-pointer profile, so
-such a type is rejected during semantic analysis (`GTI-S2056`, related to the
-prelude's error field) rather than reaching code generation.
+A raw-pointer success or error, such as `expected<T*, E>` or
+`expected<T, const U*>`, uses the ordinary accessors. `value()` and `error()`
+return a checked reference to the stored pointer slot, so the pointer can be
+read, copied or, on a `mut` result, reseated; `value_or`, `expect` and the
+consuming accessors return the pointer itself. Neither form moves or aliases
+the pointee, and every dereference remains an ordinary `unsafe` operation (see
+[pointer-slot references](raw-pointers.md#type-and-binding-model)). The
+raw-pointer audit follows the stored address, so a result that carries the
+address of a callee's local reports the expired storage where it is used.
+Raw pointers are not constant values, so these results are runtime-only.
 
 ## Mapping and chaining owned successes
 
