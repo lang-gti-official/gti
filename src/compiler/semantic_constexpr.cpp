@@ -179,8 +179,9 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   std::size_t constructors = 0;
   for (const auto *definition : constexprConstructorsAnalyzed)
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
+  const bool reanalysis = concreteReanalysis();
   StagedWorker &worker = stagedWorker;
-  if (worker.impl == nullptr || worker.stagingModel != &stagingModel ||
+  if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
       worker.declarationOrder != currentDeclarationOrder ||
       worker.definitions != definitions ||
       worker.constructors != constructors) {
@@ -189,6 +190,11 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
                                          workMetrics, sources, rawPointerAudit);
     worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
     worker.impl->semanticModel = stagingModel;
+    // The copy is a snapshot that outlives this evaluation. It must not keep
+    // the side channels (a late-demand probe's sink, a batch's call journal)
+    // an enclosing analysis lent the canonical model for its own duration.
+    worker.impl->semanticModel.setFunctionDemandSink(nullptr);
+    worker.impl->semanticModel.setCallJournal(nullptr);
     worker.impl->valueFlow = valueFlow;
     for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
       if (declaredBeforeCurrent(definition))
@@ -201,7 +207,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->genericDefaultConstants = genericDefaultConstants;
     worker.impl->defaultArgumentSyntax = defaultArgumentSyntax;
     worker.impl->defaultArgumentDependencies = defaultArgumentDependencies;
-    worker.stagingModel = &stagingModel;
+    worker.reanalysis = reanalysis;
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
     worker.constructors = constructors;
@@ -211,6 +217,13 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
       requestSession.rawResultQueries;
+  // A class instance whose assertions an enclosing evaluation is running
+  // can be reanalysed by this worker; it must see that they are running.
+  if (!requestSession.assertingClassInstances)
+    requestSession.assertingClassInstances =
+        std::make_shared<std::vector<SemanticType>>();
+  worker.impl->requestSession.assertingClassInstances =
+      requestSession.assertingClassInstances;
   worker.impl->nextLambdaId = nextLambdaId;
   return *worker.impl;
 }
@@ -226,10 +239,10 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   }
   // Nested required constants use the canonical completed catalog, never the
-  // caller's partially analyzed instance delta. Each worker still owns its
-  // scopes and semantic delta; only the bounded work account is shared.
-  const SemanticModel &stagingModel =
-      instanceBaseModel ? *instanceBaseModel : semanticModel;
+  // caller's partially analyzed instance delta, whatever kind of instance is
+  // being reanalysed. Each worker still owns its scopes and semantic delta;
+  // only the bounded work account is shared.
+  const SemanticModel &stagingModel = constexprStagingModel();
   const auto *function = std::get_if<const FunctionDecl *>(&selected);
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   const auto *info =
