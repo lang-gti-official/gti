@@ -327,6 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
+| `L-OWN-02` owner-tracked view fields | phase 1 in progress | Value-level text dependencies on the existing stored-dependency model; phase 1 covers non-generic classes, structs and payload enums, then generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -8953,6 +8954,100 @@ prerequisite checkpoints as full acceptance.
   cycles documented as a limitation, allocation failure, and HIR/MIR lifecycle
   tests.
 
+### L-OWN-02: Owner-Tracked View Fields
+
+- **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
+  question in the 0.449.0 follow-ups). Phase 1 is in progress on
+  `codex/view-fields`; phases 2–4 are planned.
+- **Problem and client:** no field can hold a view of caller-owned text. A
+  `std::string_view` or `c_string` field, a payload-enum alternative of either
+  type, and the storage of any constructor that keeps a text parameter accept
+  only ownerless text. A token, diagnostic or error value over its input is
+  therefore rejected (`GTI-S2045`). Examples: `Diag{.text = input.view()}`,
+  `outcome::err(input.view())`, `unexpected(input.view())`. Programs copy the
+  text into a `std::string` or use the checked `std::string_view&` adapter
+  form.
+- **Rule:** a value whose text field holds owner-dependent text carries that
+  text's read-only owner dependency at the field's path, as a reference field
+  carries its referent's. The field may be direct, reached through nested
+  nominal fields, or in a payload-enum alternative. The dependency belongs to
+  the value, not to its type. A value whose text fields are all ownerless has
+  no dependency and keeps every current capability. The rule is the same for
+  any class, struct or payload enum.
+- **Design (architecture review 2026-10-21):**
+  - *Value-level, not type-level.* `std::string_view` has no borrowed state as
+    a type. A dynamic view is a carrier per value:
+    - its expression traits mark the borrowed state;
+    - a `StoredValue` semantic loan names the owner;
+    - MIR has a `Stored` entry loan with an empty designated path.
+
+    A type-level text-field trait would give every struct with a text field
+    the carrier restrictions: no reassignment, no global or container storage.
+    That would break current tables, configurations and scanners. Phase 1
+    keeps type traits and `storedReferencePaths` unchanged. Instead it lets a
+    constructed value's dependency set hold dependencies whose designated path
+    ends at a text field.
+  - *Reuse the dependency model.* `SemanticLoanDependency::designatedFields`,
+    `SemanticBorrowDependencySet`, the parameter-to-field re-rooting of
+    `storedCarrierConstructorBindings`, and
+    `FunctionBorrowDependencySummary`/`BorrowedFieldOrigin` already express
+    "field path F of the result carries the dependency of parameter p at path
+    S". A text binding differs from a reference binding in one way: an
+    ownerless argument contributes no dependency, where a missing reference
+    source fails the binding.
+  - *MIR.* A `Stored` loan whose designated path ends at a text field denotes
+    that text's opaque owner, as the empty path already does for a lone view.
+    Verification accepts that terminal and never treats it as a referent
+    place. `verifyOwnerlessTextContracts` admits a dependent text-field write
+    only when the written value's `Stored` loan designates that field.
+  - *Where a dependent value may live.* A local binding it initializes, a
+    by-value argument or result under a summary, and a temporary within one
+    expression. Still rejected:
+    - assigning a dependent value into existing storage;
+    - global or static storage, fixed arrays and collections;
+    - a field of another object;
+    - captures (phase 1);
+    - mutable, reassignable or (in phase 1) multi-owner graphs.
+  - *Backend.* No change: a view is a by-value descriptor, and every lifetime is
+    verified before emission.
+- **Phase 1 (classes, structs and payload enums, not generic):**
+  - Dynamic text reaches a text field through designated or aggregate
+    initialization, a constructor that stores a text parameter, or payload
+    construction.
+  - Field reads and switch payload bindings of such a field yield dependent
+    views.
+  - Copies alias the dependency and moves transfer it.
+  - By-value parameters relay it, and returns publish it under a one-owner
+    summary.
+  - Acceptance:
+    - local, constructor, payload-enum, returned and relayed shapes compile
+      and run at O0/O3, with exact semantic, HIR and MIR loan identities;
+    - mutation, movement or destruction of the owner while a dependent value
+      is live is rejected, as are reassignment with a dependent value, every
+      rejected storage form and a second owner;
+    - ownerless programs emit identical C++ (corpus differential).
+- **Phase 2 (generic types):** `pair<std::string_view, int>`,
+  `expected<T, std::string_view>`, `optional<std::string_view>` and success
+  views such as `expected<std::string_view, E>`, including
+  `unexpected(input.view())`. This needs dependency summaries through generic
+  constructors and accessors after substitution.
+- **Phase 3 (nested borrowing values):** a field whose type is itself
+  dependent, as in `struct conflict { Diag diag; }`. It also covers borrowed
+  error structs such as `expected<int, conflict>` where `conflict` holds an
+  `Entry& entry` (`GTI-S2045` today, even as a local). This reuses the
+  composed receiver-prefix proof from the nested conditional carriers
+  follow-up.
+- **Phase 4 (retire special cases):**
+  - the ownerless text contracts for fields (`ownerlessTextParameters`,
+    `recordOwnerlessTextCall`, and the field writes in
+    `verifyOwnerlessTextContracts`); static storage keeps them;
+  - the rule that a stored view reads as ownerless;
+  - the separate dynamic-text return summary, folded into
+    `FunctionBorrowDependencySummary`.
+- **Non-goals:** mutable views, reseating a dependency, lifetime inference from
+  emitted C++, and any library-name rule. `StringView` and `CString` are
+  already compiler-owned text types.
+
 ### L-VALUE-01: Optional And Foundational Value Utilities
 
 - **State/role:** bounded optional, pair, limits, restoring swap/exchange and
@@ -9201,7 +9296,8 @@ follow-ups:
   Restoring it needs retained dynamic-view fields with explicit owner
   dependencies, not an `expected` exception. Owner decision (2026-10-21):
   owner-tracked view fields, where a value storing a dynamic view carries its
-  owner's borrow like a `T&` field, planned as its own campaign.
+  owner's borrow like a `T&` field
+  ([`L-OWN-02`](#l-own-02-owner-tracked-view-fields)).
 - Raw-pointer error alternatives are delivered in 0.452.0 through checked
   references to pointer slots
   ([rule](../language/raw-pointers.md#type-and-binding-model)), which also
