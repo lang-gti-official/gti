@@ -346,10 +346,18 @@ stores credentials or changes package permissions. See
 The source `expected` class checks mapper contracts with ordinary rules, so
 the built-in mapper family `GTI-S2097` is retired. A mapper that fails a
 member's `requires` clause, such as `and_then` with a different error type,
-reports `GTI-S2029` at the call's closing parenthesis. A `transform_error`
-mapper returning `void` or a reference fails in the member's instantiation
-(`GTI-S2000` or `GTI-S2022` at the call); an eager constraint would reject
-generic callers whose error type is still open. Mapper arity and argument
+reports `GTI-S2029` at the call's closing parenthesis. A `transform` or
+`transform_error` mapper that returns a reference makes the consuming member
+return borrowed state, so the call reports only `GTI-S2022` there, naming the
+result type. A `void` `transform_error` result fails the member's own
+assertion, which is then all that instance reports, and the `void` error
+type's class assertion; both are `GTI-S2079` at the member name. A callable
+class has no reflectable result, so such a call reports `GTI-S2023`. These
+checks run per concrete call or instance; a `requires` clause would instead
+demand that a generic caller prove the property of a result type it leaves
+open. A `void` error type is rejected by each profile's own class assertion:
+`GTI-S2079` at the use that first requires the instance, with no consequences
+from its layout or members. Mapper arity and argument
 mismatches use the ordinary call
 diagnostics (`GTI-S2005`, `GTI-S2003`, `GTI-S2017`) at the member name, with
 the prelude invocation as related information. `GTI-S2018` reports implicit
@@ -690,9 +698,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   an implicit move and produces no diagnostic. A named move-only value that
   instead requires a return conversion, such as construction of an
   `expected<T, E>` success, still names the rejected copy and spells `return
-  std::move(name);` in its hint. Field projections and other same-type
-  move-only return expressions state the copy requirement without presenting
-  identical source and destination types as a mismatch.
+  std::move(name);` in its hint. This holds for any class whose implicit
+  constructor takes the value: no constructor call is written, so the return
+  reports the copy rather than a constructor argument's `GTI-S2018`, at the
+  returned value and without related candidates. Field projections and other
+  same-type move-only return expressions state the copy requirement without
+  presenting identical source and destination types as a mismatch.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
   policy as well as copy/move construction policy. A valid ordinary form is
   exactly `Type() = default;`; point at `default`, relate the first field
@@ -891,7 +902,18 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   failed.`, append the decoded user message when present, and attach concrete
   generic substitutions plus the first requiring use as related information.
   Do not offer a fix-it: removing the assertion, changing the condition, or
-  changing the invariant are distinct choices.
+  changing the invariant are distinct choices. A concrete instance that fails
+  one of its own assertions is invalid for the reason it states, so its
+  analysis reports only static assertions, not the consequences of the broken
+  precondition. For a class instance this covers its field, constructor,
+  destructor and method analyses (such as a `void` field); for a function,
+  constructor or destructor instance, the rest of its body. Semantics evaluates
+  each class instance's assertions once per request, from whichever of those
+  analyses runs first. An assertion whose substituted arguments are still
+  symbolic, as in an instance formed while analyzing an invalid one, stays
+  deferred rather than reporting `GTI-S2057`. Inside a trusted library the
+  failure is re-anchored at the requesting use, like any other
+  library-internal error.
 - `GTI-S2080` owns a static-assertion condition whose resolved type is not exact
   `bool`. Point at the condition and report the actual type without applying
   integer truthiness or contextual conversion. Unsupported constant execution
@@ -1124,6 +1146,12 @@ target at a repeatable site therefore fail at call viability. Do not postpone
 these cases to a body-local `GTI-S2022` or `GTI-S2046`: concrete reanalysis
 must confirm the relation, not discover that its public contract was
 insufficient.
+When a generic call's instantiated signature applies
+`std::meta::callable_return_type` to a concrete type with no reflectable
+signature, such as a class with `operator()`, the call names no result type:
+`GTI-S2023` reports it at the call's closing parenthesis and relates the
+selected declaration. A projection written with such a type is reported where
+it is written, not again at each call.
 
 Exact read-member requirements also use `GTI-S2029`. Named concepts retain
 their declared name; a direct requirement names the missing member and relates
@@ -1198,6 +1226,12 @@ It also rejects a retained consuming-field invocation whose selected fallback
 returns a reference or tracked borrow. The call token is primary, the selected
 callable declaration is related, and the hint suggests an owning result or
 non-consuming invocation. There is no ownership-changing automatic fix.
+A consuming method whose result, once instantiated, is a reference or carries
+tracked borrowed state is rejected at the call's closing parenthesis, and the
+message names that result type: a consumed receiver cannot keep a returned
+borrow alive. A sole candidate's arguments are not checked against that
+result first, so a fresh argument it would have borrowed adds no
+`GTI-S2017`.
 Active cleanup alone no longer rejects a moved nominal or lambda receiver:
 the verified MIR full-expression obligation retains the receiver and its
 captures. Other callable, confinement, borrowing, and availability diagnostics

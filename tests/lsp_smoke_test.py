@@ -7129,23 +7129,20 @@ def test_expected_success_ownership_diagnostic(executable, root):
                       "params": {"textDocument": {"uri": uri, "languageId": "gti",
                                                   "version": 1, "text": source}}})
         errors = publication(1)
-        # The result is constructed by its source class's implicit
-        # constructor, so copying the named owner into that constructor's
-        # by-value parameter is the general deleted-copy error.
-        assert sum(item.get("code") == "GTI-S2018" for item in errors) == 1, errors
-        diagnostic = next((item for item in errors
-                           if item.get("code") == "GTI-S2018"), None)
-        assert diagnostic is not None, errors
+        # The result's implicit constructor would copy the named owner. That
+        # is the return's own copy: no constructor call is written, so it is
+        # not reported as a constructor argument.
+        assert [item.get("code") for item in errors] == ["GTI-S2003"], errors
+        diagnostic = errors[0]
         offset = source.index("return text") + len("return ")
         assert diagnostic["range"] == {
             "start": lsp_position(source, offset),
             "end": lsp_position(source, offset + 4)}, diagnostic
         assert diagnostic["message"].startswith(
-            "Constructor argument 1 would call the deleted copy constructor "
-            "of 'std::string'."), diagnostic
+            "Cannot return 'text' by copy because type 'std::string' is "
+            "move-only."), diagnostic
         assert diagnostic["data"]["hints"] == [
-            "Pass the argument with std::move(...) when this call should "
-            "transfer ownership."]
+            "Use 'return std::move(text);' to transfer ownership."]
         assert "fixes" not in diagnostic["data"]
         session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
                       "params": {"textDocument": {"uri": uri, "version": 2},
