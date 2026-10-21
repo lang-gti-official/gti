@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/diagnostic.h"
+#include "gti/parser.h"
 #include "gti/token.h"
 
 #include <cstddef>
@@ -63,6 +64,7 @@ struct CachedParsedUnit {
   StmtList declarations;
   std::vector<Diagnostic> diagnostics;
   bool hadError = false;
+  std::optional<SyntaxCompletionContext> completionContext;
 };
 
 // A process-local, thread-safe LRU shared by compatible frontend invocations.

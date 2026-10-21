@@ -1,6 +1,7 @@
 #include "gti/language_queries.h"
 
 #include "gti/lexer.h"
+#include "language_snippets.h"
 #include "semantic_spelling.h"
 
 #include <algorithm>
@@ -1307,6 +1308,12 @@ public:
         input.packageSourceRoots);
     const std::optional<SemanticCompletionContext> &context =
         snapshot.semantics.completionContext();
+    if (snapshot.syntaxCompletion) {
+      result.candidates =
+          completionSnippets(*snapshot.syntaxCompletion, input.source);
+      for (CompletionCandidate &candidate : result.candidates)
+        candidate.sortText = completionSortText(99000, candidate.label);
+    }
     if (!context) {
       return result;
     }
@@ -1319,6 +1326,9 @@ public:
       std::size_t score = 0;
     };
     std::vector<RankedCandidate> ranked;
+    for (CompletionCandidate &candidate : result.candidates)
+      ranked.push_back({.candidate = std::move(candidate), .score = 99000});
+    result.candidates.clear();
     std::unordered_set<std::string> seen;
     for (const SemanticCompletionCandidateRecord &record :
          context->candidates) {
@@ -2099,6 +2109,8 @@ private:
       return 3;
     case CompletionCandidateKind::Namespace:
       return 4;
+    case CompletionCandidateKind::Snippet:
+      return 5;
     }
     return 5;
   }
