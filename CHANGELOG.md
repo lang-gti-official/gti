@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.452.1 — Constructors that move a plain value after other initializers
+
+- Fix the internal compiler error `GTI-B0001` ("backend failed while
+  generating a representation") when a constructor moves a parameter of a
+  plain value type into a field after another member initializer, as in
+  `shelf(int32_t tag) : v(std::vector<int32_t>()), tag(std::move(tag)) {}`.
+  The earlier initializer could build a field that can fail, compute a value
+  such as `odd(tag % 2 == 1)`, or call a function. Integers, `bool`, floats,
+  `char`, enums (including enums whose payloads are plain values), raw
+  pointers and fixed arrays of these were all affected, as were generic
+  classes such as `shelf<T>` with `T = int32_t`. Copying the parameter
+  (`tag(tag)`) already worked.
+- Moving a `std::string_view` parameter into a field after such an
+  initializer is still rejected with `GTI-B0001`; copying the view works.
+
 ## 0.452.0 — Checked references to raw pointers
 
 - A checked reference may now name a raw-pointer slot. `T*&` and `const T*&`
