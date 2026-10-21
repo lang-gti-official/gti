@@ -184,6 +184,35 @@ mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
     const MirProgram &program, const MirConstructorInstance &instance,
     const MirStoredCarrierReference &path, std::size_t depth = 0);
 
+// A construction that publishes one dynamic text argument into a direct text
+// field (L-OWN-02). Its borrow facts describe this call: the target
+// constructor borrows nothing itself, and its sole initializer of that field
+// stores exactly that formal and no other.
+[[nodiscard]] bool
+dependentTextPublication(const MirProgram &program,
+                         const MirInstruction &instruction,
+                         const MirConstructorInstance &constructor) {
+  if (!instruction.dependentTextPublication ||
+      instruction.kind != MirInstructionKind::Construct ||
+      constructor.borrowOrigin != BorrowOriginKind::None ||
+      constructor.completeBorrow ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      instruction.borrowFields.size() != 1)
+    return false;
+  const auto &mapping = instruction.borrowFields.front();
+  return mapping.origin == BorrowOriginKind::Argument &&
+         mapping.parameter == instruction.borrowArgument &&
+         mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
+         mapping.resultFields.size() == 1 &&
+         mapping.access == AccessMode::ReadOnly &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
+         mir_detail::dependentTextFieldFormal(program, constructor,
+                                              mapping.resultFields.front()) ==
+             mapping.parameter;
+}
+
 bool exactCThreadRuntimeFunction(const MirFunctionInstance &function) {
   const auto operation = function.cThreadOperation;
   if (operation == CThreadRuntimeOperation::None) {
@@ -3670,11 +3699,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               block.id, instruction.id);
         }
         if (instruction.kind == MirInstructionKind::Construct &&
+            !dependentTextPublication(program, instruction,
+                                      *constructorTarget) &&
             (instruction.borrowOrigin != constructorTarget->borrowOrigin ||
              instruction.borrowArgument != constructorTarget->borrowParameter ||
              instruction.borrowArguments !=
                  constructorTarget->borrowParameters ||
-             instruction.borrowAccess != constructorTarget->borrowAccess)) {
+             instruction.borrowAccess != constructorTarget->borrowAccess ||
+             instruction.dependentTextPublication)) {
           return verificationFailure(
               body, owner,
               "construct-result borrow origin does not match the "

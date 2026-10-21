@@ -745,6 +745,10 @@ struct MirInstruction {
   // Preserve the frontend-selected origins; emission must not infer them.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // A construction publishes dynamic text arguments into direct text fields
+  // under its result loan. Its borrow facts describe this call, not the
+  // target constructor's summary.
+  bool dependentTextPublication = false;
   std::optional<BorrowOriginPlace> borrowPlace;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;

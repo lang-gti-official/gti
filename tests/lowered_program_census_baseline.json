@@ -2504,11 +2504,26 @@
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 84
       }
+    },
+    "170-view-fields.gti": {
+      "declarations": 1429,
+      "bodies": 145,
+      "generated_items": 101,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 51
+      }
     }
   },
   "totals": {
-    "declarations": 172769,
-    "bodies": 22927,
-    "generated_items": 14432
+    "declarations": 174198,
+    "bodies": 23072,
+    "generated_items": 14533
   }
 }

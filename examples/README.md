@@ -67,6 +67,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
+| Keep views of a local string in a value's text fields without copying the text | [170: view fields](170-view-fields.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
@@ -242,6 +243,7 @@ is a teaching helper, not a production server.
 | `167-callable-result-types.gti` | computed callable result types used by an unrelated source-defined mapping wrapper; no builtin combinator |
 | `168-source-value-profiles.gti` | disjoint void/reference class profiles, enum-backed constexpr construction and consumption, generic forwarding, and checked borrowing |
 | `169-source-expected.gti` | global source-defined `expected`, value/void/reference results, constexpr, `?`, borrowing mapper captures, error mapping and checked extraction from a temporary result |
+| `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, and an ownerless token that keeps its method calls |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
