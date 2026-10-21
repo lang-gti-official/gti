@@ -14,8 +14,9 @@ if __name__ == "__main__":
         return (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                 "division_by_zero in integer_division\n")
 
-    # One line per completed constructor, in program order.
-    printed = ["74\n1\n7\n", "1\n69\n", "71\n", "74\n17\n", "107\n1\n", "85\n6\n"]
+    # What main prints after each group of constructions, in order.
+    printed = ["74\n1\n7\n", "1\n69\n", "71\n", "74\n17\n", "107\n1\n", "85\n6\n",
+               "22\n"]
 
     def through(count):
         return "".join(printed[:count])
@@ -25,7 +26,7 @@ if __name__ == "__main__":
 
     ledger = failure("id(id + 60 / divisor)")
     main(names=(name,), cases={name: [
-        ((), (0, through(6) + closed(7), "")),
+        ((), (0, through(7) + closed(7), "")),
         # Stocked's ledger fails before the move into its sibling field.
         (("1",), (70, "", ledger)),
         # A sibling fails after the move; Measured's built ledger rolls back.

@@ -8,8 +8,9 @@
 // Work before the move, a later sibling, or the constructor body can still
 // fail, and the owning field built first is then dropped exactly once. Owning
 // moves, generated-copy struct moves and a scalar moved first share the same
-// body-ordered schedule.
-// Copying these formals already worked; moving them was GTI-B0001.
+// body-ordered schedule, and a move after an initializer that writes the
+// formal sees the written value.
+// Copying these formals already compiled; moving them was GTI-B0001.
 #include <std/string>
 #include <std/utility>
 #include <std/vector>
@@ -130,6 +131,20 @@ public:
         name(std::move(name)) {}
 };
 
+int32_t bump(mut int32_t& value) {
+  value = value + 1;
+  return value;
+}
+
+// An earlier initializer writes the formal through a mutable reference. The
+// move runs after it in the body, so the field sees the updated value.
+class Bumped {
+public:
+  int32_t first;
+  int32_t second;
+  Bumped(mut int32_t seed) : first(bump(seed)), second(std::move(seed)) {}
+};
+
 int main(int argc, std::vector<std::string> argv) {
   stage = argc - 1;
   Stocked stocked = Stocked(7);
@@ -166,5 +181,8 @@ int main(int argc, std::vector<std::string> argv) {
   Headed headed = Headed(23, 2, std::string("headed"));
   std::println(headed.tag + headed.ledger.id);
   std::println(headed.name.size());
+
+  Bumped bumped = Bumped(1);
+  std::println(bumped.first * 10 + bumped.second);
   return 0;
 }
