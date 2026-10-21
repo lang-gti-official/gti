@@ -23,17 +23,6 @@ namespace {
          type.kind == SemanticType::UInt32 || type.kind == SemanticType::UInt64;
 }
 
-[[nodiscard]] std::optional<SemanticType>
-mirFallibleBorrowReferent(const SemanticType &type) {
-  if (type.kind != SemanticType::Expected || type.arguments.size() != 2 ||
-      type.arguments.front().kind != SemanticType::Reference ||
-      type.arguments.front().referenceAccess != AccessMode::ReadOnly ||
-      type.arguments.front().arguments.size() != 1) {
-    return std::nullopt;
-  }
-  return type.arguments.front().arguments.front();
-}
-
 [[nodiscard]] std::optional<Literal>
 programConstantLiteral(const ConstantValue &constant) {
   if (const auto *integer = std::get_if<ConstantInteger>(&constant)) {
@@ -136,7 +125,7 @@ public:
     // Every `?` propagation is an exit too, and a body whose last statement
     // is not a return may also complete by reaching its end.
     for (const HirValue &value : source.values) {
-      if (value.expectedPropagation || value.propagation) {
+      if (value.propagation) {
         ++exitCount;
       }
     }
@@ -268,7 +257,6 @@ public:
                initializer.targetType == SemanticType::Bool ||
                initializer.targetType == SemanticType::Char ||
                initializer.targetType.kind == SemanticType::RawPointer ||
-               initializer.targetType.kind == SemanticType::Expected ||
                initializer.targetType.kind == SemanticType::Array ||
                initializer.targetType.kind == SemanticType::Class ||
                // Only a borrow-carrying closure takes the explicit stage; a
@@ -281,8 +269,7 @@ public:
                ((initializer.targetType.kind == SemanticType::Class ||
                  initializer.targetType.kind == SemanticType::Lambda ||
                  initializer.targetType.kind == SemanticType::Enum ||
-                 initializer.targetType.kind == SemanticType::Array ||
-                 initializer.targetType.kind == SemanticType::Expected) &&
+                 initializer.targetType.kind == SemanticType::Array) &&
                 !field->requiresActiveCleanup)) &&
               // A closure environment stored by value is a borrow-carrying
               // field exactly like a class carrier: the same Initialize,
@@ -298,12 +285,8 @@ public:
               constructorRollbackStageEligible(initializer)
                   ? dropObligationForValue(initializer.arguments.front())
                   : 0;
-          const auto expectedFieldDrop =
-              expectedFieldInitializationDrop(initializer);
           const bool explicitOwningFieldStage =
-              (owningStageSource != 0 &&
-               temporaryIsActive(owningStageSource)) ||
-              (expectedFieldDrop && expectedFieldDrop->requiresActiveCleanup);
+              owningStageSource != 0 && temporaryIsActive(owningStageSource);
           // A lexical aggregate temporary can already carry a transfer token
           // even when its fields require no active cleanup. Its owning stage
           // is the sole publication; never initialize the same field twice.
@@ -353,9 +336,8 @@ public:
                  .constructionOrder = rollback,
                  .kind = MirDropObligationKind::ConstructionRollback,
                  .place = destination,
-                 .dropType = expectedFieldDrop       ? *expectedFieldDrop
-                             : sourceDrop == nullptr ? MirDropType{}
-                                                     : sourceDrop->dropType});
+                 .dropType = sourceDrop == nullptr ? MirDropType{}
+                                                   : sourceDrop->dropType});
             MirInstruction initialize{
                 .kind = MirInstructionKind::Initialize,
                 .hirValue = initializer.arguments.front(),
@@ -696,10 +678,6 @@ private:
     MirLoanId loan = 0;
   };
 
-  struct PreparedCallArgumentFailure {
-    HirValueId argument = 0;
-  };
-
   [[nodiscard]] static bool sameScopeState(const std::vector<Scope> &left,
                                            const std::vector<Scope> &right) {
     return left.size() == right.size() &&
@@ -775,10 +753,8 @@ private:
       return false;
     }
     const HirValue *argument = findValue(initializer.arguments.front());
-    if (argument == nullptr ||
-        ((!argument->dropObligation ||
-          argument->info.type != initializer.targetType) &&
-         !expectedFieldInitializationDrop(initializer))) {
+    if (argument == nullptr || !argument->dropObligation ||
+        argument->info.type != initializer.targetType) {
       return false;
     }
     const auto owner = std::find_if(program.classInstances().begin(),
@@ -796,26 +772,7 @@ private:
                      });
     return field != owner->fields.end() &&
            field->info.type == initializer.targetType &&
-           (field->info.traits == argument->info.traits ||
-            expectedFieldInitializationDrop(initializer).has_value());
-  }
-
-  [[nodiscard]] std::optional<MirDropType> expectedFieldInitializationDrop(
-      const HirConstructorInitializer &initializer) const {
-    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
-        initializer.targetType.kind != SemanticType::Expected ||
-        initializer.arguments.size() != 1 || initializer.storesReference ||
-        initializer.constructorTarget || initializer.generatedDefault ||
-        resolvedTraits(initializer.targetType).containsBorrowedState)
-      return std::nullopt;
-    const auto *argument = findValue(initializer.arguments.front());
-    if (argument == nullptr || argument->info.traits.containsBorrowedState ||
-        (argument->info.type != initializer.targetType &&
-         !isImplicitExpectedInitializationConversion(initializer.targetType,
-                                                     argument->info.type)))
-      return std::nullopt;
-    std::unordered_set<HirClassInstanceId> visiting;
-    return uniqueCleanupType(initializer.targetType, visiting);
+           field->info.traits == argument->info.traits;
   }
 
   [[nodiscard]] FailurePropagationKind normalizedCallPropagation(
@@ -929,48 +886,6 @@ private:
           child->payloadField = index - 1;
           result.aggregate.push_back(*child);
         }
-      }
-      return result;
-    }
-    if ((type.kind == SemanticType::Expected && type.arguments.size() == 2) ||
-        (type.kind == SemanticType::Unexpected && type.arguments.size() == 1)) {
-      MirDropType result{.type = type};
-      for (const auto &alternative : type.arguments) {
-        auto child = uniqueCleanupType(alternative, visiting);
-        if (!child) {
-          const bool passive =
-              alternative == SemanticType::Void ||
-              (alternative.kind >= SemanticType::Int8 &&
-               alternative.kind <= SemanticType::Char) ||
-              alternative.kind == SemanticType::RawPointer ||
-              alternative.kind == SemanticType::NativeFunction ||
-              alternative.kind == SemanticType::NullPtr ||
-              alternative.kind == SemanticType::CString ||
-              alternative.kind == SemanticType::StringView ||
-              (alternative.kind == SemanticType::Enum &&
-               std::none_of(program.enumDeclarations().begin(),
-                            program.enumDeclarations().end(),
-                            [&](const auto &item) {
-                              return item.type == alternative && item.payload;
-                            }));
-          if (passive) {
-            child = MirDropType{.type = alternative};
-          } else {
-            const auto owner = std::find_if(
-                program.classInstances().begin(),
-                program.classInstances().end(), [&](const auto &candidate) {
-                  return candidate.type == alternative;
-                });
-            if (alternative.kind != SemanticType::Class ||
-                owner == program.classInstances().end() ||
-                owner->requiresActiveCleanup)
-              return std::nullopt;
-            child =
-                MirDropType{.type = alternative, .classInstance = owner->id};
-          }
-        }
-        result.requiresActiveCleanup |= child->requiresActiveCleanup;
-        result.aggregate.push_back(*child);
       }
       return result;
     }
@@ -3057,17 +2972,8 @@ private:
     block->instructions.push_back(std::move(instruction));
     const MirInstruction &appended = block->instructions.back();
     const bool neverReturns = appended.neverReturns;
-    const bool fullExpressionRoot = isFullExpressionRoot(appended.hirValue);
-    const bool preparedCallArgumentRoot =
-        preparedCallArgumentFailure &&
-        preparedCallArgumentFailure->argument == appended.hirValue;
-    const MirFailureControlFlowPosition failurePosition =
-        fullExpressionRoot ? MirFailureControlFlowPosition::FullExpressionRoot
-        : preparedCallArgumentRoot
-            ? MirFailureControlFlowPosition::PreparedCallArgumentRoot
-            : MirFailureControlFlowPosition::None;
     if (routeFailureControlFlow && routeFailureEdgesHere() &&
-        requiresMirFailureControlFlow(appended, failurePosition)) {
+        requiresMirFailureControlFlow(appended)) {
       const MirDropObligationId successResultDrop =
           appended.successResultDrop.value_or(0);
       appendFailureControlFlow(id, successResultDrop);
@@ -3839,17 +3745,11 @@ private:
       if (const MirPlaceId global =
               globalStoragePlace(origin, output.placeDomain))
         return global;
-    const std::optional<SemanticType> fallibleReferent =
-        mirFallibleBorrowReferent(value.info.type);
-    const SemanticType originType =
-        fallibleReferent ? *fallibleReferent : value.info.type;
     MirPlace lowered{.root = MirPlaceRootKind::Symbol,
                      .symbol = origin.root,
-                     .type = originType,
-                     .access = fallibleReferent ? AccessMode::ReadOnly
-                                                : value.info.access,
-                     .traits = fallibleReferent ? semanticTraits(originType)
-                                                : value.info.traits,
+                     .type = value.info.type,
+                     .access = value.info.access,
+                     .traits = value.info.traits,
                      .sourceValue = value.id,
                      .key = PlaceKey{.domain = output.placeDomain,
                                      .root = origin.root,
@@ -4268,7 +4168,6 @@ private:
       }
       break;
     case HirValueKind::Call:
-    case HirValueKind::ExpectedPropagation:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
       place = loanOrValuePlace(*value);
@@ -4697,7 +4596,6 @@ private:
   [[nodiscard]] static bool isPlaceExpression(HirValueKind kind) {
     switch (kind) {
     case HirValueKind::Call:
-    case HirValueKind::ExpectedPropagation:
     case HirValueKind::Propagation:
     case HirValueKind::Conditional:
     case HirValueKind::Grouping:
@@ -4774,7 +4672,6 @@ private:
     // the projection reads the moved temporary, not the source place.
     if (isCallLike(*value) || value->kind == HirValueKind::DirectInitializer ||
         value->kind == HirValueKind::Move ||
-        value->kind == HirValueKind::ExpectedPropagation ||
         value->kind == HirValueKind::Propagation ||
         value->kind == HirValueKind::Conditional) {
       emitValue(id);
@@ -5096,16 +4993,6 @@ private:
                                 : AccessMode::ReadOnly;
   }
 
-  [[nodiscard]] bool isExpectedPropagationExtraction(HirValueId valueId) const {
-    return std::any_of(
-        source.values.begin(), source.values.end(),
-        [&](const HirValue &candidate) {
-          return candidate.expectedPropagation &&
-                 (candidate.expectedPropagation->successExtraction == valueId ||
-                  candidate.expectedPropagation->errorExtraction == valueId);
-        });
-  }
-
   // The value-rooted slot of a materialized temporary whose obligation is
   // still active, or zero.
   [[nodiscard]] MirPlaceId temporarySlot(HirValueId id) {
@@ -5127,18 +5014,17 @@ private:
     return slot->id;
   }
 
-  [[nodiscard]] MirOperand temporaryBorrowOperand(
-      HirValueId id, AccessMode access, const SemanticType &stagedType,
-      bool allowExpected = false, bool allowBorrowedCarrier = false) {
+  [[nodiscard]] MirOperand
+  temporaryBorrowOperand(HirValueId id, AccessMode access,
+                         const SemanticType &stagedType,
+                         bool allowBorrowedCarrier = false) {
     const HirValue *temporary = findValue(id);
     // Semantics admits fresh class, struct and payload-enum values here.
     if (temporary == nullptr ||
         (temporary->info.type.kind != SemanticType::Class &&
          temporary->info.type.kind != SemanticType::Enum &&
          temporary->info.type.kind != SemanticType::Lambda &&
-         temporary->info.type.kind != SemanticType::FunctionItem &&
-         (!allowExpected ||
-          temporary->info.type.kind != SemanticType::Expected)) ||
+         temporary->info.type.kind != SemanticType::FunctionItem) ||
         temporary->info.category != ValueCategory::Value ||
         (temporary->info.traits.containsBorrowedState &&
          !allowBorrowedCarrier &&
@@ -5207,8 +5093,6 @@ private:
         materialized->sourceValue != temporary->id ||
         !materialized->projections.empty() ||
         (temporary->info.traits.containsBorrowedState &&
-         !(mirFallibleBorrowReferent(temporary->info.type) &&
-           loanForValue(id) != 0) &&
          !findMirTemporaryCarrierDependency(output, *materialized))) {
       valid = false;
       return {};
@@ -5494,8 +5378,6 @@ private:
     case HirValueKind::Unary:
       return value.operation ? unaryOperation(*value.operation)
                              : MirOperation::None;
-    case HirValueKind::Unexpected:
-      return MirOperation::Unexpected;
     default:
       return MirOperation::None;
     }
@@ -6116,9 +5998,8 @@ private:
             // producer/drop authority as an ephemeral receiver. Do not
             // canonicalize this place through its external Stored loan: an
             // operator may return an inline field of the temporary itself.
-            const auto shell =
-                temporaryBorrowOperand(*receiver, receiverAccess(value),
-                                       input->info.type, false, true);
+            const auto shell = temporaryBorrowOperand(
+                *receiver, receiverAccess(value), input->info.type, true);
             if (shell.place != 0)
               valuePlaces.insert_or_assign(*receiver, shell.place);
             return shell.place;
@@ -6503,27 +6384,6 @@ private:
                                .info = value.info});
       return;
     }
-    if (value.intrinsic == IntrinsicKind::ExpectedHasValue) {
-      const std::optional<HirValueId> receiver = receiverValue(value);
-      const HirValue *source = receiver ? findValue(*receiver) : nullptr;
-      if (detachedBorrowResult || reserveBorrowResult || !receiver ||
-          source == nullptr || !callArgumentValues(value).empty() ||
-          source->info.type.kind != SemanticType::Expected ||
-          source->info.type.arguments.size() != 2 ||
-          value.info.type != SemanticType::Bool) {
-        valid = false;
-        return;
-      }
-      (void)appendInstruction({
-          .kind = MirInstructionKind::Compute,
-          .hirValue = value.id,
-          .result = resultFor(value),
-          .operands = {receiverOperand(*receiver, AccessMode::ReadOnly)},
-          .operation = MirOperation::ExpectedHasValue,
-          .info = value.info,
-      });
-      return;
-    }
     DefinedFailureOperation failure = value.definedFailure;
     if (detachedBorrowResult) {
       failure.localOrigins.clear();
@@ -6633,10 +6493,9 @@ private:
             value.nativeCalleeType ? valueOperand(receiver.value)
             : retainedReceiver
                 ? receiverOperand(receiverSource->operands.front(), access)
-            : temporaryReceiver
-                ? temporaryBorrowOperand(receiver.value, access, receiver.type,
-                                         false, true)
-                : receiverOperand(receiver.value, access);
+            : temporaryReceiver ? temporaryBorrowOperand(receiver.value, access,
+                                                         receiver.type, true)
+                                : receiverOperand(receiver.value, access);
         if (terminated()) {
           return;
         }
@@ -6673,25 +6532,11 @@ private:
         valid = false;
         return;
       }
-      const bool expectedTemporaryExtraction =
-          (isExpectedPropagationExtraction(value.id) ||
-           (value.source == nullptr && value.definedFailure.empty())) &&
-          receiverSource != nullptr &&
-          receiverSource->info.category == ValueCategory::Value &&
-          receiverSource->info.type.kind == SemanticType::Expected &&
-          (value.intrinsic == IntrinsicKind::ExpectedValue ||
-           value.intrinsic == IntrinsicKind::ExpectedError);
       MirOperand operand =
           value.nativeCalleeType ? valueOperand(*receiver)
           : retainedReceiver ? receiverOperand(receiverSource->operands.front(),
                                                AccessMode::Mutable)
-          : expectedTemporaryExtraction
-              ? temporaryBorrowOperand(
-                    *receiver, AccessMode::ReadOnly, receiverSource->info.type,
-                    true,
-                    mirFallibleBorrowReferent(receiverSource->info.type)
-                        .has_value())
-              : receiverOperand(*receiver, access);
+                             : receiverOperand(*receiver, access);
       if (expandsPack) {
         const HirValue *input = findValue(*receiver);
         // An owned environment has a retained full-expression obligation.
@@ -6746,29 +6591,14 @@ private:
       }
     }
 
-    const auto beginPreparedArgumentFailure =
-        [&](HirValueId argument, HirCallInputKind kind,
-            const SemanticType &parameter) {
-          const auto enclosingFailure = preparedCallArgumentFailure;
-          if (!preparedParameterDrops.empty() ||
-              !temporaryArgumentLoans.empty() ||
-              (kind == HirCallInputKind::MoveValue &&
-               parameter.kind == SemanticType::Class)) {
-            preparedCallArgumentFailure =
-                PreparedCallArgumentFailure{.argument = argument};
-          }
-          return enclosingFailure;
-        };
     if (value.callPlan) {
       for (const HirCallArgument &argument : value.callPlan->arguments) {
         call.parameterTypes.push_back(argument.parameterType);
-        const auto enclosingFailure = beginPreparedArgumentFailure(
-            argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
             argument.kind == HirCallInputKind::ReadTemporaryBorrow
                 ? temporaryBorrowOperand(
                       argument.value, AccessMode::ReadOnly,
-                      argument.parameterType, false,
+                      argument.parameterType,
                       argument.parameterType.kind == SemanticType::Reference &&
                           argument.parameterType.arguments.size() == 1 &&
                           argument.parameterType.arguments.front().kind ==
@@ -6776,7 +6606,6 @@ private:
             : argument.kind == HirCallInputKind::CopyValue
                 ? copyArgumentOperand(argument.value, argument.parameterType)
                 : argumentOperand(argument.value, argument.parameterType);
-        preparedCallArgumentFailure = enclosingFailure;
         if (terminated()) {
           return;
         }
@@ -6910,17 +6739,12 @@ private:
             valid = false;
             continue;
           }
-          // Fixed expressions before a final pack expansion have the same
-          // failure-before-publication contract as ordinary call arguments.
-          const auto enclosingFailure =
-              beginPreparedArgumentFailure(input->id, *kind, parameter);
           MirOperand sourceArgument =
               *kind == HirCallInputKind::CopyValue
                   ? copyArgumentOperand(input->id, parameter)
               : mutableStorageInput
                   ? receiverOperand(input->id, AccessMode::Mutable)
                   : argumentOperand(input->id, parameter);
-          preparedCallArgumentFailure = enclosingFailure;
           appendPreparedArgument(
               input->id, parameter, *kind, std::move(sourceArgument), 0,
               loanForValue(input->id),
@@ -7317,14 +7141,7 @@ private:
               value.borrowAccess == AccessMode::ReadOnly));
         if ((derivedCallResult || derivedOriginCarrier) &&
             !(shellReference &&
-              output.loans[originLoan - 1].kind == MirLoanKind::Stored) &&
-            !(value.intrinsic == IntrinsicKind::ExpectedValue &&
-              sourceReceiverValue &&
-              mirFallibleBorrowReferent(
-                  findValue(*sourceReceiverValue)->info.type))) {
-          // A fallible reference stores an external pointer, not an inline
-          // referent. Extraction shares that owner's authority independently
-          // of the carrier shell, which may end at this full expression.
+              output.loans[originLoan - 1].kind == MirLoanKind::Stored)) {
           parent = originLoan;
         }
       }
@@ -7869,8 +7686,7 @@ private:
     const bool transferableBorrowedResult =
         call.loan &&
         (value.info.type.kind == SemanticType::Class ||
-         value.info.type.kind == SemanticType::Enum ||
-         mirFallibleBorrowReferent(value.info.type).has_value()) &&
+         value.info.type.kind == SemanticType::Enum) &&
         value.info.category == ValueCategory::Value &&
         value.info.traits.movable && value.info.traits.containsBorrowedState;
     // A cleanup-owning result exists only after a failure-capable call
@@ -8496,8 +8312,7 @@ private:
     }
     producer.successResultDestination = destination;
     const MirInstructionId producerId = producer.id;
-    if (!requiresMirFailureControlFlow(
-            producer, MirFailureControlFlowPosition::FullExpressionRoot)) {
+    if (!requiresMirFailureControlFlow(producer)) {
       producer.successResultDestination.reset();
       return;
     }
@@ -8524,35 +8339,11 @@ private:
       valid = false;
       return {};
     }
-    if (value->info.type == SemanticType::Bool) {
-      return valueOperand(id);
-    }
-    if (const auto found = contextualValues.find(id);
-        found != contextualValues.end()) {
-      return {.kind = MirOperandKind::Value,
-              .value = found->second,
-              .type = SemanticType::Bool};
-    }
-
-    const ExpressionInfo info{.type = SemanticType::Bool,
-                              .category = ValueCategory::Value,
-                              .access = AccessMode::ReadOnly,
-                              .traits = semanticTraits(SemanticType::Bool)};
-    const MirValueId result = appendValue(id, info);
-    if (value->info.type.kind == SemanticType::Expected) {
-      (void)appendInstruction({.kind = MirInstructionKind::Compute,
-                               .hirValue = id,
-                               .result = result,
-                               .operands = {valueOperand(id)},
-                               .operation = MirOperation::ExpectedHasValue,
-                               .info = info});
-    } else {
+    if (value->info.type != SemanticType::Bool) {
       valid = false;
+      return {};
     }
-    contextualValues.emplace(id, result);
-    return {.kind = MirOperandKind::Value,
-            .value = result,
-            .type = SemanticType::Bool};
+    return valueOperand(id);
   }
 
   [[nodiscard]] MirPlaceId logicalTemporary(const HirValue &value) {
@@ -9217,18 +9008,6 @@ private:
       return;
     }
 
-    for (const HirValueId input : value.conditionalInputs) {
-      emitValue(input);
-      const HirValue *eager = findValue(input);
-      // A cleanup-free closure still needs stable environment identity when
-      // its invocation is in a later branch. Owning closures already have a
-      // value-rooted place from their full-expression drop obligation.
-      if (eager != nullptr && eager->kind == HirValueKind::Lambda &&
-          eager->info.traits.drop == DropKind::Trivial &&
-          !valuePlaces.contains(input)) {
-        valuePlaces.emplace(input, valueRootPlace(*eager));
-      }
-    }
     const MirOperand condition = conditionOperand(value.operands[0]);
     const MirBlockId thenBlock = appendBlock();
     const MirBlockId elseBlock = appendBlock();
@@ -9379,158 +9158,6 @@ private:
                          .type = value.info.type}},
            .info = value.info});
     }
-    emittedValues.insert(value.id);
-  }
-
-  void emitExpectedPropagation(const HirValue &value) {
-    if (!value.expectedPropagation ||
-        value.info.type == SemanticType::Unknown) {
-      valid = false;
-      return;
-    }
-    const HirExpectedPropagationPlan &plan = *value.expectedPropagation;
-    const HirValue *operand = findValue(plan.operand);
-    const HirValue *successExtraction = findValue(plan.successExtraction);
-    const HirValue *errorExtraction = findValue(plan.errorExtraction);
-    const HirValue *unexpected = findValue(plan.unexpected);
-    if (operand == nullptr || successExtraction == nullptr ||
-        errorExtraction == nullptr || unexpected == nullptr ||
-        operand->info.type.kind != SemanticType::Expected ||
-        operand->info.type.arguments.size() != 2 ||
-        (operand->info.type.arguments[0] != value.info.type &&
-         mirFallibleBorrowReferent(operand->info.type) !=
-             std::optional<SemanticType>{value.info.type}) ||
-        successExtraction->intrinsic != IntrinsicKind::ExpectedValue ||
-        errorExtraction->intrinsic != IntrinsicKind::ExpectedError ||
-        unexpected->kind != HirValueKind::Unexpected ||
-        unexpected->info.type.kind != SemanticType::Unexpected ||
-        unexpected->info.type.arguments.size() != 1 ||
-        unexpected->info.type.arguments.front() !=
-            operand->info.type.arguments[1]) {
-      valid = false;
-      return;
-    }
-
-    const auto temporaryBaseline =
-        fullExpressionTemporaryBaselines.find(value.fullExpression);
-    const auto scopeBaseline =
-        fullExpressionScopeBaselines.find(value.fullExpression);
-    if (value.fullExpression == 0 ||
-        temporaryBaseline == fullExpressionTemporaryBaselines.end() ||
-        scopeBaseline == fullExpressionScopeBaselines.end()) {
-      valid = false;
-      return;
-    }
-    const MirOperand condition = conditionOperand(plan.operand);
-    const std::vector<Scope> evaluatedScopes = scopes;
-    const std::vector<TemporaryDrop> evaluatedTemporaryDrops = temporaryDrops;
-    const auto evaluatedBindingLoans = bindingLoans;
-    const MirBlockId successBlock = appendBlock();
-    const MirBlockId errorBlock = appendBlock();
-    terminate({.kind = MirTerminatorKind::Branch,
-               .hirValue = value.id,
-               .value = condition,
-               .target = successBlock,
-               .elseTarget = errorBlock});
-
-    current = errorBlock;
-    scopes = evaluatedScopes;
-    temporaryDrops = evaluatedTemporaryDrops;
-    // A scalar error may leave through the body's shared exit ladders. That
-    // path lowers only the error; the shared tail spells the Unexpected
-    // value at its return.
-    std::optional<SharedExitCarrier> shared = sharedValueCarrier(*unexpected);
-    if (shared && !sharedExitEligible(temporaryBaseline->second)) {
-      shared.reset();
-    }
-    if (shared) {
-      shared->stored = valueOperand(shared->storedSource);
-      if (!sharedExitEligible(temporaryBaseline->second)) {
-        shared.reset();
-      }
-    }
-    if (shared) {
-      const MirPlaceId carrier = storeSharedExitValue(*shared);
-      endReturnExpressionLoans(scopeBaseline->second);
-      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
-      if (!emitSharedExit(*shared, carrier)) {
-        valid = false;
-      }
-    } else {
-      const MirOperand propagatedError = valueOperand(plan.unexpected);
-      const MirDropObligationId enclosingPendingReturnDrop = pendingReturnDrop;
-      prepareReturnOwnership(plan.unexpected, propagatedError);
-      endReturnExpressionLoans(scopeBaseline->second);
-      emitTemporaryDrops(temporaryBaseline->second, value.id, 0, 0, true);
-      emitScopeExit(0);
-      publishReturnOwnership(plan.unexpected);
-      pendingReturnDrop = enclosingPendingReturnDrop;
-      terminate({.kind = MirTerminatorKind::Return,
-                 .hirValue = value.id,
-                 .value = propagatedError});
-    }
-
-    current = successBlock;
-    scopes = evaluatedScopes;
-    temporaryDrops = evaluatedTemporaryDrops;
-    // Cleanup on the propagated-error path must not retire the success path's
-    // carrier-to-owner mapping, just as it must not retire its scope loans.
-    bindingLoans = evaluatedBindingLoans;
-    if (value.info.type == SemanticType::Void) {
-      emitValue(plan.successExtraction);
-      endAddedLoans(evaluatedScopes);
-      emittedValues.insert(value.id);
-      return;
-    }
-    if (plan.successValue == 0 || findValue(plan.successValue) == nullptr) {
-      valid = false;
-      return;
-    }
-
-    if (value.info.category == ValueCategory::Place) {
-      forwardBorrowResult(value, plan.successValue);
-      emittedValues.insert(value.id);
-      return;
-    }
-
-    const MirPlaceId temporary = conditionalTemporary(value);
-    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
-                              .hirValue = value.id,
-                              .destination = temporary,
-                              .operands = {valueOperand(plan.successValue)},
-                              .info = {.type = value.info.type,
-                                       .category = ValueCategory::Place,
-                                       .access = AccessMode::Mutable,
-                                       .traits = value.info.traits}};
-    const MirDropObligationId resultObligation =
-        dropObligationForValue(value.id, temporary);
-    const MirDropObligationId sourceObligation =
-        dropObligationForValue(plan.successValue);
-    if (resultObligation != 0) {
-      if (temporaryIsActive(sourceObligation)) {
-        appendReparentOrTypedTransfer(initialize, sourceObligation,
-                                      resultObligation);
-        (void)removeTemporary(sourceObligation);
-      } else {
-        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
-                                     .target = resultObligation});
-      }
-      registerTemporary(resultObligation);
-    }
-    (void)appendInstruction(std::move(initialize));
-    const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
-                            !value.info.traits.copyable;
-    (void)appendInstruction(
-        {.kind =
-             moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
-         .hirValue = value.id,
-         .result = resultFor(value),
-         .operands = {{.kind = moveResult ? MirOperandKind::Move
-                                          : MirOperandKind::Copy,
-                       .place = temporary,
-                       .type = value.info.type}},
-         .info = value.info});
-    endAddedLoans(evaluatedScopes);
     emittedValues.insert(value.id);
   }
 
@@ -10082,10 +9709,6 @@ private:
       }
     }
 
-    if (value->kind == HirValueKind::ExpectedPropagation) {
-      emitExpectedPropagation(*value);
-      return;
-    }
     if (value->kind == HirValueKind::Propagation) {
       emitPropagation(*value);
       return;
@@ -10319,10 +9942,10 @@ private:
             output.findDropObligation(sourceObligation);
         if (sourceDrop != nullptr && destinationPlace != nullptr &&
             sourceDrop->dropType.type != destinationPlace->type) {
-          // A conversion into a distinct owning wrapper, such as a payload
-          // replacing an Expected binding, transfers the source object out of
-          // its own lifetime. The destination keeps its obligation, which now
-          // owns the converted value, as for a storage-free source.
+          // A conversion into a distinct owning wrapper transfers the source
+          // object out of its own lifetime. The destination keeps its
+          // obligation, which now owns the converted value, as for a
+          // storage-free source.
           appendLifecycle(assign, {.kind = MirLifecycleEventKind::TransferOut,
                                    .source = sourceObligation});
           (void)removeTemporary(sourceObligation);
@@ -10388,15 +10011,14 @@ private:
       (void)valueOperand(id);
       return;
     }
-    // A comma's object-valued left operand (a class or Expected value) is a
-    // discarded evaluation, not an input of the comma: it completes, keeping
+    // A comma's object-valued left operand (a class value) is a discarded
+    // evaluation, not an input of the comma: it completes, keeping
     // its temporaries' full-expression lifetime, and the comma forwards its
     // right operand. A place operand evaluates only its place.
     if (value->kind == HirValueKind::Binary &&
         value->operation == TokenKind::COMMA && value->operands.size() == 2) {
       const HirValue *left = findValue(value->operands.front());
-      if (left != nullptr && (left->info.type.kind == SemanticType::Class ||
-                              left->info.type.kind == SemanticType::Expected)) {
+      if (left != nullptr && (left->info.type.kind == SemanticType::Class)) {
         if (left->info.category == ValueCategory::Place &&
             isPlaceExpression(left->kind))
           emitPlaceDependencies(left->id);
@@ -10477,15 +10099,10 @@ private:
       }
       instruction.callSite = value->id;
       for (const auto &argument : value->callPlan->arguments) {
-        const auto previousFailure = preparedCallArgumentFailure;
-        if (!payloadPreparedDrops.empty() || !payloadTemporaryLoans.empty())
-          preparedCallArgumentFailure =
-              PreparedCallArgumentFailure{.argument = argument.value};
         auto operand =
             argument.kind == HirCallInputKind::CopyValue
                 ? copyArgumentOperand(argument.value, argument.parameterType)
                 : argumentOperand(argument.value, argument.parameterType);
-        preparedCallArgumentFailure = previousFailure;
         if (terminated())
           return;
         auto prepared = prepareCallInput(
@@ -10600,7 +10217,6 @@ private:
     }
     if (value->kind == HirValueKind::ArrayInitializer ||
         (value->kind == HirValueKind::PayloadConstruction && !stagedPayload) ||
-        value->kind == HirValueKind::Unexpected ||
         value->kind == HirValueKind::Lambda) {
       for (std::size_t index = 0; index < value->operands.size(); ++index) {
         if (value->kind == HirValueKind::Lambda &&
@@ -11661,9 +11277,7 @@ private:
   //
   // Returned values travel in one Temporary carrier per value type: an exit
   // stores its value before its cleanup, and the ladder's tail loads it and
-  // returns it. An `unexpected(error)` return carries the error and the tail
-  // rebuilds the Unexpected value, since an Unexpected value is spelled only
-  // at its consuming return. Only values of block-parameter type (scalars,
+  // returns it. Only values of block-parameter type (scalars,
   // enums, pointers) are carried; owning, class and borrowed results, exits
   // with a pending owning result or return loan, and exits with live
   // temporaries keep their own cleanup. So do bodies with a single exit.
@@ -11701,21 +11315,13 @@ private:
 
   struct SharedExitCarrier {
     bool hasValue = false;
-    // The tail rebuilds Unexpected(value) from the carried error value.
-    bool unexpected = false;
     SemanticType type = SemanticType::Unknown;
     SemanticTypeTraits traits{};
-    // The HIR value lowered into the carrier; for an Unexpected return the
-    // error operand, since the Unexpected value is spelled only in the tail.
-    HirValueId storedSource = 0;
     MirOperand stored;
     // The HIR value the exit returns: the root of its full expression, which
     // the carrier's store realizes on this path.
-    HirValueId rootSource = 0;
-    HirValueId valueSource = 0;
+    HirValueId source = 0;
     ExpressionInfo valueInfo;
-    HirValueId unexpectedSource = 0;
-    ExpressionInfo unexpectedInfo;
   };
 
   struct SharedExitUnit {
@@ -11807,7 +11413,7 @@ private:
   }
 
   // The carrier for returning `value` from a shared exit, when it is a
-  // scalar success value or `unexpected(error)` with a scalar error.
+  // scalar value of the return type.
   [[nodiscard]] std::optional<SharedExitCarrier>
   sharedValueCarrier(const HirValue &value) const {
     // A substituted program constant has exactly one MIR materialization,
@@ -11816,51 +11422,20 @@ private:
         value.programConstantSubstitution) {
       return std::nullopt;
     }
-    const SemanticType &returned = output.returnType;
-    const bool expected = returned.kind == SemanticType::Expected &&
-                          returned.arguments.size() == 2;
-    if (value.kind == HirValueKind::Unexpected) {
-      const HirValue *error = value.operands.size() == 1
-                                  ? findValue(value.operands.front())
-                                  : nullptr;
-      if (error == nullptr || error->dropObligation ||
-          error->programConstantSubstitution || !expected ||
-          value.info.type.kind != SemanticType::Unexpected ||
-          value.info.type.arguments.size() != 1 ||
-          value.info.type.arguments.front() != returned.arguments[1] ||
-          error->info.type != returned.arguments[1] ||
-          !isMirBlockParameterType(error->info.type)) {
-        return std::nullopt;
-      }
-      return SharedExitCarrier{.hasValue = true,
-                               .unexpected = true,
-                               .type = error->info.type,
-                               .traits = error->info.traits,
-                               .storedSource = error->id,
-                               .rootSource = value.id,
-                               .valueSource = error->id,
-                               .valueInfo = loadedValueInfo(*error),
-                               .unexpectedSource = value.id,
-                               .unexpectedInfo = value.info};
-    }
     if (!isMirBlockParameterType(value.info.type) ||
-        (value.info.type != returned &&
-         !(expected && value.info.type == returned.arguments.front()))) {
+        value.info.type != output.returnType) {
       return std::nullopt;
     }
     return SharedExitCarrier{.hasValue = true,
                              .type = value.info.type,
                              .traits = value.info.traits,
-                             .storedSource = value.id,
-                             .rootSource = value.id,
-                             .valueSource = value.id,
+                             .source = value.id,
                              .valueInfo = loadedValueInfo(value)};
   }
 
   // The carrier of a return statement when its exit may share cleanup, or
   // nullopt when the return keeps its own cleanup. Decided before the
-  // operand is emitted, because an `unexpected(error)` return lowers only
-  // the error on the shared path.
+  // operand is emitted.
   [[nodiscard]] std::optional<SharedExitCarrier>
   sharedReturnCarrier(const HirStatement &statement,
                       const std::vector<TemporaryDrop> &temporariesAtExit) {
@@ -11880,8 +11455,7 @@ private:
           return std::nullopt;
         }
         carrier = SharedExitCarrier{};
-      } else if (output.returnType.kind == SemanticType::Reference ||
-                 mirFallibleBorrowReferent(output.returnType)) {
+      } else if (output.returnType.kind == SemanticType::Reference) {
         return std::nullopt;
       } else {
         carrier = sharedValueCarrier(*value);
@@ -11894,9 +11468,8 @@ private:
   }
 
   [[nodiscard]] MirPlaceId exitCarrierPlace(const SharedExitCarrier &carrier) {
-    for (const auto &[identity, place] : exitCarriers) {
-      if (identity.first == carrier.unexpected &&
-          identity.second == carrier.type) {
+    for (const auto &[type, place] : exitCarriers) {
+      if (type == carrier.type) {
         return place;
       }
     }
@@ -11905,9 +11478,8 @@ private:
                                           .type = carrier.type,
                                           .access = AccessMode::Mutable,
                                           .traits = carrier.traits,
-                                          .sourceValue = carrier.valueSource});
-    exitCarriers.emplace_back(std::pair{carrier.unexpected, carrier.type},
-                              place);
+                                          .sourceValue = carrier.source});
+    exitCarriers.emplace_back(carrier.type, place);
     return place;
   }
 
@@ -12010,7 +11582,7 @@ private:
     const MirPlaceId place = exitCarrierPlace(carrier);
     (void)appendInstruction(
         {.kind = MirInstructionKind::Initialize,
-         .hirValue = carrier.rootSource,
+         .hirValue = carrier.source,
          .destination = place,
          .operands = {carrier.stored},
          .info = ExpressionInfo{.type = carrier.type,
@@ -12025,8 +11597,8 @@ private:
   // exit ladders, once its value is stored in `place`. Returns false, having
   // emitted nothing, when the exit shares no drop.
   //
-  // The tail belongs to every exit that reaches it, so its reload, rebuilt
-  // Unexpected value and return name no source location, like the shared
+  // The tail belongs to every exit that reaches it, so its reload and return
+  // name no source location, like the shared
   // failure cleanup: debug information maps them to generated code rather
   // than to whichever exit happened to emit them first. Each exit's own
   // carrier store keeps its source location.
@@ -12062,8 +11634,7 @@ private:
     }
     std::optional<MirOperand> result;
     if (carrier.hasValue) {
-      const MirValueId loaded =
-          appendValue(carrier.valueSource, carrier.valueInfo);
+      const MirValueId loaded = appendValue(carrier.source, carrier.valueInfo);
       (void)appendInstruction({.kind = MirInstructionKind::Load,
                                .result = loaded,
                                .operands = {{.kind = MirOperandKind::Copy,
@@ -12073,19 +11644,6 @@ private:
                               false, false);
       result = MirOperand{
           .kind = MirOperandKind::Value, .value = loaded, .type = carrier.type};
-      if (carrier.unexpected) {
-        const MirValueId wrapped =
-            appendValue(carrier.unexpectedSource, carrier.unexpectedInfo);
-        (void)appendInstruction({.kind = MirInstructionKind::Compute,
-                                 .result = wrapped,
-                                 .operands = {*result},
-                                 .operation = MirOperation::Unexpected,
-                                 .info = carrier.unexpectedInfo},
-                                false, false);
-        result = MirOperand{.kind = MirOperandKind::Value,
-                            .value = wrapped,
-                            .type = carrier.unexpectedInfo.type};
-      }
     }
     terminate({.kind = MirTerminatorKind::Return, .value = std::move(result)});
     return true;
@@ -12421,19 +11979,8 @@ private:
       break;
     }
     if (statement.value) {
-      const HirValue *initializer = findValue(*statement.value);
-      const std::optional<SemanticType> fallibleReferent =
-          binding == nullptr ? std::nullopt
-                             : mirFallibleBorrowReferent(binding->info.type);
-      if (binding != nullptr && fallibleReferent && initializer != nullptr &&
-          initializer->info.type == *fallibleReferent) {
-        MirOperand reference =
-            referenceOperand(*statement.value, *statement.binding);
-        reference.place = placeForValue(*statement.value);
-        retainedLoan = reference.loan;
-        operands.push_back(std::move(reference));
-      } else if (binding != nullptr &&
-                 binding->info.type.kind == SemanticType::Reference) {
+      if (binding != nullptr &&
+          binding->info.type.kind == SemanticType::Reference) {
         MirOperand reference =
             referenceOperand(*statement.value, *statement.binding);
         // The loan is provenance authority; the place is the exact runtime
@@ -12794,19 +12341,6 @@ private:
         dropObligationForBinding(*statement.binding);
     const MirDropObligationId sourceObligation =
         statement.value ? dropObligationForValue(*statement.value) : 0;
-    std::optional<MirDropType> expectedFieldDrop;
-    if (output.kind == MirBodyKind::FieldInitializers && binding != nullptr &&
-        binding->info.type.kind == SemanticType::Expected && statement.value &&
-        !binding->info.traits.containsBorrowedState) {
-      const auto *value = findValue(*statement.value);
-      if (value != nullptr && !value->info.traits.containsBorrowedState &&
-          (value->info.type == binding->info.type ||
-           isImplicitExpectedInitializationConversion(binding->info.type,
-                                                      value->info.type))) {
-        std::unordered_set<HirClassInstanceId> visiting;
-        expectedFieldDrop = uniqueCleanupType(binding->info.type, visiting);
-      }
-    }
     if (target != 0) {
       if (temporaryIsActive(sourceObligation)) {
         appendReparentOrTypedTransfer(initialize, sourceObligation, target);
@@ -12816,9 +12350,7 @@ private:
                                      .target = target});
       }
     } else if (output.kind == MirBodyKind::FieldInitializers &&
-               (temporaryIsActive(sourceObligation) ||
-                (expectedFieldDrop &&
-                 expectedFieldDrop->requiresActiveCleanup))) {
+               temporaryIsActive(sourceObligation)) {
       // A completed per-instance field arms rollback exactly like a
       // constructor stage: the object under construction owns it from
       // normal completion, and any later defined-failure edge in this body
@@ -12826,8 +12358,7 @@ private:
       const MirPlace *destinationPlace = output.findPlace(destination);
       const MirDropObligation *sourceDrop =
           output.findDropObligation(sourceObligation);
-      if (destinationPlace != nullptr &&
-          (sourceDrop != nullptr || expectedFieldDrop) &&
+      if (destinationPlace != nullptr && sourceDrop != nullptr &&
           destinationPlace->root == MirPlaceRootKind::Binding &&
           destinationPlace->binding != 0 &&
           destinationPlace->projections.empty()) {
@@ -12837,16 +12368,9 @@ private:
              .constructionOrder = rollback,
              .kind = MirDropObligationKind::ConstructionRollback,
              .place = destination,
-             .dropType = expectedFieldDrop ? *expectedFieldDrop
-                                           : sourceDrop->dropType});
-        if (temporaryIsActive(sourceObligation)) {
-          appendReparentOrTypedTransfer(initialize, sourceObligation, rollback);
-          (void)removeTemporary(sourceObligation);
-        } else {
-          appendLifecycle(
-              initialize,
-              {.kind = MirLifecycleEventKind::Initialize, .target = rollback});
-        }
+             .dropType = sourceDrop->dropType});
+        appendReparentOrTypedTransfer(initialize, sourceObligation, rollback);
+        (void)removeTemporary(sourceObligation);
         constructorRollback.push_back(rollback);
       } else {
         appendLifecycle(initialize, {.kind = MirLifecycleEventKind::TransferOut,
@@ -13423,9 +12947,6 @@ private:
              sourceRange.materializesElementValue
                  ? dropObligationForValue(sourceRange.elementAccessValue)
                  : MirDropObligationId{0},
-         .expectedPayloadExtraction = sourceRange.expectedPayloadProjection
-                                          ? mirValueFor(sourceRange.source)
-                                          : MirValueId{0},
          .ownerDrop = ownerDrop,
          .conditionEntryBlock = loop->second.conditionEntry,
          .conditionBlock = loop->second.condition,
@@ -13435,7 +12956,6 @@ private:
          .exitBlock = loop->second.exit,
          .arrayLength = sourceRange.arrayLength,
          .ownsRangeTemporary = sourceRange.ownsRangeTemporary,
-         .expectedPayloadProjection = sourceRange.expectedPayloadProjection,
          .materializesElementValue = sourceRange.materializesElementValue,
          .endpointParking =
              rangeEndpointParking.contains(statement.id)
@@ -13964,14 +13484,9 @@ private:
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     std::optional<MirOperand> result;
     std::optional<MirLoanId> returnLoan;
-    // Decided before the operand is emitted: on the shared path an
-    // `unexpected(error)` return lowers only the error, and the shared tail
-    // spells the Unexpected value at its return.
     std::optional<SharedExitCarrier> shared =
         sharedReturnCarrier(statement, incomingTemporaryDrops);
-    if (statement.value && shared && shared->unexpected) {
-      shared->stored = valueOperand(shared->storedSource);
-    } else if (statement.value) {
+    if (statement.value) {
       if (output.returnType.kind == SemanticType::Void) {
         const HirValue *value = findValue(*statement.value);
         if (value == nullptr || value->info.type != SemanticType::Void) {
@@ -13982,56 +13497,6 @@ private:
         // a runtime value. Its full-expression and lexical cleanup still run
         // before the operand-free return below.
         emitValue(*statement.value);
-      } else if (const std::optional<SemanticType> fallibleReferent =
-                     mirFallibleBorrowReferent(output.returnType);
-                 fallibleReferent && findValue(*statement.value) != nullptr &&
-                 findValue(*statement.value)->info.type == *fallibleReferent) {
-        // A successful expected<T&, E> return transports the referent's
-        // runtime address and the owner's semantic dependency separately.
-        // Publish a fresh Return loan so body-local cleanup can retire the
-        // source loan before the pointer is wrapped at the ABI boundary.
-        MirOperand borrow =
-            referenceOperand(*statement.value, 0, AccessMode::ReadOnly);
-        if (borrow.loan == 0 || borrow.loan > output.loans.size()) {
-          valid = false;
-          return;
-        }
-        const MirLoan retainedLoan = output.loans[borrow.loan - 1];
-        if (retainedLoan.kind == MirLoanKind::Parameter && retainedLoan.entry)
-          borrow.place =
-              referenceReturnRuntimeAlias(*statement.value, retainedLoan);
-        if (retainedLoan.kind == MirLoanKind::Stored && retainedLoan.entry &&
-            !retainedLoan.designatedFields.empty()) {
-          // A by-value carrier's loan protects its external owner, not its
-          // shell. Preserve the exact designated runtime referent separately
-          // just as for an ordinary reference return.
-          borrow.place = placeForValue(*statement.value);
-          const MirPlace *runtime = output.findPlace(borrow.place);
-          if (runtime == nullptr || runtime->type != *fallibleReferent) {
-            valid = false;
-            return;
-          }
-        }
-        const MirLoanId published =
-            createLoan(MirLoanKind::Return, retainedLoan.source,
-                       retainedLoan.access, *statement.value);
-        output.loans[published - 1].storedDependency =
-            retainedLoan.storedDependency;
-        (void)appendInstruction({.kind = MirInstructionKind::Borrow,
-                                 .hirValue = *statement.value,
-                                 .operands = {borrow},
-                                 .loan = published,
-                                 .info = findValue(*statement.value)->info});
-        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                 .hirValue = *statement.value,
-                                 .loan = borrow.loan});
-        removeLoanFromState(borrow.loan, scopes, bindingLoans);
-        output.loans[published - 1].escapes = true;
-        result = MirOperand{.kind = MirOperandKind::Loan,
-                            .place = borrow.place,
-                            .loan = published,
-                            .type = *fallibleReferent};
-        returnLoan = published;
       } else if (output.returnType.kind == SemanticType::Reference) {
         MirOperand borrow = referenceOperand(*statement.value, 0,
                                              output.returnType.referenceAccess);
@@ -14540,17 +14005,13 @@ private:
     if (shared && (returnLoan || !sharedExitEligible(incomingTemporaryDrops))) {
       // Evaluating the return expression changed what the exit may share:
       // it moved an owner, whose drop now depends on this path, or formed a
-      // loan the return exports. Finish on the ordinary path, spelling the
-      // Unexpected value the shared path left to its tail.
-      if (shared->unexpected) {
-        result = valueOperand(*statement.value);
-      }
+      // loan the return exports. Finish on the ordinary path.
       shared.reset();
     }
     if (shared) {
       // A carried value has no obligation, so there is no result ownership
       // to prepare or publish around the cleanup.
-      if (shared->hasValue && !shared->unexpected) {
+      if (shared->hasValue) {
         if (!result) {
           valid = false;
           return;
@@ -14696,11 +14157,10 @@ private:
   std::optional<std::size_t> planningFailureCleanup;
   // Shared normal-exit cleanup; see emitSharedExit. The exit count is the
   // body's returns, `?` propagations and its reachable end; one carrier
-  // place per (error, type) holds returned values; each shared block is
+  // place per type holds returned values; each shared block is
   // registered under the exit state it continues from.
   std::size_t exitCount = 0;
-  std::vector<std::pair<std::pair<bool, SemanticType>, MirPlaceId>>
-      exitCarriers;
+  std::vector<std::pair<SemanticType, MirPlaceId>> exitCarriers;
   std::map<SharedExitKey, MirBlockId> sharedExitBlocks;
   bool exitSharingUsed = false;
   bool exitsJoined = false;
@@ -14720,7 +14180,6 @@ private:
   std::unordered_map<HirFullExpressionId, std::vector<Scope>>
       fullExpressionScopeBaselines;
   std::unordered_map<HirValueId, MirValueId> loweredValues;
-  std::unordered_map<HirValueId, MirValueId> contextualValues;
   std::unordered_map<HirValueId, MirValueId> materializedValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
   // Every extraction observes the same subject representation that selected
@@ -14745,7 +14204,6 @@ private:
   std::unordered_set<HirValueId> checkedPlacePrefixes;
   std::vector<Scope> scopes;
   std::vector<TemporaryDrop> temporaryDrops;
-  std::optional<PreparedCallArgumentFailure> preparedCallArgumentFailure;
   std::vector<BreakContext> breakContexts;
   std::vector<ContinueContext> continueContexts;
   std::unordered_map<HirStatementId, LoweredLoopShape> loweredLoops;

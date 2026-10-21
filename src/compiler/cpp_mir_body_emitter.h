@@ -41,8 +41,6 @@ enum class CppMirTypeRepresentationKind {
   Lambda,
   UniqueOwner,
   SharedPointer,
-  Expected,
-  Unexpected,
   Meta,
   Count,
 };
@@ -191,7 +189,6 @@ enum class CppMirEmissionCapabilityKind {
   CallableDispatch,
   Closure,
   DefinedFailure,
-  Expected,
   HostedEntry,
   Intrinsic,
   LifetimeStorage,
@@ -285,14 +282,6 @@ enum class CppMirEmissionEncoding {
 [[nodiscard]] std::optional<CppMirTypeRepresentationKind>
 cppMirExpectedTypeRepresentation(const SemanticType &type);
 
-// Expected with a class payload uses uninitialized result storage in the
-// transformed ABI. Native boundary adapters must share body emission's exact
-// move/representation eligibility rather than default-constructing a payload.
-[[nodiscard]] bool
-cppMirExpectedClassPlacementResult(const MirProgram &program,
-                                   const CppMirBodyEmissionMap &representations,
-                                   const SemanticType &type);
-
 // Lexical fixed arrays (including cleanup-free move-only elements) cannot
 // assume default/copy construction at an ABI boundary. Share their MIR-derived
 // placement contract with adapters.
@@ -332,11 +321,11 @@ cppMirCompoundOperatorSpelling(MirOperation operation);
 
 // The single spelling authority for the shipped integer-arithmetic helper
 // family (`gti_internal_backend_helpers_v1`): the fully qualified helper a
-// backend spells for one of the nine wrapping/saturating/checked intrinsic
-// kinds, and an empty view for every other kind. The general text
-// vocabulary admits only the six wrapping/saturating kinds (a checked
-// variant produces an `Expected` result outside the scalar vocabulary);
-// the compatibility emitter also spells the checked template form.
+// backend spells for one of the nine wrapping, saturating and overflow-test
+// intrinsic kinds, and an empty view for every other kind. Ordinary
+// arithmetic calls spell only the six wrapping/saturating kinds; the three
+// overflow tests behind the source `checked_*` functions have their own
+// `bool` result path.
 [[nodiscard]] std::string_view
 cppIntegerArithmeticIntrinsicSpelling(IntrinsicKind intrinsic);
 

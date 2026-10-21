@@ -37,7 +37,6 @@ public:
   void visitThisExpr(const This &expr) override;
   void visitSetExpr(const Set &expr) override;
   void visitUnaryExpr(const Unary &expr) override;
-  void visitUnexpectedExpr(const Unexpected &expr) override;
   void visitVariableExpr(const Variable &expr) override;
 
 private:

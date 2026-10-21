@@ -2457,14 +2457,6 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
              candidate.arrayLengthParameterId == 0 &&
              candidate.arrayLength != 0 &&
              self(self, candidate.arguments.front());
-    case SemanticType::Expected:
-      return candidate.arguments.size() == 2 &&
-             (candidate.arguments.front() == SemanticType::Void ||
-              self(self, candidate.arguments.front())) &&
-             self(self, candidate.arguments.back());
-    case SemanticType::Unexpected:
-      return candidate.arguments.size() == 1 &&
-             self(self, candidate.arguments.front());
     case SemanticType::Class: {
       const MirClassInstance *instance = nullptr;
       for (const MirClassInstance &item : program.classInstances()) {
