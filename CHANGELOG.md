@@ -21,8 +21,9 @@ for what minor and patch releases mean.
   pointers and fixed arrays of these were all affected, as were generic
   classes such as `shelf<T>` with `T = int32_t`. Copying the parameter
   (`tag(tag)`) already worked.
-- Moving a `std::string_view` parameter into a field after such an
-  initializer is still rejected with `GTI-B0001`; copying the view works.
+- Moving a `std::string_view`, a lambda or a function name into a field after
+  one of these initializers is still rejected with `GTI-B0001`. Copying the
+  view works.
 
 ## 0.452.0 — Checked references to raw pointers
 
