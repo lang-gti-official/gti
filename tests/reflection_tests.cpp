@@ -27,10 +27,13 @@ void expect(bool valid, const std::string &message) {
 
 lang::FrontendResult
 analyze(const std::filesystem::path &root, const std::filesystem::path &entry,
-        lang::FrontendPhase stopAfter = lang::FrontendPhase::Hir) {
+        lang::FrontendPhase stopAfter = lang::FrontendPhase::Hir,
+        lang::TrustedBodyAnalysis trustedBodies =
+            lang::TrustedBodyAnalysis::Complete) {
   lang::FrontendOptions options;
   options.stopAfter = stopAfter;
   options.analyzeRecoveredProgram = true;
+  options.trustedBodies = trustedBodies;
   return lang::Frontend(options).analyze(entry, std::nullopt,
                                          {root / "stdlib/prelude.gti"}, {},
                                          {root / "stdlib"});
@@ -39,10 +42,12 @@ analyze(const std::filesystem::path &root, const std::filesystem::path &entry,
 lang::FrontendResult analyzeSource(const std::filesystem::path &root,
                                    const std::filesystem::path &directory,
                                    const std::string &name,
-                                   const std::string &source) {
+                                   const std::string &source,
+                                   lang::TrustedBodyAnalysis trustedBodies =
+                                       lang::TrustedBodyAnalysis::Complete) {
   const std::filesystem::path path = directory / name;
   std::ofstream(path) << source;
-  return analyze(root, path);
+  return analyze(root, path, lang::FrontendPhase::Hir, trustedBodies);
 }
 
 bool hasCode(const lang::FrontendResult &result, std::string_view code) {
@@ -578,6 +583,176 @@ int main() {
          "default_value on a field without an initializer is rejected once");
 }
 
+void checkClassAssertions(const std::filesystem::path &root,
+                          const std::filesystem::path &directory) {
+  // A dependent class assertion is evaluated for every concrete instance,
+  // and the reflected constants it requires stage through one worker that
+  // instance discovery reuses. The driver's Reachable trusted-body mode also
+  // wraps each concrete reanalysis in a late-demand probe, so run both modes.
+  const std::string box = R"(#include <std/meta>
+class Box<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void");
+  mut T value;
+public:
+  Box(T value) : value(value) {}
+};
+)";
+  for (const lang::TrustedBodyAnalysis trustedBodies :
+       {lang::TrustedBodyAnalysis::Complete,
+        lang::TrustedBodyAnalysis::Reachable}) {
+    const std::string mode =
+        trustedBodies == lang::TrustedBodyAnalysis::Reachable ? "reachable"
+                                                              : "complete";
+    const auto valid = analyzeSource(
+        root, directory, "class-assert-" + mode + ".gti",
+        box + "int main() { Box<int32_t> b = Box<int32_t>(1); return 0; }\n",
+        trustedBodies);
+    expect(valid.diagnostics.empty() && valid.hirValid,
+           mode + ": a reflected class assertion holds for an instance whose "
+                  "class and constructor both reanalyse it");
+
+    const auto rejected =
+        analyzeSource(root, directory, "class-assert-void-" + mode + ".gti",
+                      box + "int unwrap(Box<void> &box) { return 0; }\n"
+                            "int main() { return 0; }\n",
+                      trustedBodies);
+    const lang::Diagnostic *failure =
+        rejected.diagnostics.empty() ? nullptr : &rejected.diagnostics.front();
+    expect(!rejected.hirValid && countCode(rejected, "GTI-S2079") == 1 &&
+               failure != nullptr && failure->code == "GTI-S2079" &&
+               failure->message == "Static assertion failed. no void" &&
+               std::any_of(failure->related.begin(), failure->related.end(),
+                           [](const lang::RelatedDiagnostic &related) {
+                             return related.message ==
+                                    "Concrete substitution: 'T' = 'void'.";
+                           }),
+           mode + ": an invalid type argument is rejected first, with the "
+                  "class assertion's own message");
+
+    // Reflecting on the instance itself, or on an instance whose assertion
+    // reflects back, reanalyses it in the staged worker, and so does an
+    // assertion in a destructor that reflects on its class. The enclosing
+    // reanalysis owns the assertion, which is not evaluated again there.
+    const auto reflective =
+        analyzeSource(root, directory, "class-assert-self-" + mode + ".gti",
+                      R"(#include <std/meta>
+class Node<T> {
+  static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(1),
+                "one field");
+  T value;
+public:
+  Node(T value) : value(value) {}
+};
+class Left<T> {
+  static_assert(std::meta::type<Right<T>>().field_count() == uint64_t(1),
+                "right has one field");
+  T value;
+public:
+  Left(T value) : value(value) {}
+};
+class Right<T> {
+  static_assert(std::meta::type<Left<T>>().field_count() == uint64_t(1),
+                "left has one field");
+  T value;
+public:
+  Right(T value) : value(value) {}
+};
+class Guard<T> {
+  T value;
+public:
+  Guard(T value) : value(value) {}
+  ~Guard() {
+    static_assert(std::meta::type<Guard<T>>().field_count() == uint64_t(1),
+                  "guard has one field");
+  }
+};
+int main() {
+  Node<int32_t> node = Node<int32_t>(1);
+  Left<int32_t> left = Left<int32_t>(2);
+  Right<int32_t> right = Right<int32_t>(3);
+  Guard<int32_t> guard = Guard<int32_t>(4);
+  return 0;
+}
+)",
+                      trustedBodies);
+    expect(reflective.diagnostics.empty() && reflective.hirValid,
+           mode + ": an assertion may reflect on its own class instance or "
+                  "on one that reflects back");
+
+    const auto miscounted = analyzeSource(
+        root, directory, "class-assert-self-false-" + mode + ".gti",
+        R"(#include <std/meta>
+class Node<T> {
+  static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(2),
+                "two fields");
+  T value;
+public:
+  Node(T value) : value(value) {}
+};
+int main() { Node<int32_t> node = Node<int32_t>(1); return 0; }
+)",
+        trustedBodies);
+    expect(miscounted.diagnostics.size() == 1 &&
+               miscounted.diagnostics.front().message ==
+                   "Static assertion failed. two fields",
+           mode + ": a false self-reflecting assertion reports its message "
+                  "once");
+
+    // Constant evaluation and initializer-effect analysis reanalyse class
+    // instances in isolated workers; their assertions behave the same there.
+    const auto staged =
+        analyzeSource(root, directory, "class-assert-staged-" + mode + ".gti",
+                      R"(#include <std/meta>
+class Cell<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void cell");
+  T value;
+public:
+  constexpr Cell(T value) : value(value) {}
+  constexpr T get() { return value; }
+};
+constexpr int32_t read_cell() {
+  Cell<int32_t> cell = Cell<int32_t>(7);
+  return cell.get();
+}
+static_assert(read_cell() == 7);
+Cell<int32_t> global_cell = Cell<int32_t>(3);
+int main() { return global_cell.get() - 3; }
+)",
+                      trustedBodies);
+    expect(staged.diagnostics.empty() && staged.hirValid,
+           mode + ": class assertions hold for instances reached by constant "
+                  "evaluation and by a global initializer");
+
+    const auto stagedVoid = analyzeSource(
+        root, directory, "class-assert-staged-void-" + mode + ".gti",
+        R"(#include <std/meta>
+class Tag<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void tag");
+public:
+  constexpr Tag() {}
+};
+constexpr int32_t tag<T>() {
+  Tag<T> value = Tag<T>();
+  return 1;
+}
+static_assert(tag<int32_t>() == 1);
+static_assert(tag<void>() == 1);
+int main() { return 0; }
+)",
+        trustedBodies);
+    const auto stagedFailure = std::find_if(
+        stagedVoid.diagnostics.begin(), stagedVoid.diagnostics.end(),
+        [](const lang::Diagnostic &diagnostic) {
+          return diagnostic.code == "GTI-S2079";
+        });
+    expect(countCode(stagedVoid, "GTI-S2079") == 1 &&
+               stagedFailure != stagedVoid.diagnostics.end() &&
+               stagedFailure->message == "Static assertion failed. no void tag",
+           mode + ": an instance formed only by constant evaluation is still "
+                  "rejected by its class assertion");
+  }
+}
+
 int main() {
   const std::filesystem::path root =
       std::filesystem::path(__FILE__).parent_path().parent_path();
@@ -592,6 +767,7 @@ int main() {
   checkAttributeFormatter();
   checkPhase3(root, directory);
   checkDefaults(root, directory);
+  checkClassAssertions(root, directory);
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

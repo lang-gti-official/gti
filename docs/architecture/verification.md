@@ -33,6 +33,73 @@ Both were located by tracing the refusal sites of `supportsBodyTextImpl`.
 Every other removed statement was then audited: each either names an Expected
 construct or sits under a guard that requires one.
 
+## Class assertions with staged reflection (0.453.2)
+
+`reflection_semantics` adds `checkClassAssertions`, run under Complete and
+Reachable trusted-body analysis. A `Box<T>` whose assertion stages
+`std::meta::type<T>().is_void()` is reanalysed by both its class and its
+constructor; for `Box<void>` the first diagnostic is `GTI-S2079` "no void"
+with the `'T' = 'void'` substitution. Assertions that reflect on their own
+instance, on a class whose assertion reflects back, or, in a destructor, on
+their own class pass, and a false self-reflecting assertion reports its message
+once. Instances formed only by constant evaluation or by a global initializer
+are checked in their workers: `Tag<void>` formed inside a `constexpr` call is
+rejected. `testStaticAssertions` adds class and function assertions that call
+a constexpr helper declared after them; class and function instances, reached
+from a constant evaluation and from global initializers, that read a namespace
+constant, call a constexpr helper and select an `if constexpr` arm; and a
+function whose assertion evaluates its own instance. `reflection_runtime`
+compiles and runs `reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23.
+Main `6d502f02` crashes the reflection test (SIGBUS) and fails all four
+`testStaticAssertions` additions; a genuine `if constexpr` cycle still reports
+the same staging-depth diagnostics as main. Examples 091, 092, 093 and 141 still create one staged worker per
+compile, and interleaved compile times stay within 2.5% of main.
+
+## Passive formals moved after initializer work (0.453.1)
+
+`moved_passive_constructor_field_runtime` runs
+`moved_passive_constructor_fields.gti`. User-defined constructors move a
+passive formal into a field after initializer work that the move must not be
+hoisted across: a `Ledger` field whose constructor can fail, a computed or
+called sibling, or a sibling that writes the formal through `mut int32_t&`.
+The moved values are an `int32_t`, a `bool`, a `float`, a `char`, a plain
+enum, a raw pointer and a fixed array, and a generic `Shelf<T>` moves an
+`int32_t` and a payload enum with a scalar payload. One class moves an owning
+vector and a generated-copy struct beside the scalar after the fallible field,
+and one moves a scalar first, ahead of a fallible field and an owning string
+move. The move after the writing sibling must store the written value.
+Failures before the move, in a later sibling, in the body and in the generic
+owner's field exit with status 70 and the division diagnostic, and every built
+`Ledger` is dropped exactly once. Each result is checked in C++20/C++23 at
+O0/O1/O3, no-elide and ASan/UBSan. The 0.452.0 compiler stops the fixture with
+`GTI-B0001`, and a deliberately wrong expectation fails the test.
+
+In `cpp_mir_body_emitter_text`, `testMovedPassiveFieldAfterFallibleSibling`
+moves a scalar and a plain enum after a fallible user field and a checked
+remainder. The native owned-field proof must refuse the constructor and the
+failure form must admit it. The emitted constructor must start both fields
+from their empty state, move each formal once after the remainder, and roll
+back only the ledger. Forging borrowed state on the moved value must make the
+probe refuse, and a `std::string_view` moved after the same work must stay
+outside the route. The test fails against the 0.452.0 emitter; with the new
+borrowed-state check removed, only the forgery assertion fails.
+
+A differential `--emit-cpp` against main `6d502f02`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1803 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Every existing
+program emits byte-identical C++, the 736 pairs that fail with both compilers
+report identical diagnostics, and only the new fixture changed status, from
+`GTI-B0001` to success. The summed emission time was 1474.2 s before and
+1464.6 s after. On `ubuntu-8`, with a GCC-built compiler and GCC native
+compiles, the new runtime test, `cpp_mir_body_emitter_text` and
+`mixed_constructor_parameter_runtime` pass.
+
+Two shapes stay outside this route. A `std::string_view` moved after such work
+keeps its caller's loan and still fails with `GTI-B0001`, while copying it
+works. Lambda and function-item fields publish through the constructor record
+and keep the closure route's rule, which does not move them after fallible
+work.
+
 ## Switches over fixed-array elements (0.448.4)
 
 `sum_type_pipeline` adds `testFixedArrayElementSubjects`. Observing switches

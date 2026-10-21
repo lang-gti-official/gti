@@ -9,6 +9,46 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.453.2 — Class assertions with reflected constants
+
+- Fix a compiler crash (bus error, exit 138) when a generic class's
+  `static_assert` calls a constexpr function or uses reflection, as in
+  `static_assert(!std::meta::type<T>().is_void(), "no void");`. The assertion
+  now holds for `Box<int32_t>`, and `Box<void>` is rejected with
+  `error[GTI-S2079]: Static assertion failed. no void`. A library class can
+  now reject an invalid type argument with its own message.
+- Such an assertion may reflect on its own instance, as in
+  `static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(1));`,
+  or on a class whose assertion reflects back, and an assertion in a
+  destructor may reflect on its own class. This crashed or reported
+  `error[GTI-S2057]` ("The constexpr definition of 'field_count' must be
+  available before this constant-evaluated call").
+- A class instance is now checked the same way wherever it is formed. A class
+  with such an assertion, or whose field initializer reads a namespace
+  constant, now works when a `constexpr` function constructs it or a global
+  initializer does. These reported `error[GTI-S2057]` or
+  `error[GTI-S2001]: Undefined name`. A generic function whose `if constexpr`
+  calls a constexpr function no longer reports `error[GTI-S2057]` when a
+  global initializer calls it.
+- A dependent class assertion may call a constexpr function declared after
+  the class, as an assertion in a generic function already could.
+
+## 0.453.1 — Constructors that move a plain value after other initializers
+
+- Fix the internal compiler error `GTI-B0001` ("backend failed while
+  generating a representation") when a constructor moves a parameter of a
+  plain value type into a field after another member initializer, as in
+  `shelf(int32_t tag) : v(std::vector<int32_t>()), tag(std::move(tag)) {}`.
+  The earlier initializer could build a field that can fail, compute a value
+  such as `odd(tag % 2 == 1)`, or call a function. Integers, `bool`, floats,
+  `char`, enums (including enums whose payloads are plain values), raw
+  pointers and fixed arrays of these were all affected, as were generic
+  classes such as `shelf<T>` with `T = int32_t`. Copying the parameter
+  (`tag(tag)`) already worked.
+- Moving a `std::string_view`, a lambda or a function name into a field after
+  one of these initializers is still rejected with `GTI-B0001`. Copying the
+  view works.
+
 ## 0.453.0 — Clearer `expected` diagnostics
 
 - Repeated errors report once. A library instance that failed at several

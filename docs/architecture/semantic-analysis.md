@@ -709,7 +709,13 @@ definition or constructor is available to constant evaluation only when it is
 declared before the current declaration (`GTI-S2057`), whether or not a demand
 has already analysed it. A body analysed early therefore sees exactly what it
 would have seen in sequence: the globals and constant definitions that precede
-it, including ones that follow its caller.
+it, including ones that follow its caller. Concrete reanalysis is not
+positional. A generic function, constructor or destructor instance, and a
+class instance's field initializers and static assertions, are reanalysed
+after the primary pass has checked their names in place, so their dependent
+constants see every analysed `constexpr` definition and namespace global. The
+isolated staged and initializer-effect workers, which hold no declaration
+orders, follow the same rule.
 
 `TrustedBodyAnalysis::Deferred` is a test mode of `FrontendOptions` that
 analyses compiler-trusted bodies after the application bodies, in reverse
@@ -2680,22 +2686,37 @@ state. HIR rejects any still-unselected branch rather than emitting an empty
 branch. Unused-mut advice is withheld for a deferred-flow body's locals since
 uninspected arms may contain writes.
 
-Required constants encountered during concrete reanalysis stage against its
-canonical base model, never its partially analyzed delta. Nested workers keep
-separate semantic state and share only a constant-request work account. Nested
-staging counts toward the depth bound, and its executed work consumes the same
-4096-step budget as the enclosing request. Recursive semantic-staging cycles
-therefore fail with a resource diagnostic instead of unbounded reentry.
+Required constants encountered during concrete reanalysis of any instance kind
+(function, constructor, destructor, or class field initializers and static
+assertions) stage against its canonical base model, never its partially
+analyzed delta. Nested workers keep separate semantic state and share only a
+constant-request work account and the list of instances whose reanalysis is
+open along the staging chain. Nested staging counts toward the depth bound,
+and its executed work consumes the same 4096-step budget as the enclosing
+request. Recursive semantic-staging cycles therefore fail with a resource
+diagnostic instead of unbounded reentry. An assertion's constant may need the
+instance that owns it, as when a class assertion or a destructor reflects on
+the class's fields. A worker then reanalyzes that open instance without
+evaluating its assertions: the enclosing reanalysis owns their outcome, and an
+assertion yields no value. Other required constants, such as `if constexpr`
+conditions, are still evaluated, so a genuine cycle still fails as above.
 
 Concrete reanalysis resets body scopes, so early HIR discovery uses a lazy,
 isolated semantic provider rather than reentering the unfinished caller. Its
-request-local snapshot copies the sealed catalog and current semantic model,
-preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
+request-local snapshot copies the sealed catalog and the canonical semantic
+model, preserves declaration IDs, and rebuilds owned callable indexes. Ordinary
 instance analysis still produces each typed delta; there is no second generic
-resolver. Non-generic closures do not allocate this snapshot. The snapshot and
-its instance deltas expire after the synchronous lowering operation. Tests
-retain enclosing locals and live loans across this boundary. Concrete semantic
-diagnostics are authoritative and cannot fall back to legacy execution.
+resolver. Non-generic closures do not allocate this snapshot. Instance deltas
+expire after the synchronous lowering operation. The snapshot is reused while
+the declaration order, whether a concrete reanalysis is open, and the
+available constexpr definitions and constructors are unchanged, and completing
+the primary analysis drops it. Its key never includes the model's address,
+which moves between the analyzer and each reanalysis scope. The copy drops the
+side channels an enclosing analysis lent the canonical model, a late-demand
+probe's demand sink and a batch's call journal, which do not outlive that
+analysis. Tests retain enclosing locals and live loans across this boundary.
+Concrete semantic diagnostics are authoritative and cannot fall back to legacy
+execution.
 
 Unsupported closures/profile operations still use the existing AST driver;
 work already executed consumes the shared limit, and arithmetic/resource
