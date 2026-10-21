@@ -235,10 +235,72 @@ int main() { return 0; }
          "a dependent value is not returned in this phase");
 }
 
+void testConstructorReads() {
+  // A constructor body could read a published field back through `this` as
+  // ownerless text, so a constructor with a body keeps the ownerless rule.
+  // Initializers and field defaults cannot reference members yet.
+  const std::string declarations = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+class Logging {
+public:
+  std::string_view text;
+  Logging(std::string_view text) : text(text) { kept = this.text; }
+};
+mut int built = 0;
+class Counting {
+public:
+  std::string_view text;
+  Counting(std::string_view text) : text(text) { built = built + 1; }
+};
+class Plain {
+public:
+  std::string_view text;
+  int kind;
+  Plain(std::string_view input, int kind) : text(input), kind(kind) {}
+};
+)gti";
+  for (const char *construction :
+       {"Logging value = Logging(owner.view());",
+        "Counting value = Counting(owner.view());"}) {
+    const auto result = analyzeText(
+        declarations + "int main() { std::string owner{\"owned\"}; " +
+        construction + " return 0; }\n");
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2045") &&
+               hasDiagnosticHint(result.diagnostics,
+                                 "reads the object, so it keeps its text "
+                                 "fields ownerless"),
+           std::string("a constructor that reads the object keeps the "
+                       "ownerless rule: ") +
+               construction);
+    expect(std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("a reading constructor is diagnosed at source: ") +
+               construction);
+  }
+  const auto plain = analyzeText(declarations + R"gti(
+int main() {
+  std::string owner{"owned"};
+  Plain value = Plain(owner.view(), 2);
+  Logging literal = Logging("literal");
+  return value.text.size() == 5 && kept.size() == 7 ? 0 : 1;
+}
+)gti");
+  if (!plain.canGenerateCode())
+    printDiagnostics(plain);
+  expect(plain.canGenerateCode(),
+         "an empty-body constructor publishes, and an ownerless argument "
+         "still reaches a reading constructor");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
     {"testConfinement", testConfinement},
+    {"testConstructorReads", testConstructorReads},
 };
 } // namespace
 

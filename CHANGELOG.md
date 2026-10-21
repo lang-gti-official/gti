@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.454.2 — Constructors with a body keep text fields ownerless
+
+- Fix an unsound case of 0.454.0's text fields that view a local owner. A
+  constructor body could copy the published field into lasting storage, as in
+  `Holder(std::string_view text) : text(text) { kept = this.text; }`. With
+  `Holder h = Holder(s.view());` the global `kept` then kept a view of `s`
+  after `s` was destroyed, without any error. Such a constructor now keeps the
+  ownerless rule, and the call reports `error[GTI-S2045]` with a hint that
+  its body reads the object. A constructor with an empty body still stores a
+  view of a local owner, and literal arguments still work with any
+  constructor.
+
 ## 0.454.0 — Text fields that view a local owner
 
 - A class or struct value may now hold a view of a named local string in a

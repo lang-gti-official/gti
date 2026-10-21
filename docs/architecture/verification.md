@@ -1,5 +1,24 @@
 # Compiler Verification
 
+## Constructor bodies and published view fields (0.454.2)
+
+A 0.454.0 constructor body could read a published field through `this` as
+ownerless text and store it in a global, which left a dangling view after the
+owner died. Semantics now publishes only through a constructor with an empty
+body (`constructionKeepsPublishedText`).
+
+`view_fields` checks two cases:
+- `testConstructorReads` rejects a body that stores `this.text`, and a body
+  that touches only a global, at source with the new hint;
+- an empty-body constructor still publishes, and a reading constructor still
+  accepts a literal.
+
+MIR independently reads a publishable field through `this` as its formal's
+text inside the constructor. A read that reaches ownerless storage then fails
+the existing "dependent text argument also reaches ownerless text storage"
+check. Ownerless programs verify unchanged, because each such formal is
+already a requirement of its initializer.
+
 ## Owner-tracked view fields, phase 1a (0.454.0)
 
 `view_fields` checks the publication facts. Each dependent construction

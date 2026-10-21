@@ -8157,7 +8157,9 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
               ? textFieldOwnerDependency(expr.arguments()[i], field)
               : std::vector<SemanticLoanDependency>{};
       const bool restrictedOwner =
-          !dependencies.empty() && !textPublicationOwner(target);
+          !dependencies.empty() &&
+          (!textPublicationOwner(target) ||
+           !constructionKeepsPublishedText(target, nullptr));
       if (restrictedOwner)
         dependencies.clear();
       if (!dependencies.empty() && !textOrigins.empty()) {
@@ -8177,9 +8179,9 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
         if (restrictedOwner)
           diagnostics.back().hints.insert(
               diagnostics.back().hints.begin(),
-              "A struct with a destructor keeps its text fields ownerless, "
-              "because that code reads them outside the body that created "
-              "the value.");
+              "A struct with a destructor, or a field default that reads the "
+              "object, keeps its text fields ownerless, because that code "
+              "reads them outside the body that created the value.");
         valid = false;
       }
     }
