@@ -22728,6 +22728,160 @@ int main() {
          "report the live borrow of its root after the join");
 }
 
+// On a mutable receiver, an accessor pair selects its read-only form for a
+// use that only reads the result, and its `mut` form for one that may mutate.
+void testUseBasedAccessorSelection() {
+  const std::string pair = R"(
+struct Slot {
+  mut int32_t value = 2;
+  int32_t& get() { return this.value; }
+  mut int32_t& get() mut { return this.value; }
+  int32_t& operator[](std::size_t index) { return this.value; }
+  mut int32_t& operator[](std::size_t index) mut { return this.value; }
+  bool empty() { return this.value == 0; }
+};
+int32_t read(int32_t& value) { return value; }
+void write(mut int32_t& value) { value += 1; }
+)";
+  const std::string selections = pair + R"(
+int main() {
+  mut Slot slot{};
+  int32_t& held = slot.get();
+  int32_t copied = slot.get();
+  int32_t passed = read(slot.get());
+  int32_t& element = slot[std::size_t(0)];
+  bool tested = slot.get() == 2 && !slot.empty();
+  int32_t sum = held + copied + passed + element;
+  mut int32_t& edited = slot.get();
+  edited += sum;
+  write(slot.get());
+  return tested ? slot.get() : 0;
+}
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "use-based-accessor-selection.gti", selections,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << "Unexpected accessor selection diagnostic: "
+                << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "reads of a mutable owner through accessor pairs stay valid while "
+         "one result is live");
+  const lang::FunctionDecl *mainFunction =
+      findTopLevelFunction(frontend.program, "main");
+  const auto statement = [&](std::size_t index) -> const lang::Stmt * {
+    return mainFunction == nullptr ||
+                   index >= mainFunction->body()->statements().size()
+               ? nullptr
+               : mainFunction->body()->statements()[index].get();
+  };
+  const auto initializer = [&](std::size_t index) -> const lang::Expr * {
+    const auto *declaration =
+        dynamic_cast<const lang::VariableDecl *>(statement(index));
+    return declaration == nullptr ? nullptr : declaration->initializer().get();
+  };
+  const auto firstArgument =
+      [](const lang::Expr *expression) -> const lang::Expr * {
+    const auto *call = dynamic_cast<const lang::Call *>(expression);
+    return call == nullptr || call->arguments().empty()
+               ? nullptr
+               : call->arguments().front().get();
+  };
+  const auto selected =
+      [&](const lang::Expr *expression) -> std::optional<lang::AccessMode> {
+    const auto *call = dynamic_cast<const lang::Call *>(expression);
+    const lang::ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : frontend.semantics.findCall(*call);
+    if (resolved == nullptr ||
+        resolved->returnType.kind != lang::SemanticType::Reference)
+      return std::nullopt;
+    return resolved->returnType.referenceAccess;
+  };
+  const auto *logical = dynamic_cast<const lang::Logical *>(initializer(5));
+  const auto *comparison =
+      logical == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Binary *>(logical->left().get());
+  const auto *written =
+      dynamic_cast<const lang::ExpressionStmt *>(statement(9));
+  const auto *returned = dynamic_cast<const lang::ReturnStmt *>(statement(10));
+  const auto *conditional = returned == nullptr
+                                ? nullptr
+                                : dynamic_cast<const lang::ConditionalExpr *>(
+                                      returned->value().get());
+  expect(selected(initializer(1)) == lang::AccessMode::ReadOnly &&
+             selected(initializer(2)) == lang::AccessMode::ReadOnly &&
+             selected(firstArgument(initializer(3))) ==
+                 lang::AccessMode::ReadOnly &&
+             comparison != nullptr &&
+             selected(comparison->left().get()) == lang::AccessMode::ReadOnly &&
+             conditional != nullptr &&
+             selected(conditional->thenExpression().get()) ==
+                 lang::AccessMode::ReadOnly,
+         "a read-only reference, copy, read-only argument, operand and "
+         "returned value select the read-only accessor");
+  expect(selected(initializer(7)) == lang::AccessMode::Mutable &&
+             written != nullptr &&
+             selected(firstArgument(written->expression().get())) ==
+                 lang::AccessMode::Mutable,
+         "a mutable reference and a mutable argument select the mut accessor");
+  const lang::ResolvedOperatorInfo *subscript =
+      initializer(4) == nullptr
+          ? nullptr
+          : frontend.semantics.findOperator(*initializer(4));
+  expect(subscript != nullptr && subscript->receiverMutability ==
+                                     lang::ReceiverMutability::ReadOnly,
+         "a read-only reference to an element selects the read-only "
+         "operator[]");
+
+  const std::string conflicting = pair + R"(
+int main() {
+  mut Slot slot{};
+  int32_t& held = slot.get();
+  slot.get() = 4;
+  return held;
+}
+)";
+  const lang::FrontendResult rejected = lang::Frontend().analyze(
+      "use-based-accessor-conflict.gti", conflicting,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const std::size_t assignment = conflicting.find("slot.get() = 4");
+  expect(!rejected.canGenerateCode() &&
+             std::any_of(rejected.diagnostics.begin(),
+                         rejected.diagnostics.end(),
+                         [&](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-S2017" &&
+                                  diagnostic.primary.start >= assignment &&
+                                  diagnostic.primary.start <
+                                      assignment +
+                                          std::string_view("slot.get()").size();
+                         }),
+         "assigning through the accessor still selects the mut form and "
+         "conflicts with a live read-only result");
+
+  const std::string readOnly = pair + R"(
+int main() {
+  mut Slot slot{};
+  int32_t& held = slot.get();
+  return held + slot[std::size_t(0)] - 4;
+}
+)";
+  const lang::FrontendResult advised = lang::Frontend().analyze(
+      "use-based-accessor-advice.gti", readOnly, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(advised.canGenerateCode() &&
+             std::any_of(advised.diagnostics.begin(), advised.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-S2096" &&
+                                  diagnostic.message.find("'slot'") !=
+                                      std::string::npos;
+                         }),
+         "a mutable owner read only through accessor pairs is never used "
+         "mutably");
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnershipSemanticFoundation", testOwnershipSemanticFoundation},
     {"testExplicitValueMoves", testExplicitValueMoves},
@@ -22821,6 +22975,7 @@ constexpr NamedTest kTests[] = {
      testCleanupOwningTemporaryArguments},
     {"testExpressionJoinsKeepAssignmentPlaces",
      testExpressionJoinsKeepAssignmentPlaces},
+    {"testUseBasedAccessorSelection", testUseBasedAccessorSelection},
 };
 
 } // namespace

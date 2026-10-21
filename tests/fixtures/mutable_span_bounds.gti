@@ -11,8 +11,9 @@ int main(int argc, std::vector<std::string> argv) {
     return int(invalid.size());
   }
   if (argc == 3) {
+    // A read would select the read-only back(); writing keeps the mut path.
     mut auto empty = view.first(std::size_t(0));
-    return empty.back();
+    empty.back() = 4;
   }
   if (argc == 4) {
     auto first = view.first(std::size_t(1));

@@ -2951,6 +2951,15 @@ auto SemanticVisitor::Impl::analyze(const ExprPtr &expr, OccurrenceRole roles)
 auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
     const ExprPtr &expr, const SemanticType &expectedType,
     bool inferFromInstantiation) -> SemanticType {
+  // A value expected as bool is tested for truth, unless an enclosing
+  // context already gave it a use.
+  std::optional<ResultUseScope> truthUse;
+  if (expectedType == SemanticType::Bool && consultsResultUse(expr.get()) &&
+      !resultUseFor(*expr))
+    truthUse.emplace(
+        *this, expr.get(),
+        std::vector{operatorResultUseStep(OverloadedOperator::ContextualBool)},
+        ResultUseAccess::ReadOnly);
   const Call *call = directCall(expr);
   if (call == nullptr) {
     return analyze(expr);
@@ -2974,6 +2983,14 @@ auto SemanticVisitor::Impl::analyzeInitializer(
   const Expr *enclosingExpression = contextualInitializerExpression;
   contextualInitializerType = expectedType;
   contextualInitializerExpression = expr.get();
+  // The value initializes the expected type, unless an enclosing context
+  // already gave it a use.
+  std::optional<ResultUseScope> initializedUse;
+  if (expectedType != SemanticType::Unknown && consultsResultUse(expr.get()) &&
+      !resultUseFor(*expr))
+    initializedUse.emplace(*this, expr.get(),
+                           std::vector{bindResultUseStep({expectedType})},
+                           ResultUseAccess::Unknown);
   const auto literal =
       isIntegral(expectedType) && isContextualIntegerLiteral(expr.get())
           ? integerConstant(expr.get())
@@ -11314,22 +11331,64 @@ auto SemanticVisitor::Impl::analyzeContextualIntegerOperand(
 
 auto SemanticVisitor::Impl::analyzeBinaryOperands(const Binary &expression)
     -> std::pair<SemanticType, SemanticType> {
+  // An overloaded operator is a member of its left operand and takes the
+  // right one as its argument; a built-in operator reads both. A comma
+  // discards its left operand and yields its right one.
+  const std::optional<OverloadedOperator> operation =
+      binaryOperator(expression.oper().kind);
+  // `left` is the left operand's type, or null for an integer literal.
+  const auto analyzeRight = [&](const SemanticType *left) {
+    const ExprPtr &right = expression.right();
+    std::optional<ResultUseScope> use;
+    if (consultsResultUse(right.get())) {
+      if (expression.oper().kind == TokenKind::COMMA) {
+        use.emplace(*this, right.get(), resultUseFor(expression));
+      } else if (operation && left != nullptr && classInfo(*left) != nullptr) {
+        std::vector<SemanticType> parameters;
+        for (const CallableCandidate &candidate :
+             structuralOperatorCandidates(*left, *operation))
+          if (candidate.parameterTypes.size() == 1)
+            parameters.push_back(candidate.parameterTypes.front());
+        if (!parameters.empty())
+          use.emplace(*this, right.get(),
+                      std::vector{bindResultUseStep(std::move(parameters))},
+                      ResultUseAccess::Unknown);
+      } else if (operation && (left == nullptr ||
+                               (*left != SemanticType::Unknown &&
+                                left->kind != SemanticType::TypeParameter))) {
+        use.emplace(*this, right.get(),
+                    std::vector{operatorResultUseStep(*operation)},
+                    ResultUseAccess::ReadOnly);
+      }
+    }
+    return analyze(right);
+  };
+  const auto analyzeLeft = [&] {
+    std::optional<ResultUseScope> use;
+    if (operation && consultsResultUse(expression.left().get()))
+      use.emplace(*this, expression.left().get(),
+                  std::vector{operatorResultUseStep(*operation)},
+                  ResultUseAccess::ReadOnly);
+    return analyze(expression.left());
+  };
   if (!acceptsContextualIntegerOperand(expression.oper().kind)) {
-    return {analyze(expression.left()), analyze(expression.right())};
+    const SemanticType left = analyzeLeft();
+    return {left, analyzeRight(&left)};
   }
 
   const bool leftLiteral = isContextualIntegerLiteral(expression.left().get());
   const bool rightLiteral =
       isContextualIntegerLiteral(expression.right().get());
   if (leftLiteral == rightLiteral) {
-    return {analyze(expression.left()), analyze(expression.right())};
+    const SemanticType left = analyzeLeft();
+    return {left, analyzeRight(&left)};
   }
   if (rightLiteral) {
-    const SemanticType left = analyze(expression.left());
+    const SemanticType left = analyzeLeft();
     return {left, analyzeContextualIntegerOperand(expression.right(), left)};
   }
 
-  const SemanticType right = analyze(expression.right());
+  const SemanticType right = analyzeRight(nullptr);
   return {analyzeContextualIntegerOperand(expression.left(), right), right};
 }
 

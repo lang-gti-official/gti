@@ -669,10 +669,16 @@ int main() {
 void checkNestedReadonlyReferences() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
   std::size_t publications = 0;
-  for (const auto &relative :
-       {"coverage/reproducers/a59-readonly-ref-into-mut-nested-container.gti",
-        "coverage/reproducers/a59-map-at-then-element-ref.gti",
-        "fixtures/borrow_nested_readonly.gti"}) {
+  // The reproducers only read through accessor pairs, which then select their
+  // read-only forms; the fixture's `mut`-only operator[] keeps a mutable
+  // parent loan under its read-only child.
+  for (const auto &[relative, mutableParent] :
+       {std::pair{"coverage/reproducers/"
+                  "a59-readonly-ref-into-mut-nested-container.gti",
+                  false},
+        std::pair{"coverage/reproducers/a59-map-at-then-element-ref.gti",
+                  false},
+        std::pair{"fixtures/borrow_nested_readonly.gti", true}}) {
     const auto path = root / relative;
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
@@ -750,8 +756,11 @@ void checkNestedReadonlyReferences() {
                        std::to_string(mutation));
           }
         }
-    expect(checked != 0,
-           "fixture exercises suspended parent provenance publication");
+    expect(mutableParent ? checked != 0 : checked == 0,
+           mutableParent
+               ? "fixture exercises suspended parent provenance publication"
+               : "a read-only use of an accessor pair keeps no mutable parent "
+                 "loan");
   }
   std::ifstream declarationsInput(root / "fixtures/borrow_nested_readonly.gti");
   const std::string fixture{std::istreambuf_iterator<char>(declarationsInput),

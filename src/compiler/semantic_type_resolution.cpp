@@ -843,12 +843,15 @@ auto SemanticVisitor::Impl::isContextualCallableResultArgument(
 }
 
 auto SemanticVisitor::Impl::analyzeContextualCallArguments(
-    const ExprList &arguments) -> ContextualCallArguments {
+    const ExprList &arguments,
+    std::span<const std::optional<ResultUseStep>> uses)
+    -> ContextualCallArguments {
   ContextualCallArguments result;
   result.types.reserve(arguments.size());
   result.deferred.reserve(arguments.size());
   bool deferred = false;
-  for (const ExprPtr &argument : arguments) {
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const ExprPtr &argument = arguments[index];
     deferred = deferred || isContextualArrayArgument(argument) ||
                isContextualCallableResultArgument(argument);
     // A namespace function name has no evaluation effects. Its selection may
@@ -858,8 +861,16 @@ auto SemanticVisitor::Impl::analyzeContextualCallArguments(
     const bool argumentDeferred =
         deferred || isContextualNativeFunctionArgument(argument);
     result.deferred.emplace_back(argumentDeferred);
-    result.types.emplace_back(argumentDeferred ? SemanticType::Unknown
-                                               : analyze(argument));
+    if (argumentDeferred) {
+      result.types.emplace_back(SemanticType::Unknown);
+      continue;
+    }
+    std::optional<ResultUseScope> argumentUse;
+    if (index < uses.size() && uses[index] && consultsResultUse(argument.get()))
+      argumentUse.emplace(*this, argument.get(),
+                          std::vector<ResultUseStep>{*uses[index]},
+                          ResultUseAccess::Unknown);
+    result.types.emplace_back(analyze(argument));
   }
   return result;
 }
@@ -7470,6 +7481,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   contextualInitializerExpression = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
+  contextualResultUse.reset();
   currentReceiverMutability = ReceiverMutability::ReadOnly;
   suppressedProjectedPlaceReads.clear();
   constructorDepth = 0;

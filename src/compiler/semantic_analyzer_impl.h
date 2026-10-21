@@ -863,6 +863,26 @@ private:
     bool inferResultFromInstantiation = false;
   };
 
+  // How one expression's result is used, for choosing between otherwise exact
+  // read-only and mutable-receiver overloads of an accessor. Steps are the
+  // projections applied to the result, innermost first; `top` is the access
+  // the outermost use needs. Unknown keeps the mutable-receiver preference.
+  enum class ResultUseAccess { Unknown, ReadOnly, Mutable };
+  struct ResultUseStep {
+    enum class Kind { Field, Member, Operator, Bind };
+    Kind kind = Kind::Field;
+    std::string name;
+    OverloadedOperator operation = OverloadedOperator::Subscript;
+    // Bind: the declared types the value may initialize, such as each
+    // candidate's parameter at the argument's position.
+    std::vector<SemanticType> targets;
+  };
+  struct ResultUse {
+    const Expr *expression = nullptr;
+    std::vector<ResultUseStep> steps;
+    ResultUseAccess top = ResultUseAccess::Unknown;
+  };
+
   struct LoanFlowRecord {
     SemanticLoanId id = 0;
     std::size_t region = 0;
@@ -3141,8 +3161,10 @@ private:
   [[nodiscard]] bool
   isContextualCallableResultArgument(const ExprPtr &expression) const;
 
-  [[nodiscard]] ContextualCallArguments
-  analyzeContextualCallArguments(const ExprList &arguments);
+  // `uses` holds the optional Bind step of each argument's result use.
+  [[nodiscard]] ContextualCallArguments analyzeContextualCallArguments(
+      const ExprList &arguments,
+      std::span<const std::optional<ResultUseStep>> uses = {});
 
   [[nodiscard]] bool contextualCallArgumentPotentiallyMatches(
       const SemanticType &parameter, const SemanticType &argument,
@@ -4920,6 +4942,78 @@ private:
 
   [[nodiscard]] const ClassInfo &classInfo(ClassId id) const;
 
+  // The contextual use of `expression`'s result, when its enclosing
+  // expression or statement supplied one.
+  [[nodiscard]] std::optional<ResultUse>
+  resultUseFor(const Expr &expression) const;
+  // The access a result of `type` needs under `use`: projections through
+  // fields keep the outer use, a member or operator whose every overload has
+  // one receiver capability decides it, and an accessor pair defers to its
+  // own use. Unknown when a step cannot be resolved.
+  [[nodiscard]] ResultUseAccess accessorResultUse(const ResultUse &use,
+                                                  SemanticType type) const;
+  // True when `operation` on `receiver` is an accessor pair whose result
+  // `use` only reads.
+  [[nodiscard]] bool
+  readOnlyAccessorOperator(const std::optional<ResultUse> &use,
+                           const SemanticType &receiver,
+                           OverloadedOperator operation) const;
+  // Whether `expression` can be an accessor's result or pass its own use on
+  // to one. Only these forms read a contextual use.
+  [[nodiscard]] static bool consultsResultUse(const Expr *expression);
+  // Sets the use of one child expression for the scope's lifetime.
+  class ResultUseScope {
+  public:
+    ResultUseScope(Impl &impl, const Expr *expression,
+                   std::vector<ResultUseStep> steps, ResultUseAccess top)
+        : impl_(impl), active_(consultsResultUse(expression)) {
+      if (active_)
+        set(expression, std::move(steps), top);
+    }
+    // A use passed through unchanged, as by a grouping or a conditional arm.
+    ResultUseScope(Impl &impl, const Expr *expression,
+                   const std::optional<ResultUse> &use)
+        : impl_(impl), active_(use && consultsResultUse(expression)) {
+      if (active_)
+        set(expression, use->steps, use->top);
+    }
+    ~ResultUseScope() {
+      if (active_)
+        impl_.contextualResultUse = std::move(saved_);
+    }
+    ResultUseScope(const ResultUseScope &) = delete;
+    ResultUseScope &operator=(const ResultUseScope &) = delete;
+
+  private:
+    void set(const Expr *expression, std::vector<ResultUseStep> steps,
+             ResultUseAccess top) {
+      saved_ = std::move(impl_.contextualResultUse);
+      impl_.contextualResultUse = ResultUse{
+          .expression = expression, .steps = std::move(steps), .top = top};
+    }
+
+    Impl &impl_;
+    bool active_ = false;
+    std::optional<ResultUse> saved_;
+  };
+  // A child's use after one more projection of the parent's result.
+  [[nodiscard]] static std::vector<ResultUseStep>
+  prependResultUseStep(ResultUseStep step,
+                       const std::optional<ResultUse> &parent);
+  [[nodiscard]] static ResultUseStep
+  operatorResultUseStep(OverloadedOperator operation) {
+    return {.kind = ResultUseStep::Kind::Operator, .operation = operation};
+  }
+  [[nodiscard]] static ResultUseStep
+  bindResultUseStep(std::vector<SemanticType> targets) {
+    return {.kind = ResultUseStep::Kind::Bind, .targets = std::move(targets)};
+  }
+  // The Bind step for each argument of `expr`, from the parameters at its
+  // position in every candidate of the callee; none when they are not known.
+  [[nodiscard]] std::vector<std::optional<ResultUseStep>>
+  argumentResultUses(const Call &expr, const SemanticType &calleeType,
+                     const std::optional<Symbol> &callee) const;
+
   [[nodiscard]] const MemberInfo *findMember(const SemanticType &objectType,
                                              const Token &name) const;
 
@@ -5671,6 +5765,7 @@ private:
     const Expr *contextualInitializerExpression = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
+    std::optional<ResultUse> contextualResultUse;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     std::size_t constructorDepth = 0;
     std::size_t destructorDepth = 0;
@@ -5973,6 +6068,7 @@ private:
         contextualOperatorIntegerType;
     decltype(RequestSessionState::contextualCallableResult)
         contextualCallableResult;
+    decltype(RequestSessionState::contextualResultUse) contextualResultUse;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     decltype(RequestSessionState::suppressedProjectedPlaceReads)
         suppressedProjectedPlaceReads;
@@ -6053,6 +6149,8 @@ private:
       requestSession.contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
+  std::optional<ResultUse> &contextualResultUse =
+      requestSession.contextualResultUse;
   ReceiverMutability &currentReceiverMutability =
       requestSession.currentReceiverMutability;
   std::size_t &constructorDepth = requestSession.constructorDepth;
