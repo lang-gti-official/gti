@@ -327,7 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phase 1 in progress | Value-level text dependencies on the existing stored-dependency model; phase 1 covers non-generic classes, structs and payload enums, then generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phase 1a implemented; phase 1b next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values. Phase 1b adds relays through field-level parameter contracts, payload enums, returns and temporaries. Later phases cover generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -8957,8 +8957,8 @@ prerequisite checkpoints as full acceptance.
 ### L-OWN-02: Owner-Tracked View Fields
 
 - **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
-  question in the 0.449.0 follow-ups). Phase 1 is in progress on
-  `codex/view-fields`; phases 2–4 are planned.
+  question in the 0.449.0 follow-ups). Phase 1a (local class and struct values)
+  is implemented; phase 1b and phases 2–4 are planned.
 - **Problem and client:** no field can hold a view of caller-owned text. A
   `std::string_view` or `c_string` field, a payload-enum alternative of either
   type, and the storage of any constructor that keeps a text parameter accept
@@ -9010,22 +9010,38 @@ prerequisite checkpoints as full acceptance.
     - mutable, reassignable or (in phase 1) multi-owner graphs.
   - *Backend.* No change: a view is a by-value descriptor, and every lifetime is
     verified before emission.
-- **Phase 1 (classes, structs and payload enums, not generic):**
-  - Dynamic text reaches a text field through designated or aggregate
-    initialization, a constructor that stores a text parameter, or payload
-    construction.
-  - Field reads and switch payload bindings of such a field yield dependent
-    views.
-  - Copies alias the dependency and moves transfer it.
-  - By-value parameters relay it, and returns publish it under a one-owner
-    summary.
-  - Acceptance:
-    - local, constructor, payload-enum, returned and relayed shapes compile
-      and run at O0/O3, with exact semantic, HIR and MIR loan identities;
-    - mutation, movement or destruction of the owner while a dependent value
-      is live is rejected, as are reassignment with a dependent value, every
-      rejected storage form and a second owner;
-    - ownerless programs emit identical C++ (corpus differential).
+- **Phase 1a (implemented, local class and struct values):**
+  - A constructor that stores a text parameter, or a designated list,
+    publishes one named owner at one direct text field. The call's
+    `dependentTextPublication` facts never become the constructor's summary.
+  - The value lives in its creating body: a local binding, a copy that aliases
+    the loan, a move, a field read that yields a dependent view, or a
+    discarded statement. Every other use fails closed with `GTI-S2045`.
+  - Classes with a destructor, bases or virtual methods keep the ownerless
+    rule. Their destructor or dispatched methods would read the field as
+    ownerless text outside the creating body.
+  - Evidence: `view_fields` (semantic rejections and verifier mutations),
+    `view_fields_runtime` (C++20/C++23 at O0/O1/O3, no-elide, sanitized),
+    example 170 and an ownerless corpus differential.
+- **Phase 1b (remaining phase 1):**
+  - *Boundary found in 1a.* Inside a callee, a text-field read of a by-value or
+    reference parameter, of `this`, or of a capture is ownerless (the
+    stored-view rule, PR #170). Relaying a dependent value is therefore
+    sound only once class parameters carry field-level contracts. Such a
+    contract says either "this field may be dependent" (the callee then reads
+    a dependent view) or "requires ownerless" (the argument must be ownerless,
+    as `ownerlessTextParameters` does for text formals). Method receivers need
+    the same contract on `this`.
+  - Payload construction and switch payload bindings, including MIR's
+    `PayloadExtract`, which treats a text payload as ownerless today.
+  - Returns publishing a one-owner summary through
+    `FunctionBorrowDependencySummary`.
+  - Reading a text field of a class temporary, for example
+    `Holder(owner.view()).text`. Today's C++ backend refuses this even for an
+    ownerless temporary; it needs the owned-result slot extended to text
+    fields.
+  - Acceptance: relayed, payload-enum and returned shapes compile and run at
+    O0/O3, with exact semantic, HIR and MIR loan identities.
 - **Phase 2 (generic types):** `pair<std::string_view, int>`,
   `expected<T, std::string_view>`, `optional<std::string_view>` and success
   views such as `expected<std::string_view, E>`, including

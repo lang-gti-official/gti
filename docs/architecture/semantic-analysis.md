@@ -2524,6 +2524,20 @@ one origin suspended across its whole moved lifetime; a returned carrier
 re-establishes that exact dependency in the caller rather than inventing a new
 root.
 
+A value whose class type has no borrowed state can still carry one owner
+dependency at a direct text field (`L-OWN-02`, phase 1). Constructor and
+designated-construction selection mark the call `dependentTextPublication`
+and record a `BorrowedFieldOrigin` from the dynamic argument to the field.
+They do not record a complete dependency set: like a dynamic view, the value
+uses the retained-loan model. Its expression traits carry the borrowed state,
+and its binding's `StoredValue` loan designates the field and names the
+argument's owner. A copy adds a carrier to that loan, a move transfers it, and
+a read of the designated field yields an owner-dependent view. Code outside the
+creating body reads text fields as ownerless, so `noteTextDependentValue`
+records each dependent value. A local initializer, a field read, a grouping, a
+move or a discarded statement consumes it. `finalizeTextDependentValues`
+reports every other use as `GTI-S2045`, so an unsupported context fails closed.
+
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
 root and named-field, fixed-array index, or checked-dereference projections.

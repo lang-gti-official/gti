@@ -1,0 +1,43 @@
+// A value may hold a view of a named local owner in a text field. The value
+// carries that owner's read-only dependency, much as a reference field
+// carries its referent's, so no text is copied or allocated. Today such a
+// value stays in the body that creates it: a local binding, a copy, a move or
+// a field read. It cannot be passed, returned, captured or stored.
+#include <std/string>
+
+// A token views its input; it owns no text.
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  uint64_t width() { return this.text.size(); }
+};
+
+struct Note {
+  std::string_view text;
+  int column;
+};
+
+int main() {
+  std::string line{"count = 42"};
+
+  // Both values view `line`: the constructor and the designated list publish
+  // its dependency at their text fields.
+  Token name = Token(line.view(), 1);
+  Note note{.text = line.view(), .column = 7};
+
+  // A copy shares the dependency; reading the field yields a view of `line`.
+  Token copy = name;
+  std::string_view text = copy.text;
+  std::println(text);
+  std::println(note.column);
+
+  // While any of these values is live, `line` cannot be mutated, moved or
+  // destroyed; for example `line.append("!")` here is rejected.
+
+  // A token over a literal is ownerless: it keeps method calls and storage.
+  Token keyword = Token("let", 0);
+  std::println(keyword.width());
+  return name.kind == 1 && note.text.size() == 10 ? 0 : 1;
+}

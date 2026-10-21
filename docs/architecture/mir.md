@@ -1831,6 +1831,21 @@ and may hold dynamic text. Static text storage counts as ownerless because
 semantics admits only ownerless initializers and stores into it; MIR checks
 assignments to it but does not yet re-verify global initializers.
 
+A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
+`dependentTextPublication` flag marks borrow facts that belong to the call: the
+target constructor's own summary stays empty, because its other call sites
+store ownerless text. The call has one `BorrowedFieldOrigin` from an argument
+to a direct text field of a class without borrowed state. Its result carries a
+read-only `Stored` loan that designates exactly that field. The
+constructor-summary match accepts the call, and the text contracts waive that
+argument's ownerless requirement, only when the constructor's sole text
+initializer of the field reads exactly that formal and no other text
+initializer does. The constructor body must not also store the formal as
+ownerless text. `isOwnerlessTextFieldProjection` excludes a direct text-field
+place whose object carries a `Stored` loan designating the field: a carrier
+binding of that loan, or the construction's own result value. A write into
+such a field still requires ownerless text.
+
 Plain and fallible reference returns share the exact runtime-alias selection
 for a reference parameter's entry loan. If a local alias stores an accessor's
 different address, the Return operand names that alias's dereference place,
