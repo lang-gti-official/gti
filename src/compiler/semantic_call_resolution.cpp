@@ -1834,6 +1834,10 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                 ? requirement.syntax->name.last()
                 : requirement.syntax->arguments.front().name.last();
       }
+      // The concept the requirement names states what satisfies it, ahead of
+      // any concept it is defined through.
+      if (std::optional<std::string> explanation = conceptInfo.explanation())
+        failure->conceptExplanation = std::move(explanation);
       return failure;
     }
     return std::nullopt;
@@ -1873,7 +1877,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                                                               .declaration
                                                               ->name()}},
           .leafApplication = requirement.syntax,
-          .applicationArgumentIndex = index};
+          .applicationArgumentIndex = index,
+          .conceptExplanation = conceptInfo.explanation()};
     }
   }
   AppliedConceptRequirement direct = requirement;
@@ -1909,7 +1914,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
                                                         : conceptInfo
                                                               .declaration
                                                               ->name()}},
-          .leafApplication = requirement.syntax};
+          .leafApplication = requirement.syntax,
+          .conceptExplanation = conceptInfo.explanation()};
     }
   }
   return std::nullopt;

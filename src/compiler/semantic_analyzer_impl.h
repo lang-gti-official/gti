@@ -1608,6 +1608,14 @@ private:
     bool protocol = false;
     std::vector<std::string> associatedTypes;
     std::vector<ProtocolOperation> operations;
+
+    // `[[unsatisfied("...")]]`: what satisfies the concept, in its author's
+    // words.
+    [[nodiscard]] std::optional<std::string> explanation() const {
+      if (declaration == nullptr || !declaration->explanation())
+        return std::nullopt;
+      return std::string(declaration->explanation()->text());
+    }
   };
 
   // One `for <Parameters> concept Concept<Patterns...>` block. Its patterns

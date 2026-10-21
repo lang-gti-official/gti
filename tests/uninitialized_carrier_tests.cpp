@@ -284,8 +284,8 @@ void owner_states<T>() {
             isPreludeClass(transported, component, "expected") &&
             component.arguments.size() == 2 &&
             component.arguments.front().kind == lang::SemanticType::UniqueOwner;
-        const bool error = isPreludeClass(transported, component,
-                                          "std::detail::unexpected_value");
+        const bool error =
+            isPreludeClass(transported, component, "std::unexpected_value");
         if (!directOwner && !nestedOwner && !error)
           continue;
         unexpected += error;

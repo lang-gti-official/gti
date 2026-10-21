@@ -167,6 +167,16 @@ the internal call, declaration, and distinct immediate request as related spans.
 This is diagnostic provenance only: it changes neither instance keys nor
 discovery limits, semantic selection, or executable HIR/MIR behavior.
 
+An error inside a trusted library instance that user code first required is
+re-anchored the same way. Its primary becomes the requesting site, and the
+library location becomes a "Reported inside this library instance." note.
+Several internal failures of one request can then share a primary. Reports
+that differ only in their library locations merge into one diagnostic that
+lists each location. Reports from different concrete instances keep their own
+substitution and request notes, so they stay separate. Separately, the
+frontend drops an exact repeat, such as one check run twice over the same
+syntax.
+
 For early constant requests, `lowerConstantFunction` and
 `lowerConstantConstructor` reuse ordinary body lowering on a closure rooted in
 one completed constexpr function, method, or constructor. Semantics supplies

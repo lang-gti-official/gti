@@ -47,6 +47,9 @@ struct SourceSpan {
 struct RelatedDiagnostic {
   SourceSpan span;
   std::string message;
+
+  friend bool operator==(const RelatedDiagnostic &,
+                         const RelatedDiagnostic &) = default;
 };
 
 struct FixIt {
@@ -54,6 +57,8 @@ struct FixIt {
   std::string replacement;
   std::string message;
   bool preferred = true;
+
+  friend bool operator==(const FixIt &, const FixIt &) = default;
 };
 
 struct Diagnostic {
@@ -71,6 +76,8 @@ struct Diagnostic {
   // name to find candidates, but only ordinary frontend reanalysis can prove
   // an include fixes the lookup in its actual scope. Never parse message text.
   std::string missingIncludeName;
+
+  friend bool operator==(const Diagnostic &, const Diagnostic &) = default;
 };
 
 [[nodiscard]] inline bool
