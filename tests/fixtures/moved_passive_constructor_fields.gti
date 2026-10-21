@@ -12,7 +12,7 @@
 // formal sees the written value. A text view or C string, directly or as a
 // generic owner's value, carries only its caller's loan into a field that
 // keeps ownerless text, so it takes the same body-ordered route, even after
-// an earlier sibling reads it.
+// an earlier sibling reads it; so does a function name.
 // Copying these formals already compiled; moving them was GTI-B0001.
 #include <std/string>
 #include <std/utility>
@@ -40,6 +40,9 @@ int32_t amount(Reading reading) {
 }
 
 bool odd(int32_t value) { return value % 2 == 1; }
+
+int32_t seven() { return 7; }
+int32_t call<F>(F f) { return f(); }
 
 // A user-defined owning field whose constructor can fail precedes the move.
 class Stocked {
@@ -149,22 +152,36 @@ public:
 };
 
 // A text view and a C string carry only their caller's entry loan. Their
-// by-value fields keep ownerless text, so the moves publish no dependency:
-// MIR records each one as the constructor record's exact Move, which stays in
-// the body after the fallible ledger. An earlier sibling reads the view first.
-class Viewed {
+// by-value fields keep ownerless text, so the moves publish no dependency.
+// MIR records each move, like a function name's, as the constructor record's
+// exact Move, which stays in the body after the fallible ledger. An earlier
+// sibling reads the view first.
+class Viewed<F> {
 public:
   Ledger ledger;
   uint64_t length;
   std::string_view name;
   c_string tag;
+  F action;
   mut int32_t quotient;
-  Viewed(std::string_view name, c_string tag)
+  Viewed(std::string_view name, c_string tag, F action)
       : ledger(Ledger(29, divisor_for(7))), length(name.size()),
-        name(std::move(name)), tag(std::move(tag)), quotient(0) {
+        name(std::move(name)), tag(std::move(tag)), action(std::move(action)),
+        quotient(0) {
     this.quotient = 60 / divisor_for(8);
   }
 };
+
+// The text, the C string and a function name are all moved after the ledger.
+void view_with<F>(F action) {
+  Viewed<F> viewed = Viewed<F>("viewed", "tag", action);
+  std::println(int32_t(viewed.length) + int32_t(viewed.name.size()) +
+               viewed.ledger.id + viewed.quotient + call(viewed.action));
+  unsafe {
+    auto tag = std::string::try_from_c_string(viewed.tag);
+    std::println(tag ? int32_t(tag.value().size()) : 0);
+  }
+}
 
 int main(int argc, std::vector<std::string> argv) {
   stage = argc - 1;
@@ -209,12 +226,6 @@ int main(int argc, std::vector<std::string> argv) {
   Shelf<std::string_view> titled = Shelf<std::string_view>("shelf");
   std::println(int32_t(titled.value.size()) + titled.ledger.id);
 
-  Viewed viewed = Viewed("viewed", "tag");
-  std::println(int32_t(viewed.length) + int32_t(viewed.name.size()) +
-               viewed.ledger.id + viewed.quotient);
-  unsafe {
-    auto tag = std::string::try_from_c_string(viewed.tag);
-    std::println(tag ? int32_t(tag.value().size()) : 0);
-  }
+  view_with(seven);
   return 0;
 }
