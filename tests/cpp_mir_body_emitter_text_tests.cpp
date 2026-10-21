@@ -1495,6 +1495,239 @@ int main() {
   expect(viewConstructors == 1, "the view fixture keeps its constructor");
 }
 
+void testMovedChainReturnConstruction() {
+  // A failure-free body returns a class constructed from a moved scalar. The
+  // Move and its call input stage into the construction and never
+  // materialize, so the returned construction must spell std::move over the
+  // formal; spelling the unassigned call-input local returned zero.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-chain-return.gti", R"(
+#include <std/utility>
+
+class Holder {
+public:
+  int32_t value;
+  Holder(int32_t value) : value(value) {}
+};
+
+Holder make(int32_t value) { return Holder(std::move(value)); }
+
+expected<int32_t, int32_t> refuse(int32_t code) {
+  return unexpected(std::move(code));
+}
+
+int main() {
+  Holder holder = make(42);
+  return holder.value - 42 + (refuse(3) ? 1 : refuse(3).error() - 3);
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved-chain return fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  for (std::string_view name : {"make", "unexpected"}) {
+    const lang::MirFunctionInstance *function = nullptr;
+    for (const lang::HirFunctionInstance &candidate :
+         frontend.hir.functionInstances())
+      if (candidate.source != nullptr &&
+          candidate.source->name().lexeme == name)
+        function = frontend.mir.findFunctionInstance(candidate.id);
+    expect(function != nullptr && !function->mayRaiseDefinedFailure,
+           "a construction from a moved scalar should be failure-free");
+    if (function == nullptr) {
+      continue;
+    }
+    const std::string text = selectedBodyText(frontend, *function);
+    const std::size_t link = text.find("links a moved-place chain");
+    const std::size_t returned = text.find("(std::move(__gti_mir_p_1));");
+    expect(link != std::string::npos && returned != std::string::npos &&
+               text.find("return ", link) < returned,
+           "the returned construction should move the formal itself: " + text);
+  }
+}
+
+void testMovedPassiveFieldInPlainConstructor() {
+  // Moving a scalar formal cannot fail, so these constructors are proved
+  // failure-free and use the ordinary form. A move after a computed or called
+  // sibling, or after a copy of the same formal, cannot be hoisted into the
+  // member-initializer list: the ordinary body publishes it in MIR order from
+  // the field's empty state. A leading move stays a native publication.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-passive-plain-field.gti", R"(
+#include <std/utility>
+
+bool is_odd(int32_t value) { return (value & 1) == 1; }
+
+class Gauge {
+public:
+  bool odd;
+  bool flagged;
+  int32_t tag;
+  Gauge(int32_t tag)
+      : odd((tag & 1) == 1), flagged(is_odd(tag)), tag(std::move(tag)) {}
+};
+
+class Copied {
+public:
+  int32_t first;
+  int32_t second;
+  Copied(int32_t tag) : first(tag), second(std::move(tag)) {}
+};
+
+class Leading {
+public:
+  int32_t tag;
+  bool odd;
+  Leading(int32_t tag, int32_t other)
+      : tag(std::move(tag)), odd(is_odd(other)) {}
+};
+
+class CopiedChecked {
+public:
+  int32_t first;
+  int32_t second;
+  int32_t quotient;
+  CopiedChecked(int32_t tag, int32_t divisor)
+      : first(tag), second(std::move(tag)), quotient(60 / divisor) {}
+};
+
+int main() {
+  Gauge gauge = Gauge(7);
+  Copied copied = Copied(9);
+  Leading leading = Leading(11, 3);
+  CopiedChecked checked = CopiedChecked(2, 30);
+  return gauge.odd && gauge.flagged && leading.odd
+             ? gauge.tag + copied.first + copied.second + leading.tag +
+                   checked.first + checked.second + checked.quotient - 42
+             : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the plain moved-passive-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto constructorOf =
+      [&](std::string_view owner) -> const lang::MirConstructorInstance * {
+    const auto found = std::find_if(
+        frontend.hir.classInstances().begin(),
+        frontend.hir.classInstances().end(), [&](const auto &instance) {
+          return instance.source != nullptr &&
+                 instance.source->name().lexeme == owner;
+        });
+    for (const lang::MirConstructorInstance &constructor :
+         frontend.mir.constructorInstances())
+      if (found != frontend.hir.classInstances().end() &&
+          constructor.owner == found->id)
+        return &constructor;
+    return nullptr;
+  };
+  const lang::MirConstructorInstance *gauge = constructorOf("Gauge");
+  const lang::MirConstructorInstance *copied = constructorOf("Copied");
+  const lang::MirConstructorInstance *leading = constructorOf("Leading");
+  const lang::MirConstructorInstance *checked = constructorOf("CopiedChecked");
+  expect(gauge != nullptr && copied != nullptr && leading != nullptr &&
+             checked != nullptr && !gauge->mayRaiseDefinedFailure &&
+             !copied->mayRaiseDefinedFailure &&
+             !leading->mayRaiseDefinedFailure &&
+             checked->mayRaiseDefinedFailure,
+         "a scalar move is failure-free; the division keeps its failure");
+  if (gauge == nullptr || copied == nullptr || leading == nullptr ||
+      checked == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  const auto address = [](const lang::MirConstructorInstance &constructor) {
+    return lang::MirBodyAddress{.kind = lang::MirBodyKind::Constructor,
+                                .owner = constructor.id};
+  };
+  for (const lang::MirConstructorInstance *staged : {gauge, copied}) {
+    expect(!lang::cppMirOwnedParameterFieldBindings(frontend.mir, *staged) &&
+               lang::cppMirOrdinaryBodyStagedParameterMoves(frontend.mir,
+                                                            *staged) &&
+               emitter.supportsBodyText(address(*staged)) &&
+               !emitter.supportsFailureBodyText(address(*staged)),
+           "a move after earlier initializer work publishes in the ordinary "
+           "body instead of the member-initializer list");
+  }
+  const auto leadingMoves =
+      lang::cppMirOwnedParameterFieldBindings(frontend.mir, *leading);
+  expect(leadingMoves && leadingMoves->size() == 1 &&
+             emitter.supportsBodyText(address(*leading)),
+         "a leading move keeps its native member-initializer publication");
+  expect(!lang::cppMirOwnedParameterFieldBindings(frontend.mir, *checked) &&
+             emitter.supportsFailureBodyText(address(*checked)),
+         "a failure-form copy ahead of its own move publishes in body order");
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("plain moved passive fields should emit: ") +
+                      error.what());
+    return;
+  }
+  const auto definition = [&](std::string_view head) {
+    const std::size_t start = text.find(head);
+    const std::size_t end =
+        start == std::string::npos ? start : text.find("\n  }\n", start);
+    return end == std::string::npos ? std::string()
+                                    : text.substr(start, end - start);
+  };
+  const std::string gaugeText = definition("Gauge::Gauge(std::int32_t");
+  const std::string copiedText = definition("Copied::Copied(std::int32_t");
+  const std::string checkedText = definition(
+      "CopiedChecked::CopiedChecked(::gti_internal::backend::mir_failure_"
+      "constructor_tag_v1<");
+  const std::size_t call = gaugeText.find("is_odd(");
+  const std::size_t move = gaugeText.find(" = std::move(__gti_mir_p_");
+  expect(gaugeText.find("tag(::gti_internal::backend::mir_empty_state_v1<") !=
+                 std::string::npos &&
+             gaugeText.find("std::move(__gti_mir_arg_") == std::string::npos &&
+             call != std::string::npos && move != std::string::npos &&
+             call < move &&
+             text.find("Gauge(::gti_internal::backend::mir_failure_"
+                       "constructor_tag_v1<") == std::string::npos,
+         "the ordinary constructor moves its formal once, after the call, "
+         "and no failure form remains");
+  for (const std::string *body : {&copiedText, &checkedText}) {
+    const std::size_t shell = body->find(" __gti_mir_p_1 = __gti_mir_arg_0;");
+    const std::size_t copy = body->find(" = __gti_mir_p_1;");
+    const std::size_t moved = body->find(" = std::move(__gti_mir_p_1);");
+    expect(shell != std::string::npos && copy != std::string::npos &&
+               moved != std::string::npos && shell < copy && copy < moved &&
+               body->find("std::move(__gti_mir_arg_0)") == std::string::npos,
+           "a copy ahead of its own move reads the declared formal shell "
+           "before the body moves it");
+  }
+
+  // Borrowed state and a failure-capable summary each leave this route.
+  lang::MirProgram borrowed = frontend.mir;
+  lang::MirProgram failing = frontend.mir;
+  auto &borrowedConstructors =
+      const_cast<std::vector<lang::MirConstructorInstance> &>(
+          borrowed.constructorInstances());
+  bool forged = false;
+  for (lang::MirValue &value : borrowedConstructors[gauge->id - 1].body.values)
+    if (value.info.type == lang::SemanticType::Int32 &&
+        value.sourceValue == gauge->initializers.back().arguments.front()) {
+      value.info.traits.containsBorrowedState = true;
+      forged = true;
+    }
+  const_cast<std::vector<lang::MirConstructorInstance> &>(
+      failing.constructorInstances())[gauge->id - 1]
+      .mayRaiseDefinedFailure = true;
+  expect(forged &&
+             !lang::cppMirOrdinaryBodyStagedParameterMoves(
+                 borrowed, borrowed.constructorInstances()[gauge->id - 1]) &&
+             !lang::cppMirOrdinaryBodyStagedParameterMoves(
+                 failing, failing.constructorInstances()[gauge->id - 1]),
+         "the ordinary route stages only drop-free moves of failure-free "
+         "constructors");
+}
+
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
@@ -7771,6 +8004,9 @@ constexpr NamedTest kTests[] = {
      testMovedClosureFieldInFallibleConstructor},
     {"testMovedPassiveFieldAfterFallibleSibling",
      testMovedPassiveFieldAfterFallibleSibling},
+    {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
+    {"testMovedPassiveFieldInPlainConstructor",
+     testMovedPassiveFieldInPlainConstructor},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",
