@@ -9,6 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.454.0 — Text fields that view a local owner
+
+- A class or struct value may now hold a view of a named local string in a
+  text field. `Token token = Token(input.view(), 3);` and
+  `Note note{.text = input.view(), .column = 7};` used to report
+  `error[GTI-S2045]`. They now compile, and the value keeps `input` borrowed
+  read-only: mutating, moving or destroying `input` while `token` is live is
+  rejected. No text is copied or allocated.
+- Copies of such a value share the dependency, a move transfers it, and
+  reading the field, as in `std::string_view head = token.text;`, gives a view
+  of the same owner. Other text fields of the value stay ownerless.
+- For now the value must stay in the function that creates it. Passing it to a
+  function, calling a method on it, returning it, capturing it, binding a
+  reference to it or storing it reports `error[GTI-S2045]` ("This value holds
+  dynamic text from a local owner"). A value may view one owner. Classes with
+  a destructor, a base or virtual methods keep the previous rule. A value over
+  a literal is unaffected and keeps every capability.
+
 ## 0.453.5 — Constructors that copy a parameter after changing it
 
 - Fix wrong code when a constructor copies a parameter into a field after an

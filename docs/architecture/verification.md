@@ -1,5 +1,31 @@
 # Compiler Verification
 
+## Owner-tracked view fields, phase 1a (0.454.0)
+
+`view_fields` checks the publication facts. Each dependent construction
+carries the `dependentTextPublication` flag and a read-only `Stored` loan that
+designates its one text field, and its constructor's HIR summary stays empty.
+Three MIR mutations are each rejected by the verifier: a cleared flag, a
+publication naming the wrong formal, and a loan without its designated field.
+Twelve confinement cases are each rejected at source and never reach an
+internal error: arguments, a method receiver, an ownerless sink, assignment,
+a reference, a capture, two owners, a destructor class, a temporary owner,
+and owner mutation through the value and through a view read from it.
+`view_fields_runtime` runs constructor and designated publication, copies,
+moves, a dependent view read, a mixed dependent and ownerless value and an
+ownerless relay under C++20 and C++23 at O0, O1 and O3, without copy elision,
+and with ASan and UBSan.
+
+A differential `--emit-cpp` run against the merge-base compiler (`33220490`)
+covered the 1,338 programs in `examples`, `tests/fixtures` and
+`tests/coverage`. Every program kept its exit status, and 1,335 emit
+byte-identical C++. The other three are source-location fixtures whose
+embedded file path, and its length, differ only because the two trees live at
+different roots. The first run found 176 programs that the
+branch rejected with `GTI-S2045`: a range-for's hidden reference binding has a
+retained loan, so its read was mistaken for a dependent carrier. A carrier
+must now be a binding of the class type itself.
+
 ## Constructor copies after formal writes (0.453.5)
 
 `constructor_copy_after_formal_write_runtime` runs

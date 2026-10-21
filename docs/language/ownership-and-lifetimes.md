@@ -2312,7 +2312,8 @@ runtime loan; a dynamic argument transfers its existing owner dependency to
 the result. That retained loan prevents mutation, movement, or destruction of
 the owner until the last local carrier ends. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
-storage, or be nested in a field, global, static, array, or dynamic container.
+storage, or be nested in a global, static, array, or dynamic container. It
+reaches a field only through the owner-tracked view fields described below.
 Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
@@ -2326,6 +2327,40 @@ dynamic initializer such as `text(owner.view())` is rejected at its initializer;
 an ordinary view parameter forwarded to a storing constructor is potentially
 dynamic, even if some callers happen to pass literals. Conditional expressions
 cannot erase a dynamic operand's dependency.
+
+### Owner-tracked view fields
+
+A value may hold a view of a named local owner in a direct text field when
+the value stays in the body that creates it. A constructor whose initializer
+stores a text parameter, or a designated list, then publishes the argument's
+owner dependency at that field instead of rejecting the argument:
+
+```gti
+std::string input{"token text"};
+Token token = Token(input.view(), 3);       // token.text views input
+Diag diag{.text = input.view(), .line = 2}; // so does diag.text
+std::string_view head = token.text;         // a view of input as well
+```
+
+The dependency belongs to the value, not to its type. A `Token` over a literal
+is ownerless and keeps every capability: it may be stored, passed, returned or
+used as a method receiver. A value with a dependency:
+
+- may initialize a local binding, be copied into another local (both carry the
+  one dependency) or be moved;
+- yields, when its published field is read, a dynamic view of the same owner;
+  its other text fields stay ownerless;
+- keeps its owner borrowed read-only until its last carrier ends, so the owner
+  cannot be mutated, moved or destroyed while the value is live.
+
+It cannot yet be passed to a function or constructor, used as a method
+receiver, returned, captured, bound by a reference, assigned into existing
+storage, or stored in a global, a field, an array or a container. Each of these
+is `GTI-S2045`. Code outside the creating body reads text fields as ownerless,
+so a dependent value must not reach it. For the same reason a class with a
+destructor, a base or virtual methods keeps the ownerless field rule. A value
+holds dynamic text from at most one owner, and that owner must be a named
+place: a view of a temporary owner is rejected as before.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
@@ -2363,8 +2398,10 @@ require the declared owner. Callers conservatively retain the summarized owner
 dependency for the whole result, even when a literal/null branch executes.
 
 A `std::string_view` or `c_string` field, or a fixed-array element of either
-type, holds only an ownerless view, because a dynamic view cannot be stored
-there, including through a constructor initializer. Returning such storage,
+type, holds only an ownerless view wherever a method, parameter or return can
+reach it: a dynamic view is stored there, including through a constructor
+initializer, only by an owner-tracked value that stays in its creating body.
+Returning such storage,
 as in `return this.name;`, `return name;`, `return this.label.text;`,
 `return this.aliases[index];` or
 `return label.text;` through a parameter, copies that independent value. It

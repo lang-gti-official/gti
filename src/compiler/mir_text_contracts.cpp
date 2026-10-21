@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <set>
 #include <span>
 #include <unordered_set>
@@ -30,11 +31,28 @@ public:
 
   MirVerificationResult verify();
 
+  // The ownerless inputs that the constructor's text field initializers
+  // require, and the formals that alone initialize one direct text field
+  // each, keyed to that field.
+  struct InitializerTextInputs {
+    std::set<std::size_t> requirements;
+    std::map<std::size_t, SymbolId> fields;
+  };
+  InitializerTextInputs
+  initializerTextInputs(const MirConstructorInstance &constructor,
+                        bool diagnose);
+
 private:
   const MirProgram &program;
   MirVerificationResult result;
   std::vector<std::set<std::size_t>> requirements;
   std::vector<std::set<std::size_t>> constructorRequirements;
+  // Per constructor: the formals that initialize exactly one direct text
+  // field and reach no other text initializer, keyed to that field.
+  std::vector<std::map<std::size_t, SymbolId>> constructorTextFields;
+  // Formals whose text a construction published under its result's loan; the
+  // constructor body must not also store them as ownerless text.
+  std::set<std::pair<std::size_t, std::size_t>> publishedFormals;
   std::unordered_set<HirFunctionInstanceId> activeReturns;
   std::set<std::size_t> activeTemporaries;
 
@@ -283,6 +301,35 @@ private:
     return sources(context, operand, active);
   }
 
+  // A construction whose result carries a read-only Stored loan designating
+  // one direct text field publishes the argument for that field as dependent
+  // text: the loan, not an ownerless proof, keeps the text valid.
+  bool publishesText(const TextBody &context, const MirInstruction &instruction,
+                     std::size_t index) {
+    const auto constructor = *instruction.constructorTarget;
+    const auto &fields = constructorTextFields[constructor - 1];
+    const auto field = fields.find(index);
+    const auto *loan =
+        instruction.loan ? context.body.findLoan(*instruction.loan) : nullptr;
+    if (!instruction.dependentTextPublication || field == fields.end() ||
+        !loan || loan->kind != MirLoanKind::Stored ||
+        loan->access != AccessMode::ReadOnly ||
+        loan->designatedFields != std::vector<SymbolId>{field->second} ||
+        !loan->additionalDependencies.empty() ||
+        !directTextField(program, instruction.info.type, field->second))
+      return false;
+    const BorrowedFieldOrigin expected{.resultFields = {field->second},
+                                       .origin = BorrowOriginKind::Argument,
+                                       .parameter = index,
+                                       .access = AccessMode::ReadOnly};
+    if (std::find(instruction.borrowFields.begin(),
+                  instruction.borrowFields.end(),
+                  expected) == instruction.borrowFields.end())
+      return false;
+    publishedFormals.emplace(constructor, index);
+    return true;
+  }
+
   std::set<std::size_t> scan(const TextBody &context, std::size_t owner,
                              bool diagnose) {
     std::set<std::size_t> needed;
@@ -309,6 +356,9 @@ private:
               &constructorRequirements[*instruction.constructorTarget - 1];
         if (required)
           for (const auto index : *required) {
+            if (instruction.kind == MirInstructionKind::Construct &&
+                publishesText(context, instruction, index))
+              continue;
             if (index < instruction.operands.size())
               require(instruction, instruction.operands[index]);
             else if (diagnose)
@@ -380,38 +430,56 @@ private:
   }
 };
 
+auto TextContracts::initializerTextInputs(
+    const MirConstructorInstance &constructor, bool diagnose)
+    -> InitializerTextInputs {
+  const TextBody context{constructor.body, constructor.parameterTypes,
+                         constructor.parameterBindings};
+  InitializerTextInputs inputs;
+  std::map<std::size_t, std::size_t> uses;
+  for (const auto &initializer : constructor.initializers) {
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        !textType(initializer.targetType) || initializer.arguments.size() != 1)
+      continue;
+    // A `nullptr` initializer of a c_string field keeps its own literal
+    // type; the literal is ownerless text by construction.
+    const auto found = std::find_if(
+        constructor.body.values.begin(), constructor.body.values.end(),
+        [&](const auto &value) {
+          return value.sourceValue == initializer.arguments.front() &&
+                 (value.info.type == initializer.targetType ||
+                  (initializer.targetType.kind == SemanticType::CString &&
+                   value.info.type.kind == SemanticType::NullPtr));
+        });
+    const auto source = found == constructor.body.values.end()
+                            ? TextSources{}
+                            : sources(context, {.kind = MirOperandKind::Value,
+                                                .value = found->id,
+                                                .type = found->info.type});
+    if (!source.known && diagnose)
+      fail(context, constructor.id, nullptr,
+           "text field initializer has no independent ownerless input proof");
+    inputs.requirements.insert(source.parameters.begin(),
+                               source.parameters.end());
+    for (const auto parameter : source.parameters)
+      ++uses[parameter];
+    if (source.known && source.parameters.size() == 1 && initializer.field != 0)
+      inputs.fields.emplace(*source.parameters.begin(), initializer.field);
+  }
+  std::erase_if(inputs.fields,
+                [&](const auto &entry) { return uses[entry.first] != 1; });
+  return inputs;
+}
+
 MirVerificationResult TextContracts::verify() {
   requirements.resize(program.functionInstances().size());
   constructorRequirements.resize(program.constructorInstances().size());
+  constructorTextFields.resize(program.constructorInstances().size());
   for (const auto &constructor : program.constructorInstances()) {
-    const TextBody context{constructor.body, constructor.parameterTypes,
-                           constructor.parameterBindings};
-    for (const auto &initializer : constructor.initializers) {
-      if (initializer.kind != ConstructorInitializerTargetKind::Field ||
-          !textType(initializer.targetType) ||
-          initializer.arguments.size() != 1)
-        continue;
-      // A `nullptr` initializer of a c_string field keeps its own literal
-      // type; the literal is ownerless text by construction.
-      const auto found = std::find_if(
-          constructor.body.values.begin(), constructor.body.values.end(),
-          [&](const auto &value) {
-            return value.sourceValue == initializer.arguments.front() &&
-                   (value.info.type == initializer.targetType ||
-                    (initializer.targetType.kind == SemanticType::CString &&
-                     value.info.type.kind == SemanticType::NullPtr));
-          });
-      const auto source = found == constructor.body.values.end()
-                              ? TextSources{}
-                              : sources(context, {.kind = MirOperandKind::Value,
-                                                  .value = found->id,
-                                                  .type = found->info.type});
-      if (!source.known)
-        fail(context, constructor.id, nullptr,
-             "text field initializer has no independent ownerless input proof");
-      constructorRequirements[constructor.id - 1].insert(
-          source.parameters.begin(), source.parameters.end());
-    }
+    auto inputs = initializerTextInputs(constructor, true);
+    constructorRequirements[constructor.id - 1] =
+        std::move(inputs.requirements);
+    constructorTextFields[constructor.id - 1] = std::move(inputs.fields);
   }
   bool changed = true;
   while (changed) {
@@ -466,6 +534,7 @@ MirVerificationResult TextContracts::verify() {
     (void)scan({instance.fieldInitializers, {}, {}}, instance.id, true);
     (void)scan({instance.staticFieldInitializers, {}, {}}, instance.id, true);
   }
+  std::vector<std::set<std::size_t>> constructorBodyNeeds;
   for (const auto &constructor : program.constructorInstances()) {
     const TextBody context{constructor.body, constructor.parameterTypes,
                            constructor.parameterBindings};
@@ -476,6 +545,7 @@ MirVerificationResult TextContracts::verify() {
       fail(context, constructor.id, nullptr,
            "constructor call requires an unrepresented ownerless text input "
            "contract");
+    constructorBodyNeeds.push_back(needed);
   }
   for (const auto &destructor : program.destructorInstances())
     (void)scan({destructor.body, {}, {}}, destructor.owner, true);
@@ -486,6 +556,13 @@ MirVerificationResult TextContracts::verify() {
       fail({lambda.body, lambda.parameterTypes, lambda.parameterBindings},
            lambda.id, nullptr,
            "lambda requires an unrepresented ownerless text input contract");
+  for (const auto &[constructor, index] : publishedFormals)
+    if (constructorBodyNeeds[constructor - 1].contains(index)) {
+      const auto &instance = program.constructorInstances()[constructor - 1];
+      fail({instance.body, instance.parameterTypes, instance.parameterBindings},
+           constructor, nullptr,
+           "dependent text argument also reaches ownerless text storage");
+    }
   if (program.embeddingPlan())
     for (const auto &entry : program.embeddingPlan()->exports)
       if (entry.function && entry.function <= requirements.size() &&
@@ -495,6 +572,41 @@ MirVerificationResult TextContracts::verify() {
              .message =
                  "native export erases an ownerless text input contract"});
   return std::move(result);
+}
+} // namespace
+
+namespace {
+// Whether the object that a direct text-field place reads carries a Stored
+// loan designating that field: one of the loan's carrier bindings, or the
+// value that its publishing construction produced (L-OWN-02). Such a field
+// holds its owner's dynamic text.
+bool dependentTextCarrierField(const MirBody &body, const MirPlace &place) {
+  if (place.projections.size() != 1 ||
+      place.projections.front().kind != MirProjectionKind::Field)
+    return false;
+  const std::vector<SymbolId> field{place.projections.front().field};
+  const MirPlace *root = &place;
+  for (std::size_t depth = 0;
+       root->root == MirPlaceRootKind::Loan && depth <= body.loans.size();
+       ++depth) {
+    const auto *loan = body.findLoan(root->loan);
+    const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+    if (!source || !source->projections.empty())
+      return false;
+    root = source;
+  }
+  const auto *value = root->root == MirPlaceRootKind::Value
+                          ? body.findValue(root->value)
+                          : nullptr;
+  return std::any_of(
+      body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+        return loan.kind == MirLoanKind::Stored &&
+               loan.designatedFields == field &&
+               ((root->root == MirPlaceRootKind::Binding &&
+                 std::find(loan.carriers.begin(), loan.carriers.end(),
+                           root->binding) != loan.carriers.end()) ||
+                (value != nullptr && value->sourceValue == loan.producedBy));
+      });
 }
 } // namespace
 
@@ -511,7 +623,8 @@ bool isOwnerlessTextFieldProjection(const MirProgram &program,
       std::none_of(place.projections.begin(), place.projections.end(),
                    [](const auto &projection) {
                      return projection.kind == MirProjectionKind::Field;
-                   }))
+                   }) ||
+      dependentTextCarrierField(body, place))
     return false;
   std::optional<SemanticType> current;
   for (const auto &root : body.places) {
@@ -567,6 +680,33 @@ bool isOwnerlessTextFieldProjection(const MirProgram &program,
     }
   }
   return *current == place.type;
+}
+
+bool directTextField(const MirProgram &program, const SemanticType &type,
+                     SymbolId field) {
+  if (type.kind != SemanticType::Class || field == 0)
+    return false;
+  const auto instance = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &candidate) { return candidate.type == type; });
+  return instance != program.classInstances().end() &&
+         !instance->traits.containsBorrowedState &&
+         std::any_of(instance->declaredFields.begin(),
+                     instance->declaredFields.end(), [&](const auto &entry) {
+                       return entry.symbol == field && textType(entry.type);
+                     });
+}
+
+std::optional<std::size_t>
+dependentTextFieldFormal(const MirProgram &program,
+                         const MirConstructorInstance &constructor,
+                         SymbolId field) {
+  TextContracts contracts(program);
+  for (const auto &[formal, target] :
+       contracts.initializerTextInputs(constructor, false).fields)
+    if (target == field)
+      return formal;
+  return std::nullopt;
 }
 
 MirVerificationResult verifyOwnerlessTextContracts(const MirProgram &program) {
