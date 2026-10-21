@@ -15753,10 +15753,10 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
 // A trivially dropped scalar, enum, pointer or array value has no parameter
 // shell drop either: MIR records no obligation for its formal, its moved value
 // or its field, so the proof demands that complete absence. MIR stages a text
-// view without an Initialize: the constructor record publishes its exact Move
-// (mirRecordPublishedConstructorInitializer), which the body emits in MIR
-// order. Borrowed state is admitted only as formalEntryLoanOnlyMove's entry
-// loan.
+// view or a function item without an Initialize: the constructor record
+// publishes its exact Move (mirRecordPublishedConstructorInitializer), which
+// the body emits in MIR order. Borrowed state is admitted only as
+// formalEntryLoanOnlyMove's entry loan.
 [[nodiscard]] bool bodyStagedOwnedParameterFieldInitializers(
     const MirProgram &program, const MirConstructorInstance &constructor) {
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
@@ -56339,6 +56339,10 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
             }
             if ((instruction.destination &&
                  namesFormal(*instruction.destination)) ||
+                (instruction.successResultDestination &&
+                 namesFormal(*instruction.successResultDestination)) ||
+                (instruction.retainedOwnerPlace &&
+                 namesFormal(*instruction.retainedOwnerPlace)) ||
                 (instruction.receiver &&
                  operandNamesFormal(*instruction.receiver)) ||
                 std::any_of(instruction.operands.begin(),
