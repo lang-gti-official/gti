@@ -1593,8 +1593,9 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
     }
-    // A local binding that retains a dependent text value (L-OWN-02).
-    if (textDependentType(type) && symbol != nullptr &&
+    // A local binding that retains a dependent text value (L-OWN-02). A
+    // reference binding's loan is its referent's, not a text dependency.
+    if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
         symbol->retainedLoan != 0 && symbol->variableDeclaration != nullptr) {
       const auto *binding =
           semanticModel.findBinding(*symbol->variableDeclaration);

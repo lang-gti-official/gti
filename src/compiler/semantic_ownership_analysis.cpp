@@ -1253,10 +1253,11 @@ auto SemanticVisitor::Impl::textDependentFields(const Expr &expression) const
   const Symbol *symbol =
       variable == nullptr ? nullptr : resolvedBorrowVariable(*variable);
   const SemanticLoanInfo *loan =
-      symbol == nullptr || symbol->retainedLoan == 0
+      symbol == nullptr || symbol->retainedLoan == 0 ||
+              symbol->type.kind == SemanticType::Reference
           ? nullptr
           : semanticModel.findLoan(symbol->retainedLoan);
-  if (loan == nullptr)
+  if (loan == nullptr || loan->kind != SemanticLoanKind::StoredValue)
     return fields;
   fields = loan->designatedFields;
   for (const auto &dependency : loan->additionalDependencies)
