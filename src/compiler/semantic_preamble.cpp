@@ -88,6 +88,7 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);
   requestSession.rawResultQueries.reset();
+  requestSession.openReanalyses.reset();
   requestSession.collectingRawResult.reset();
   compilerTypeClasses = source.compilerTypeClasses;
   designatedMoves = source.designatedMoves;
@@ -228,6 +229,8 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
             std::chrono::steady_clock::now() - finalizationStart)
             .count());
   }
+  // As in check(): no worker copied mid-analysis serves concrete requests.
+  stagedWorker = {};
   lateDemandReady = trustedBodies == TrustedBodyAnalysis::Reachable;
   return !hadError();
 }

@@ -177,8 +177,10 @@ public:
   // into an empty delta that reads through to the detached base, and the
   // bracket then restores the base and identity counters. Analyses are
   // strictly sequential: a bracket must close before the next one opens.
+  // While it is open, reanalysisBase names the detached base and the
+  // instance is on the staging chain's list of open reanalyses.
   struct InstanceAnalysisScope {
-    explicit InstanceAnalysisScope(Impl &visitor)
+    InstanceAnalysisScope(Impl &visitor, InstanceAnalysisKey instance)
         : visitor(visitor), baseModel(std::move(visitor.semanticModel)),
           baseDiagnostics(std::move(visitor.diagnostics)),
           savedGenericParameterId(visitor.nextGenericParameterId),
@@ -186,13 +188,25 @@ public:
           savedFunctionId(visitor.nextFunctionId),
           savedLambdaId(visitor.nextLambdaId),
           savedSemanticLoanId(visitor.nextSemanticLoanId),
-          savedPlaceSelectionId(visitor.nextPlaceSelectionId) {
+          savedPlaceSelectionId(visitor.nextPlaceSelectionId),
+          openReanalyses(visitor.openReanalyses()) {
       visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel,
                                                visitor.instanceSymbolCeiling);
       if (visitor.journalNextInstance)
         visitor.semanticModel.beginInstanceReuseJournal();
       visitor.diagnostics.clear();
+      visitor.reanalysisBase = &baseModel;
+      // A constant that one of the instance's static assertions requires can
+      // need the instance itself (reflecting on its own fields, constructing
+      // it), so staging may reanalyse it in a nested worker. The enclosing
+      // reanalysis owns those assertions and an assertion yields no value,
+      // so the nested one supplies the instance's facts without them.
+      nested = std::find(openReanalyses->begin(), openReanalyses->end(),
+                         instance) != openReanalyses->end();
+      if (!nested)
+        openReanalyses->push_back(std::move(instance));
+      visitor.requestSession.assertionsOwnedUpChain = nested;
     }
 
     ~InstanceAnalysisScope() { visitor.catalog.assertUnchangedSinceSeal(); }
@@ -223,7 +237,11 @@ public:
       visitor.nextSemanticLoanId = savedSemanticLoanId;
       visitor.nextPlaceSelectionId = savedPlaceSelectionId;
       visitor.instanceBaseModel = nullptr;
+      visitor.reanalysisBase = nullptr;
       visitor.instanceAnalysisActive = false;
+      visitor.requestSession.assertionsOwnedUpChain = false;
+      if (!nested)
+        openReanalyses->pop_back();
       result.model.rebase(&visitor.semanticModel);
       return result;
     }
@@ -237,7 +255,20 @@ public:
     LambdaId savedLambdaId;
     SemanticLoanId savedSemanticLoanId;
     std::size_t savedPlaceSelectionId;
+    std::shared_ptr<std::vector<InstanceAnalysisKey>> openReanalyses;
+    bool nested = false;
   };
+
+  // Concrete instances whose reanalysis is open along the current staging
+  // chain: this analyzer's own and those of the analyzers whose constants
+  // staged into it. Staged workers share the list.
+  [[nodiscard]] std::shared_ptr<std::vector<InstanceAnalysisKey>>
+  openReanalyses() {
+    if (!requestSession.openReanalyses)
+      requestSession.openReanalyses =
+          std::make_shared<std::vector<InstanceAnalysisKey>>();
+    return requestSession.openReanalyses;
+  }
 
   // New concrete-only declarations must not reuse another instance's IDs.
   // Primary declaration IDs remain inherited; the base snapshot stays
@@ -5774,6 +5805,10 @@ private:
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
     const SemanticModel *instanceBaseModel = nullptr;
+    // The detached canonical model of the open InstanceAnalysisScope, for
+    // every kind of concrete reanalysis. instanceBaseModel publishes the
+    // same model to function and constructor bodies only.
+    const SemanticModel *reanalysisBase = nullptr;
     const FunctionDecl *currentFunctionDeclaration = nullptr;
     std::optional<SemanticType> contextualInitializerType;
     const Expr *contextualInitializerExpression = nullptr;
@@ -5795,6 +5830,11 @@ private:
     std::vector<CThreadCallUse> cThreadCallUses;
     std::vector<RawBorrowCallUse> rawBorrowCallUses;
     std::shared_ptr<RawResultQueryState> rawResultQueries;
+    // See openReanalyses() and InstanceAnalysisScope.
+    std::shared_ptr<std::vector<InstanceAnalysisKey>> openReanalyses;
+    // Set while this analyzer reanalyses an instance whose reanalysis is
+    // already open further up the staging chain, which owns its assertions.
+    bool assertionsOwnedUpChain = false;
     std::shared_ptr<CompleteReturnQueryState> completeReturnQueries;
     std::shared_ptr<RawResultQuery> collectingRawResult;
     std::size_t rawAccessObservation = 0;
@@ -5994,6 +6034,14 @@ private:
   // Analyses one deferred body in its own declaration context.
   void analyzeDeferredBody(RequestSessionState::DeferredBody body);
 
+  // A concrete reanalysis of any instance kind (function, constructor,
+  // destructor, or class field initializers and static assertions) runs over
+  // the completed program, so declaration order gates nothing inside it.
+  // Staged and query workers hold no declaration orders at all.
+  [[nodiscard]] bool concreteReanalysis() const {
+    return reanalysisBase != nullptr;
+  }
+
   // Declaration-level lexical order. `beginDeclaration` gives a declaration
   // statement the next order and makes it current for the analysis of its
   // own initializer or body; the guard restores the enclosing order.
@@ -6002,7 +6050,7 @@ private:
     std::size_t enclosing;
     DeclarationOrderScope(Impl &impl, const Stmt &stmt)
         : impl(impl), enclosing(impl.currentDeclarationOrder) {
-      if (impl.instanceAnalysisActive)
+      if (impl.concreteReanalysis())
         return;
       const auto found = impl.declarationOrders.find(&stmt);
       impl.currentDeclarationOrder =
@@ -6015,14 +6063,14 @@ private:
     ~DeclarationOrderScope() { impl.currentDeclarationOrder = enclosing; }
   };
   [[nodiscard]] bool declaredBeforeCurrent(const Stmt *declaration) const {
-    if (instanceAnalysisActive)
+    if (concreteReanalysis())
       return true;
     const auto found = declarationOrders.find(declaration);
     return found != declarationOrders.end() &&
            found->second < currentDeclarationOrder;
   }
   [[nodiscard]] bool symbolVisibleNow(const Symbol &symbol) const {
-    return instanceAnalysisActive || symbol.variableDeclaration == nullptr ||
+    return concreteReanalysis() || symbol.variableDeclaration == nullptr ||
            symbol.declarationOrder == 0 ||
            symbol.declarationOrder < currentDeclarationOrder;
   }
@@ -6153,6 +6201,7 @@ private:
   bool &instanceClassContextActive = requestSession.instanceClassContextActive;
   bool &instanceAnalysisActive = requestSession.instanceAnalysisActive;
   const SemanticModel *&instanceBaseModel = requestSession.instanceBaseModel;
+  const SemanticModel *&reanalysisBase = requestSession.reanalysisBase;
   const FunctionDecl *&currentFunctionDeclaration =
       requestSession.currentFunctionDeclaration;
   std::optional<SemanticType> &contextualInitializerType =
@@ -6211,16 +6260,30 @@ private:
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
 
   // ---- Staged constant evaluation worker --------------------------------
+  // The model the constants required here stage against: this analyzer's
+  // canonical model, which an open concrete reanalysis has detached into its
+  // scope. Never the reanalysis's partial delta, whose copy would keep
+  // reading through to a scope that is gone once the reanalysis closes.
+  [[nodiscard]] const SemanticModel &constexprStagingModel() const {
+    return reanalysisBase != nullptr ? *reanalysisBase : semanticModel;
+  }
   // The analyzer a staged constexpr evaluation lowers its constant instance
   // through. It copies the sealed catalog and the staging model, which is
   // most of an evaluation's cost, so it is kept and reused while nothing it
-  // copied can have changed: the staging model, the current declaration
-  // order, and the constexpr definitions and constructors declared before
-  // it. Per-evaluation context (the work budget, raw result queries, the
-  // lambda identity floor) is refreshed on every use.
+  // copied can have changed. The staging model is always the canonical model,
+  // but that model moves between this analyzer and each open reanalysis
+  // scope, so its address identifies nothing. The worker is keyed instead by
+  // what the model can have gained: the current declaration order, whether a
+  // concrete reanalysis (which sees every analysed definition) is open, and
+  // the constexpr definitions and constructors available. Completing the
+  // primary analysis drops the worker. A late-demand batch does not: it
+  // completes only deferred trusted bodies, never constexpr ones, so nothing a
+  // staged constant can execute changes. Per-evaluation context (the work
+  // budget, raw result queries, the open reanalyses, the lambda identity
+  // floor) is refreshed on every use.
   struct StagedWorker {
     std::unique_ptr<Impl> impl;
-    const SemanticModel *stagingModel = nullptr;
+    bool reanalysis = false;
     std::size_t declarationOrder = 0;
     std::size_t definitions = 0;
     std::size_t constructors = 0;

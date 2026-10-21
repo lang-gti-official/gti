@@ -112,6 +112,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   instanceClassContextActive = false;
   instanceAnalysisActive = false;
   instanceBaseModel = nullptr;
+  reanalysisBase = nullptr;
   currentFunctionDeclaration = nullptr;
   currentProgramEffectOwner = {};
   programEffects.clear();
@@ -120,6 +121,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();
+  requestSession.openReanalyses.reset();
+  requestSession.assertionsOwnedUpChain = false;
   requestSession.collectingRawResult.reset();
   requestSession.rawAccessObservation = 0;
   requestSession.hasCThreadRequirements = false;
@@ -196,6 +199,9 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - finalizationStart)
             .count());
   }
+  // A staged worker copied the model part way through the analysis; the
+  // concrete requests that follow stage against the completed model.
+  stagedWorker = {};
   lateDemandReady = trustedBodies == TrustedBodyAnalysis::Reachable;
   return !hadError();
 }
@@ -411,7 +417,12 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     const std::vector<CompileTimeValue> &functionValueArguments)
     -> SemanticInstanceAnalysis {
   const FunctionInfo *function = semanticModel.findFunction(functionId);
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Function,
+                                      .declaration = functionId,
+                                      .classTypes = classTypeArguments,
+                                      .classValues = classValueArguments,
+                                      .types = functionTypeArguments,
+                                      .values = functionValueArguments});
   if (function == nullptr || function->declaration == nullptr) {
     return scope.finish();
   }
@@ -514,7 +525,12 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
       break;
     }
   }
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Constructor,
+                                      .declaration = constructorId,
+                                      .classTypes = classTypeArguments,
+                                      .classValues = classValueArguments,
+                                      .types = constructorTypeArguments,
+                                      .values = constructorValueArguments});
   if (constructor == nullptr || constructor->declaration == nullptr) {
     return scope.finish();
   }
@@ -571,7 +587,10 @@ auto SemanticVisitor::Impl::analyzeDestructorInstance(
       classType == nullptr || classType->declaration == nullptr
           ? nullptr
           : semanticModel.findClassLifecycle(*classType->declaration);
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Destructor,
+                                      .declaration = classId,
+                                      .classTypes = classTypeArguments,
+                                      .classValues = classValueArguments});
   if (lifecycle == nullptr || !lifecycle->declaredDestructor ||
       lifecycle->declaredDestructor->declaration == nullptr) {
     return scope.finish();
@@ -592,7 +611,11 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
     const std::vector<CompileTimeValue> &classValueArguments)
     -> SemanticInstanceAnalysis {
   const ClassTypeInfo *classType = semanticModel.findClassType(classId);
-  InstanceAnalysisScope scope(*this);
+  InstanceAnalysisScope scope(
+      *this, {.kind = InstanceAnalysisKind::ClassFieldInitializers,
+              .declaration = classId,
+              .classTypes = classTypeArguments,
+              .classValues = classValueArguments});
   if (classType == nullptr || classType->declaration == nullptr) {
     return scope.finish();
   }
@@ -1710,6 +1733,9 @@ auto SemanticVisitor::Impl::visitCompileErrorDirective(
 
 auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
     -> void {
+  // The open reanalysis further up the staging chain evaluates it.
+  if (requestSession.assertionsOwnedUpChain)
+    return;
   const DeclarationOrderScope declarationOrder{*this, stmt};
   const std::size_t diagnosticsBefore = diagnostics.size();
   const bool enclosingStaticAssert = analyzingDependentConstantCondition;
