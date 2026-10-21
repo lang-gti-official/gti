@@ -2353,14 +2353,37 @@ used as a method receiver. A value with a dependency:
 - keeps its owner borrowed read-only until its last carrier ends, so the owner
   cannot be mutated, moved or destroyed while the value is live.
 
-It cannot yet be passed to a function or constructor, used as a method
-receiver, returned, captured, bound by a reference, assigned into existing
-storage, or stored in a global, a field, an array or a container. Each of these
-is `GTI-S2045`. Code outside the creating body reads text fields as ownerless,
-so a dependent value must not reach it. For the same reason a class with a
-destructor, a base or virtual methods keeps the ownerless field rule. A value
-holds dynamic text from at most one owner, and that owner must be a named
-place: a view of a temporary owner is rejected as before.
+It may also be passed to a function, by value or by reference, or call a
+method, when that function keeps the field's text within the call:
+
+```gti
+uint64_t width(Token token) { return token.text.size(); }
+void keep(Token token) { kept = token.text; }   // kept is a global view
+
+width(token);       // valid: the text stays within the call
+token.text.size();  // valid
+keep(token);        // GTI-S2045: keep lets the text outlive the call
+```
+
+Each function's field contract is inferred from its body. A text field of a
+formal or of the receiver requires ownerless text at every call when the
+function:
+- stores it or returns it as independent text;
+- passes it to a function that requires it;
+- lets the whole formal escape: copies, stores or returns it, captures it, or
+  passes it where no such contract applies.
+
+Literal-backed values satisfy every contract, so existing calls are
+unaffected. Inside such a function, reading the field gives a dependent view
+of whatever the caller passed.
+
+A dependent value still cannot be passed to a constructor, a lambda, a
+virtual method or a generic function, nor returned, captured, bound by a
+reference, assigned into existing storage, or stored in a global, a field, an
+array or a container. Each of these is `GTI-S2045`. For the same reason a
+class with a destructor, a base or virtual methods keeps the ownerless field
+rule. A value holds dynamic text from at most one owner, and that owner must
+be a named place: a view of a temporary owner is rejected as before.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its

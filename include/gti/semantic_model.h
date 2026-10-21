@@ -826,6 +826,18 @@ struct RawBorrowContract {
                          const RawBorrowContract &) = default;
 };
 
+// A text field of a formal or of the receiver whose text a function lets
+// outlive the call, so every argument must hold ownerless text there
+// (L-OWN-02). A text formal's own requirement is ownerlessTextParameters.
+struct OwnerlessTextField {
+  bool receiver = false;
+  std::size_t parameter = 0;
+  SymbolId field = 0;
+
+  friend auto operator<=>(const OwnerlessTextField &,
+                          const OwnerlessTextField &) = default;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -868,6 +880,8 @@ struct FunctionInfo {
   // when its concrete by-value formal is StringView or CString. These are
   // inferred from storage and exact forwarding, never from a literal caller.
   std::vector<std::size_t> ownerlessTextParameters;
+  // Sorted and unique; inferred like ownerlessTextParameters.
+  std::vector<OwnerlessTextField> ownerlessTextFields;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -2052,6 +2066,9 @@ public:
   [[nodiscard]] const std::vector<std::size_t> &required() const {
     return required_;
   }
+  [[nodiscard]] const std::vector<OwnerlessTextField> &requiredFields() const {
+    return requiredFields_;
+  }
   [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
 
 private:
@@ -2060,11 +2077,13 @@ private:
                                      std::uint64_t snapshot)
       : source_(function.bodyDeclaration()), function_(function.id),
         parameters_(function.parameterTypes),
-        required_(function.ownerlessTextParameters), snapshot_(snapshot) {}
+        required_(function.ownerlessTextParameters),
+        requiredFields_(function.ownerlessTextFields), snapshot_(snapshot) {}
   const FunctionDecl *source_;
   FunctionId function_;
   std::vector<SemanticType> parameters_;
   std::vector<std::size_t> required_;
+  std::vector<OwnerlessTextField> requiredFields_;
   std::uint64_t snapshot_;
 };
 

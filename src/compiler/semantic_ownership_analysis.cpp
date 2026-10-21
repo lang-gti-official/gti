@@ -1287,6 +1287,44 @@ auto SemanticVisitor::Impl::consumeTextDependentValue(const ExprPtr &expression)
 }
 
 auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
+  // A relay into a callee that lets none of the value's dynamic fields
+  // outlive the call keeps the value within the caller's loan.
+  for (const auto &relay : requestSession.textDependentRelays) {
+    const auto found = requestSession.textDependentValues.find(relay.argument);
+    const FunctionInfo *callee = semanticModel.findFunction(relay.callee);
+    if (found == requestSession.textDependentValues.end() ||
+        found->second.consumed || found->second.diagnosed ||
+        callee == nullptr || relay.fields.empty() ||
+        !semanticModel.hasAnalyzedFunctionBody(*callee->bodyDeclaration()))
+      continue;
+    const auto required = std::find_if(
+        relay.fields.begin(), relay.fields.end(), [&](SymbolId field) {
+          return std::binary_search(
+              callee->ownerlessTextFields.begin(),
+              callee->ownerlessTextFields.end(),
+              OwnerlessTextField{.receiver = relay.calleeFormal.receiver,
+                                 .parameter = relay.calleeFormal.parameter,
+                                 .field = field});
+        });
+    if (required == relay.fields.end()) {
+      found->second.consumed = true;
+      continue;
+    }
+    found->second.diagnosed = true;
+    const std::size_t before = diagnostics.size();
+    report(found->second.location,
+           "This value holds dynamic text from a local owner, and '" +
+               callee->declaration->name().lexeme +
+               "' stores or returns that text as ownerless text.",
+           "GTI-S2045");
+    if (diagnostics.size() > before) {
+      diagnostics.back().related.push_back(
+          {tokenSpan(callee->declaration->name()),
+           "This function lets the field's text outlive the call."});
+      diagnostics.back().hints.emplace_back(
+          "Pass a value over ownerless text, or keep this use local.");
+    }
+  }
   for (const Expr *expression : requestSession.textDependentValueOrder) {
     auto &use = requestSession.textDependentValues.at(expression);
     if (use.consumed || use.diagnosed)
@@ -1311,6 +1349,312 @@ auto SemanticVisitor::Impl::textPublicationOwner(const SemanticType &type) const
   return owner != nullptr && !typeTraits(type).containsBorrowedState &&
          storedReferencePaths(type).empty() && !owner->destructor &&
          owner->bases.empty() && !owner->polymorphic;
+}
+
+auto SemanticVisitor::Impl::textFieldContractFunction(
+    const FunctionInfo &function) const -> bool {
+  if (function.declaration == nullptr ||
+      function.bodyDeclaration() == nullptr ||
+      function.bodyDeclaration()->body() == nullptr || function.virtualMethod ||
+      function.overrideMethod || function.linkage != LanguageLinkage::Gti ||
+      !function.genericParameters.empty())
+    return false;
+  return function.ownerClass == 0 ||
+         classInfo(function.ownerClass).genericParameters.empty();
+}
+
+auto SemanticVisitor::Impl::textFieldContractScope() const
+    -> const FunctionInfo * {
+  const FunctionInfo *function = currentFunctionInfo();
+  if (function == nullptr || instanceAnalysisActive || lambdaDepth != 0 ||
+      constructorDepth != 0 || destructorDepth != 0 ||
+      !textFieldContractFunction(*function))
+    return nullptr;
+  return function;
+}
+
+auto SemanticVisitor::Impl::readOnlyTextFieldFormal(
+    const FunctionDecl &declaration, std::span<const SemanticType> types,
+    std::size_t index) const -> bool {
+  if (index >= declaration.parameters().size() || index >= types.size())
+    return false;
+  if (types[index].kind == SemanticType::Reference)
+    return types[index].referenceAccess == AccessMode::ReadOnly;
+  return declaration.parameters()[index].mutability != Mutability::Mutable;
+}
+
+auto SemanticVisitor::Impl::textFieldContractFormal(const Expr &object) const
+    -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *function = textFieldContractScope();
+  if (function == nullptr)
+    return std::nullopt;
+  const Expr *current = &object;
+  while (const auto *group = exprAs<Grouping>(current)) {
+    if (!group->expression())
+      return std::nullopt;
+    current = group->expression().get();
+  }
+  // Only a read-only formal or receiver: a mutable one may be rewritten, so
+  // its reads keep the ownerless rule and it takes no relay.
+  if (exprAs<This>(current) != nullptr) {
+    if (function->ownerClass == 0 || function->staticMember ||
+        function->bodyDeclaration()->receiverMutability() !=
+            ReceiverMutability::ReadOnly ||
+        !textPublicationOwner(openClassType(function->ownerClass)))
+      return std::nullopt;
+    return OwnerlessTextField{.receiver = true};
+  }
+  const auto *variable = exprAs<Variable>(current);
+  const Symbol *symbol =
+      variable == nullptr ? nullptr : resolve(variable->name());
+  if (symbol == nullptr || symbol->parameterDeclaration == nullptr)
+    return std::nullopt;
+  const auto &parameters = function->bodyDeclaration()->parameters();
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    if (&parameters[index] != symbol->parameterDeclaration)
+      continue;
+    if (parameters[index].pack || index >= function->parameterTypes.size() ||
+        !readOnlyTextFieldFormal(*function->bodyDeclaration(),
+                                 function->parameterTypes, index))
+      return std::nullopt;
+    SemanticType type = function->parameterTypes[index];
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    if (!textPublicationOwner(type))
+      return std::nullopt;
+    return OwnerlessTextField{.parameter = index};
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::ownerlessTextForwardingField(
+    const ExprPtr &expression) const -> std::optional<OwnerlessTextField> {
+  if (!expression)
+    return std::nullopt;
+  const Expr *current = expression.get();
+  while (const auto *group = exprAs<Grouping>(current)) {
+    if (!group->expression())
+      return std::nullopt;
+    current = group->expression().get();
+  }
+  if (const auto *get = exprAs<Get>(current);
+      get != nullptr && get->access().kind != TokenKind::ARROW &&
+      get->object()) {
+    auto formal = textFieldContractFormal(*get->object());
+    const SemanticType *objectType = semanticModel.findType(*get->object());
+    if (!formal || objectType == nullptr)
+      return std::nullopt;
+    SemanticType type = *objectType;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    const MemberInfo *member = findMember(type, get->name());
+    if (member == nullptr)
+      return std::nullopt;
+    formal->field = symbolForDeclaration(member->symbol.declaration);
+    if (!directTextField(type, formal->field))
+      return std::nullopt;
+    return formal;
+  }
+  const auto *variable = exprAs<Variable>(current);
+  return variable == nullptr ? std::nullopt
+                             : implicitReceiverTextField(*variable);
+}
+
+auto SemanticVisitor::Impl::implicitReceiverTextField(
+    const Variable &variable) const -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *function = textFieldContractScope();
+  const Symbol *symbol = resolve(variable.name());
+  if (function == nullptr || symbol == nullptr || symbol->ownerClass == 0 ||
+      symbol->staticMember || symbol->parameterDeclaration != nullptr ||
+      function->ownerClass != symbol->ownerClass || function->staticMember)
+    return std::nullopt;
+  const SemanticType owner = openClassType(function->ownerClass);
+  const SymbolId field = symbolForDeclaration(symbol->declaration);
+  if (!textPublicationOwner(owner) || !directTextField(owner, field))
+    return std::nullopt;
+  return OwnerlessTextField{.receiver = true, .field = field};
+}
+
+auto SemanticVisitor::Impl::directTextFieldSymbols(
+    const SemanticType &type) const -> std::vector<SymbolId> {
+  std::vector<SymbolId> fields;
+  const ClassInfo *owner = classInfo(type);
+  if (owner == nullptr)
+    return fields;
+  for (const FieldInfo &entry : owner->fields) {
+    if (entry.declaration == nullptr)
+      continue;
+    const auto member = owner->members.find(entry.declaration->name().lexeme);
+    if (member == owner->members.end())
+      continue;
+    const SymbolId field =
+        symbolForDeclaration(member->second.symbol.declaration);
+    if (directTextField(type, field))
+      fields.push_back(field);
+  }
+  std::sort(fields.begin(), fields.end());
+  return fields;
+}
+
+auto SemanticVisitor::Impl::noteTextFieldFormalUse(const Expr &expression,
+                                                   OwnerlessTextField formal)
+    -> void {
+  formal.field = 0;
+  const auto [entry, inserted] = requestSession.textFieldFormalUses.try_emplace(
+      &expression,
+      RequestSessionState::TextFieldFormalUse{
+          .function = currentFunctionDeclaration, .formal = formal});
+  if (inserted)
+    requestSession.textFieldFormalOrder.push_back(&expression);
+}
+
+auto SemanticVisitor::Impl::consumeTextFieldFormalUse(const ExprPtr &expression)
+    -> void {
+  const Expr *current = expression.get();
+  while (current != nullptr) {
+    if (const auto found = requestSession.textFieldFormalUses.find(current);
+        found != requestSession.textFieldFormalUses.end()) {
+      found->second.consumed = true;
+      return;
+    }
+    const auto *group = exprAs<Grouping>(current);
+    if (group == nullptr)
+      return;
+    current = group->expression().get();
+  }
+}
+
+auto SemanticVisitor::Impl::requireOwnerlessTextField(
+    const FunctionDecl *declaration, OwnerlessTextField field) -> bool {
+  const FunctionInfo *function = declaration == nullptr
+                                     ? nullptr
+                                     : semanticModel.findFunction(*declaration);
+  if (function == nullptr || function->declaration == nullptr)
+    return false;
+  const auto &fields = function->ownerlessTextFields;
+  const auto at = std::lower_bound(fields.begin(), fields.end(), field);
+  if (at != fields.end() && *at == field)
+    return false;
+  FunctionInfo updated = *function;
+  updated.ownerlessTextFields.insert(
+      updated.ownerlessTextFields.begin() + (at - fields.begin()), field);
+  semanticModel.record(*updated.declaration, std::move(updated));
+  return true;
+}
+
+auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
+                                                const CallableCandidate &target)
+    -> void {
+  if (!target.id || !target.declaration)
+    return;
+  const FunctionInfo *callee = semanticModel.findFunction(*target.declaration);
+  const bool contract = callee != nullptr && textFieldContractFunction(*callee);
+  const auto relay = [&](const ExprPtr &argument, OwnerlessTextField formal) {
+    const ExpressionInfo *info =
+        argument ? semanticModel.findExpression(*argument) : nullptr;
+    if (contract && info != nullptr && isTextDependentValue(*info))
+      requestSession.textDependentRelays.push_back(
+          {.argument = argument.get(),
+           .callee = target.id,
+           .calleeFormal = formal,
+           .fields = textDependentFields(*argument)});
+  };
+  // A formal passed on as the callee's formal or receiver of the same class
+  // carries the callee's requirements on it back to the caller.
+  const auto forward = [&](const ExprPtr &argument, OwnerlessTextField formal,
+                           const SemanticType &formalType) {
+    const auto caller =
+        argument ? textFieldContractFormal(*argument) : std::nullopt;
+    const ExpressionInfo *info =
+        argument ? semanticModel.findExpression(*argument) : nullptr;
+    if (!contract || !caller || info == nullptr || info->type != formalType)
+      return;
+    requestSession.textFieldForwardUses.push_back(
+        {.caller = currentFunctionDeclaration,
+         .callerFormal = *caller,
+         .callee = target.id,
+         .calleeFormal = formal});
+    consumeTextFieldFormalUse(argument);
+  };
+  if (callee != nullptr && callee->ownerClass != 0 && !callee->staticMember &&
+      target.declaration->receiverMutability() ==
+          ReceiverMutability::ReadOnly) {
+    const SemanticType owner = openClassType(callee->ownerClass);
+    if (const auto *member = exprAs<Get>(call.callee().get());
+        member != nullptr && member->access().kind != TokenKind::ARROW) {
+      relay(member->object(), {.receiver = true});
+      forward(member->object(), {.receiver = true}, owner);
+    } else if (const FunctionInfo *scope = textFieldContractScope();
+               exprAs<Variable>(call.callee().get()) != nullptr && contract &&
+               scope != nullptr && scope->ownerClass == callee->ownerClass &&
+               !scope->staticMember && textPublicationOwner(owner)) {
+      // An implicit receiver call forwards this method's receiver.
+      requestSession.textFieldForwardUses.push_back(
+          {.caller = currentFunctionDeclaration,
+           .callerFormal = {.receiver = true},
+           .callee = target.id,
+           .calleeFormal = {.receiver = true}});
+    }
+  }
+  for (std::size_t index = 0;
+       index < call.arguments().size() && index < target.parameterTypes.size();
+       ++index) {
+    SemanticType formalType = target.parameterTypes[index];
+    if (formalType.kind == SemanticType::Reference &&
+        formalType.arguments.size() == 1)
+      formalType = SemanticType(formalType.arguments.front());
+    if (!textPublicationOwner(formalType) ||
+        !readOnlyTextFieldFormal(*target.declaration, target.parameterTypes,
+                                 index))
+      continue;
+    relay(call.arguments()[index], {.parameter = index});
+    forward(call.arguments()[index], {.parameter = index}, formalType);
+  }
+}
+
+auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
+  // An unconsumed use lets the whole formal, and so each text field, outlive
+  // the call.
+  for (const Expr *expression : requestSession.textFieldFormalOrder) {
+    const auto &use = requestSession.textFieldFormalUses.at(expression);
+    const FunctionInfo *function =
+        use.consumed || use.function == nullptr
+            ? nullptr
+            : semanticModel.findFunction(*use.function);
+    if (function == nullptr)
+      continue;
+    SemanticType type = use.formal.receiver
+                            ? openClassType(function->ownerClass)
+                        : use.formal.parameter < function->parameterTypes.size()
+                            ? function->parameterTypes[use.formal.parameter]
+                            : SemanticType::Unknown;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    for (const SymbolId field : directTextFieldSymbols(type))
+      (void)requireOwnerlessTextField(use.function,
+                                      {.receiver = use.formal.receiver,
+                                       .parameter = use.formal.parameter,
+                                       .field = field});
+  }
+  // Finite monotone closure over exact (formal, field) pairs.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (const auto &use : requestSession.textFieldForwardUses) {
+      const FunctionInfo *callee = semanticModel.findFunction(use.callee);
+      if (callee == nullptr)
+        continue;
+      const auto fields = callee->ownerlessTextFields;
+      for (const auto &field : fields)
+        if (field.receiver == use.calleeFormal.receiver &&
+            (field.receiver || field.parameter == use.calleeFormal.parameter))
+          changed = requireOwnerlessTextField(
+                        use.caller, {.receiver = use.callerFormal.receiver,
+                                     .parameter = use.callerFormal.parameter,
+                                     .field = field.field}) ||
+                    changed;
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::directTextField(const SemanticType &type,
@@ -1409,6 +1753,13 @@ auto SemanticVisitor::Impl::requireOwnerlessTextParameter(
     const ExprPtr &expression) -> bool {
   const auto index = ownerlessTextForwardingParameter(expression);
   const auto *function = currentFunctionInfo();
+  // A formal's or the receiver's text field forwards a field requirement.
+  if (!index && function != nullptr) {
+    if (const auto field = ownerlessTextForwardingField(expression)) {
+      (void)requireOwnerlessTextField(function->declaration, *field);
+      return true;
+    }
+  }
   if (!index || !function || !function->declaration ||
       function->virtualMethod || function->overrideMethod ||
       function->linkage != LanguageLinkage::Gti)
@@ -1460,6 +1811,7 @@ auto SemanticVisitor::Impl::recordOwnerlessTextCall(
 }
 
 auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
+  finalizeTextFieldContracts();
   const auto required = [&](const auto &use) {
     const auto *target = semanticModel.findFunction(use.callee);
     if (!target && instanceBaseModel)
