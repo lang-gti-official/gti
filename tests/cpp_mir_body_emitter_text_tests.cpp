@@ -1605,6 +1605,41 @@ int main() {
     }
   }
 
+  // The body-ordered class copy keeps the native copy's ownership contract:
+  // both forms admit the exact Read, and a drifted Read fails closed.
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress lineAddress{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = line->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                 .supportsBodyText(lineAddress) &&
+             lang::CppMirBodyEmitter(frontend.mir, map)
+                 .supportsFailureBodyText(lineAddress),
+         "both constructor forms admit the body-ordered class copy");
+  {
+    lang::MirProgram mutated = frontend.mir;
+    bool forged = false;
+    for (const auto &constructor : mutated.constructorInstances()) {
+      if (constructor.id != line->id) {
+        continue;
+      }
+      auto &changed = const_cast<lang::MirConstructorInstance &>(constructor);
+      for (lang::MirBlock &block : changed.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Load &&
+              instruction.info.type.kind == lang::SemanticType::Class &&
+              instruction.ownership) {
+            instruction.ownership->reachable = false;
+            forged = true;
+          }
+        }
+      }
+    }
+    const lang::CppMirBodyEmitter emitter(mutated, map);
+    expect(forged && !emitter.supportsBodyText(lineAddress) &&
+               !emitter.supportsFailureBodyText(lineAddress),
+           "a body-ordered class copy fails closed when its Read drifts");
+  }
+
   std::string text;
   try {
     text = gti_test::emitCpp(frontend).contents;
