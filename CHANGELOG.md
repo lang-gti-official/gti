@@ -9,6 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.453.5 — Constructors that copy a parameter after changing it
+
+- Fix wrong code when a constructor copies a parameter into a field after an
+  earlier member initializer changed that parameter, as in
+  `Pair(mut int32_t seed) : first(bump(seed)), second(seed) {}` with
+  `int32_t bump(mut int32_t& value)`. `Pair(1)` stored the caller's `1` in
+  `second` instead of the bumped `2`. The earlier initializer could pass the
+  parameter to a `mut` reference of a function or a constructor, assign it
+  (`seed = 5`, `seed += 5`, `++seed`), run a lambda capturing it with
+  `[mut &seed]`, or call a `mut` method on it or change one of its fields.
+  Integers, enums, raw pointers and copyable structs were affected, in
+  generic classes too. A copy taken before the change, or of a parameter
+  nothing changes, was already correct.
+- A constructor can now copy a struct into a field from a reference
+  parameter, as in `Holder(Point& point) : point(point) {}`, or copy a
+  changed struct parameter beside a moved one. Both stopped with
+  `GTI-B0001`.
+
 ## 0.453.4 — Moving plain values no longer makes code failure-capable
 
 - Moving a plain value, such as `int32_t y = std::move(x);` or a constructor

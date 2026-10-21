@@ -2047,6 +2047,246 @@ int main() {
          "constructors");
 }
 
+void testCopiedFormalAfterEarlierWrite() {
+  // The native member-initializer list copies a formal's entry value before
+  // the body runs. A copy MIR makes after an earlier initializer wrote the
+  // formal therefore stays in body order, from the field's empty state; a
+  // copy before the write, or of a formal nothing writes, stays native.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-copied-formal-after-write.gti", R"(
+int32_t bump(mut int32_t& value) {
+  value = value + 1;
+  return value;
+}
+
+struct Point {
+  mut int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+
+int32_t shift(mut Point& point) {
+  point.x = point.x + 10;
+  return point.x;
+}
+
+class Pair {
+public:
+  int32_t first;
+  int32_t untouched;
+  int32_t second;
+  Pair(mut int32_t seed, int32_t other)
+      : first(bump(seed)), untouched(other), second(seed) {}
+};
+
+class Early {
+public:
+  int32_t first;
+  int32_t second;
+  Early(mut int32_t seed) : first(seed), second(bump(seed)) {}
+};
+
+class Line {
+public:
+  int32_t first;
+  Point second;
+  Line(mut Point point) : first(shift(point)), second(point) {}
+};
+
+int main() {
+  Pair pair = Pair(1, 5);
+  Early early = Early(1);
+  Line line = Line(Point(1, 2));
+  return pair.second * 10 + pair.untouched + early.first * 10 + early.second +
+         line.second.x - 48;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the copied-formal-after-write fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *pair = nullptr;
+  const lang::MirConstructorInstance *early = nullptr;
+  const lang::MirConstructorInstance *line = nullptr;
+  std::size_t matches = 0;
+  const std::vector<lang::SemanticType> twoIntegers{lang::SemanticType::Int32,
+                                                    lang::SemanticType::Int32};
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    const auto &parameters = constructor.parameterTypes;
+    if (parameters == twoIntegers && constructor.initializers.size() == 3) {
+      pair = &constructor;
+      ++matches;
+    } else if (parameters.size() == 1 &&
+               parameters.front() == lang::SemanticType::Int32 &&
+               constructor.initializers.size() == 2) {
+      early = &constructor;
+      ++matches;
+    } else if (parameters.size() == 1 &&
+               parameters.front().kind == lang::SemanticType::Class &&
+               constructor.initializers.size() == 2) {
+      line = &constructor;
+      ++matches;
+    }
+  }
+  expect(matches == 3 && pair != nullptr && early != nullptr && line != nullptr,
+         "the fixture keeps exactly its Pair, Early and Line constructors");
+  if (matches != 3 || pair == nullptr || early == nullptr || line == nullptr) {
+    return;
+  }
+  const auto copiedInitializers =
+      [](const lang::MirProgram &program,
+         const lang::MirConstructorInstance &constructor) {
+        std::vector<std::size_t> initializers;
+        if (const auto bindings =
+                lang::cppMirCopyParameterFieldBindings(program, constructor)) {
+          for (const auto &binding : *bindings) {
+            initializers.push_back(binding.initializer);
+          }
+        }
+        std::sort(initializers.begin(), initializers.end());
+        return initializers;
+      };
+  expect(copiedInitializers(frontend.mir, *pair) ==
+                 std::vector<std::size_t>{1} &&
+             copiedInitializers(frontend.mir, *early) ==
+                 std::vector<std::size_t>{0} &&
+             copiedInitializers(frontend.mir, *line).empty(),
+         "only copies that no earlier write reaches publish natively");
+
+  // The write decides: read-only access to the formal before the copy leaves
+  // its entry value in place, so the same copy is native again.
+  {
+    lang::MirProgram mutated = frontend.mir;
+    bool forged = false;
+    for (const auto &constructor : mutated.constructorInstances()) {
+      if (constructor.id != pair->id) {
+        continue;
+      }
+      auto &changed = const_cast<lang::MirConstructorInstance &>(constructor);
+      for (lang::MirBlock &block : changed.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          for (lang::MirOperand &operand : instruction.operands) {
+            if (operand.kind == lang::MirOperandKind::BorrowWrite) {
+              operand.kind = lang::MirOperandKind::BorrowRead;
+              forged = true;
+            }
+          }
+        }
+      }
+      expect(forged && copiedInitializers(mutated, constructor) ==
+                           std::vector<std::size_t>{1, 2},
+             "a copy after read-only access to its formal stays native");
+    }
+  }
+
+  // The body-ordered class copy keeps the native copy's ownership contract:
+  // both forms admit the exact Read, and a drifted Read fails closed.
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress lineAddress{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = line->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                 .supportsBodyText(lineAddress) &&
+             lang::CppMirBodyEmitter(frontend.mir, map)
+                 .supportsFailureBodyText(lineAddress),
+         "both constructor forms admit the body-ordered class copy");
+  {
+    lang::MirProgram mutated = frontend.mir;
+    bool forged = false;
+    for (const auto &constructor : mutated.constructorInstances()) {
+      if (constructor.id != line->id) {
+        continue;
+      }
+      auto &changed = const_cast<lang::MirConstructorInstance &>(constructor);
+      for (lang::MirBlock &block : changed.body.blocks) {
+        for (lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Load &&
+              instruction.info.type.kind == lang::SemanticType::Class &&
+              instruction.ownership) {
+            instruction.ownership->reachable = false;
+            forged = true;
+          }
+        }
+      }
+    }
+    const lang::CppMirBodyEmitter emitter(mutated, map);
+    expect(forged && !emitter.supportsBodyText(lineAddress) &&
+               !emitter.supportsFailureBodyText(lineAddress),
+           "a body-ordered class copy fails closed when its Read drifts");
+  }
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("copies after a formal write should emit: ") +
+                      error.what());
+    return;
+  }
+  const auto forms = [&](std::string_view owner) {
+    std::vector<std::string> bodies;
+    const std::string signature =
+        std::string(owner) + "::" + std::string(owner) + "(";
+    for (std::size_t start = text.find(signature); start != std::string::npos;
+         start = text.find(signature, start + signature.size())) {
+      const std::size_t end = text.find("\n  }\n", start);
+      if (end == std::string::npos) {
+        break;
+      }
+      bodies.push_back(text.substr(start, end - start));
+    }
+    return bodies;
+  };
+  // The statement storing `second` through the field alias the body declares.
+  const auto publication = [](const std::string &body) {
+    const std::size_t alias = body.find(" = (*this).second;");
+    const std::size_t name = alias == std::string::npos
+                                 ? std::string::npos
+                                 : body.rfind("auto &", alias);
+    const std::size_t stored =
+        name == std::string::npos
+            ? std::string::npos
+            : body.find(body.substr(name + 6, alias - name - 6) + " = ", alias);
+    return stored == std::string::npos
+               ? std::pair<std::size_t, std::string>{stored, {}}
+               : std::pair<std::size_t, std::string>{
+                     stored,
+                     body.substr(stored, body.find('\n', stored) - stored)};
+  };
+  const std::string emptySecond =
+      "second(::gti_internal::backend::mir_empty_state_v1<std::remove_cv_t<"
+      "decltype(second)>>())";
+  const std::vector<std::string> pairForms = forms("Pair");
+  const std::vector<std::string> lineForms = forms("Line");
+  expect(!pairForms.empty() && !lineForms.empty(),
+         "both constructors should emit at least one form");
+  for (const std::string &body : pairForms) {
+    const std::size_t call = body.find("bump");
+    const auto [stored, statement] = publication(body);
+    expect(body.find("untouched(__gti_mir_arg_1)") != std::string::npos &&
+               body.find(emptySecond) != std::string::npos &&
+               body.find("second(__gti_mir_arg_") == std::string::npos &&
+               call != std::string::npos && stored != std::string::npos &&
+               call < stored &&
+               statement.find("__gti_mir_arg_") == std::string::npos,
+           "a scalar copy after the write publishes in body order");
+  }
+  for (const std::string &body : lineForms) {
+    const std::size_t call = body.find("shift");
+    const std::size_t copied = body.find("auto __gti_mir_v_");
+    const auto [stored, statement] = publication(body);
+    expect(body.find(emptySecond) != std::string::npos &&
+               body.find("second(__gti_mir_arg_") == std::string::npos &&
+               call != std::string::npos && copied != std::string::npos &&
+               stored != std::string::npos && call < copied &&
+               copied < stored &&
+               statement.find("std::move(__gti_mir_v_") != std::string::npos,
+           "a class copy after the write copies into a transient and then "
+           "into the empty field, in body order");
+  }
+}
+
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
@@ -8327,6 +8567,7 @@ constexpr NamedTest kTests[] = {
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
     {"testMovedPassiveFieldInPlainConstructor",
      testMovedPassiveFieldInPlainConstructor},
+    {"testCopiedFormalAfterEarlierWrite", testCopiedFormalAfterEarlierWrite},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",
