@@ -6,8 +6,7 @@ namespace lang {
 namespace {
 
 bool identifierCharacter(char value) {
-  return (value >= 'a' && value <= 'z') ||
-         (value >= 'A' && value <= 'Z') ||
+  return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
          (value >= '0' && value <= '9') || value == '_';
 }
 
@@ -38,26 +37,24 @@ completionSnippets(const SyntaxCompletionContext &context,
   };
   const bool declaration = context.kind == SyntaxCompletionKind::Declaration;
   const bool member = context.kind == SyntaxCompletionKind::ClassMember;
-  const bool ordinaryOwner =
-      member && (context.ownerKind == ClassKind::Class ||
-                 context.ownerKind == ClassKind::Struct);
+  const bool ordinaryOwner = member && (context.ownerKind == ClassKind::Class ||
+                                        context.ownerKind == ClassKind::Struct);
   if (declaration || ordinaryOwner) {
     add("class", "Class with a linked name and default constructor",
         "class ${1:Name} {\npublic:\n\t$1() = default;\n\nprivate:\n\t$0\n};");
     add("class generic", "Generic class",
-        "class ${1:Name}<${2:T}> {\npublic:\n\t$1() = default;\n\nprivate:\n\t$0\n};");
+        "class ${1:Name}<${2:T}> {\npublic:\n\t$1() = "
+        "default;\n\nprivate:\n\t$0\n};");
     add("struct", "Struct declaration", "struct ${1:Name} {\n\t$0\n};");
     add("using", "Type alias", "using ${1:Name} = ${2:int32_t};$0");
   }
   if (declaration) {
-    add("namespace", "Namespace declaration",
-        "namespace ${1:name} {\n\t$0\n}");
+    add("namespace", "Namespace declaration", "namespace ${1:name} {\n\t$0\n}");
     add("enum", "Scoped enum declaration",
         "enum class ${1:Name} {\n\t${2:Value},\n\t$0\n};");
     add("interface", "Interface with a read-only method requirement",
-        "interface ${1:Name} {\n\tvoid ${2:method_name}(${3}) = 0;\n\t$0\n};");
-    add("fn", "Free function",
-        "${1:void} ${2:function_name}(${3}) {\n\t$0\n}");
+        "interface ${1:Name} {\n\tvoid ${2:method_name}(${3});\n\t$0\n};");
+    add("fn", "Free function", "${1:void} ${2:function_name}(${3}) {\n\t$0\n}");
   }
   if (ordinaryOwner && context.owner) {
     add("ctor", "Constructor for " + context.owner->lexeme,

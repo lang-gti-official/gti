@@ -4500,11 +4500,10 @@ private:
 
   void captureSyntaxCompletion(SyntaxCompletionKind kind) {
     if (peek().completion) {
-      syntaxCompletion = SyntaxCompletionContext{
-          .kind = kind,
-          .token = peek(),
-          .owner = currentClassName,
-          .ownerKind = currentClassKind};
+      syntaxCompletion = SyntaxCompletionContext{.kind = kind,
+                                                 .token = peek(),
+                                                 .owner = currentClassName,
+                                                 .ownerKind = currentClassKind};
     }
   }
 
@@ -4548,7 +4547,8 @@ const std::vector<ParseDiagnostic> &Parser::errors() const {
   return impl->errors();
 }
 
-const std::optional<SyntaxCompletionContext> &Parser::completionContext() const {
+const std::optional<SyntaxCompletionContext> &
+Parser::completionContext() const {
   return impl->completionContext();
 }
 

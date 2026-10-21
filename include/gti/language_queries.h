@@ -196,6 +196,9 @@ struct CompletionInput {
   std::filesystem::path entryPath;
   std::string source;
   std::size_t byteOffset = 0;
+  // Static templates are opt-in so plain symbol clients retain their complete
+  // candidate budget and ranking, not a filtered/truncated snippet list.
+  bool includeSnippets = false;
   TargetInfo target = TargetInfo::host();
   ConfigurationFlags configurationFlags;
   ConfigurationFlags declaredConfigurationFlags;

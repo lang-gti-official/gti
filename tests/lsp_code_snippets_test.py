@@ -73,7 +73,7 @@ def run(executable, compiler, root, support):
         contexts = (
             "|\nint main() { return 0; }\n",
             "class Widget { public:\n|\n};\nint main() { return 0; }\n",
-            "#include <std/vector>\nvoid f() {\n  bool condition = false; int32_t count = 0; int32_t value = 0;\n  std::vector<int32_t> values;\n  |\n}\nint main() { return 0; }\n",
+            "#include <std/vector>\nvoid f() {\n  bool condition = false; int32_t count = 0; int32_t value = 0;\n  std::vector<int32_t> values = std::vector<int32_t>();\n  |\n}\nint main() { f(); return 0; }\n",
         )
         for marked in contexts:
             source, items = complete(marked)
@@ -87,8 +87,10 @@ def run(executable, compiler, root, support):
                 program = source[:offset] + expand(edit["newText"]) + source[offset:]
                 output = root / f"expanded-{total}.gti"
                 output.write_text(program, encoding="utf-8")
-                result = subprocess.run([compiler, str(output), "--check"], capture_output=True, text=True)
+                result = subprocess.run([compiler, str(output), "-o", str(root / "expanded-app")], capture_output=True, text=True)
                 assert result.returncode == 0, (item["label"], program, result.stdout, result.stderr)
+                subprocess.run([str(root / "expanded-app")], check=True, timeout=30,
+                               capture_output=True, text=True)
                 total += 1
         assert total >= 20, total
 

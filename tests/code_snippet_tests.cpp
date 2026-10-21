@@ -11,22 +11,22 @@ void require(bool value, const char *message) {
     throw std::runtime_error(message);
 }
 
-lang::CompletionResult query(
-    std::string source,
-    std::shared_ptr<lang::FrontendCache> cache = nullptr,
-    lang::FrontendWorkMetrics *metrics = nullptr) {
+lang::CompletionResult
+query(std::string source, std::shared_ptr<lang::FrontendCache> cache = nullptr,
+      lang::FrontendWorkMetrics *metrics = nullptr) {
   const std::size_t offset = source.find('|');
   require(offset != std::string::npos, "missing cursor marker");
   source.erase(offset, 1);
   return lang::LanguageQueries().complete({.entryPath = "snippet.gti",
-                                            .source = std::move(source),
-                                            .byteOffset = offset,
-                                            .workMetrics = metrics,
-                                            .cache = std::move(cache)});
+                                           .source = std::move(source),
+                                           .byteOffset = offset,
+                                           .includeSnippets = true,
+                                           .workMetrics = metrics,
+                                           .cache = std::move(cache)});
 }
 
 const lang::CompletionCandidate *snippet(const lang::CompletionResult &result,
-                                          std::string_view label) {
+                                         std::string_view label) {
   const auto found = std::find_if(
       result.candidates.begin(), result.candidates.end(),
       [&](const auto &candidate) {
@@ -37,17 +37,22 @@ const lang::CompletionCandidate *snippet(const lang::CompletionResult &result,
 }
 
 void run() {
-  for (const std::string prefix : {"cl", "class", "class generic"}) {
-    const auto result = query(prefix == "class generic" ? "cl|" : prefix + "|");
+  for (const std::string prefix : {"cl", "class"}) {
+    const auto result = query(prefix + "|");
     require(snippet(result, "class") != nullptr, "class declaration missing");
-    require(snippet(result, "class generic") != nullptr, "generic class missing");
+    require(snippet(result, "class generic") != nullptr,
+            "generic class missing");
     require(snippet(result, "if") == nullptr, "statement leaked to namespace");
   }
   const auto top = query("|");
-  for (const auto label : {"class", "struct", "enum", "interface", "namespace",
-                           "using", "fn"})
+  for (const auto label :
+       {"class", "struct", "enum", "interface", "namespace", "using", "fn"})
     require(snippet(top, label) != nullptr, "namespace template missing");
   require(snippet(top, "ctor") == nullptr, "constructor without owner");
+  const auto ranked = query("void class_helper() {}\ncl|");
+  require(!ranked.candidates.empty() &&
+              ranked.candidates.front().label == "class_helper",
+          "snippet displaced an exact semantic candidate");
 
   const auto member = query("class Widget { public: | }; ");
   for (const auto label : {"class", "struct", "ctor", "dtor", "method",
@@ -64,26 +69,27 @@ void run() {
           "interface constructor offered");
 
   const auto body = query("void f() { | }");
-  for (const auto label : {"if", "ifelse", "for", "foreach", "while", "switch",
-                           "unsafe"})
+  for (const auto label :
+       {"if", "ifelse", "for", "foreach", "while", "switch", "unsafe"})
     require(snippet(body, label) != nullptr, "statement template missing");
   require(snippet(body, "class") == nullptr, "declaration leaked to statement");
   require(snippet(query("void f() { if| }"), "if") != nullptr,
           "complete keyword trigger missing");
 
-  for (const std::string source : {
-           "void f() { int32_t x = cl|; }", "void f() { f(cl|); }",
-           "void f() { this.cl|; }", "namespace n {} void f() { n::cl|; }",
-           "// cl|", "/* cl| */", "/* cl|", "\"cl|\"", "\"cl|",
-           "void f() { char c = 'c|'; }", "#include <cl|>",
-           "#if defined(NEVER)\ncl|\n#endif\n"}) {
+  for (const std::string source :
+       {"void f() { int32_t x = cl|; }", "void f() { f(cl|); }",
+        "void f() { this.cl|; }", "namespace n {} void f() { n::cl|; }",
+        "// cl|", "/* cl| */", "/* cl|", "\"cl|\"", "\"cl|",
+        "void f() { char c = 'c|'; }", "#include <cl|>",
+        "#if defined(NEVER)\ncl|\n#endif\n"}) {
     const auto result = query(source);
-    require(std::none_of(result.candidates.begin(), result.candidates.end(),
-                         [](const auto &candidate) {
-                           return candidate.kind ==
-                                  lang::CompletionCandidateKind::Snippet;
-                         }),
-            "snippet escaped its syntactic boundary");
+    if (std::any_of(result.candidates.begin(), result.candidates.end(),
+                    [](const auto &candidate) {
+                      return candidate.kind ==
+                             lang::CompletionCandidateKind::Snippet;
+                    }))
+      throw std::runtime_error("snippet escaped its syntactic boundary: " +
+                               source);
   }
 
   const std::string source = "/* 😀 */ cl|utter";
@@ -100,6 +106,10 @@ void run() {
   const auto cached = query("class Cached { ct| };", cache, &metrics);
   require(snippet(cached, "ctor") != nullptr, "cache lost syntax context");
   require(!metrics.parseCacheHits.empty(), "parsed cache was not reused");
+  const auto plain = lang::LanguageQueries().complete(
+      {.entryPath = "snippet.gti", .source = "cl", .byteOffset = 2});
+  require(snippet(plain, "class") == nullptr,
+          "plain compiler query opted into templates implicitly");
 }
 
 } // namespace
