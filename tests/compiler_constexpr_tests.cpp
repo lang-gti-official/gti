@@ -4955,6 +4955,104 @@ int main() { return 0; }
          "a non-dependent false assertion in an unused generic declaration "
          "should fail immediately");
 
+  // Concrete reanalysis of every instance kind runs over the completed
+  // program: declaration order gates neither a class nor a function
+  // instance, so both may call a constexpr helper declared after them.
+  const std::string laterHelper = R"(
+class Narrow<uint64_t N> {
+  static_assert(admits<N>(), "class instance is too wide");
+public:
+  Narrow() {}
+};
+void check<uint64_t N>() {
+  static_assert(admits<N>(), "function instance is too wide");
+}
+constexpr bool admits<uint64_t N>() { return N <= uint64_t(4); }
+)";
+  const lang::FrontendResult laterAccepted = lang::Frontend().analyze(
+      "later-helper-static-assert.gti", laterHelper + R"(
+int main() {
+  Narrow<4> narrow = Narrow<4>();
+  check<4>();
+  return 0;
+}
+)");
+  expect(laterAccepted.canGenerateCode() &&
+             !hasDiagnosticCode(laterAccepted.diagnostics, "GTI-S2057"),
+         "dependent class and function assertions should both see a "
+         "constexpr helper declared after them");
+  const lang::FrontendResult laterRejected = lang::Frontend().analyze(
+      "later-helper-static-assert-wide.gti", laterHelper + R"(
+int main() {
+  Narrow<8> narrow = Narrow<8>();
+  check<8>();
+  return 0;
+}
+)");
+  expect(!laterRejected.hirValid &&
+             countDiagnosticCode(laterRejected.diagnostics, "GTI-S2079") == 2 &&
+             hasDiagnostic(laterRejected.diagnostics,
+                           "Static assertion failed. class instance is too "
+                           "wide") &&
+             hasDiagnostic(laterRejected.diagnostics,
+                           "Static assertion failed. function instance is too "
+                           "wide"),
+         "the later helper should be evaluated for each concrete instance");
+
+  // Constant evaluation and initializer-effect analysis reanalyse instances
+  // in isolated workers that hold no declaration order. A class reached
+  // there still reads namespace constants and calls constexpr helpers, and
+  // a generic body reached from a global initializer still selects its
+  // compile-time branch.
+  const lang::FrontendResult isolatedReanalysis =
+      lang::Frontend().analyze("isolated-reanalysis-static-assert.gti", R"(
+constexpr int32_t start_value = 5;
+constexpr bool admits<uint64_t N>() { return N <= uint64_t(4); }
+class Counter<uint64_t N> {
+  static_assert(admits<N>(), "counter is too wide");
+  int32_t start = start_value;
+public:
+  constexpr Counter() {}
+  constexpr int32_t first() { return start; }
+};
+constexpr int32_t first_of<uint64_t N>() {
+  Counter<N> counter = Counter<N>();
+  return counter.first();
+}
+static_assert(first_of<2>() == 5);
+int32_t pick<uint64_t N>() {
+  if constexpr (admits<N>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+Counter<3> counter = Counter<3>();
+int32_t picked = pick<3>();
+int main() { return counter.first() + picked - 6; }
+)");
+  expect(isolatedReanalysis.canGenerateCode() &&
+             !hasDiagnosticCode(isolatedReanalysis.diagnostics, "GTI-S2057") &&
+             !hasDiagnosticCode(isolatedReanalysis.diagnostics, "GTI-S2001"),
+         "class and function instances reanalysed by constant evaluation or "
+         "initializer effects should see the completed program");
+
+  // Evaluating an assertion can need the very instance that owns it. The
+  // nested reanalysis staging performs supplies that instance's facts and
+  // leaves the assertion to its owner instead of reentering it.
+  const lang::FrontendResult selfAssertion =
+      lang::Frontend().analyze("self-instance-static-assert.gti", R"(
+constexpr int32_t unit<uint64_t N>() {
+  static_assert(unit<N>() == 1, "unit instance");
+  return 1;
+}
+int main() { return unit<3>() - 1; }
+)");
+  expect(selfAssertion.canGenerateCode() &&
+             !hasDiagnosticCode(selfAssertion.diagnostics, "GTI-S2057"),
+         "an assertion that evaluates its own function instance should be "
+         "evaluated once by that instance");
+
   const std::array<std::pair<std::string, std::string>, 7> malformed{{
       {"static_assert; int recovered() { return 0; }", "Expect '('"},
       {"static_assert(); int recovered() { return 0; }", "Expect a condition"},

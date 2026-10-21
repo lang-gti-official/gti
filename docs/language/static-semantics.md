@@ -2339,6 +2339,13 @@ once for each canonical concrete class, function, method, or constructor
 instance. Repeated uses of one instance do not duplicate a failure. A concrete
 failure retains the generic declaration as its primary location and reports
 the substituted arguments plus the first requiring use as related information.
+Concrete evaluation sees the completed program: a dependent assertion may call
+a constexpr definition declared after it, in a class exactly as in a function.
+An assertion may require the instance that owns it, as when a class assertion
+or a destructor reflects on the class's fields, and is still evaluated once
+rather than recursively.
+The same holds wherever the instance is formed, including inside a constant
+evaluation or a global initializer.
 An independent assertion inside a generic declaration is still evaluated
 immediately, and an unused genuinely dependent assertion does not fail solely
 because it remains symbolic.

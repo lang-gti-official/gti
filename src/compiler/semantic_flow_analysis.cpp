@@ -249,14 +249,11 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
           worker->valueFlow = valueFlow;
-          for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
-            if (declaredBeforeCurrent(definition))
-              worker->constexprDefinitionsAnalyzed.insert(definition);
-          }
-          for (const auto *definition : constexprConstructorsAnalyzed) {
-            if (declaredBeforeCurrent(definition))
-              worker->constexprConstructorsAnalyzed.insert(definition);
-          }
+          // Initializer effects close over the completed program, so every
+          // analysed constexpr definition is available to the concrete
+          // instances they reach, exactly as to their HIR reanalysis.
+          worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
+          worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
           worker->genericDefaultConstants = genericDefaultConstants;
           worker->defaultArgumentSyntax = defaultArgumentSyntax;
           worker->defaultArgumentDependencies = defaultArgumentDependencies;
