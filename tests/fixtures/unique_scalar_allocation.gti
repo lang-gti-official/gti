@@ -48,9 +48,10 @@ int main() {
   auto null_value = std::make_unique<nullptr_t>(nullptr);
   callback empty_callback = nullptr;
   mut auto callback_owner = std::make_unique<callback>(empty_callback);
-  // The owner itself is nonempty even when its stored pointer value is null.
-  // References to raw pointers retain GTI's separate rejected-use boundary.
-  if (pointer == nullptr || null_pointer == nullptr || *null_value != nullptr ||
+  // The owner itself is nonempty even when its stored pointer value is null;
+  // dereferencing it reads that stored pointer through a checked reference.
+  if (pointer == nullptr || *pointer != nullptr || null_pointer == nullptr ||
+      *null_pointer != nullptr || *null_value != nullptr ||
       callback_owner == nullptr || *callback_owner != nullptr) {
     return 3;
   }

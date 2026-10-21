@@ -1011,11 +1011,13 @@ base-type              = primitive-type
    may be reseated; it does not change pointee access. `T* const*` points to a
    read-only pointer slot, unlike `const T**`, whose final object is read-only.
    Locals, parameters, fields, aliases, generic arguments and unannotated
-   returns use the same type family. References to raw pointers, anonymous
+   returns use the same type family. A checked reference may name a pointer
+   slot (`T*&`, `mut const T*&`) except one with native layout: a fixed
+   pointer-array element or a native record or union field. Anonymous
    function-pointer declarators, pointer-to-array types and implicit array
    decay remain rejected. Fixed arrays may contain nested pointer values.
-   Raw-pointer variables and
-   fields require an explicit initializer, normally `nullptr`.
+   Raw-pointer variables and fields declared with a pointer type require an
+   explicit initializer, normally `nullptr`.
 
    Carrying, copying, assigning, passing, returning, null comparison, compatible
    equality, adding outer qualification and address formation are safe.
@@ -1131,7 +1133,8 @@ expected-type          = "expected" "<" type "," type ">" ;
    passed to a mutable method until the loan ends. Nominal multi-origin and
    nested carrier fields use the stored-reference contract above; they are not
    general nested-reference types. Reference globals, whole fixed-array
-   references and references to raw pointers remain unsupported.
+   references and references to native-layout pointer slots remain
+   unsupported.
 
    Public sparse storage uses ordinary class, generic, call and unsafe-block
    syntax over the general typed object-lifetime operations. The former private

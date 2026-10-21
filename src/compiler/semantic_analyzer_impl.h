@@ -2329,6 +2329,12 @@ private:
                                        const Token &location);
 
   [[nodiscard]] bool validateForeignStorageBorrow(const ExprPtr &expression);
+  // A checked reference to a raw pointer borrows a GTI pointer slot. An
+  // element of a fixed pointer array or a field of a native record or union
+  // holds a native pointer object the reference cannot represent.
+  [[nodiscard]] bool
+  validateNativePointerSlotBorrow(const ExprPtr &expression,
+                                  const SemanticType &reference);
 
   void validateCallPlaceExclusivityImpl(
       std::span<const SemanticType> parameterTypes,
