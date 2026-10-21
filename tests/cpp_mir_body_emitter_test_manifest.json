@@ -306,6 +306,18 @@
       "suite": "text"
     },
     {
+      "name": "testMovedViewAfterFormalRead",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedChainReturnConstruction",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedPassiveFieldInPlainConstructor",
+      "suite": "text"
+    },
+    {
       "name": "testCopiedFormalAfterEarlierWrite",
       "suite": "text"
     },

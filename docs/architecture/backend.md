@@ -2636,11 +2636,48 @@ obligation names its formal, its moved value or its field, and its `Move` and
 absence. The field then starts from its passive empty state in the
 member-initializer list, and the exact `Move` and `Initialize` publish it in
 MIR order, as in `Gauge(int32_t tag) : ledger(Ledger(tag, divisor)),
-odd(tag % 2 == 1), tag(std::move(tag))`. The MIR failure summary does not yet
-prove a non-class `Move` failure-free, so such a constructor is always
-failure-capable and takes this failure form; the ordinary form keeps the
-native-publication rule. A moved text view keeps its caller's loan and stays
-outside this route.
+odd(tag % 2 == 1), tag(std::move(tag))`.
+
+A moved `std::string_view`, `c_string` or function item uses the same
+drop-free route without an `Initialize`. MIR stages none for these types: the
+constructor record publishes the formal's exact `Move` under the shared
+`mirRecordPublishedConstructorInitializer` rule, and that value has no other
+consumer. The body emits the `Move` and its field store in MIR order, and the
+field keeps its passive native default state until then, as in
+`shelf(std::string_view name) : v(std::vector<int32_t>()),
+name(std::move(name))`. A text view or C string also carries its caller's text
+as the formal's entry loan. A by-value field may hold only ownerless text
+(semantics reports `GTI-S2045` otherwise), so the move publishes no dependency
+and MIR records no `Stored` loan for that field. The proof admits borrowed
+state only in exactly that shape: the formal carries it through one entry loan
+with no producer, escape, stored field, lifecycle binding, two-phase
+reservation or extra dependency. No loan derives from that entry loan, every
+record naming it is its comment-only `EndBorrow`, and no loan publishes into
+the field or is produced by the moved value. A user-defined borrowed carrier,
+such as a class with a `T&` field, is a different family. Its field retains
+the dependency through a `Stored` publication, and its native class has no
+empty representation, because its references must be bound when the object is
+constructed. Moving, copying or constructing such a carrier after work that
+can fail therefore stays outside the failure form; only the first-field prefix
+routes below publish one.
+
+Such a move is itself failure-free (see the MIR failure summary), so a
+constructor whose other work cannot fail, as in
+`Gauge(int32_t tag) : odd((tag & 1) == 1), flagged(is_odd(tag)),
+tag(std::move(tag))`, uses the ordinary form. When the native owned-field
+proof cannot hoist every owned move, `cppMirOrdinaryBodyStagedParameterMoves`
+admits the same body-ordered publication there for drop-free moves only:
+the constructor's summary must be failure-free, its fields must have the
+empty state, no reference may bind natively, and natively copied fields must
+form the complete first-field prefix. Body admission and the planner's
+initializer list consult that one proof. For a constructor that either form
+can body-stage, passive scalar parameter copies stay in the MIR body schedule
+(`cppMirCopyParameterFieldBindings`), whichever form is selected.
+The native owned-field proof also refuses a passive scalar sibling that copies
+the very formal a later initializer moves, as in `Copied(int32_t tag) :
+first(tag), second(std::move(tag))`: the native list would move the formal
+before the body copy ran, and the formal's shell is never declared. That
+constructor publishes in body order in both forms.
 
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
@@ -2730,7 +2767,15 @@ effect-free records of earlier initializers precede the `Move` (passive scalar
 siblings, record-published closure copies, or stored-reference bindings), and
 its own full-expression boundary follows it. The native member-initializer list
 then moves the formal exactly where MIR moves it, in the failure form as in the
-ordinary one, and the body only records that publication. Whether the failure
+ordinary one, and the body only records that publication. A body with no
+failure record cannot abort before the move, so the proof also binds a move
+recorded after other initializers, which then run in the body after the native
+list has published the field. That reordering is exact only while no other
+record names the formal, apart from its lexical shell `Drop`. An earlier
+initializer that reads the formal, as in `Sized(std::string_view name) :
+length(name.size()), name(std::move(name))`, would read a parameter the list
+has already consumed; such a move keeps the read and the move in the failure
+form's body, in MIR order, through the drop-free route above. Whether the failure
 form may keep the published field when a later edge fails is a separate,
 per-field proof. A trivially dropped field needs nothing. A struct-capturing
 closure field is retained as a passive shell under the copy route's capture
@@ -3427,6 +3472,14 @@ Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
 generated copy/destruction traits, field drop facts, and the absence of active
 cleanup or state-bearing bases remain required.
+
+A moved value staged through plain call inputs into one construction in the
+move's own block, with no record between them touching the source place, is a
+moved-place chain (`movedPlaceChainSource`). Neither the `Move` nor its call
+inputs materialize a local, so every spelling of that construction passes
+`std::move` over the source place, including a construction published at a
+plain or failure-form return, as in `return Holder(std::move(value));` and
+`unexpected(code)` for a scalar error.
 
 ### Declarations And ABI
 
