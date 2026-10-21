@@ -148,6 +148,7 @@ struct DocumentSymbolInfo {
 };
 
 enum class CompletionCandidateKind {
+  Snippet,
   Namespace,
   TypeAlias,
   Class,

@@ -109,6 +109,7 @@ struct FrontendOptions {
 };
 
 struct FrontendResult {
+  std::optional<SyntaxCompletionContext> syntaxCompletion;
   Program program;
   SemanticModel semantics;
   HirProgram hir;
