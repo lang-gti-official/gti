@@ -1288,12 +1288,18 @@ auto SemanticVisitor::Impl::consumeTextDependentValue(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
   // A relay into a callee that lets none of the value's dynamic fields
-  // outlive the call keeps the value within the caller's loan.
-  for (const auto &relay : requestSession.textDependentRelays) {
+  // outlive the call keeps the value within the caller's loan. Relays are
+  // decided by the request's own finalization, once the field contracts they
+  // read are final; an instance analysis's finalization leaves them pending.
+  for (auto &relay : requestSession.textDependentRelays) {
     const auto found = requestSession.textDependentValues.find(relay.argument);
+    if (instanceAnalysisActive || relay.decided ||
+        found == requestSession.textDependentValues.end())
+      continue;
+    relay.decided = true;
+    found->second.relayed = false;
     const FunctionInfo *callee = semanticModel.findFunction(relay.callee);
-    if (found == requestSession.textDependentValues.end() ||
-        found->second.consumed || found->second.diagnosed ||
+    if (found->second.consumed || found->second.diagnosed ||
         callee == nullptr || relay.fields.empty() ||
         !semanticModel.hasAnalyzedFunctionBody(*callee->bodyDeclaration()))
       continue;
@@ -1327,7 +1333,7 @@ auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
   }
   for (const Expr *expression : requestSession.textDependentValueOrder) {
     auto &use = requestSession.textDependentValues.at(expression);
-    if (use.consumed || use.diagnosed)
+    if (use.consumed || use.diagnosed || use.relayed)
       continue;
     use.diagnosed = true;
     const std::size_t before = diagnostics.size();
@@ -1355,23 +1361,30 @@ auto SemanticVisitor::Impl::textPublicationOwner(const SemanticType &type) const
 }
 
 auto SemanticVisitor::Impl::textFieldContractFunction(
-    const FunctionInfo &function) const -> bool {
-  if (function.declaration == nullptr ||
-      function.bodyDeclaration() == nullptr ||
-      function.bodyDeclaration()->body() == nullptr || function.virtualMethod ||
-      function.overrideMethod || function.linkage != LanguageLinkage::Gti ||
-      !function.genericParameters.empty())
+    const FunctionDecl *declaration, const FunctionDecl *body,
+    bool dynamicDispatch, ClassId ownerClass) const -> bool {
+  if (declaration == nullptr || body == nullptr || body->body() == nullptr ||
+      dynamicDispatch || declaration->linkage() != LanguageLinkage::Gti ||
+      !declaration->genericParameters().empty())
     return false;
-  return function.ownerClass == 0 ||
-         classInfo(function.ownerClass).genericParameters.empty();
+  return ownerClass == 0 || classInfo(ownerClass).genericParameters.empty();
 }
 
 auto SemanticVisitor::Impl::textFieldContractScope() const
     -> const FunctionInfo * {
+  // An instance analysis records no contract, and looking up its function
+  // there would consult the generic declaration and demand its body.
+  if (instanceAnalysisActive || lambdaDepth != 0 || constructorDepth != 0 ||
+      destructorDepth != 0)
+    return nullptr;
+  // Finding the scope is bookkeeping, not a use of the function's body.
+  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
   const FunctionInfo *function = currentFunctionInfo();
-  if (function == nullptr || instanceAnalysisActive || lambdaDepth != 0 ||
-      constructorDepth != 0 || destructorDepth != 0 ||
-      !textFieldContractFunction(*function))
+  if (function == nullptr ||
+      !textFieldContractFunction(
+          function->declaration, function->bodyDeclaration(),
+          function->virtualMethod || function->overrideMethod,
+          function->ownerClass))
     return nullptr;
   return function;
 }
@@ -1466,9 +1479,11 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
 auto SemanticVisitor::Impl::implicitReceiverTextField(
     const Variable &variable) const -> std::optional<OwnerlessTextField> {
   const FunctionInfo *function = textFieldContractScope();
+  if (function == nullptr)
+    return std::nullopt;
   const Symbol *symbol = resolve(variable.name());
-  if (function == nullptr || symbol == nullptr || symbol->ownerClass == 0 ||
-      symbol->staticMember || symbol->parameterDeclaration != nullptr ||
+  if (symbol == nullptr || symbol->ownerClass == 0 || symbol->staticMember ||
+      symbol->parameterDeclaration != nullptr ||
       function->ownerClass != symbol->ownerClass || function->staticMember)
     return std::nullopt;
   const SemanticType owner = openClassType(function->ownerClass);
@@ -1548,29 +1563,40 @@ auto SemanticVisitor::Impl::requireOwnerlessTextField(
 auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
                                                 const CallableCandidate &target)
     -> void {
-  if (!target.id || !target.declaration)
+  // An instance analysis records no relay or forward: its formals carry no
+  // contract, and a relay from a generic body is decided by the body's open
+  // analysis, or not at all.
+  if (instanceAnalysisActive || !target.id || !target.declaration ||
+      !textFieldContractFunction(target.declaration, target.bodyDeclaration(),
+                                 target.virtualMethod || target.overrideMethod,
+                                 target.ownerClass))
     return;
-  const FunctionInfo *callee = semanticModel.findFunction(*target.declaration);
-  const bool contract = callee != nullptr && textFieldContractFunction(*callee);
-  const auto relay = [&](const ExprPtr &argument, OwnerlessTextField formal) {
+  // An argument is classified before its formal's class is queried: most
+  // calls relay and forward nothing.
+  const auto record = [&](const ExprPtr &argument, OwnerlessTextField formal,
+                          const SemanticType &formalType) {
     const ExpressionInfo *info =
         argument ? semanticModel.findExpression(*argument) : nullptr;
-    if (contract && info != nullptr && isTextDependentValue(*info))
+    if (info == nullptr || info->type != formalType)
+      return;
+    if (isTextDependentValue(*info)) {
+      const auto found =
+          requestSession.textDependentValues.find(argument.get());
+      if (found == requestSession.textDependentValues.end() ||
+          !textPublicationOwner(formalType))
+        return;
+      found->second.relayed = true;
       requestSession.textDependentRelays.push_back(
           {.argument = argument.get(),
            .callee = target.id,
            .calleeFormal = formal,
            .fields = textDependentFields(*argument)});
-  };
-  // A formal passed on as the callee's formal or receiver of the same class
-  // carries the callee's requirements on it back to the caller.
-  const auto forward = [&](const ExprPtr &argument, OwnerlessTextField formal,
-                           const SemanticType &formalType) {
-    const auto caller =
-        argument ? textFieldContractFormal(*argument) : std::nullopt;
-    const ExpressionInfo *info =
-        argument ? semanticModel.findExpression(*argument) : nullptr;
-    if (!contract || !caller || info == nullptr || info->type != formalType)
+      return;
+    }
+    // A formal passed on as the callee's formal or receiver of the same class
+    // carries the callee's requirements on it back to the caller.
+    const auto caller = textFieldContractFormal(*argument);
+    if (!caller)
       return;
     requestSession.textFieldForwardUses.push_back(
         {.caller = currentFunctionDeclaration,
@@ -1579,17 +1605,16 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
          .calleeFormal = formal});
     consumeTextFieldFormalUse(argument);
   };
-  if (callee != nullptr && callee->ownerClass != 0 && !callee->staticMember &&
+  if (target.ownerClass != 0 && !target.staticMember &&
       target.declaration->receiverMutability() ==
           ReceiverMutability::ReadOnly) {
-    const SemanticType owner = openClassType(callee->ownerClass);
+    const SemanticType owner = openClassType(target.ownerClass);
     if (const auto *member = exprAs<Get>(call.callee().get());
         member != nullptr && member->access().kind != TokenKind::ARROW) {
-      relay(member->object(), {.receiver = true});
-      forward(member->object(), {.receiver = true}, owner);
+      record(member->object(), {.receiver = true}, owner);
     } else if (const FunctionInfo *scope = textFieldContractScope();
-               exprAs<Variable>(call.callee().get()) != nullptr && contract &&
-               scope != nullptr && scope->ownerClass == callee->ownerClass &&
+               exprAs<Variable>(call.callee().get()) != nullptr &&
+               scope != nullptr && scope->ownerClass == target.ownerClass &&
                !scope->staticMember && textPublicationOwner(owner)) {
       // An implicit receiver call forwards this method's receiver.
       requestSession.textFieldForwardUses.push_back(
@@ -1606,16 +1631,19 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
     if (formalType.kind == SemanticType::Reference &&
         formalType.arguments.size() == 1)
       formalType = SemanticType(formalType.arguments.front());
-    if (!textPublicationOwner(formalType) ||
+    if (formalType.kind != SemanticType::Class ||
         !readOnlyTextFieldFormal(*target.declaration, target.parameterTypes,
                                  index))
       continue;
-    relay(call.arguments()[index], {.parameter = index});
-    forward(call.arguments()[index], {.parameter = index}, formalType);
+    record(call.arguments()[index], {.parameter = index}, formalType);
   }
 }
 
 auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
+  // Contracts are request facts: an instance analysis records no use, and its
+  // finalization must not look up, and so demand, the functions they name.
+  if (instanceAnalysisActive)
+    return;
   // An unconsumed use lets the whole formal, and so each text field, outlive
   // the call.
   for (const Expr *expression : requestSession.textFieldFormalOrder) {
