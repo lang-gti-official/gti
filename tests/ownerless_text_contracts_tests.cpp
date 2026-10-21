@@ -75,7 +75,7 @@ struct Label {
 };
 void write(mut std::string_view& output, std::string_view input) { output = input; }
 )gti";
-  for (const std::string &write :
+  for (const char *write :
        {"label.slot() = owner.view();",
         "mut std::string_view& alias = label.slot(); alias = owner.view();",
         "write(label.slot(), owner.view());"}) {
