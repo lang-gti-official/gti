@@ -197,6 +197,43 @@ public:
   Referenced(Point& point) : point(point) {}
 };
 
+// Constructed fields and base initializers read formals natively too. A field
+// built from the formal after the write, a write inside the constructed
+// field's own arguments, and a base whose computed argument writes the formal
+// before a field copy all see the written value.
+class Inner {
+public:
+  int32_t a;
+  int32_t b;
+  Inner(int32_t a, int32_t b) : a(a), b(b) {}
+};
+
+class Outer {
+public:
+  int32_t first;
+  Inner inner;
+  Outer(mut int32_t seed) : first(bump(seed)), inner(Inner(seed, seed)) {}
+};
+
+class Nested {
+public:
+  Inner inner;
+  Nested(mut int32_t seed) : inner(Inner(seed += 5, seed)) {}
+};
+
+class Base {
+public:
+  int32_t a;
+  int32_t b;
+  Base(int32_t a, int32_t b) : a(a), b(b) {}
+};
+
+class Derived : public Base {
+public:
+  int32_t copy;
+  Derived(mut int32_t seed) : Base(seed += 5, seed), copy(seed) {}
+};
+
 // Work after the body-ordered copies can still fail.
 class Divided {
 public:
@@ -267,6 +304,13 @@ int main(int argc, std::vector<std::string> argv) {
   Point anchor = Point(3, 7);
   Referenced referenced = Referenced(anchor);
   std::println(referenced.point.x * 10 + referenced.point.y);
+
+  Outer outer = Outer(1);
+  std::println(outer.first * 100 + outer.inner.a * 10 + outer.inner.b);
+  Nested nested = Nested(1);
+  std::println(nested.inner.a * 10 + nested.inner.b);
+  Derived derived = Derived(1);
+  std::println(derived.a * 100 + derived.b * 10 + derived.copy);
 
   Divided divided = Divided(1, Point(1, 2));
   std::println(divided.first * 1000 + divided.second * 100 + divided.shifted +
