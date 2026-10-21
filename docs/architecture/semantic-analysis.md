@@ -2537,6 +2537,11 @@ creating body reads text fields as ownerless, so `noteTextDependentValue`
 records each dependent value. A local initializer, a field read, a grouping, a
 move or a discarded statement consumes it. `finalizeTextDependentValues`
 reports every other use as `GTI-S2045`, so an unsupported context fails closed.
+Publication also requires `constructionKeepsPublishedText`. The constructor
+body must be empty, because it could read the field back through `this` as
+ownerless text. `readsConstructedObject` must also find no read of the object
+in another initializer or field default; the language rejects such reads
+today, and any expression form the check does not inspect counts as a read.
 
 A function in a field-contract scope (`textFieldContractScope`) carries a
 field-level contract, `FunctionInfo::ownerlessTextFields`, beside

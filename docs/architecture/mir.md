@@ -1841,7 +1841,12 @@ constructor-summary match accepts the call, and the text contracts waive that
 argument's ownerless requirement, only when the constructor's sole text
 initializer of the field reads exactly that formal and no other text
 initializer does. The constructor body must not also store the formal as
-ownerless text. In a function that can carry a field-level contract (`fieldContractFunction`),
+ownerless text. Inside such a constructor, `TextContracts` reads a
+publishable field back through `this` as that formal's text. A read in
+another initializer makes the formal non-exclusive, and a read reaching
+ownerless storage from the body fails the publication.
+
+In a function that can carry a field-level contract (`fieldContractFunction`),
 `TextContracts` independently derives `ownerlessTextFields`:
 - a formal's or the receiver's text-field projection is a field source, not
   ownerless text;

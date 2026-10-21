@@ -1345,6 +1345,9 @@ auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
 
 auto SemanticVisitor::Impl::textPublicationOwner(const SemanticType &type) const
     -> bool {
+  // Copy and move constructors are defaulted or deleted (custom bodies are
+  // GTI-S2020), so copying a dependent value runs no code that could read its
+  // fields as ownerless. Supporting custom bodies must revisit this.
   const ClassInfo *owner = classInfo(type);
   return owner != nullptr && !typeTraits(type).containsBorrowedState &&
          storedReferencePaths(type).empty() && !owner->destructor &&
@@ -1655,6 +1658,93 @@ auto SemanticVisitor::Impl::finalizeTextFieldContracts() -> void {
                     changed;
     }
   }
+}
+
+auto SemanticVisitor::Impl::readsConstructedObject(
+    const Expr &expression, const ClassInfo &owner,
+    const std::vector<Parameter> *formals) const -> bool {
+  const auto reads = [&](const ExprPtr &child) {
+    return child && readsConstructedObject(*child, owner, formals);
+  };
+  switch (expression.exprKind()) {
+  case ExprKind::This:
+    return true;
+  case ExprKind::LiteralExpr:
+  case ExprKind::QualifiedName:
+    return false;
+  case ExprKind::Variable: {
+    const auto &name = static_cast<const Variable &>(expression).name();
+    if (formals != nullptr && std::any_of(formals->begin(), formals->end(),
+                                          [&](const Parameter &formal) {
+                                            return formal.name.lexeme ==
+                                                   name.lexeme;
+                                          }))
+      return false;
+    const auto member = owner.members.find(name.lexeme);
+    return member != owner.members.end() && !member->second.symbol.staticMember;
+  }
+  case ExprKind::Grouping:
+    return reads(static_cast<const Grouping &>(expression).expression());
+  case ExprKind::Get:
+    return reads(static_cast<const Get &>(expression).object());
+  case ExprKind::Unary:
+    return reads(static_cast<const Unary &>(expression).right());
+  case ExprKind::Binary: {
+    const auto &binary = static_cast<const Binary &>(expression);
+    return reads(binary.left()) || reads(binary.right());
+  }
+  case ExprKind::Logical: {
+    const auto &logical = static_cast<const Logical &>(expression);
+    return reads(logical.left()) || reads(logical.right());
+  }
+  case ExprKind::ConditionalExpr: {
+    const auto &conditional = static_cast<const ConditionalExpr &>(expression);
+    return reads(conditional.condition()) ||
+           reads(conditional.thenExpression()) ||
+           reads(conditional.elseExpression());
+  }
+  case ExprKind::Index: {
+    const auto &index = static_cast<const Index &>(expression);
+    return reads(index.object()) || reads(index.index());
+  }
+  case ExprKind::Conversion:
+    return reads(static_cast<const Conversion &>(expression).value());
+  case ExprKind::Call: {
+    const auto &call = static_cast<const Call &>(expression);
+    return reads(call.callee()) ||
+           std::any_of(call.arguments().begin(), call.arguments().end(), reads);
+  }
+  case ExprKind::DirectInitializer: {
+    const auto &direct = static_cast<const DirectInitializer &>(expression);
+    return std::any_of(direct.arguments().begin(), direct.arguments().end(),
+                       reads);
+  }
+  default:
+    return true;
+  }
+}
+
+auto SemanticVisitor::Impl::constructionKeepsPublishedText(
+    const SemanticType &type, const ConstructorDecl *constructor) const
+    -> bool {
+  const ClassInfo *owner = classInfo(type);
+  if (owner == nullptr)
+    return false;
+  for (const FieldInfo &field : owner->fields)
+    if (field.declaration != nullptr && field.declaration->initializer() &&
+        readsConstructedObject(*field.declaration->initializer(), *owner,
+                               nullptr))
+      return false;
+  if (constructor == nullptr)
+    return true;
+  if (constructor->body() && !constructor->body()->statements().empty())
+    return false;
+  for (const auto &initializer : constructor->initializers())
+    for (const auto &argument : initializer.arguments)
+      if (argument &&
+          readsConstructedObject(*argument, *owner, &constructor->parameters()))
+        return false;
+  return true;
 }
 
 auto SemanticVisitor::Impl::directTextField(const SemanticType &type,
