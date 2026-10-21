@@ -1,5 +1,65 @@
 # Compiler Verification
 
+## Text views moved after initializer work (0.453.3)
+
+`moved_passive_constructor_field_runtime` now also runs a generic `Viewed<F>`
+whose constructor moves a `std::string_view`, a `c_string` and a function name
+after a `Ledger` field that can fail. An earlier sibling reads the view first,
+and the constructor body can fail after the moves. A `Shelf<std::string_view>`
+also moves its view after the shelf's fallible ledger. When the ledger fails
+before the moves, only the ledgers built earlier are dropped. When the body
+fails after them, Viewed's ledger is also rolled back, exactly once. The moved
+C string is read back through `std::string::try_from_c_string`. Each result is
+checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The main compiler
+(`b0a1f524`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`, `testMovedPassiveFieldAfterFallibleSibling` now
+moves a view and a C string after a fallible field and a checked remainder.
+- The native owned-field proof must refuse the constructor.
+- Both moves must be constructor-record publications, with no `Stored` loan
+  for either field.
+- The failure form must emit both moves in MIR order after the ledger and roll
+  back only the ledger.
+- Three forgeries must fail closed: a formal without the borrowed state, a loan
+  derived from the entry loan, and an entry loan that publishes into the field.
+- A `Cursor` with an `int32_t&` field, moved after the same work, must stay
+  unsupported.
+
+`testMovedViewAfterFormalRead` reads a view through its receiver and as a call
+argument before moving it, with no failure record. The native proof must refuse
+it, and the failure form must read the body alias before the move. A sibling
+that does not name the formal keeps the native move.
+
+With the entry-loan witness disabled, the derived-loan and formal forgeries
+fail, as does the 0.453.1 borrowed-state forgery. The stored-field forgery is
+also refused by the stored-reference pairing.
+
+A differential `--emit-cpp` against main `b0a1f524` ran on `ubuntu-8` with
+GCC 15.2 compilers and one `GTI_STDLIB_PATH` for both. It covered the 1,806
+programs in `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3.
+2,870 runs emit byte-identical C++, and the 740 runs that fail with both
+compilers report identical diagnostics. Only the new fixture changes status,
+from `GTI-B0001` to success, at both levels. The summed emission time was
+3,727 s before and 3,744 s after. Before the reconcile below, the 11 focused
+tests of the verify selection also passed on `ubuntu-6` with GCC 15.2. Current
+main does not build with GCC 15.2,
+because a `-Wdangling-pointer` false positive in
+`semantic_call_resolution.cpp` is treated as an error, so both Linux builds
+added `-Wno-dangling-pointer`. After reconciling with main `33220490`, which
+retires the built-in `expected` path, the differential was repeated on macOS
+against that main. It gave the same counts, with no text or diagnostic changes
+and the same two fixture status changes, and the summed emission time was
+2,595.0 s before and 2,596.9 s after. The 11 focused tests also passed on the
+reconciled head.
+
+Some shapes stay outside the route and still stop with `GTI-B0001`:
+- a class with a reference field (a user-defined borrowed carrier) moved,
+  copied or constructed after work that can fail;
+- a lambda moved after such work;
+- a borrowed payload enum such as `enum Slot { ready(int32_t& value), empty }`
+  passed by value into a field, which fails earlier, in MIR construction, even
+  with no fallible sibling.
+
 ## Built-in expected retirement (internal, 0.453)
 
 Since 0.449.0 `expected` is a prelude class. This change removes the

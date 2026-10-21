@@ -306,6 +306,10 @@
       "suite": "text"
     },
     {
+      "name": "testMovedViewAfterFormalRead",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },
