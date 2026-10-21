@@ -561,13 +561,16 @@ int main() { return 0; }
   const lang::FrontendResult expectedReturned = lang::Frontend().analyze(
       "move-only-expected-return.gti", expectedReturnSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  // The return initializes the result through its implicit constructor, so
-  // the copy is the general deleted-copy argument diagnostic at the payload.
+  // The return initializes the result through its implicit constructor. That
+  // copies the named payload as any other return would, so the return's own
+  // copy diagnostic names it; no constructor call is written.
   const lang::Diagnostic *expectedCopy =
-      findDiagnosticByCode(expectedReturned.diagnostics, "GTI-S2018");
+      findDiagnosticByCode(expectedReturned.diagnostics, "GTI-S2003");
   const std::size_t expectedName =
       expectedReturnSource.find("return text") + std::string("return ").size();
-  expect(!expectedReturned.canGenerateCode() && expectedCopy != nullptr &&
+  expect(!expectedReturned.canGenerateCode() &&
+             expectedReturned.diagnostics.size() == 1 &&
+             expectedCopy != nullptr &&
              expectedCopy->primary.source ==
                  std::filesystem::absolute("move-only-expected-return.gti")
                      .lexically_normal()
@@ -575,17 +578,17 @@ int main() { return 0; }
              expectedCopy->primary.start == expectedName &&
              expectedCopy->primary.end == expectedName + 4 &&
              expectedCopy->message ==
-                 "Constructor argument 1 would call the deleted copy "
-                 "constructor of 'std::string'." &&
+                 "Cannot return 'text' by copy because type 'std::string' is "
+                 "move-only." &&
              expectedCopy->hints ==
                  std::vector<std::string>{
-                     "Pass the argument with std::move(...) when this call "
-                     "should transfer ownership."} &&
+                     "Use 'return std::move(text);' to transfer ownership."} &&
              expectedCopy->fixes.empty(),
          "wrapping a named success payload must diagnose its attempted copy "
-         "before backend admission, with the same exact ownership hint");
+         "before backend admission, as the return's copy");
   // Only one implicit conversion applies, so a nested result names its inner
-  // construction; that construction still owns the payload copy.
+  // construction. That written construction owns the payload copy and
+  // reports it as its constructor argument.
   std::string nestedReturnSource = expectedReturnSource;
   nestedReturnSource.replace(
       nestedReturnSource.find("expected<std::string, error>"),
@@ -600,9 +603,13 @@ int main() { return 0; }
   const auto *nestedCopy =
       findDiagnosticByCode(nestedReturned.diagnostics, "GTI-S2018");
   expect(!nestedReturned.canGenerateCode() && nestedCopy != nullptr &&
-             expectedCopy != nullptr &&
-             nestedCopy->message == expectedCopy->message &&
-             nestedCopy->hints == expectedCopy->hints &&
+             nestedCopy->message ==
+                 "Constructor argument 1 would call the deleted copy "
+                 "constructor of 'std::string'." &&
+             nestedCopy->hints ==
+                 std::vector<std::string>{
+                     "Pass the argument with std::move(...) when this call "
+                     "should transfer ownership."} &&
              nestedCopy->primary.start == nestedReturnSource.find("text)"),
          "nested expected success conversions cannot bypass payload ownership");
   for (const std::string replacement :
@@ -2937,33 +2944,42 @@ void testDuplicateDiagnosticsMerge() {
                            return diagnostic.code == code;
                          });
   };
+  // The trusted fixture calls the mapper twice; both calls reject its
+  // parameter type for the one request.
   const auto mapper = lang::Frontend().analyze(
       "duplicate-library-instance.gti", R"(
-expected<int32_t, int32_t> load() { return 1; }
-class Mapper { public: int32_t operator()(int32_t value) { return value; } };
 int main() {
-  auto result = load().transform(Mapper());
-  return 0;
+  auto flag = [](bool value) -> int32_t { return 1; };
+  return fixture::twice(flag);
 }
 )",
-      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
-  const auto reflected =
+      {root / "stdlib/prelude.gti",
+       root / "tests/fixtures/library_report_merge_prelude.gti"},
+      {}, {root / "stdlib"});
+  const auto rejected =
       std::find_if(mapper.diagnostics.begin(), mapper.diagnostics.end(),
                    [](const lang::Diagnostic &diagnostic) {
-                     return diagnostic.code == "GTI-S2023";
+                     return diagnostic.code == "GTI-S2003";
                    });
   const auto libraryNote = [](const lang::RelatedDiagnostic &related) {
     return related.message == "Reported inside this library instance.";
   };
   const auto libraryNotes =
-      reflected == mapper.diagnostics.end()
+      rejected == mapper.diagnostics.end()
           ? 0
-          : std::count_if(reflected->related.begin(), reflected->related.end(),
+          : std::count_if(rejected->related.begin(), rejected->related.end(),
                           libraryNote);
-  expect(!mapper.canGenerateCode() && count(mapper, "GTI-S2023") == 1 &&
-             libraryNotes > 1 &&
-             std::is_partitioned(reflected->related.begin(),
-                                 reflected->related.end(), libraryNote),
+  if (mapper.diagnostics.size() != 1 || libraryNotes != 2) {
+    for (const auto &diagnostic : mapper.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      for (const auto &related : diagnostic.related)
+        std::cerr << "  note: " << related.message << '\n';
+    }
+  }
+  expect(!mapper.canGenerateCode() && mapper.diagnostics.size() == 1 &&
+             count(mapper, "GTI-S2003") == 1 && libraryNotes == 2 &&
+             std::is_partitioned(rejected->related.begin(),
+                                 rejected->related.end(), libraryNote),
          "one library request reports one diagnostic with each internal site "
          "ahead of its request notes");
   const auto pack = lang::Frontend().analyze(
@@ -2971,6 +2987,71 @@ int main() {
                                 "Pack<int[2]&> value{}; return 0; }");
   expect(!pack.canGenerateCode() && count(pack, "GTI-S2017") == 1,
          "a type checked twice reports its error once");
+}
+
+// A failure that makes the rest of a call or instance meaningless is that
+// call's or instance's one error, without the checks it would invalidate.
+void testRejectedInstanceCascades() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto analyze = [&](std::string_view name, std::string source) {
+    return lang::Frontend().analyze(std::string(name), std::move(source),
+                                    {root / "stdlib/prelude.gti"}, {},
+                                    {root / "stdlib"});
+  };
+  // A consumed receiver cannot keep a returned borrow alive, so the selected
+  // signature is rejected once, naming its result. The fresh argument that
+  // result would have borrowed is not checked against it as well.
+  const std::string consumingSource = R"(#include <std/meta>
+class Source {
+public:
+  Source() {}
+  std::meta::callable_return_type<F> map<F>(F& mapper) && { return mapper(1); }
+};
+int stored = 1;
+int& pick(int value) { return stored; }
+int main() { [[discard]] Source().map(pick); return 0; }
+)";
+  const auto consuming =
+      analyze("consuming-borrowed-result.gti", consumingSource);
+  const std::size_t paren = consumingSource.find("(pick)") + 5;
+  expect(!consuming.canGenerateCode() && consuming.diagnostics.size() == 1 &&
+             consuming.diagnostics.front().code == "GTI-S2022" &&
+             consuming.diagnostics.front().message ==
+                 "A consuming method cannot return a reference or tracked "
+                 "borrowed state; this call returns 'int32_t&'." &&
+             consuming.diagnostics.front().primary.start == paren &&
+             consuming.diagnostics.front().primary.end == paren + 1,
+         "a consuming call that would return a borrow is one error at the "
+         "call, naming the result");
+
+  // A function instance whose own assertion fails is invalid for the reason
+  // it states; its body does not also report the index that assumption
+  // would have made valid (GTI-S2016 without the assertion).
+  const std::string functionSource = R"(int first<uint64_t N>() {
+  static_assert(N > 0, "first needs at least one element");
+  int values[N] = {};
+  return values[0];
+}
+int main() { return first<0>(); }
+)";
+  const auto function =
+      analyze("rejected-function-instance.gti", functionSource);
+  const std::size_t condition = functionSource.find("N > 0");
+  expect(!function.canGenerateCode() && function.diagnostics.size() == 1 &&
+             function.diagnostics.front().code == "GTI-S2079" &&
+             function.diagnostics.front().message ==
+                 "Static assertion failed. first needs at least one element" &&
+             function.diagnostics.front().primary.start == condition &&
+             function.diagnostics.front().primary.end == condition + 5,
+         "a function instance's failed assertion is its only error");
+  std::string unasserted = functionSource;
+  unasserted.erase(unasserted.find("  static_assert"),
+                   unasserted.find("  int values") -
+                       unasserted.find("  static_assert"));
+  const auto without = analyze("unasserted-function-instance.gti", unasserted);
+  expect(!without.canGenerateCode() && without.diagnostics.size() == 1 &&
+             without.diagnostics.front().code == "GTI-S2016",
+         "without its assertion the same instance reports its own error");
 }
 
 lang::FrontendResult analyzeDiagnosticFixture(
@@ -3336,6 +3417,7 @@ constexpr NamedTest kTests[] = {
      testUnknownFunctionAttributeClassification},
     {"testUnknownTypeCascadeSuppression", testUnknownTypeCascadeSuppression},
     {"testDuplicateDiagnosticsMerge", testDuplicateDiagnosticsMerge},
+    {"testRejectedInstanceCascades", testRejectedInstanceCascades},
     {"testRecoveryFindingDiagnostics", testRecoveryFindingDiagnostics},
     {"testGenericArgumentDiagnosticGuidance",
      testGenericArgumentDiagnosticGuidance},
