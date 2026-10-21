@@ -2285,7 +2285,7 @@ flowchart TD
   EO --> TD
   IP --> SD["M-OWN-03 stored and escaping mutable dependencies"]
   TD --> SD
-  IP --> EP["M-OWN-04 named expected-payload range loans"]
+  IP --> EP["M-OWN-04 named expected-payload range loans, retired"]
   TD --> EP
   TD --> OE["M-EXEC-01 per-family ordered MIR lowering"]
   FC --> MF["M-FAIL-01 + Q-FAIL-01 failure IR/runtime substrate"]
@@ -2994,8 +2994,9 @@ rescheduling the completed cutover.
   class whose `value()` and `error()` are ordinary accessors returning
   receiver-tied references. The client and the shapes listed as non-goals
   below (fields, reference parameters, mutable payload traversal, `error()`
-  ranges) now follow the general range and borrow rules; the compiler-trusted
-  `ExpectedValue` extraction no longer participates. See
+  ranges) now follow the general range and borrow rules. The compiler-trusted
+  `ExpectedValue` extraction was removed with the built-in expected
+  representation (2026-10-21). See
   [ranges over `expected` payloads](../language/ranges.md#ranges-over-expected-payloads).
 - **Named client:** iterate the owned string returned by
   `std::fread(...).value()` without moving it out of the named
@@ -9187,15 +9188,20 @@ inert in the raw audit. By owner decision the optimizer proofs and exit sharing
 it lost are re-baselined as recovery-pending under `RT-12`. Remaining
 follow-ups:
 
-- Retire the built-in Expected path: `SemanticType::Expected`, the
-  `IntrinsicKind::Expected*` and `MirOperation::Unexpected` operations, the
-  M-OWN-04 `expectedPayloadExtraction` route and the backend's Expected
-  representation. No source program reaches them.
+- Done (2026-10-21, internal): the built-in Expected path is retired.
+  `SemanticType::Expected`, the `IntrinsicKind::Expected*` and
+  `MirOperation::Unexpected` operations, the M-OWN-04
+  `expectedPayloadExtraction` route and the backend's Expected representation
+  are removed. No source program reached them; emitted C++ for the example and
+  test corpus changes only by deleted dead support text
+  ([evidence](../architecture/verification.md#built-in-expected-retirement-internal-0453)).
 - Dynamic text in results: a `std::string_view` or `c_string` alternative
   must be ownerless, so `unexpected(input.view())` over a caller's string is
   rejected (`GTI-S2045`), although the built-in carrier tracked that borrow.
   Restoring it needs retained dynamic-view fields with explicit owner
-  dependencies, not an `expected` exception.
+  dependencies, not an `expected` exception. Owner decision (2026-10-21):
+  owner-tracked view fields, where a value storing a dynamic view carries its
+  owner's borrow like a `T&` field, planned as its own campaign.
 - Raw-pointer error alternatives are delivered in 0.452.0 through checked
   references to pointer slots
   ([rule](../language/raw-pointers.md#type-and-binding-model)), which also
@@ -10271,7 +10277,7 @@ owned by the rows and domain plans above.
 | Temporary/active-drop authority | **normal/failure lifecycle and ordered rollback delivered for admitted families** | `M-LIFE-01` and subsequent call/constructor/capture/aggregate failure integration. New unsupported profiles still need exact active state and once-only cleanup. |
 | Stored/escaping mutable dependencies | **conflict-checked multi-path stored aggregates delivered** | Shared/exclusive access, origin paths and relay mappings are implemented; reseating and broader dependency transforms remain explicit goals. |
 | Mutable iteration/views | **mutable spans/buffers and nested/multi-owner carriers delivered within their profiles** | Precise projection shortening (`L-UP-16`), reseatable views and proxy yields remain; existing mutable views do not wait for a new ownership representation. |
-| Named expected-payload range loans | **complete bounded systems-readiness integration** for fallible byte-input parsers and serializers | `M-OWN-04`; exact named active-value projection feeding the existing `L-RANGE-01` read-only plan |
+| Ranges over `expected` payloads | **general range and borrow rules** since the source-defined `expected` (0.449.0) | `M-OWN-04` delivered the bounded byte-input client; its compiler route is retired |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
 | Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Borrowed capture/results and inline consuming projection remain general lifetime/origin goals, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |

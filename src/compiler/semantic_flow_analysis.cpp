@@ -571,8 +571,6 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
   case SemanticType::Array:
-  case SemanticType::Expected:
-  case SemanticType::Unexpected:
     for (const SemanticType &argument : type.arguments) {
       if (argument != SemanticType::Void) {
         recordProgramCleanupEffects(argument, span, visiting);
@@ -820,31 +818,6 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
                                          call->arguments());
     addUnknownProgramEffect(
         expression, "a deferred callable invocation has no closed target set");
-    return;
-  }
-  if (const ExpectedCombinatorInfo *transform =
-          semanticModel.findExpectedCombinator(*call)) {
-    if (transform->kind == ExpectedCombinatorKind::Expect) {
-      return;
-    }
-    if (transform->lambda != 0) {
-      addProgramEffectEdge(
-          {.kind = ProgramEffectOwnerKind::Lambda, .id = transform->lambda},
-          expression);
-      return;
-    }
-    const FunctionInfo *target = semanticModel.findFunction(transform->mapper);
-    if (target == nullptr || target->linkage != LanguageLinkage::Gti ||
-        target->declaration == nullptr ||
-        target->bodyDeclaration()->body() == nullptr ||
-        !target->genericParameters.empty()) {
-      addUnknownProgramEffect(
-          expression, "an expected mapper has no closed static GTI target");
-    } else {
-      addProgramEffectEdge(
-          {.kind = ProgramEffectOwnerKind::Function, .id = target->id},
-          expression);
-    }
     return;
   }
   const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
@@ -1570,10 +1543,6 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   }
   if (const auto *unary = exprAs<Unary>(&expr);
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
-    const SemanticType *operand = semanticModel.findType(*unary->right());
-    if (operand != nullptr && isFallibleBorrowType(*operand))
-      return expressionInfo(std::move(type), ValueCategory::Place,
-                            AccessMode::ReadOnly);
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
         plan->output.returnType.kind == SemanticType::Reference)
@@ -1763,35 +1732,6 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   }
   if (kind == ExprKind::Call) {
     const Call &call = static_cast<const Call &>(expr);
-    if (call.callee() && call.callee()->exprKind() == ExprKind::Get) {
-      const Get *member = static_cast<const Get *>(call.callee().get());
-      const SemanticType *objectType =
-          semanticModel.findType(*member->object());
-      if (objectType != nullptr && objectType->kind == SemanticType::Expected &&
-          (member->name().lexeme == "value" ||
-           member->name().lexeme == "error")) {
-        const ExpressionInfo *objectInfo =
-            semanticModel.findExpression(*member->object());
-        if (objectInfo != nullptr &&
-            objectInfo->category == ValueCategory::Value) {
-          // An rvalue expected owns its payload for this full expression.
-          // Its value()/error() overload consumes that payload into a new
-          // value instead of publishing an lvalue into the expected.
-          return expressionInfo(std::move(type));
-        }
-        const bool fallibleBorrowValue = member->name().lexeme == "value" &&
-                                         isFallibleBorrowType(*objectType);
-        return expressionInfo(
-            std::move(type), ValueCategory::Place,
-            fallibleBorrowValue
-                ? AccessMode::ReadOnly
-                : (objectInfo != nullptr &&
-                           objectInfo->category == ValueCategory::Place &&
-                           objectInfo->access == AccessMode::Mutable
-                       ? AccessMode::Mutable
-                       : AccessMode::ReadOnly));
-      }
-    }
     const ResolvedCallInfo *resolved = semanticModel.findCall(call);
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
@@ -2069,43 +2009,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
 
   if (kind == ExprKind::Call) {
     const auto *call = static_cast<const Call *>(&expr);
-    if (const auto *transform = semanticModel.findExpectedCombinator(*call)) {
-      if (transform->kind == ExpectedCombinatorKind::Expect) {
-        const auto *member = exprAs<Get>(call->callee().get());
-        if (member != nullptr) {
-          anchor(member->name());
-          addFailureOutcome(operation, DefinedFailureCode::Panic,
-                            DefinedFailureDetail::ExplicitPanic);
-        }
-        return operation;
-      }
-      operation.propagation = transform->lambda != 0
-                                  ? FailurePropagationKind::Callable
-                                  : FailurePropagationKind::DirectCall;
-      return operation;
-    }
-    if (call->callee() && call->callee()->exprKind() == ExprKind::Get) {
-      const auto *member = static_cast<const Get *>(call->callee().get());
-      const SemanticType objectType = semanticModel.typeOf(*member->object());
-      if (objectType.kind == SemanticType::Expected &&
-          call->arguments().empty()) {
-        if (member->name().lexeme == "value") {
-          anchor(member->name());
-          addFailureOutcome(operation,
-                            DefinedFailureCode::InvalidExpectedAccess,
-                            DefinedFailureDetail::ValueOnError);
-          return operation;
-        }
-        if (member->name().lexeme == "error") {
-          anchor(member->name());
-          addFailureOutcome(operation,
-                            DefinedFailureCode::InvalidExpectedAccess,
-                            DefinedFailureDetail::ErrorOnValue);
-          return operation;
-        }
-      }
-    }
-
     if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call)) {
       const IntrinsicKind intrinsic = resolved->intrinsic;
       if (intrinsic != IntrinsicKind::None) {
@@ -2200,15 +2103,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectRelocateRange:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
-        // The expected extractions' defined-failure outcomes anchor in
-        // the member-call analysis that has always owned them; the
-        // resolved record only carries the spelling identity.
-        case IntrinsicKind::ExpectedValue:
-        case IntrinsicKind::ExpectedError:
-        case IntrinsicKind::ExpectedValueOr:
         case IntrinsicKind::ArrayRangeBegin:
         case IntrinsicKind::ArraySize:
-        case IntrinsicKind::ExpectedHasValue:
         case IntrinsicKind::ThreadHandleEmpty:
         case IntrinsicKind::ThreadSpawn:
         case IntrinsicKind::ThreadJoinable:
@@ -4935,71 +4831,6 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
                             : "(std::size_t position)"),
              .scopeDistance = 0});
       }
-    }
-  } else if (objectType.kind == SemanticType::Expected &&
-             objectType.arguments.size() == 2) {
-    const SemanticType &value = objectType.arguments[0];
-    const SemanticType &error = objectType.arguments[1];
-    context.candidates.push_back(
-        {.kind = SemanticCompletionCandidateKind::Method,
-         .name = "has_value",
-         .qualifiedName = "has_value",
-         .detail = "bool has_value()",
-         .scopeDistance = 0});
-    context.candidates.push_back(
-        {.kind = SemanticCompletionCandidateKind::Method,
-         .name = "value",
-         .qualifiedName = "value",
-         .detail = typeSpelling(value) + " value()",
-         .scopeDistance = 0});
-    context.candidates.push_back(
-        {.kind = SemanticCompletionCandidateKind::Method,
-         .name = "error",
-         .qualifiedName = "error",
-         .detail = typeSpelling(error) + " error()",
-         .scopeDistance = 0});
-    if (value != SemanticType::Void && !isFallibleBorrowType(objectType)) {
-      context.candidates.push_back(
-          {.kind = SemanticCompletionCandidateKind::Method,
-           .name = "value_or",
-           .qualifiedName = "value_or",
-           .detail = typeSpelling(value) + " value_or(" + typeSpelling(value) +
-                     " fallback)",
-           .scopeDistance = 0});
-    }
-    if (!isFallibleBorrowType(objectType)) {
-      context.candidates.push_back(
-          {.kind = SemanticCompletionCandidateKind::Method,
-           .name = "transform_error",
-           .qualifiedName = "transform_error",
-           .detail = "expected<" + typeSpelling(value) +
-                     ", F> transform_error(F(" + typeSpelling(error) +
-                     ") mapper) &&",
-           .scopeDistance = 0});
-      context.candidates.push_back(
-          {.kind = SemanticCompletionCandidateKind::Method,
-           .name = "transform",
-           .qualifiedName = "transform",
-           .detail = "expected<U, " + typeSpelling(error) + "> transform(U(" +
-                     (value == SemanticType::Void ? "" : typeSpelling(value)) +
-                     ") mapper) &&",
-           .scopeDistance = 0});
-      context.candidates.push_back(
-          {.kind = SemanticCompletionCandidateKind::Method,
-           .name = "and_then",
-           .qualifiedName = "and_then",
-           .detail = "expected<U, " + typeSpelling(error) +
-                     "> and_then(expected<U, " + typeSpelling(error) + ">(" +
-                     (value == SemanticType::Void ? "" : typeSpelling(value)) +
-                     ") mapper) &&",
-           .scopeDistance = 0});
-      context.candidates.push_back(
-          {.kind = SemanticCompletionCandidateKind::Method,
-           .name = "expect",
-           .qualifiedName = "expect",
-           .detail =
-               typeSpelling(value) + " expect(std::string_view message) &&",
-           .scopeDistance = 0});
     }
   }
   semanticModel.recordCompletion(std::move(context));
@@ -8075,42 +7906,11 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
     return rawPointerFields(group->expression().get());
   if (const auto *conversion = exprAs<Conversion>(expression))
     return rawPointerFields(conversion->value().get());
-  if (const auto *unexpected = exprAs<Unexpected>(expression))
-    return rawPointerFields(unexpected->error().get());
   if (const auto *call = exprAs<Call>(expression)) {
     if (semanticModel.findPayloadConstruction(*call)) {
       std::vector<ProjectedRawPointerOrigins> fields;
       for (const auto &argument : call->arguments())
         mergeRawPointerFields(fields, rawPointerFields(argument.get()));
-      return fields;
-    }
-    const auto intrinsic = resolvedIntrinsicKind(*call);
-    const auto *combinator = semanticModel.findExpectedCombinator(*call);
-    const bool observer =
-        intrinsic == IntrinsicKind::ExpectedValue ||
-        intrinsic == IntrinsicKind::ExpectedError ||
-        intrinsic == IntrinsicKind::ExpectedValueOr ||
-        (combinator && combinator->kind == ExpectedCombinatorKind::Expect);
-    if (observer || combinator) {
-      std::vector<ProjectedRawPointerOrigins> fields;
-      if (const auto *member = exprAs<Get>(call->callee().get()))
-        fields = rawPointerFields(member->object().get());
-      if (intrinsic == IntrinsicKind::ExpectedValueOr)
-        for (const auto &argument : call->arguments())
-          mergeRawPointerFields(fields, rawPointerFields(argument.get()));
-      // Tagged alternatives currently share a conservative raw-origin union.
-      // An observer returns the carried address, never the carrier's address.
-      // Mapping may produce new addresses inside an unqueried callable body.
-      if (combinator && !observer)
-        for (auto path : rawPointerFieldPaths(combinator->resultType))
-          mergeRawPointerFields(
-              fields, {{std::move(path),
-                        {{.addressSite = tokenSpan(call->paren()),
-                          .sourceResultQuery =
-                              std::numeric_limits<std::size_t>::max()}}}});
-      for (auto &field : fields)
-        for (auto &origin : field.origins)
-          origin.possible = true;
       return fields;
     }
   }
@@ -8401,9 +8201,7 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
         path.insert(path.begin(), {.kind = PlaceProjectionKind::DynamicIndex});
       return paths;
     }
-    if (current.kind == SemanticType::Expected ||
-        current.kind == SemanticType::Unexpected ||
-        current.kind == SemanticType::Enum) {
+    if (current.kind == SemanticType::Enum) {
       if (active.size() >= 128 ||
           std::find(active.begin(), active.end(), current) != active.end())
         return {};
@@ -8414,15 +8212,10 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
           if (std::find(result.begin(), result.end(), path) == result.end())
             result.push_back(std::move(path));
       };
-      if (current.kind == SemanticType::Enum) {
-        if (const auto info = enumTypeFor(current))
-          for (const auto &variant : info->enumerators)
-            for (const auto &payload : variant.payloadTypes)
-              append(payload);
-      } else {
-        for (const auto &payload : current.arguments)
-          append(payload);
-      }
+      if (const auto info = enumTypeFor(current))
+        for (const auto &variant : info->enumerators)
+          for (const auto &payload : variant.payloadTypes)
+            append(payload);
       active.pop_back();
       return result;
     }
@@ -8499,12 +8292,6 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
         std::find(visited.begin(), visited.end(), key) != visited.end())
       return;
     visited.push_back(key);
-    if (current.kind == SemanticType::Expected ||
-        current.kind == SemanticType::Unexpected) {
-      for (const auto &payload : current.arguments)
-        self(self, payload, index);
-      return;
-    }
     if (current.kind == SemanticType::Enum) {
       if (const auto info = enumTypeFor(current))
         for (const auto &variant : info->enumerators)
@@ -9179,7 +8966,6 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
   if (!rawAuditEnabled())
     return {};
   if (const auto *call = exprAs<Call>(&expression)) {
-    const auto intrinsic = resolvedIntrinsicKind(*call);
     // A statically selected source call whose result query completed has an
     // exact origin summary: its produced fields name every pointer the result
     // can carry, so the receiver and arguments are not possible origins.
@@ -9197,15 +8983,6 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
     if (exactQuery && exactQuery->complete && exactQuery->valid) {
       std::vector<RawPointerOrigin> result;
       for (const auto &field : rawProducedFields(expression))
-        mergeRawPointerOrigins(result, field.origins);
-      return result;
-    }
-    if (intrinsic == IntrinsicKind::ExpectedValue ||
-        intrinsic == IntrinsicKind::ExpectedError ||
-        intrinsic == IntrinsicKind::ExpectedValueOr ||
-        semanticModel.findExpectedCombinator(*call)) {
-      std::vector<RawPointerOrigin> result;
-      for (const auto &field : rawPointerFields(&expression))
         mergeRawPointerOrigins(result, field.origins);
       return result;
     }
@@ -9755,9 +9532,7 @@ auto SemanticVisitor::Impl::applyRawCleanupWrites(
         result |= self(self, capture);
     } else if (current.kind == SemanticType::Array ||
                current.kind == SemanticType::UniqueOwner ||
-               current.kind == SemanticType::SharedPointer ||
-               current.kind == SemanticType::Expected ||
-               current.kind == SemanticType::Unexpected) {
+               current.kind == SemanticType::SharedPointer) {
       for (const auto &argument : current.arguments)
         result |= self(self, argument);
     }
@@ -10664,9 +10439,6 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
     case IntrinsicKind::NumericTypeParameterConversion:
     case IntrinsicKind::NumericAliasConversion:
     case IntrinsicKind::DefaultTypeParameterConstruction:
-    case IntrinsicKind::ExpectedHasValue:
-    case IntrinsicKind::ExpectedValue:
-    case IntrinsicKind::ExpectedError:
     case IntrinsicKind::ArraySize:
     case IntrinsicKind::IntegerWrappingAdd:
     case IntrinsicKind::IntegerWrappingSubtract:
@@ -11849,12 +11621,7 @@ auto SemanticVisitor::Impl::canConvertToUnsigned(SemanticType originalType,
 
 auto SemanticVisitor::Impl::isContextuallyBool(const SemanticType &type)
     -> bool {
-  return type == SemanticType::Bool || type.kind == SemanticType::Expected;
-}
-
-auto SemanticVisitor::Impl::isExpectedVoid(const SemanticType &type) -> bool {
-  return type.kind == SemanticType::Expected && type.arguments.size() == 2 &&
-         type.arguments[0] == SemanticType::Void;
+  return type == SemanticType::Bool;
 }
 
 auto SemanticVisitor::Impl::numericResult(SemanticType left, SemanticType right,
@@ -11918,13 +11685,6 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
   }
   if (!isAssignable(target, value, expression.get())) {
     return false;
-  }
-  // Wrapping a success payload does not bypass its copy/move policy. A
-  // borrowed success payload is a distinct reference conversion, not a copy.
-  if (target.kind == SemanticType::Expected && target.arguments.size() == 2 &&
-      target != value && value.kind != SemanticType::Unexpected &&
-      target.arguments.front().kind != SemanticType::Reference) {
-    return isOwnershipAssignable(target.arguments.front(), value, expression);
   }
   if (target != value || !expression || target.kind == SemanticType::TypePack) {
     return true;
@@ -12002,8 +11762,7 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
     return true;
   }
   if (target.kind != SemanticType::UniqueOwner &&
-      (isImplicitScalarInitializationConversion(target, value) ||
-       isImplicitExpectedInitializationConversion(target, value))) {
+      isImplicitScalarInitializationConversion(target, value)) {
     return true;
   }
   if (target.kind == SemanticType::RawPointer) {
@@ -12022,27 +11781,7 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
     }
     return integerRangeFits(target, value);
   }
-  if (target == value) {
-    return true;
-  }
-  if (target.kind != SemanticType::Expected || target.arguments.size() != 2) {
-    return false;
-  }
-  if (value.kind == SemanticType::Unexpected && value.arguments.size() == 1) {
-    const Expr *errorExpression = expression;
-    if (const auto *unexpected = exprAs<Unexpected>(expression)) {
-      errorExpression = unexpected->error().get();
-    }
-    return isAssignable(target.arguments[1], value.arguments[0],
-                        errorExpression);
-  }
-  if (target.arguments.front().kind == SemanticType::Reference &&
-      target.arguments.front().referenceAccess == AccessMode::ReadOnly &&
-      target.arguments.front().arguments.size() == 1) {
-    return value == target.arguments.front().arguments.front();
-  }
-  return target.arguments[0] != SemanticType::Void &&
-         isAssignable(target.arguments[0], value, expression);
+  return target == value;
 }
 
 auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
@@ -12198,14 +11937,6 @@ auto SemanticVisitor::Impl::baseTypeOf(
     return SemanticType::Char;
   case TokenKind::NULLPTR_TYPE:
     return SemanticType::NullPtr;
-  case TokenKind::EXPECTED: {
-    std::vector<SemanticType> arguments;
-    arguments.reserve(type.arguments.size());
-    for (const TypeRef &argument : type.arguments) {
-      arguments.emplace_back(typeOf(argument, fromScope));
-    }
-    return SemanticType(SemanticType::Expected, std::move(arguments));
-  }
   default:
     if (const std::optional<SemanticType> parameter =
             resolveTypeParameter(type.name)) {
@@ -12484,8 +12215,6 @@ auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
     return static_cast<const Set &>(expression).name();
   case ExprKind::Unary:
     return static_cast<const Unary &>(expression).oper();
-  case ExprKind::Unexpected:
-    return static_cast<const Unexpected &>(expression).keyword();
   case ExprKind::Variable:
     return static_cast<const Variable &>(expression).name();
   }

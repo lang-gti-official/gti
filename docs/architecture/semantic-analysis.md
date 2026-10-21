@@ -328,13 +328,11 @@ copy/move preserve that map. Assignment replaces the affected map subtree,
 while uncertain call writes weakly merge possible input origins. Scope exit
 and owner replacement mark retained origin facts expired/invalidated, so a
 later binding incarnation cannot silently revive an earlier address.
-The traversal includes inherited fields and raw-bearing `expected`,
-`unexpected`, and payload-enum alternatives. Tagged alternatives currently
-share a conservative origin union rather than variant-sensitive projections;
-enum pattern bindings and expected observers preserve that union. An observer
-of a stored pointer does not substitute the live carrier shell as its origin.
-Raw-bearing expected mapper outputs remain unresolved until their selected
-mapper effects have an exact query substitution; inert transport is permitted.
+The traversal includes inherited fields and raw-bearing payload-enum
+alternatives. Tagged alternatives currently share a conservative origin union
+rather than variant-sensitive projections; enum pattern bindings preserve that
+union. An observer of a stored pointer does not substitute the live carrier
+shell as its origin.
 
 Loop entry seeds temporary symbolic pointer-input origins. Copies and field
 flow carry these symbols to actual memory-use sites; reachable backedges
@@ -2095,8 +2093,8 @@ read-only or mutable borrows of a fresh temporary. Semantics alone classifies
 freshness: ordinary construction, by-value GTI calls, and value-producing GTI
 operators qualify for the bounded ephemeral-borrow contract. Receiver-only
 materialization also accepts owned movable class values from conditional
-expressions, lambda calls, copy/move construction, and consuming Expected
-extraction; this does not broaden ephemeral argument borrowing. Reusable
+expressions, lambda calls and copy/move construction; this does not broaden
+ephemeral argument borrowing. Reusable
 targets remain non-static with non-borrowing results, apart from the existing
 nonescaping read-observation exception. A virtual target, including an
 override or interface implementation, keeps `CallDispatch::Virtual`: dispatch
@@ -2329,8 +2327,8 @@ real function.
 
 `SemanticTypeTraits` is the single authority for the independent
 `transferCapable` and `shareCapable` facts. Scalars and enums are positive;
-arrays, expected alternatives, ordinary classes, concrete generics, and
-read-only callable environments compose their component facts. References,
+arrays, ordinary classes, concrete generics, and read-only callable
+environments compose their component facts. References,
 stored borrowed state, string views, and raw pointers are negative in the
 initial profile. Compiler-owned unique-owner and storage types recurse through
 their element type by identity rather than wrapper spelling.
@@ -2504,13 +2502,6 @@ state is not locally provable.
 
 ## Loan Flow
 
-Borrowed expected propagation yields a read-only referent place, preserving
-the carrier's original owner, escape boundary and loan endpoint. Its success
-does not require referent copyability or movability; only the error alternative
-is transported. Borrowed `expect` records a reference return and a consuming
-receiver, so both ordinary reference checks and explicit named consumption
-apply. These extraction forms participate in the same stored-source,
-transient-production and retained-loan queries as other checked references.
 Global and local loan-flow places use the same analysis-local domain. HIR
 qualifies those places with its concrete snapshot/body identity; qualifying
 only global dependencies during semantic conflict checks would incorrectly
@@ -2553,18 +2544,6 @@ this makes two aliases from repeated singleton accessors conflict until an
 explicit nested scope ends the first. The concurrent profile rejects the
 underlying mutable global/static binding before this single-threaded loan rule
 can authorize unsynchronized process-wide mutation.
-
-M-OWN-04 adds one range-only checked-call exception without creating a general
-retained call-result rule. When the compiler-generated immutable range owner
-is initialized by exact `ExpectedValue` on an available named local or
-by-value parameter, semantic analysis records a receiver-origin read borrow and
-marks the range plan as an Expected payload projection. The loan place remains
-the complete Expected root, so movement, replacement, mutation, and drop
-conflict for the loop lifetime. Field/global receivers, `ExpectedError`,
-mutable element bindings, standalone retained payload references, and escaping
-elements receive no permission from this marker. The checked extraction keeps
-its ordinary local failure origin; HIR and MIR preserve the accepted fact
-rather than reconstructing it from call spelling.
 
 ## Defined Integer Arithmetic
 
@@ -2638,8 +2617,8 @@ MIR schedule, not a future backend-to-MIR cutover.
 
 M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
 static fields after the existing more-specific unique-owner, storage, and
-borrowed-state checks. The recursive semantic trait follows arrays, expected
-payloads, aliases, bases, fields, captures, and concrete generic substitutions,
+borrowed-state checks. The recursive semantic trait follows arrays, aliases,
+bases, fields, captures, and concrete generic substitutions,
 and treats declared cleanup as an active obligation. `GTI-S2061` reports the
 outer declaration plus the first available declared-cleanup/base/field cause.
 HIR and MIR can therefore rely on the absence of source global/static drop
@@ -2780,11 +2759,7 @@ against that domain, and compares enum switch labels through the shared
 constant comparison kernel. No native enum representation or public library
 name supplies authority. These passive values use the same checked locations,
 aggregate copies, constructor/method calls and shared budgets as scalar
-builders. Passive Expected/Unexpected composition uses exact typed aggregate
-constants and the canonical result operations, including prefix propagation,
-void success and checked-integer results. Small early expression kernels share
-result construction/observation with MIR; completed result-bearing bodies
-cannot fall back to AST execution. Payload-enum execution remains a separate
+builders. Payload-enum execution remains a separate
 profile; it is not admitted by the integral-enum catalog.
 
 ## Boundaries

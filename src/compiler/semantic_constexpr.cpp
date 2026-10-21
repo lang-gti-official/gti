@@ -373,9 +373,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const auto resultValues = [](const MirBody &body) {
     const auto resultType = [](const auto &self,
                                const SemanticType &type) -> bool {
-      return type.kind == SemanticType::Expected ||
-             type.kind == SemanticType::Unexpected ||
-             type.kind == SemanticType::UniqueOwner ||
+      return type.kind == SemanticType::UniqueOwner ||
              type.kind == SemanticType::TypePack ||
              ((type.kind == SemanticType::Array ||
                type.kind == SemanticType::Reference) &&

@@ -175,8 +175,6 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   case SemanticType::SharedPointer:
     return true;
   case SemanticType::Array:
-  case SemanticType::Unexpected:
-  case SemanticType::Expected:
   case SemanticType::Lambda:
   case SemanticType::Enum:
   case SemanticType::Class:
@@ -221,16 +219,8 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   bool result = false;
   switch (type.kind) {
   case SemanticType::Array:
-  case SemanticType::Unexpected:
     result = type.arguments.size() == 1 &&
              requiresActiveCleanup(type.arguments.front(), query);
-    break;
-  case SemanticType::Expected:
-    result = std::any_of(type.arguments.begin(), type.arguments.end(),
-                         [&](const SemanticType &argument) {
-                           return argument != SemanticType::Void &&
-                                  requiresActiveCleanup(argument, query);
-                         });
     break;
   case SemanticType::Enum: {
     if (type.enumId == 0 || type.enumId > enums.size() ||
@@ -398,26 +388,6 @@ auto SemanticVisitor::Impl::typeCapabilities(
       return typeCapabilities(type.arguments.front(), visiting, boundary);
     }
     return {};
-  case SemanticType::Expected:
-  case SemanticType::Unexpected: {
-    ConcurrencyCapabilities result{.transferCapable = true,
-                                   .shareCapable = true};
-    if (type.arguments.empty()) {
-      return {};
-    }
-    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-      if (type.kind == SemanticType::Expected && index == 0 &&
-          type.arguments[index] == SemanticType::Void) {
-        continue;
-      }
-      const ConcurrencyCapabilities component =
-          typeCapabilities(type.arguments[index], visiting, boundary);
-      result.transferCapable =
-          result.transferCapable && component.transferCapable;
-      result.shareCapable = result.shareCapable && component.shareCapable;
-    }
-    return result;
-  }
   case SemanticType::TypeParameter: {
     const GenericConstraintSet constraints = constraintOf(type);
     return {.transferCapable =
@@ -653,36 +623,6 @@ auto SemanticVisitor::Impl::typeTraits(
     }
     const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
     return lambda == nullptr ? semanticTraits(type) : lambda->traits;
-  }
-
-  if (type.kind == SemanticType::Expected ||
-      type.kind == SemanticType::Unexpected) {
-    SemanticTypeTraits traits = semanticTraits(type);
-    traits.relocation = RelocationKind::Structural;
-    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-      const SemanticType &argument = type.arguments[index];
-      if (type.kind == SemanticType::Expected && index == 0 &&
-          argument == SemanticType::Void) {
-        continue;
-      }
-      const SemanticTypeTraits argumentTraits = typeTraits(argument, visiting);
-      if (argumentTraits.ownership == OwnershipKind::Unique ||
-          (traits.ownership == OwnershipKind::Value &&
-           argumentTraits.ownership == OwnershipKind::Shared)) {
-        traits.ownership = argumentTraits.ownership;
-      }
-      traits.copyable = traits.copyable && argumentTraits.copyable;
-      traits.movable = traits.movable && argumentTraits.movable;
-      traits.copyAssignable =
-          traits.copyAssignable && argumentTraits.copyAssignable;
-      traits.moveAssignable =
-          traits.moveAssignable && argumentTraits.moveAssignable;
-      traits.containsBorrowedState =
-          traits.containsBorrowedState || argumentTraits.containsBorrowedState;
-      if (argumentTraits.relocation == RelocationKind::Unavailable)
-        traits.relocation = RelocationKind::Unavailable;
-    }
-    return traits;
   }
 
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
@@ -1480,20 +1420,6 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
     if (!typeTraits(current).containsBorrowedState ||
         !requiresActiveCleanupFor(current))
       return false;
-    if (current.kind == SemanticType::Expected ||
-        current.kind == SemanticType::Unexpected) {
-      const std::size_t arity = current.kind == SemanticType::Expected ? 2 : 1;
-      if (current.arguments.size() != arity)
-        return true;
-      // Generated alternative cleanup only retains a dependency when one of
-      // the actual components can use or release it during destruction. An
-      // unrelated owning error does not extend a borrowed success's loan.
-      return std::any_of(current.arguments.begin(), current.arguments.end(),
-                         [&](const auto &component) {
-                           return component.kind == SemanticType::Unknown ||
-                                  self(self, component);
-                         });
-    }
     if (current.kind == SemanticType::Enum) {
       const auto enumeration = enumTypeFor(current);
       if (!enumeration || !enumeration->payload ||
@@ -3638,27 +3564,6 @@ auto SemanticVisitor::Impl::storedConditionSymbols(
   return result;
 }
 
-auto SemanticVisitor::Impl::isFallibleBorrowType(const SemanticType &type) const
-    -> bool {
-  if (type.kind != SemanticType::Expected || type.arguments.size() != 2) {
-    return false;
-  }
-  const SemanticType &success = type.arguments.front();
-  return success.kind == SemanticType::Reference &&
-         success.referenceAccess == AccessMode::ReadOnly &&
-         success.arguments.size() == 1 &&
-         !typeTraits(success.arguments.front()).containsBorrowedState &&
-         !typeTraits(type.arguments.back()).containsBorrowedState;
-}
-
-auto SemanticVisitor::Impl::fallibleBorrowReferent(
-    const SemanticType &type) const -> std::optional<SemanticType> {
-  if (!isFallibleBorrowType(type)) {
-    return std::nullopt;
-  }
-  return type.arguments.front().arguments.front();
-}
-
 auto SemanticVisitor::Impl::storedReferenceReferent(
     const SemanticType &type) const -> std::optional<SemanticType> {
   const auto path = storedReferencePath(type);
@@ -3676,7 +3581,7 @@ auto SemanticVisitor::Impl::storedReferenceReferent(
 auto SemanticVisitor::Impl::isBorrowReturningType(
     const SemanticType &type) const -> bool {
   return type.kind == SemanticType::Reference ||
-         isDirectStoredReferenceType(type) || isFallibleBorrowType(type);
+         isDirectStoredReferenceType(type);
 }
 
 auto SemanticVisitor::Impl::functionReturnBorrowSummary(
@@ -4076,9 +3981,6 @@ auto SemanticVisitor::Impl::borrowAccess(const SemanticType &type) const
     -> AccessMode {
   if (type.kind == SemanticType::Reference) {
     return type.referenceAccess;
-  }
-  if (isFallibleBorrowType(type)) {
-    return AccessMode::ReadOnly;
   }
   const ClassInfo *owner = classInfo(type);
   if (owner != nullptr && isDefaultLibraryMutexGuardCarrier(*owner)) {
@@ -5143,9 +5045,6 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
     return nullptr;
   if (const auto *unary = exprAs<Unary>(expression.get());
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
-    const SemanticType *operand = semanticModel.findType(*unary->right());
-    if (operand != nullptr && isFallibleBorrowType(*operand))
-      return &unary->right();
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
         plan->output.returnType.kind == SemanticType::Reference &&
@@ -5548,9 +5447,6 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
   }
   if (const auto *unary = exprAs<Unary>(expression.get());
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
-    const SemanticType *operand = semanticModel.findType(*unary->right());
-    if (operand != nullptr && isFallibleBorrowType(*operand))
-      return retainedLoanSource(unary->right());
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
         plan->output.returnType.kind == SemanticType::Reference &&
@@ -5915,19 +5811,6 @@ auto SemanticVisitor::Impl::loanPlace(const ExprPtr &expression)
       }
     }
     if (resolved != nullptr &&
-        (resolved->intrinsic == IntrinsicKind::ExpectedValue ||
-         resolved->intrinsic == IntrinsicKind::ExpectedError)) {
-      const auto *member = exprAs<Get>(call->callee().get());
-      if (member != nullptr) {
-        // Expected alternatives share one active state and storage root.
-        // Conflict checking therefore conservatively treats access through
-        // either projection as access to the complete expected object. The
-        // range-only retention permission remains gated separately by the
-        // exact ResolvedCallInfo borrow origin above.
-        return loanPlace(member->object());
-      }
-    }
-    if (resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Global &&
         resolved->borrowPlace) {
       return loanPlace(*resolved->borrowPlace);
@@ -6268,9 +6151,6 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
 
   if (const auto *unary = exprAs<Unary>(expression.get());
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
-    const SemanticType *operand = semanticModel.findType(*unary->right());
-    if (operand != nullptr && isFallibleBorrowType(*operand))
-      return fromSource(unary->right(), AccessMode::ReadOnly, false, false);
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
         plan->output.returnType.kind == SemanticType::Reference &&
@@ -6672,8 +6552,6 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
     appendTransientMutationPlaces(set->value(), places);
   } else if (const auto *unary = exprAs<Unary>(expression.get())) {
     appendTransientMutationPlaces(unary->right(), places);
-  } else if (const auto *unexpected = exprAs<Unexpected>(expression.get())) {
-    appendTransientMutationPlaces(unexpected->error(), places);
   }
 }
 
@@ -6830,8 +6708,6 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
     appendTransientReadPlaces(set->value(), places, productions);
   } else if (const auto *unary = exprAs<Unary>(expression.get())) {
     appendTransientReadPlaces(unary->right(), places, productions);
-  } else if (const auto *unexpected = exprAs<Unexpected>(expression.get())) {
-    appendTransientReadPlaces(unexpected->error(), places, productions);
   }
 }
 
@@ -7775,7 +7651,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       movedCarrier->carrier != nullptr && movedCarrier->loan != 0 &&
       loanFlow.records.contains(movedCarrier->loan);
   if (expression && carrier->type.kind != SemanticType::Reference &&
-      !isFallibleBorrowType(carrier->type) && !namedCarrierTransfer) {
+      !namedCarrierTransfer) {
     const auto *contextual =
         semanticModel.findContextualConstruction(*expression);
     const auto *complete =
@@ -11088,11 +10964,6 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
   case SemanticType::Enum:
     return type.enumId != 0 && type.enumId <= enums.size() &&
            enumTypeFor(type).has_value();
-  case SemanticType::Expected:
-    return type.arguments.size() == 2 &&
-           (type.arguments.front() == SemanticType::Void ||
-            runtimeObjectLayoutType(type.arguments.front())) &&
-           runtimeObjectLayoutType(type.arguments.back());
   case SemanticType::Array:
     return type.arguments.size() == 1 && type.arrayLength > 0 &&
            type.arrayLengthParameterId == 0 &&
@@ -12882,7 +12753,6 @@ auto SemanticVisitor::Impl::isStorageElementType(const SemanticType &type)
   case SemanticType::FunctionSignature:
   case SemanticType::NativeFunction:
   case SemanticType::Lambda:
-  case SemanticType::Unexpected:
     return false;
   default:
     return true;

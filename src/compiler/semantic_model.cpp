@@ -1507,18 +1507,6 @@ SemanticModel::findCall(const Call &call) const {
   return base == nullptr ? nullptr : base->findCall(call);
 }
 
-[[nodiscard]] const ExpectedCombinatorInfo *
-SemanticModel::findExpectedCombinator(const Call &call) const {
-  const auto found = expectedCombinators.find(&call);
-  if (found != expectedCombinators.end()) {
-    return &found->second;
-  }
-  if (suppressedInheritedCalls.contains(&call)) {
-    return nullptr;
-  }
-  return base == nullptr ? nullptr : base->findExpectedCombinator(call);
-}
-
 [[nodiscard]] const NativeFunctionConversionInfo *
 SemanticModel::findNativeFunctionConversion(const Expr &expression) const {
   const auto found = nativeFunctionConversions.find(&expression);
@@ -1667,8 +1655,7 @@ SemanticModel::directInitializationSource(const Expr &expression) const {
   const auto *info = findExpression(expression);
   const bool objectValue = info != nullptr &&
                            info->category == ValueCategory::Value &&
-                           (info->type.kind == SemanticType::Class ||
-                            info->type.kind == SemanticType::Expected);
+                           info->type.kind == SemanticType::Class;
   if (const auto *group = exprAs<Grouping>(&expression)) {
     if (objectValue)
       return group->expression().get();
@@ -2026,7 +2013,6 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
-  expectedCombinators.clear();
   suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
@@ -2813,12 +2799,6 @@ void SemanticModel::reserveSymbolIdentities(SymbolId ceiling) {
   semanticDatabase.reserveIdentities(ceiling);
 }
 
-void SemanticModel::recordExpectedCombinator(const Call &call,
-                                             ExpectedCombinatorInfo info) {
-  suppressedInheritedCalls.erase(&call);
-  expectedCombinators.insert_or_assign(&call, std::move(info));
-}
-
 void SemanticModel::recordNativeFunctionConversion(
     const Expr &expression, NativeFunctionConversionInfo info) {
   nativeFunctionConversions.insert_or_assign(&expression, std::move(info));
@@ -2831,7 +2811,6 @@ void SemanticModel::recordFunctionItemSelection(
 
 void SemanticModel::suppressInheritedCall(const Call &call) {
   calls.erase(&call);
-  expectedCombinators.erase(&call);
   suppressedInheritedCalls.insert(&call);
 }
 
@@ -3578,35 +3557,6 @@ semanticFloatFormat(const SemanticType &type) {
     traits.drop = DropKind::Lexical;
     traits.transferCapable = false;
     traits.shareCapable = false;
-    return traits;
-  case SemanticType::Expected:
-  case SemanticType::Unexpected:
-    traits.drop = DropKind::Lexical;
-    if (type.arguments.empty()) {
-      traits.transferCapable = false;
-      traits.shareCapable = false;
-      return traits;
-    }
-    traits.relocation = RelocationKind::Structural;
-    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-      if (type.kind == SemanticType::Expected && index == 0 &&
-          type.arguments[index] == SemanticType::Void) {
-        continue;
-      }
-      const SemanticTypeTraits component =
-          semanticTraits(type.arguments[index]);
-      traits.copyable = traits.copyable && component.copyable;
-      traits.movable = traits.movable && component.movable;
-      traits.copyAssignable = traits.copyAssignable && component.copyAssignable;
-      traits.moveAssignable = traits.moveAssignable && component.moveAssignable;
-      traits.containsBorrowedState =
-          traits.containsBorrowedState || component.containsBorrowedState;
-      traits.transferCapable =
-          traits.transferCapable && component.transferCapable;
-      traits.shareCapable = traits.shareCapable && component.shareCapable;
-      if (component.relocation == RelocationKind::Unavailable)
-        traits.relocation = RelocationKind::Unavailable;
-    }
     return traits;
   case SemanticType::Int8:
   case SemanticType::Int16:
