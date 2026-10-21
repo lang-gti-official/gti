@@ -2952,17 +2952,20 @@ int main() {
                    [](const lang::Diagnostic &diagnostic) {
                      return diagnostic.code == "GTI-S2023";
                    });
+  const auto libraryNote = [](const lang::RelatedDiagnostic &related) {
+    return related.message == "Reported inside this library instance.";
+  };
   const auto libraryNotes =
       reflected == mapper.diagnostics.end()
           ? 0
           : std::count_if(reflected->related.begin(), reflected->related.end(),
-                          [](const lang::RelatedDiagnostic &related) {
-                            return related.message ==
-                                   "Reported inside this library instance.";
-                          });
+                          libraryNote);
   expect(!mapper.canGenerateCode() && count(mapper, "GTI-S2023") == 1 &&
-             libraryNotes > 1,
-         "one library request reports one diagnostic with each internal site");
+             libraryNotes > 1 &&
+             std::is_partitioned(reflected->related.begin(),
+                                 reflected->related.end(), libraryNote),
+         "one library request reports one diagnostic with each internal site "
+         "ahead of its request notes");
   const auto pack = lang::Frontend().analyze(
       "duplicate-semantic.gti", "class Pack<Args...> {}; int main() { "
                                 "Pack<int[2]&> value{}; return 0; }");

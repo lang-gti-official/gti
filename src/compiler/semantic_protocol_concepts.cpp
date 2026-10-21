@@ -1092,7 +1092,7 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
       .applicationArgumentIndex = 0,
       .missingConformance = true,
       .conformanceArguments = requirement.arguments,
-      .conceptDocumentation = conceptInfo.declaration->documentationMarkdown()};
+      .conceptExplanation = conceptInfo.explanation()};
   if (requirement.arguments.size() != conceptInfo.parameterIds.size()) {
     return failure;
   }
@@ -1103,9 +1103,12 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
-  if (auto constraint =
-          firstConstraintFailure(conformance.genericParameters, match->binding))
+  if (auto constraint = firstConstraintFailure(conformance.genericParameters,
+                                               match->binding)) {
+    if (failure.conceptExplanation)
+      constraint->conceptExplanation = failure.conceptExplanation;
     return constraint;
+  }
   if (const auto operation =
           protocolBorrowContractFailure(conformance, match->binding)) {
     failure.missingConformance = false;

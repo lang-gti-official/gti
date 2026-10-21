@@ -337,8 +337,7 @@ enum expected_void_state<E> { value, error(E failure) };
 // Source-level evidence used by and_then: the mapped result belongs to this
 // result family with the same error type. No compiler type-name recognition.
 struct expected_error_identity<E> {};
-/// An `and_then` mapper must return an `expected` with the same error type
-/// as the result it maps.
+[[unsatisfied("An 'and_then' mapper must return an 'expected' with the same error type as the result it maps.")]]
 concept expected_result<R, Error> { typename value_type; };
 
 // A void invocation publishes an empty success; a value invocation moves its

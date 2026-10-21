@@ -728,6 +728,13 @@ requireCapture(foreignVariableRow, "foreign_counter_highlight", "variable");
 requireCapture(foreignVariableRow, "mut", "keyword.modifier");
 requireCapture(foreignVariableRow, "link_name", "attribute");
 
+const conceptExplanationRow = fixtureLines.findIndex((line) =>
+  line.includes("concept explained_highlight"),
+);
+requireCapture(conceptExplanationRow, "unsatisfied", "attribute");
+requireCapture(conceptExplanationRow, '"A gauge reads."', "string");
+requireCapture(conceptExplanationRow, "explained_highlight", "type.definition");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

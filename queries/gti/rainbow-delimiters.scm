@@ -102,6 +102,14 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(concept_attribute
+  "[[" @delimiter
+  "]]" @delimiter) @container
+
+(concept_attribute
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (array_extent_parenthesized_expression
   "(" @delimiter
   ")" @delimiter) @container

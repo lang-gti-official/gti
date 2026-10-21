@@ -5732,6 +5732,107 @@ concept signed_value<T> = std::signed_numeric<T>;
              lang::Formatter().format(formatted) == formatted,
          "concept declarations should format with C++-familiar generic and "
          "conjunction spacing");
+
+  // `[[unsatisfied("...")]]` states what satisfies a concept. The concept a
+  // requirement names explains its failure ahead of the concepts it is
+  // defined through; a documentation comment explains nothing.
+  const lang::FrontendResult explained = lang::Frontend().analyze(
+      "explained-concepts.gti", R"(
+[[unsatisfied("A gauge has 'int read()'.")]]
+concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+[[unsatisfied("A dial is a gauge.")]]
+concept dial<T> = gauge<T>;
+/// A meter is a gauge.
+concept meter<T> = gauge<T>;
+int sample<T>(T& item) requires gauge<T> { return 0; }
+int turn<T>(T& item) requires dial<T> { return 0; }
+int measure<T>(T& item) requires meter<T> { return 0; }
+class Plank {};
+int main() {
+  Plank plank{};
+  return sample(plank) + turn(plank) + measure(plank);
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const auto hintsFor = [&](std::string_view application) {
+    const auto found = std::find_if(
+        explained.diagnostics.begin(), explained.diagnostics.end(),
+        [&](const lang::Diagnostic &diagnostic) {
+          return diagnostic.code == "GTI-S2029" &&
+                 diagnostic.message.find(application) != std::string::npos;
+        });
+    return found == explained.diagnostics.end() ? std::vector<std::string>{}
+                                                : found->hints;
+  };
+  const std::string gaugeText = "A gauge has 'int read()'.";
+  const std::vector<std::string> gaugeHints = hintsFor("'gauge<Plank>'");
+  const std::vector<std::string> dialHints = hintsFor("'dial<Plank>'");
+  const std::vector<std::string> meterHints = hintsFor("'meter<Plank>'");
+  expect(!explained.canGenerateCode() &&
+             countDiagnosticCode(explained.diagnostics, "GTI-S2029") == 3 &&
+             !gaugeHints.empty() && gaugeHints.front() == gaugeText &&
+             hasRelatedDiagnostic(explained.diagnostics, "read") &&
+             !dialHints.empty() && dialHints.front() == "A dial is a gauge." &&
+             std::count(dialHints.begin(), dialHints.end(), gaugeText) == 0 &&
+             !meterHints.empty() && meterHints.front() == gaugeText &&
+             !hasDiagnosticHint(explained.diagnostics, "A meter is a gauge."),
+         "a concept's explanation leads its unsatisfied requirements, the "
+         "named concept's replaces a nested one, and documentation explains "
+         "no failure");
+
+  const std::string hoverSource = R"gti([[unsatisfied("A dial \"turns\".")]]
+concept dial<T> = std::integral<T>;
+int turn<dial T>(T value) { return 0; }
+int main() { return turn(1); }
+)gti";
+  const lang::FrontendResult hovered = lang::Frontend().analyze(
+      "explained-concept-hover.gti", hoverSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const std::optional<lang::HoverInfo> explanationHover = queries.hover(
+      hovered, hovered.sourceGraph.entryUnit(), hoverSource.find("dial T") + 1);
+  expect(
+      hovered.canGenerateCode() && explanationHover &&
+          explanationHover->signature ==
+              R"gti([[unsatisfied("A dial \"turns\".")]] concept dial<T> = std::integral<T>)gti",
+      "concept hover shows the explanation as written");
+  const std::string formattedExplanation = lang::Formatter().format(
+      "[[unsatisfied(\"A dial turns.\")]]\nconcept dial<T>=std::integral<T>;");
+  expect(formattedExplanation == "[[unsatisfied(\"A dial turns.\")]] concept "
+                                 "dial<T> = std::integral<T>;\n" &&
+             lang::Formatter().format(formattedExplanation) ==
+                 formattedExplanation,
+         "an explained concept formats like other attributed declarations");
+
+  for (const auto &[malformed, reason] :
+       std::array<std::pair<std::string_view, std::string_view>, 8>{{
+           {"[[unsatisfied]] concept c<T> = std::integral<T>;",
+            "Expect '(' after 'unsatisfied'."},
+           {"[[unsatisfied(text)]] concept c<T> = std::integral<T>;",
+            "Expect a quoted explanation"},
+           {"[[unsatisfied(\"\")]] concept c<T> = std::integral<T>;",
+            "explanation cannot be empty"},
+           {"[[unsatisfied(\"a\"), unsatisfied(\"b\")]] concept c<T> = "
+            "std::integral<T>;",
+            "accepts only one"},
+           {"[[noreturn]] concept c<T> = std::integral<T>;",
+            "accepts only one"},
+           {"[[unsatisfied(\"a\")]] int f();",
+            "must directly precede a concept declaration"},
+           {"[[unsatisfied(\"a\")]] class C {};",
+            "must directly precede a concept declaration"},
+           {"class Holder { [[unsatisfied(\"a\")]] concept c<T> = "
+            "std::integral<T>; };",
+            "limited to namespace scope"},
+       }}) {
+    const lang::FrontendResult rejected = lang::Frontend().analyze(
+        "explanation-syntax.gti", std::string(malformed),
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.syntaxValid &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-P0001") &&
+               hasDiagnostic(rejected.diagnostics, std::string(reason)),
+           "malformed concept explanation is a syntax error: " +
+               std::string(malformed));
+  }
 }
 
 void testRequiresDisjunction() {
