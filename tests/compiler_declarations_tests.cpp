@@ -9710,12 +9710,10 @@ int main() {
                                 lang::DefinedFailureCode::IndexOutOfBounds;
                        });
           });
-  expect(
-      write != nullptr && boundsOutcome &&
-          lang::requiresMirFailureControlFlow(
-              *write, lang::MirFailureControlFlowPosition::FullExpressionRoot),
-      "a dynamic fixed-array element write should stay eligible for MIR "
-      "failure control flow");
+  expect(write != nullptr && boundsOutcome &&
+             lang::requiresMirFailureControlFlow(*write),
+         "a dynamic fixed-array element write should stay eligible for MIR "
+         "failure control flow");
   expect(writeBlock != nullptr && write != nullptr &&
              !writeBlock->instructions.empty() &&
              writeBlock->instructions.back().id == write->id &&

@@ -618,7 +618,6 @@ class QualifiedName;
 class This;
 class Set;
 class Unary;
-class Unexpected;
 class Variable;
 
 class BlockStmt;
@@ -686,7 +685,6 @@ public:
   virtual void visitThisExpr(const This &expr) = 0;
   virtual void visitSetExpr(const Set &expr) = 0;
   virtual void visitUnaryExpr(const Unary &expr) = 0;
-  virtual void visitUnexpectedExpr(const Unexpected &expr) = 0;
   virtual void visitVariableExpr(const Variable &expr) = 0;
 };
 
@@ -716,7 +714,6 @@ enum class ExprKind : std::uint8_t {
   This,
   Set,
   Unary,
-  Unexpected,
   Variable,
 };
 
@@ -1683,28 +1680,6 @@ private:
   Token oper_;
   ExprPtr right_;
   ExprPtr rangeObject_;
-};
-
-class Unexpected final : public ExprOfKind<ExprKind::Unexpected> {
-public:
-  Unexpected(Token keyword, ExprPtr error)
-      : keyword_(std::move(keyword)), error_(std::move(error)) {}
-  Unexpected(Unexpected &&) = default;
-  Unexpected(const Unexpected &) = delete;
-  Unexpected &operator=(Unexpected &&) = default;
-  Unexpected &operator=(const Unexpected &) = delete;
-  ~Unexpected() override = default;
-
-  void accept(ExprVisitor &visitor) const override {
-    visitor.visitUnexpectedExpr(*this);
-  }
-
-  [[nodiscard]] const Token &keyword() const { return keyword_; }
-  [[nodiscard]] const ExprPtr &error() const { return error_; }
-
-private:
-  Token keyword_;
-  ExprPtr error_;
 };
 
 class Variable final : public ExprOfKind<ExprKind::Variable> {

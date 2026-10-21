@@ -6114,11 +6114,6 @@ int main() {
         hir && hir->source && hir->source->name().lexeme == "forward";
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        expect(
-            instruction.intrinsic != lang::IntrinsicKind::ExpectedValue &&
-                instruction.intrinsic != lang::IntrinsicKind::ExpectedError &&
-                instruction.operation != lang::MirOperation::ExpectedHasValue,
-            "source propagation must not recover builtin extraction authority");
         if (instruction.intrinsic == lang::IntrinsicKind::FailInactiveValue ||
             instruction.intrinsic == lang::IntrinsicKind::FailInactiveError) {
           ++trackedFailures;

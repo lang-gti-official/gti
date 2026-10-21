@@ -142,6 +142,13 @@ all compiler/runtime support.
 | S23 (was M02) | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy with one check per safe operation and bulk byte relocation of bitwise-relocatable elements. | Final-address emplacement, construction rollback and exactly-once cleanup through general object operations. |
 | S24 (was M04) | Views and iterators over prefix storage | Span, vector and string wrappers borrow source prefix owners; `unsafe` unchecked accessors on vector, string, span and fixed array. | General carrier and checked-loan contracts; raw text conversion through an exact checked owner witness. |
 | S25 (was M03) | Character trailing-NUL policy | Source `terminated_prefix_owner`, allocation-free empty sentinel, hidden initialized terminator and embedded-NUL scan. | General text/C-string carrier conversion through a checked owner witness; this is not a private string-storage engine. |
+| S26 (was M09) | Expected active-alternative storage and ordinary helpers |
+Source `expected<T, E>`, `expected<void, E>` and `expected<T&, E>` prelude
+classes keep their alternatives in a payload enum; observers, combinators and
+`unexpected` are ordinary members and functions. The compiler's built-in
+expected type and operations are removed. | `?` through `std::tryable`,
+payload-enum lifecycle, reference payload loans and the declaration-bound
+inactive-access failure intrinsics. |
 
 Evidence: [memory](../../stdlib/std/memory.gti),
 [resource](../../stdlib/std/resource.gti),
@@ -161,7 +168,8 @@ does not claim a new test run.
 ### B. Source-Policy Migrations And Remaining Prerequisites
 
 These entries distinguish migration work from complete acceptance. S-ALLOC-09
-completed the former M01–M04 rows, now S22–S25 above. The remaining
+completed the former M01–M04 rows, now S22–S25 above, and the source-defined
+`expected` completed the former M09 row, now S26. The remaining
 rows are candidates, not implicitly approved or completed migrations.
 "Prerequisite" means a fact that must be established before retiring a path,
 not permission to weaken existing safety or reject previously supported users.
@@ -172,7 +180,6 @@ not permission to weaken existing safety or reject previously supported users.
 | M06 | Polymorphic unique-owner conversion and destruction | Private unique upcast and dynamic cleanup bindings. | Retain original allocation/release authority while changing the view; execute the actual dynamic object's cleanup. Ordinary base-pointer destruction is not a substitute. |
 | M07 | Optional engagement, access and reset | Private `optional_storage<T>`. | Source inline storage plus engagement state, inactive-access failures and checked loans. Public `uninitialized<T>` is fixed-address for non-bitwise-relocatable payloads; preserving movable owning optional needs a general carrier/lifecycle solution. A flag alone is insufficient. |
 | M08 | Shared control-block allocation, retain/release and observation | Private `shared_owner<T>` and native atomic control block. | Source ownership state plus public atomic operations, correct memory orders/count overflow, last-owner cleanup, promotion rollback, thread capabilities and polymorphic release. Weak ownership is additional work, not unlocked automatically. |
-| M09 | Expected active-alternative storage and ordinary helpers | Built-in expected type/operations. | General sum/inline-carrier, generic API and borrow contracts must preserve owned, void and checked-reference results. Source allocation alone does not retire the built-in path; `?` control flow and loan verification remain language semantics. |
 | M10 | Container guard predicates and formatting of failures | Source computes many predicates but calls private `require_*`/bounds helpers. | Source can own predicates/message policy. Preserve stable failure categories, location, cleanup and optimizer proof identity through a general failure interface; replacing everything with generic panic is not equivalent. |
 
 S22–S24 use the representation accepted in
@@ -578,8 +585,7 @@ The native predicate uses the same overflow builtin or portable mathematical
 check as checked integer execution; source success paths use defined wrapping
 arithmetic, whose value is exact when overflow was excluded. MIR constant
 execution uses the shared exact-width arithmetic evaluator for the same fact.
-This keeps result storage independent of native `expected` representations;
-negative accumulation admits the signed minimum without overflowing its
+Negative accumulation admits the signed minimum without overflowing its
 positive magnitude. Binary32 and binary64 conversion use the bounded
 `gti_rt_parse_f32_v1`/`gti_rt_parse_f64_v1` C ABI over a non-retained counted
 input, offset, format selector, and scalar output slots. A configure-time
@@ -1074,9 +1080,9 @@ deterministic serializer, limits, structured errors and explicit `codec<T>`
 customization are all GTI source over `<std/meta>`. This is an intentional
 proof that a format library can remain portable policy once compile-time
 reflection, `std::meta::construct` and the ordinary string and vector
-ownership primitives are sufficient. String-owning errors execute through
-verified MIR in both native Expected representations; the branches that add
-JSON Pointer context remain explicit source code.
+ownership primitives are sufficient. String-owning errors are ordinary source
+`expected` values executed through verified MIR; the branches that add JSON
+Pointer context remain explicit source code.
 Arena/pool factories use the same propagation rule, while elapsed clock
 subtraction deliberately maps arithmetic errors through a typed
 `transform_error` function. None changes recoverable errors into panic.
@@ -1364,7 +1370,7 @@ the complete record/descriptor validation still occurs at final reporting,
 not before that private transfer. During that transfer, lifetime slots (including
 representation-only slots), generated lifecycle wrappers, and private
 storage/owner/lock carriers do not invent the GTI cleanup that MIR deliberately
-stopped. Native expected, variant, array, closure, and unique-owner shells may
+stopped. Native variant, array, closure, and unique-owner shells may
 retire representation storage, but their payloads recursively reach those
 same guarded lifecycle boundaries. A locked native mutex is carried in raw
 lifetime storage so its destructor cannot run on an abandoned lock. Any live

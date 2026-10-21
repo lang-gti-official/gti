@@ -610,16 +610,12 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     appendIdentityInteger(output, declaration->sourceUnit);
     return appendArguments();
   }
-  case SemanticType::Expected:
-    appendIdentityText(output, "expected");
-    return appendArguments();
   case SemanticType::Unknown:
   case SemanticType::SharedPointer:
   case SemanticType::TypeParameter:
   case SemanticType::TypeName:
   case SemanticType::Function:
   case SemanticType::Lambda:
-  case SemanticType::Unexpected:
     return false;
   }
   return false;
@@ -841,9 +837,7 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
       return false; // By-value recursion is rejected before the backend.
     visiting.push_back(current);
     const bool result = [&] {
-      if (current.kind == SemanticType::Array ||
-          current.kind == SemanticType::Expected ||
-          current.kind == SemanticType::Unexpected)
+      if (current.kind == SemanticType::Array)
         return std::any_of(
             current.arguments.begin(), current.arguments.end(),
             [&](const auto &item) { return self(self, item, nativeField); });
@@ -1319,47 +1313,6 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     if (type.kind == SemanticType::TypePack && type.concretePack) {
       result += "...";
     }
-    return result;
-  }
-  case SemanticType::Expected: {
-    if (type.arguments.size() == 2 &&
-        type.arguments.front().kind == SemanticType::Reference &&
-        type.arguments.front().referenceAccess == AccessMode::ReadOnly &&
-        type.arguments.front().arguments.size() == 1) {
-      return "::gti_internal::backend::borrowed_expected<" +
-             spell(type.arguments.front().arguments.front()) + ", " +
-             spell(type.arguments.back()) + ">";
-    }
-    const bool byteTransport = std::any_of(
-        type.arguments.begin(), type.arguments.end(),
-        [&](const auto &argument) {
-          return cppRequiresIndirectValueTransport(program.mir(), argument);
-        });
-    // GTI's own representation, the same under every C++ standard.
-    std::string result =
-        dependent(dependent, type) ? "::gti_internal::backend::expected_result<"
-        : byteTransport            ? "::gti_internal::backend::byte_expected<"
-                                   : "::gti_internal::backend::expected<";
-    if (type.arguments.size() == 2) {
-      result += spell(type.arguments[0]);
-      result += ", ";
-      result += spell(type.arguments[1]);
-    }
-    result += '>';
-    return result;
-  }
-  case SemanticType::Unexpected: {
-    const bool byteTransport =
-        !type.arguments.empty() && cppRequiresIndirectValueTransport(
-                                       program.mir(), type.arguments.front());
-    std::string result = dependent(dependent, type)
-                             ? "::gti_internal::backend::unexpected_result<"
-                         : byteTransport
-                             ? "::gti_internal::backend::byte_unexpected<"
-                             : "::gti_internal::backend::unexpected<";
-    if (type.arguments.size() == 1)
-      result += spell(type.arguments.front());
-    result += '>';
     return result;
   }
   default:
