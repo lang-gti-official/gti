@@ -81,6 +81,30 @@ public:
   Built(mut int32_t seed) : writer(Writer(seed)), copy(seed) {}
 };
 
+enum class Shade { light, dark };
+
+int32_t darken(mut Shade& shade) {
+  shade = Shade::dark;
+  return 1;
+}
+
+int32_t retarget(mut const int32_t*& target, const int32_t* other) {
+  target = other;
+  return 1;
+}
+
+// A plain enum and a raw pointer are changed through references first.
+class Kinds {
+public:
+  int32_t darkened;
+  Shade shade;
+  int32_t retargeted;
+  const int32_t* target = nullptr;
+  Kinds(mut Shade shade, mut const int32_t* target, const int32_t* other)
+      : darkened(darken(shade)), shade(shade),
+        retargeted(retarget(target, other)), target(target) {}
+};
+
 struct Point {
   mut int32_t x;
   int32_t y;
@@ -202,6 +226,12 @@ int main(int argc, std::vector<std::string> argv) {
 
   Built built = Built(1);
   std::println(built.writer.value * 10 + built.copy);
+
+  int32_t left = 1;
+  int32_t right = 2;
+  Kinds kinds = Kinds(Shade::light, &left, &right);
+  std::println(kinds.darkened * 1000 + (kinds.shade == Shade::dark ? 100 : 0) +
+               kinds.retargeted * 10 + (kinds.target == &right ? 1 : 0));
 
   Tracked tracked =
       Tracked(Point(1, 2), Point(1, 2), Point(1, 2), Point(1, 2));
