@@ -416,14 +416,6 @@ mir_checked_contract_v1(bool condition, ::gti_failure_code_v1 code,
   return condition ? mir_failure_success_v1 : mir_failure_status_v1{code, detail};
 }
 
-template <typename Unexpected>
-inline decltype(auto) mir_unexpected_error_ref_v1(Unexpected &value) noexcept {
-  if constexpr (requires { value.error(); })
-    return value.error();
-  else
-    return value.value();
-}
-
 inline mir_failure_status_v1
 mir_checked_index_bounds_v1(std::uint64_t index, std::uint64_t size,
                             ::gti_failure_detail_v1 detail) noexcept {
@@ -445,116 +437,6 @@ mir_checked_string_view_at_v1(std::string_view value, Index index,
   }
   *result = static_cast<char8_t>(static_cast<unsigned char>(
       value[static_cast<std::size_t>(index)]));
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename Result>
-inline mir_failure_status_v1 mir_expected_value_v1(Expected &expected,
-                                                   Result *result) {
-  if (!expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
-  }
-  // GTI's state check owns the failure; the representation's observers are
-  // unchecked.
-  *result = *expected;
-  return mir_failure_success_v1;
-}
-
-template <typename Expected>
-inline mir_failure_status_v1
-mir_expected_void_value_v1(Expected &expected) noexcept {
-  if (!expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
-  }
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename ResultPointer>
-inline mir_failure_status_v1
-mir_expected_value_ref_v1(Expected &expected, ResultPointer *result) noexcept {
-  if (!expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
-  }
-  *result = std::addressof(*expected);
-  return mir_failure_success_v1;
-}
-
-// A verified return-publication consumer constructs directly into caller
-// storage. This adapter owns no lifetime: MIR controls success activation,
-// unpublished-result cleanup, and the final transfer to the caller.
-template <typename Result> struct mir_result_placement_slot_v1 {
-  Result *destination;
-  template <typename... Args> void construct(Args &&...args) {
-    construct_representation_at(destination, std::forward<Args>(args)...);
-  }
-};
-
-template <typename Expected, typename ResultSlot>
-inline mir_failure_status_v1
-mir_expected_value_copy_v1(const Expected &expected, ResultSlot *result) {
-  if (!expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
-  }
-  result->construct(*expected);
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename ResultSlot>
-inline mir_failure_status_v1
-mir_expected_value_move_v1(Expected &expected, ResultSlot *result) {
-  if (!expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
-  }
-  result->construct(*std::move(expected));
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename Result>
-inline mir_failure_status_v1 mir_expected_error_v1(Expected &expected,
-                                                   Result *result) {
-  if (expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
-  }
-  *result = expected.error();
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename ResultPointer>
-inline mir_failure_status_v1
-mir_expected_error_ref_v1(Expected &expected, ResultPointer *result) noexcept {
-  if (expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
-  }
-  *result = std::addressof(expected.error());
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename ResultSlot>
-inline mir_failure_status_v1
-mir_expected_error_copy_v1(const Expected &expected, ResultSlot *result) {
-  if (expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
-  }
-  result->construct(expected.error());
-  return mir_failure_success_v1;
-}
-
-template <typename Expected, typename ResultSlot>
-inline mir_failure_status_v1
-mir_expected_error_move_v1(Expected &expected, ResultSlot *result) {
-  if (expected.has_value()) {
-    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
-            GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
-  }
-  result->construct(std::move(expected).error());
   return mir_failure_success_v1;
 }
 

@@ -2305,17 +2305,6 @@ private:
       return TypeRef::nativeFunction(std::move(arrow), std::move(parameters),
                                      std::move(returnType));
     }
-    if (match({TokenKind::EXPECTED})) {
-      Token expected = previous();
-      consume(TokenKind::LESS, "Expect '<' after 'expected'.");
-      std::vector<TypeRef> arguments;
-      arguments.emplace_back(parseType());
-      consume(TokenKind::COMMA,
-              "Expect ',' between expected value and error types.");
-      arguments.emplace_back(parseType());
-      consumeGenericClose("Expect '>' after expected error type.");
-      return TypeRef(std::move(expected), std::move(arguments));
-    }
     if (match({TokenKind::INT, TokenKind::INT8, TokenKind::INT16,
                TokenKind::INT32, TokenKind::INT64, TokenKind::UINT,
                TokenKind::UINT8, TokenKind::UINT16, TokenKind::UINT32,
@@ -3761,15 +3750,6 @@ private:
     if (match({TokenKind::THIS})) {
       return std::make_unique<This>(previous());
     }
-    if (match({TokenKind::UNEXPECTED})) {
-      Token keyword = previous();
-      consume(TokenKind::LEFT_PAREN, "Expect '(' after 'unexpected'.");
-      ExprPtr errorValue = assignment();
-      consume(TokenKind::RIGHT_PAREN,
-              "Expect ')' after unexpected error value.");
-      return std::make_unique<Unexpected>(std::move(keyword),
-                                          std::move(errorValue));
-    }
     if (match({TokenKind::LEFT_PAREN})) {
       Token leftParen = previous();
       ExprPtr expr = assignment();
@@ -3883,8 +3863,8 @@ private:
         first != TokenKind::UINT32 && first != TokenKind::UINT64 &&
         first != TokenKind::FLOAT && first != TokenKind::DOUBLE &&
         first != TokenKind::BOOL && first != TokenKind::CHAR &&
-        first != TokenKind::EXPECTED && first != TokenKind::NULLPTR_TYPE &&
-        first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
+        first != TokenKind::NULLPTR_TYPE && first != TokenKind::VOID &&
+        first != TokenKind::IDENTIFIER) {
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
@@ -4073,20 +4053,6 @@ private:
                  : std::nullopt;
     }
     const TokenKind first = peekAt(offset).kind;
-    if (first == TokenKind::EXPECTED) {
-      if (peekAt(offset + 1).kind != TokenKind::LESS) {
-        return std::nullopt;
-      }
-      const std::optional<std::size_t> valueEnd = typeEnd(offset + 2);
-      if (!valueEnd || peekAt(*valueEnd).kind != TokenKind::COMMA) {
-        return std::nullopt;
-      }
-      const std::optional<std::size_t> errorEnd = typeEnd(*valueEnd + 1);
-      if (!errorEnd || peekAt(*errorEnd).kind != TokenKind::GREATER) {
-        return std::nullopt;
-      }
-      return signatureTypeEnd(*errorEnd + 1);
-    }
 
     if (first == TokenKind::AUTO || first == TokenKind::INT ||
         first == TokenKind::INT8 || first == TokenKind::INT16 ||

@@ -1918,11 +1918,6 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   case SemanticType::Array:
     return type.arguments.size() == 1 &&
            payloadTypeAllowed(type.arguments.front(), owner);
-  case SemanticType::Expected:
-    return type.arguments.size() == 2 &&
-           (type.arguments.front() == SemanticType::Void ||
-            payloadTypeAllowed(type.arguments.front(), owner)) &&
-           payloadTypeAllowed(type.arguments.back(), owner);
   case SemanticType::UniqueOwner:
     return true;
   case SemanticType::Class:
@@ -4967,17 +4962,6 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     return byValueTypeReachesClass(type.arguments.front(), target, visiting,
                                    visitingEnums, exhausted);
   }
-  if (type.kind == SemanticType::Expected ||
-      type.kind == SemanticType::Unexpected) {
-    // Alternatives occupy inline object storage even when only the error arm
-    // is constructed. Their wrapper is not an owning indirection boundary.
-    return std::any_of(type.arguments.begin(), type.arguments.end(),
-                       [&](const SemanticType &alternative) {
-                         return byValueTypeReachesClass(alternative, target,
-                                                        visiting, visitingEnums,
-                                                        exhausted);
-                       });
-  }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
     if (type == target || nonDecreasingNominalRecurrence(type, visitingEnums))
@@ -7538,21 +7522,6 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     if (returned == nullptr || !*returned) {
       valid = false;
       break;
-    }
-    const auto unexpectedReturn = [&]() {
-      const ExprPtr *candidate = returned;
-      while (candidate != nullptr && *candidate) {
-        const auto *grouping = exprAs<Grouping>(candidate->get());
-        if (grouping == nullptr) {
-          break;
-        }
-        candidate = &grouping->expression();
-      }
-      return candidate != nullptr && *candidate &&
-             exprAs<Unexpected>(candidate->get()) != nullptr;
-    }();
-    if (isFallibleBorrowType(function.returnType) && unexpectedReturn) {
-      continue;
     }
     SemanticPlace place = semanticPlace(*returned);
     std::optional<BorrowOriginPlace> candidate;

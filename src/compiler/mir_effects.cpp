@@ -98,7 +98,6 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     trapping(), // Index
     harmless(), // Identity
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
-    harmless(), // ExpectedHasValue
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     // Without a program row, conservatively retain a possible thread binding.
     MirEffectTraits{.readsUnknownMemory = true,
@@ -107,8 +106,7 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true}, // NativeCallback
     harmless(),                       // FunctionItem
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
-    MirEffectTraits{.copiesValue = true}, // PayloadExtract
-    MirEffectTraits{.copiesValue = true, .initializesValue = true},
+    MirEffectTraits{.copiesValue = true},     // PayloadExtract
     MirEffectTraits{.targetDependent = true}, // AddressOf
     MirEffectTraits{.targetDependent = true}, // PointerAdd
     MirEffectTraits{.targetDependent = true}, // PointerSubtract
@@ -234,17 +232,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{},
     // StringViewEmpty
     MirEffectTraits{},
-    // ExpectedValue: extraction terminates on the wrong state.
-    MirEffectTraits{.mayTrap = true},
-    // ExpectedError
-    MirEffectTraits{.mayTrap = true},
-    // ExpectedValueOr: observes state and copies the selected value.
-    MirEffectTraits{.copiesValue = true, .initializesValue = true},
     // ArrayRangeBegin: a pure compiler-generated zero endpoint.
     MirEffectTraits{},
     // ArraySize: a pure read of the fixed extent.
-    MirEffectTraits{},
-    // ExpectedHasValue: a pure state observer.
     MirEffectTraits{},
     // ThreadHandleEmpty: creates an empty private capability value.
     MirEffectTraits{.initializesValue = true},
@@ -537,13 +527,11 @@ constexpr auto operationNames = std::to_array<std::string_view>({
     "index",
     "identity",
     "convert",
-    "expected-value",
     "closure",
     "native-callback",
     "function-item",
     "payload-construct",
     "payload-extract",
-    "unexpected",
     "address-of",
     "pointer-add",
     "pointer-subtract",
@@ -626,12 +614,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "function-pointer-invoke",
     "string-view-size",
     "string-view-empty",
-    "expected-value",
-    "expected-error",
-    "expected-value-or",
     "array-range-begin",
     "array-size",
-    "expected-has-value",
     "thread-handle-empty",
     "thread-spawn",
     "thread-joinable",
@@ -919,22 +903,6 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
     --remaining;
     if (isMirScalarValueType(&program, type))
       return true;
-    if (operation == StructuralValueOperation::Drop &&
-        (type.kind == SemanticType::Expected ||
-         type.kind == SemanticType::Unexpected)) {
-      if (type.arguments.size() !=
-          (type.kind == SemanticType::Expected ? 2 : 1))
-        return false;
-      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-        const auto &part = type.arguments[index];
-        if (index == 0 && type.kind == SemanticType::Expected &&
-            part.kind == SemanticType::Void)
-          continue;
-        if (!self(self, part))
-          return false;
-      }
-      return true;
-    }
     if (type.kind != SemanticType::Class)
       return false;
     const MirClassInstance *owner = nullptr;
@@ -965,11 +933,7 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
     visiting.erase(owner->id);
     return fields;
   };
-  return (type.kind == SemanticType::Class ||
-          (operation == StructuralValueOperation::Drop &&
-           (type.kind == SemanticType::Expected ||
-            type.kind == SemanticType::Unexpected))) &&
-         structural(structural, type);
+  return type.kind == SemanticType::Class && structural(structural, type);
 }
 } // namespace
 
@@ -1654,42 +1618,6 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       }
       return result;
     }
-    if ((selected.kind == SemanticType::Expected &&
-         selected.arguments.size() == 2) ||
-        (selected.kind == SemanticType::Unexpected &&
-         selected.arguments.size() == 1)) {
-      MirDropType result{.type = selected};
-      for (const auto &alternative : selected.arguments) {
-        auto child = self(self, alternative);
-        if (!child) {
-          const bool passive =
-              alternative == SemanticType::Void ||
-              (alternative.kind >= SemanticType::Int8 &&
-               alternative.kind <= SemanticType::Char) ||
-              alternative.kind == SemanticType::RawPointer ||
-              alternative.kind == SemanticType::NativeFunction ||
-              alternative.kind == SemanticType::NullPtr ||
-              alternative.kind == SemanticType::CString ||
-              alternative.kind == SemanticType::StringView ||
-              (alternative.kind == SemanticType::Enum &&
-               program.findPayloadEnum(alternative) == nullptr);
-          if (passive) {
-            child = MirDropType{.type = alternative};
-          } else {
-            const auto *owner = alternative.kind == SemanticType::Class
-                                    ? classFor(alternative)
-                                    : nullptr;
-            if (owner == nullptr || owner->requiresActiveCleanup)
-              return std::nullopt;
-            child =
-                MirDropType{.type = alternative, .classInstance = owner->id};
-          }
-        }
-        result.requiresActiveCleanup |= child->requiresActiveCleanup;
-        result.aggregate.push_back(*child);
-      }
-      return result;
-    }
     if (selected.kind == SemanticType::Lambda) {
       const auto lambda = std::find_if(program.lambdaInstances().begin(),
                                        program.lambdaInstances().end(),
@@ -1866,31 +1794,13 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
                      candidate.arrayLengthParameterId == 0
                  ? self(self, candidate.arguments.front())
                  : RelocationKind::Unavailable;
-    if (candidate.kind == SemanticType::Expected ||
-        candidate.kind == SemanticType::Unexpected ||
-        candidate.kind == SemanticType::Lambda) {
-      if ((candidate.kind == SemanticType::Expected &&
-           candidate.arguments.size() != 2) ||
-          (candidate.kind == SemanticType::Unexpected &&
-           candidate.arguments.size() != 1) ||
-          (candidate.kind == SemanticType::Lambda &&
-           !candidate.hasLambdaShape()))
+    if (candidate.kind == SemanticType::Lambda) {
+      if (!candidate.hasLambdaShape())
         return RelocationKind::Unavailable;
-      const auto parts =
-          candidate.kind == SemanticType::Lambda
-              ? candidate.lambdaCaptureTypes()
-              : std::span<const SemanticType>{candidate.arguments};
-      // A closure environment is a plain aggregate of its captures; an
-      // expected keeps its engagement state and stays structural.
-      auto result = candidate.kind == SemanticType::Lambda
-                        ? RelocationKind::Bitwise
-                        : RelocationKind::Structural;
-      for (const auto &part : parts) {
-        if (candidate.kind == SemanticType::Expected &&
-            &part == &candidate.arguments.front() && part == SemanticType::Void)
-          continue;
+      // A closure environment is a plain aggregate of its captures.
+      auto result = RelocationKind::Bitwise;
+      for (const auto &part : candidate.lambdaCaptureTypes())
         result = merge(result, self(self, part));
-      }
       return result;
     }
     if (candidate.kind == SemanticType::Enum) {
@@ -1983,17 +1893,6 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
       return candidate.arguments.size() == 1 &&
              candidate.arrayLengthParameterId == 0 &&
              self(self, candidate.arguments.front());
-    }
-    if (candidate.kind == SemanticType::Expected ||
-        candidate.kind == SemanticType::Unexpected) {
-      const std::size_t count =
-          candidate.kind == SemanticType::Expected ? 2 : 1;
-      return candidate.arguments.size() == count &&
-             std::all_of(candidate.arguments.begin(), candidate.arguments.end(),
-                         [&](const auto &value) {
-                           return value == SemanticType::Void ||
-                                  self(self, value);
-                         });
     }
     if (candidate.kind == SemanticType::Lambda) {
       const MirLambdaInstance *lambda = nullptr;

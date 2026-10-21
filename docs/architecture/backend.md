@@ -2,17 +2,6 @@
 
 Status: current architecture.
 
-Passive class error returns use representation-only SSA storage: ordinary
-construction or checked copy/move extraction executes at its MIR instruction,
-before surrounding scope cleanup. An exact sole `Unexpected` consumer may
-publish after a verified normal cleanup spine, including fallible destructor
-Invokes. Only wrapper construction is deferred; payload construction, failure
-identity and all Drops stay in MIR order. Payloads must have no active cleanup,
-borrowed state or address escape, and copy extraction additionally requires
-generated copy construction. A failed cleanup therefore discards no hidden
-owning result. Shared constructor/extraction admission follows the same
-cleanup-tail proof; the runtime does not invent unwinding behavior.
-
 GTI ships a native C++ source backend. All production backends consume one
 compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
 `SemanticModel`, `HirProgram`, source MIR, optimizer side tables, or generated
@@ -29,8 +18,7 @@ existing representation scope for one immutable verified lowered program.
 These indexes contain existing MIR records, not cached permission to emit an
 operation. Copies, foreign bodies and unscoped mutation probes use direct
 queries; nested consumers of a different snapshot cannot reuse the outer
-indexes. Expected wrapper lookup follows the value's exact defining instruction
-instead of searching every instruction for each candidate. Scoped/unscoped
+indexes. Scoped/unscoped
 plan comparisons pin byte-identical output and nested-snapshot isolation.
 
 Whole owning-array movement into an adjacent fresh binding uses the shared
@@ -45,13 +33,9 @@ argument construction or append fails. A source-owned vector may have
 failure-capable destruction: its secondary-failure Invoke/terminal envelope is
 checked rather than projected away as failure-free behavior. Emission runs that
 exact cleanup under the original failure context before terminal containment.
-Similarly, an unpublished complete `expected<Class, E>` result retains its
-exact alternative cleanup recipe if another scope destructor fails after the
-result-producing call. No hidden native unwinding replaces either MIR schedule.
-Owning payload-enum returns use the same exact unpublished-result recipe,
-including a secondary failure during rollback. A proven success-alternative
-cleanup uses unchecked representation access; it must not impose a native
-`expected::value()` exception or copyable-error requirement on GTI errors.
+No hidden native unwinding replaces that MIR schedule. Owning payload-enum
+returns use the same exact unpublished-result recipe, including a secondary
+failure during rollback.
 
 The phase direction is:
 
@@ -310,25 +294,6 @@ call executes into its passive representation at its original MIR position;
 later payload operands cannot reorder it. Missing or duplicated uses, changed
 tags/types, and newly fallible payload publication fail representation admission.
 
-Checked class-payload extraction can construct a function's exact return result
-at its existing MIR Call, without an intermediate object or a second source
-move. Cleanup-free moved/copy receivers share the inert-return-tail proof;
-owning receivers retain their real moved or fresh-call lifetime slot on both
-success and wrong-state edges. The owning return consumer requires the exact
-success activation, transfer-out, and, when cleanup can fail, unpublished
-return-result reparent/rollback schedule. A non-owning placement adapter reuses
-the checked extraction helper against caller storage; it supplies neither
-implicit construction nor native unwinding. The state check still precedes
-construction, and MIR alone decides whether to destroy or publish the result.
-When the function instead returns a placement `Expected<Class, E>` whose
-success type is the extracted payload, a cleanup-free moved or copied
-extraction constructs one payload slot. The exact Return then constructs the
-Expected from it, the same publication cleanup-free calls and constructions
-use. A named Expected binding copied into that placement result likewise
-constructs its copy in representation storage, which the Return moves out. The
-copy is the one MIR selected for the `Load`, so no payload is limited to
-passive C-compatible records.
-
 A consuming payload extraction, a `Move` of a switch-owned subject binding,
 spells its field as an rvalue at the binding's construction. The extraction
 that carries the subject's `TransferOut` then ends the drained enum's C++
@@ -391,8 +356,7 @@ the slot's other users, so each result proof below covers this form unchanged.
 The value-rooted result slot of a discarded,
 replacing or field-read result already counts every prepared input. Other
 result proofs that count prepared argument transfers count this handoff too
-where their schedule admits it: the returned-result slot, an
-`Expected<Class, E>` result constructed in the binding that consumes it, and
+where their schedule admits it: the returned-result slot and
 the conditional temporary of a result made in a conditional arm or
 short-circuit operand, whether a failure-free or checked call constructs it
 there for field views or publishes it into a conditional join. Forwarding a
@@ -459,14 +423,13 @@ or new failure edge.
 
 Generated field, capture and container representations preserve the same
 property without changing MIR's active-alternative or cleanup schedule. The
-native-record container matrix covers Expected and payload-enum alternatives,
-native arrays, owning alternatives, captures and generic relays at C++20/C++23
-O0/O1/O3, disabled elision and ASan/UBSan. The broad completion and installed
-evidence is recorded in [verification](verification.md#low-level-memory-phase-1).
-Unsupported representation families
-must fail closed, never silently fall back to memberwise expired-pointer
-copying. The ordinary address carrier alone does not discharge those composite
-transport requirements.
+native-record container matrix covers payload-enum alternatives, native arrays,
+owning alternatives, captures and generic relays at C++20/C++23 O0/O1/O3,
+disabled elision and ASan/UBSan. The broad completion and installed evidence is
+recorded in [verification](verification.md#low-level-memory-phase-1).
+Unsupported representation families must fail closed, never silently fall back
+to memberwise expired-pointer copying. The ordinary address carrier alone does
+not discharge those composite transport requirements.
 
 The address representation guarantee is distinct from the unsafe obligation to
 pass a valid pointer to a callee that accesses it. The optional raw auditor can
@@ -694,7 +657,7 @@ identical.
 
 Generated support is likewise a compiled backend component rather than a
 mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
-selected C++ standard and exact Expected, storage, managed-thread, C-thread,
+selected C++ standard and exact storage, managed-thread, C-thread,
 atomic, mutex, SIMD, defined-failure, runtime-binding, and C-ABI text-view
 needs. The preamble and
 failure-support writers receive those explicit values and an output sink;
@@ -758,9 +721,8 @@ and byte-preserving indirect native-record arguments retain their separate
 representation contracts; no public owner or range name selects the prologue.
 
 Admission queries reject structurally inapplicable values before performing
-body-wide ownership searches or instruction lookups. In particular, Expected
-class-extraction receiver searches require an Expected-typed receiver, their
-producer probes require the existing class/category/lifetime conditions, and
+body-wide ownership searches or instruction lookups. In particular, producer
+probes require the existing class/category/lifetime conditions, and
 payload-enum transport metadata requires enum-typed storage. These are
 necessary conditions of the existing exact proofs, not replacement proofs or
 cached admission decisions. This keeps unrelated scalar aggregate elements
@@ -1144,29 +1106,10 @@ native parameter list only once across concrete owners. This shares only the
 declaration: each selected owner retains its own verified-MIR definition and
 every fallible instance retains its distinct status-tag overload.
 
-Constructor fields of `Expected<T, E>` can publish a separately produced
-success value, owned unexpected value, or passive scalar alternative into a
-proved private empty representation. Admission binds the exact declared field,
-selected initializer, source HIR root, full-expression boundary, unique
-consumer, and adjacent producer or Invoke-success edge. Owning input transfer
-and construction-rollback activation must match the verified MIR obligations;
-this path cannot replace a live field or invent a local-binding lifetime.
-An exact nonraising source constructor still executes at its `Construct`
-instruction in the originating lexical context, consuming its complete prepared
-argument schedule. The same payload-slot proof supports local Expected bindings
-and conditional destinations as well as fields. The sole adjacent `Initialize`
-must transfer the exact payload drop and activate the destination obligation.
-Publication moves the completed payload into that owner, retires only its
-moved-from native shell, and leaves semantic cleanup to MIR. The local Expected join writer explicitly
-excludes these proved field publications, since an actual field is not a
-temporary lifetime slot. Missing or mismatched targets, activation, source
-boundaries, or transfer events reject admission rather than selecting a native
-fallback.
-
 An otherwise unused reference-call SSA result identifies a referent; its paired
 CallResult loan already supplies the physical pointer. The declaration loop
 therefore emits no extra value object, irrespective of the referent type.
-This includes Expected and payload-enum referents: default-constructing an
+This includes payload-enum referents: default-constructing an
 unused native value could either fail to compile or introduce a second object's
 constructor/destructor effects. Selected source return types distinguish actual
 references from by-value borrowed carriers; synthesized operator destinations
@@ -1288,99 +1231,11 @@ the verified `ReturnResult` obligation: failure cleans the initialized out
 result, while success transfers it to the caller. Direct transformed calls
 and explicit construction use the same pending-result destination. Failure
 cleanup calls a fallible result's exact status cleanup recipe before native
-teardown; an infallible result uses native teardown directly. A wrapped
-`expected` value cleans its payload before tearing down the envelope.
+teardown; an infallible result uses native teardown directly.
 Source-defined buffer/sequence results use the ordinary class-result lifetime
 and field-cleanup schedule; there is no private prefix-storage result carrier.
 This does not admit arbitrary executable work or reinitialization
 between a class result's construction and Return.
-
-When the result is the class payload of an `expected` return, cleanup may
-similarly cross destructor Invoke blocks. The payload's Value obligation must
-be reparented exactly once to ReturnResult, followed by cleanup-only success
-blocks and one final publication. Until that Return, the payload remains in
-its local lifetime slot: failure destroys that slot, not the caller's still
-uninitialized `expected` output. The envelope is constructed only at successful
-publication. Extra work, a cyclic continuation, or a changed activation,
-reparent, or handoff fails the representation proof.
-The producer may activate its Value obligation directly after a failure-free
-constructor, or on the success edge of a fallible call. Both forms keep the
-payload in its local slot while later parameter cleanup runs; a failure-free
-constructor does not justify publishing early across a fallible destructor.
-Ordinary source member calls, including consuming (`&&`) receivers, use this
-same payload-return proof. A recorded invocation capability must agree with
-the selected concrete member's receiver mutability and retain an actual
-receiver; it is not grounds for rejecting an otherwise valid owning return.
-No special rule is attached to ownership-wrapper conversions or upcasts.
-
-A failure-free source call returning a complete owning Expected likewise uses
-the existing exact returned-call-result slot proof. Its value activation and
-optional reparent into an unpublished ReturnResult retain the local envelope
-through fallible cleanup. Failure destroys that envelope; only the final Return
-transfers it to the caller. Value admission consumes this proof rather than
-falling back to an observable default construction of the success alternative.
-
-Owning error alternatives use the same placement-result boundary as owning
-success alternatives, including `expected<int, Error>` and
-`expected<void, Error>`. Scalar/void success with a cleanup-free class error
-keeps the ordinary default-initialized Expected carrier: move-only does not
-by itself imply a MIR cleanup obligation or owning-error lifetime slot.
-An `Unexpected` owns real local storage after its
-payload transfer; fallible return cleanup cannot publish it early or destroy
-the caller's uninitialized output. Checked consuming payload extraction may
-feed a subsequent Expected return through the existing local payload slot.
-State-checked observers use unchecked dereference only after GTI's guard or
-verified state proof.
-
-The generated support code defines GTI's own expected representation,
-identical under C++20 and C++23; the backend uses neither the host
-`std::expected` nor a vendored implementation. `gti_internal::backend::expected<T, E>`
-is a tag and a union of the two alternatives, with a `void` specialization,
-an `unexpected<E>` error wrapper (deduced from its argument) and an `unexpect`
-tag for in-place errors. Its observers are unchecked and nothing throws,
-because MIR tests the state before every extraction and raises `GTI-R0009`
-itself. Each special member is trivial exactly when both alternatives' are,
-so a scalar result stays trivially copyable and keeps its register ABI. Its
-constructors and destructor are constexpr, so a constant result, or a constant
-aggregate holding one, is native `constexpr` storage under both standards.
-`byte_expected` keeps byte-transport payloads in representation cells, and
-`expected_result` selects between the two in dependent code.
-
-`expected<T&, E>` is not an expected holding a reference. Its private C++20/C++23
-carrier, `borrowed_expected`, stores either `const T*` or `E`; GTI
-source still observes a non-null read-only reference. MIR supplies every
-pointer from an admitted loan. Direct successful returns and local
-initializations dereference that loan when constructing the carrier, while a
-forwarded complete carrier is published as a value so its active error state
-is preserved. Checked `value()` extraction binds a child CallResult loan to the
-stored pointer after the ordinary wrong-state edge succeeds. The backend does
-not infer the owner from the pointer or extend its lifetime.
-
-Expected placement also uses MIR's recursive generated-relocation proof for
-aggregate owners containing guarded resource fields. Moving the aggregate
-invokes each field move; each guarded leaf disarms its own source. This is
-construction into empty storage, not a proof that replacement assignment or
-user-defined moves cannot fail. Consuming observers can prepare constructor
-arguments under the same exact slot, activation, handoff, and later-argument
-failure-cleanup proof as ordinary function arguments. Cleanup may traverse
-other owners' destructor Invokes without losing the prepared argument's
-already-destroyed state. An Expected returned by a resolved member call can
-likewise occupy the single value-rooted slot consumed by `?`; its receiver
-schedule remains independently verified.
-
-An owning Expected result can also fill an exact ordinary source member's
-by-value parameter. The existing typed member-receiver borrow and staging proof
-is required independently of the argument's single-consumer, activation,
-dominance, transfer and failure-cleanup proof. The receiver is not consumed or
-given a longer lifetime by the argument transfer.
-
-Expected/Unexpected native, byte-preserving and borrowed envelopes follow the
-value ABI; their alternative storage handles any payload byte transport.
-Representation-only `byte_transport` classifications therefore identify those
-envelopes without instantiating a native wrapper through ADL while its payload
-is still incomplete. This agrees with the lowered type's transport decision;
-it neither adds a by-value layout dependency nor changes semantic lifecycle or
-copy/move permission. Recursive pointer-backed container layouts remain finite.
 
 In transformed constructors with owned-parameter fields, passive scalar and
 plain-enum parameter reads remain in the MIR body schedule. They are not
@@ -1528,21 +1383,15 @@ the body emitter uses the caller-owned `PreparedParameter` slot named by MIR.
 A direct `Construct` or admitted cleanup-owning call result publishes once into
 that slot; its source drop remains authoritative until the matching `CallInput`
 reparents it, and the consuming `Call` transfers the prepared drop exactly
-once. An owning `Expected` extraction may use its value-rooted source place as
-representation and drop metadata only when it is the sole unprojected use in
-that exact reparent chain, with matching type, access, drop, call-site,
-ordering, and success/failure facts. That metadata place emits no C++ local or
-default construction. Failure before extraction success never arms the
-prepared slot, and unsupported, aliased, duplicated, projected, or mismatched
+once. Unsupported, aliased, duplicated, projected, or mismatched
 shapes remain rejected rather than receiving backend-invented storage or
 cleanup.
 
-A complete fresh owning Expected or class result can also transfer directly
+A complete fresh owning class result can also transfer directly
 from its success-activated value slot into one exact static source-GTI function
-parameter; Expected additionally admits the proved constructor consumer.
-An owning class constructor result uses the same proof, with exact publication
-either on its checked success edge or its infallible instruction activation.
-These consumers share the same slot-use and CFG proof:
+parameter. An owning class constructor result uses the same proof, with exact
+publication either on its checked success edge or its infallible instruction
+activation. These consumers share the same slot-use and CFG proof:
 one typed by-value operand, one matching unconditional `TransferOut`, producer
 success dominating the consumer, and exact cleanup on intervening argument
 failures. The function declaration's parameter and return identities must match;
@@ -1567,72 +1416,20 @@ branch-only temporary of a `?` operand in a conditional arm or on the right of
 `||` does. It moves into a directly activated prepared slot, and its moved-from
 shell ends where MIR drops it rather than at the move. A stable unprojected
 local receiver may remain staged across a propagation branch. The branch is
-either the exact `ExpectedHasValue` observation, whose unique success edge
-proves extraction of that same carrier, or the failure-free `has_value` call
-of a `?` through `std::tryable`. Its success edge continues with the
-`take_value` call, which MIR names with the propagation's own HIR value as it
-does the branch, and only the ends of the test's own input loans may follow
-the test in its block.
+the failure-free `has_value` call of a `?` through `std::tryable`. Its success
+edge continues with the `take_value` call, which MIR names with the
+propagation's own HIR value as it does the branch, and only the ends of the
+test's own input loans may follow the test in its block.
 
 A cleanup-free direct result may forward into caller storage without inventing
 a result-drop obligation when it has one exact return use and only inert
-boundary/EndBorrow records intervene. Passive expected payload construction
-and ordinary source-call results similarly permit their completed input loans
-and unrelated passive local lifetimes to end before return, including the
-exact call's Invoke success edge. Prepared argument handoff uses the same exact
-CallInput/TransferOut proof as constructor publication. The
-payload is constructed in a local slot; only the unique Return wraps it in
-the Expected envelope. No default constructor or result-drop obligation is
-invented. These representation choices preserve the verified Invoke and
-cleanup schedule.
-
-A cleanup-free `Expected<Class, E>` source-call result whose only use is the
-body's Return may also cross executable scope cleanup, including a fallible
-drop of another local. Every class alternative has a generated, inactive
-destructor and every other alternative is scalar or an integral enum, so MIR
-gives the result neither a drop nor a value-rooted place. The transformed
-callee constructs it in a representation-only lifetime slot, MIR's cleanup
-runs in order, and the Return moves it into the caller's placement storage. A
-cleanup failure leaves only that cleanup-free representation for the slot to
-retire. A call with nothing but inert records before its Return keeps the
-direct placement into the caller's storage instead.
-
-The same result-staging proof applies to an exact ordinary source member, not
-only a namespace function. Its ordered receiver input retains its own checked
-loan and ends according to MIR; no result alternative may contain borrowed
-state. A failure-free member constructs the wrapper from its returned value,
-while a transformed member constructs it only on its Invoke success edge.
-Neither route default-constructs an unused success payload. Missing or unrelated
-receivers, a substituted static/return target, extra result-place aliases and
-additional consumers fail the existing exact call and single-slot proofs.
-
-An Expected whose success payload is an enum with a boundary row (an
-integral enum, or a payload enum whose variants hold only passive movable
-fields) crosses the transformed failure ABI exactly like a scalar payload:
-through the ordinary typed out-parameter that the caller value-initializes.
-
-An exact moved-Expected return likewise publishes directly into the caller's
-result storage. This applies when its class payload is cleanup-free but lacks
-a default constructor: the unused SSA identity must not declare a second,
-default-constructed Expected. The same unique Move/Return and cleanup-tail
-proof owns that erasure; neither the result type alone nor a public name does.
-
-A checked `value()` or `error()` on a borrowed Expected may copy a cleanup-free,
-generated-copy class alternative directly into its sole binding's lifetime
-slot. The receiver remains borrowed and unchanged. This representation requires
-the exact success destination and its immediate, unconditional Initialize;
-borrow-carrying payloads and user-defined copy constructors are not folded into
-this route. The wrong-state check precedes construction, so failure never
-activates the destination. Consuming observers retain their separate verified
-movement and cleanup rules.
-
-A one-use moved Expected with a cleanup-free source binding may fuse its
-receiver move into either a direct class extraction or a trivial scalar/enum
-observer. Both use the same proof: exact source-binding/drop/type identity,
-no move lifecycle effects, no active cleanup, and exactly one receiver use.
-The scalar path retains the checked wrong-state failure edge and reads that
-binding directly instead of default-constructing a second Expected. Owning
-receivers requiring cleanup continue to require their explicit lifetime slot.
+boundary/EndBorrow records intervene. Ordinary source-call results
+similarly permit their completed input loans and unrelated passive local
+lifetimes to end before return, including the exact call's Invoke success
+edge. Prepared argument handoff uses the same exact CallInput/TransferOut
+proof as constructor publication. No default constructor or result-drop
+obligation is invented. These representation choices preserve the verified
+Invoke and cleanup schedule.
 
 The failure-free `StringViewSize` and `StringViewEmpty` observers admit either
 a borrowed view place or an ordinary SSA view value, such as the result of a
@@ -1648,28 +1445,6 @@ either operand category. When `std::string_view` becomes a source-defined
 class under the separate source-view proposal (historical PR #109), these would
 become ordinary member calls on a class value and subsume this intrinsic route.
 That proposal is not the current primitive-view implementation.
-Their existing value-rooted moved-Expected slot admits either its one state
-test or a sole checked scalar observer, preserving the same source-to-value
-drop transfer and full-expression destruction. Trivial scalar-only Expected
-SSA receivers can be read directly; neither path introduces a loan or bypasses
-the checked inactive-alternative failure.
-
-The cleanup-free class extraction route also admits an exact prepared argument
-slot, not only a named binding. It reuses the class-result staging proof for
-the sole call/constructor consumer, parameter identity, successful Invoke edge,
-slot activation, dominance, failure cleanup, and ownership transfer. The
-checked extraction constructs that slot before later arguments execute; a
-wrong-state failure leaves it inactive. Source MIR still owns consumption of
-the original Expected. No native default construction, public-name exception,
-or delayed extraction at the final C++ call is introduced.
-
-A temporary expected class result observed only through `has_value()` uses
-the same proved lifetime slot as propagation, without requiring payload
-extraction. Short-circuit evaluation may instead give it a conditional
-temporary place. That route requires exact producer/result-drop/source-value
-identity, initially unavailable storage, success-edge activation, one state
-test, and the verified conditional full-expression drop. It does not admit
-arbitrary temporary storage or infer lifetime from the native Expected type.
 
 A moved nominal callable receiver uses a different contract from a by-value
 argument. Its exact MIR Move initializes a Value-rooted lifetime slot, the
@@ -1807,9 +1582,6 @@ stages consumed by one call. It declares no local and spells
 `slot.get().field`, so a field class without a default constructor is never
 default-constructed. MIR's verified initialization bounds every read, and the
 result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
-An owning Expected temporary's payload whose fields alone are read moves into
-the payload's own result slot on the checked extraction's success edge, then is
-read the same way, as in `make_named(true).value().text.size()`.
 Inside a short-circuit operand or a conditional arm, the producer, a call, a
 construction or a `Move` out of a place (as in `c ? std::move(a).number : 0`),
 instead constructs the result in a conditional temporary that
@@ -1824,14 +1596,6 @@ When the result is read only through field views, that temporary is its
 storage: the views spell `temporary.get().field`, the result declares no local,
 and MIR's conditional Drop destroys the temporary exactly once if its operand
 ran, on the normal path or on a failure-cleanup edge.
-An owning Expected call result in such a position is held by its own
-conditional temporary. A checked extraction of a class alternative whose
-result is read only through field views moves that alternative into the
-extraction's conditional temporary on its Invoke success edge, as in
-`ok || make_named(true).value().text.size() == 7`. The extraction is the
-Expected's sole use. MIR's conditional Drops destroy the payload and the
-moved-from Expected, and a wrong-state failure edge destroys the Expected
-alone. This route is admitted only in the failure body form.
 Reading a trivial scalar does not transfer its owner: fresh passive immovable
 results use this same proof and storage without requiring a copy or move
 constructor. They cannot carry borrowed state or active drop state through
@@ -1856,14 +1620,6 @@ loan or a second drop obligation. MIR retains the unsafe store and raw-memory
 effects; construction, old-value cleanup, publication and staged-value failure
 cleanup use the existing replacement schedule unchanged.
 
-A virtual call returning an owning expected result uses the same exact binding
-or value-rooted publication slot as a static call. The selected virtual family
-supplies the checked failure contract, including a pure-virtual declaration
-target; a concrete source body on that target is not required. The fresh
-expected receiver shell retains its own success activation and once-only drop
-when a caller immediately extracts its payload. Dispatch identity, receiver,
-signature, Invoke and publication transfers remain independently verified.
-
 A failure-free source call has no Invoke edge: MIR activates its result's
 value obligation with the call's own final `Initialize` event, after any
 by-value input it consumed has transferred out. Every result slot that a
@@ -1871,19 +1627,17 @@ transformed call fills through its construction address on the success edge,
 a failure-free call fills by constructing the slot from its returned prvalue
 (`construct_from`). That covers class staging slots for a replaced binding, a
 by-value call or constructor argument, one field read and a Return, as well as
-a binding initialized from an `Expected<Class, E>` result, value-rooted
-`Expected<Class, E>`, owning-array, owning class and owning payload-enum result
-slots, a short-circuit conditional temporary that the call names as its direct
+value-rooted owning-array, owning class and owning payload-enum result slots, a
+short-circuit conditional temporary that the call names as its direct
 destination, and a callable binding. A plain owning-array result has no
 declarable local, so the plain form admits such a call only with one of those
-slots, each of which requires the call's own activation. When nothing
-executable separates the call from its Return, a plain body spells
-`return <call>` and a failure form constructs the caller's result storage from
-the call directly. The staged arguments that call consumed already transferred
-out at the call, so in a plain body their slots end the moved-from
-representation at C++ scope exit, after the returned object is initialized. A
-targetless default construction never takes that route; it spells `return T{}`
-itself.
+slots, each of which requires the call's own activation. When nothing executable
+separates the call from its Return, a plain body spells `return <call>` and a
+failure form constructs the caller's result storage from the call directly. The
+staged arguments that call consumed already transferred out at the call, so in a
+plain body their slots end the moved-from representation at C++ scope exit,
+after the returned object is initialized. A targetless default construction
+never takes that route; it spells `return T{}` itself.
 
 Generated native destructors test their class's initialized active-drop flag
 before calling its cleanup adapter. This is the same guard the adapter already
@@ -1909,11 +1663,10 @@ the call transfers like an owning argument, as in
 `return std::move(maker).make();`; only the moved-from source's drop then
 follows the call. No other invocation capability is admitted. A failure-free
 call returning a reference binds its call-result loan by address in either body
-form. A plain body returning a moved class, callable, owning array or
-`Expected<Class, E>` value stages it at the Move, before any later drop of the
-moved-from source, and returns it from that slot; a moved class value that the Return wraps as the success alternative of
-an `Expected<Class, E>` result is staged the same way. A moved owning payload
-enum already occupies its value-rooted slot. A
+form. A plain body returning a moved class, callable or owning array value
+stages it at the Move, before any later drop of the moved-from source, and
+returns it from that slot. A moved owning payload enum already occupies its
+value-rooted slot. A
 copied class whose source is dropped or overwritten before the Return is copied
 at the Load into a staging slot, while a source still live at the Return is
 copied there directly.
@@ -1929,81 +1682,19 @@ uses the existing MIR cleanup of preceding owning arguments. Unrelated
 user-defined constructors exercise both infallible and failing construction,
 ordered subsequent arguments, and early failure before call entry.
 
-A fresh placement `Expected<Class, E>` source-call result consumed by one
-exact by-value parameter shares that representation-only slot when MIR gives
-it neither a value drop nor a value-rooted place. Every alternative must agree:
-each class alternative is a unique instance with a generated destructor, no
-active cleanup or drop state, no borrowed state and a move that cannot raise,
-and each other alternative is scalar. The transformed producer constructs the
-wrapper only on its Invoke success edge. The consumer is selected by the same
-call-argument proof as a cleanup-free construction: a static source function
-or a borrowed-receiver member, with exact parameter identity and dominance from
-the success edge. It moves the wrapper into its parameter, and the moved-from
-representation is retired after the call. Intervening argument preparation
-keeps its MIR position. A failure there ends only the generated representation
-at scope exit; there is no semantic Drop to invent. A non-placement Expected,
-such as a scalar payload with a cleanup-free class error, keeps its ordinary SSA
-local. An owning alternative keeps MIR's value drop and the value-rooted
-transfer slot described above.
-
-A callable value invocation produces the same fresh temporary as a source
-call: a closure literal, a stored closure, or a callable parameter invoked as
-`code(make(a))` uses that slot under the same consumer, observer, extraction
-and discard proofs. The enclosing body's ABI decides how the invocation
-publishes into it. A transformed invocation passes the slot's construction
-address and marks it constructed on its success edge; a plain invocation
-constructs it from the returned value. A raising callable leaves the slot
-unconstructed, and a discarded result retires as soon as it is published.
-
-An owning Expected result of a callable value invocation likewise shares the
-source call's value-rooted placement slot. Its exact lambda instance supplies
-the signature, and its Invoke success edge activates the result's value drop
-under callable propagation. The invocation constructs the slot whichever ABI
-the enclosing body selects. Every slot consumer then applies unchanged: a
-discard, one consuming call or constructor, a state test, a checked `value()`
-or `error()` extraction, a constructor field, or a whole binding it replaces.
-A binding the result initializes directly keeps the direct construction into
-that binding.
-
-A class result of a callable value invocation follows the same rule
-(`callableClassResultInvocation`). Verified MIR binds the invocation's result
-and parameters to its exact lambda instance, and the invocation completes the
-result on its Invoke success edge under callable propagation, as a
-transformed source call does. A cleanup-free result therefore takes the
-representation-only SSA slot (`classSsaLifetimeSlot`) for one field read,
-by-value call argument, assignment, constructor field or discard. An owning
-result takes the value-rooted slot (`valueRootedClassCallResultSlot`) that its
-field views or one consuming call read, and a by-value argument with a
+A class result of a callable value invocation is published like a source
+call's result (`callableClassResultInvocation`). Verified MIR binds the
+invocation's result and parameters to its exact lambda instance, and the
+invocation completes the result on its Invoke success edge under callable
+propagation, as a transformed source call does. A cleanup-free result therefore
+takes the representation-only SSA slot (`classSsaLifetimeSlot`) for one field
+read, by-value call argument, assignment, constructor field or discard. An
+owning result takes the value-rooted slot (`valueRootedClassCallResultSlot`)
+that its field views or one consuming call read, and a by-value argument with a
 prepared parameter receives the result directly in that parameter's slot
 (`stagedClassResultForSource`). The invocation writer passes the selected
 slot's construction address and marks it constructed on success. No class
 result of an invocation becomes a default-constructed C++ local.
-
-The same slot may instead feed one by-value parameter of an exact ordinary
-source constructor, mirroring the owning route's constructor consumer. The
-construction must match the constructor's parameter types and owner, carry no
-local failure site, and publish its own result at an exact MIR destination.
-Both routes share that publication rule. The destination is MIR's staged or
-published class slot, a constructor field's result slot, the transformed or
-plain result of the Return that consumes the construction, or the assignment
-slot described below. A raising
-constructor must cross the failure constructor boundary; a non-raising one
-carries no defined failure. Parameter identity and dominance are the shared
-call-argument conditions. Every construction form that spells these arguments
-moves the wrapper. A construction published into a binding, a field or a
-transformed result retires the moved-from representation right after it. A
-plain Return leaves that retirement to the representation slot's scope exit,
-since nothing executes after the return. A class value reaches a constructor
-parameter through MIR's prepared-parameter place instead, so only the Expected
-wrapper, which MIR gives no place, uses this consumer. An owning Expected
-result consumed by a member-initializer construction, as in
-`held(holder(make(ok)))`, keeps its value-rooted transfer slot instead: the
-member's constructor takes the slot's wrapper as its by-value argument, and
-the constructor field's result slot admits that construction because its only
-lifecycle event hands the argument's own value drop to the constructor, as a
-prepared argument would. A failed producer leaves the slot unconstructed, and
-a failing member constructor already owns its parameter, so the result is
-destroyed exactly once on every path.
 
 A cleanup-free class construction whose constructor can fail, consumed by one
 adjacent `Assign` into an existing binding, uses the same representation-only
@@ -2015,7 +1706,7 @@ construction leaves the binding untouched. The class needs a generated move
 constructor and move assignment, no borrowed state and no active drop state.
 The construction's only lifecycle events may hand each by-value argument to
 the constructor once (`preparedArgumentTransfer`): an owning argument's own
-value drop, so a consumed owning Expected argument is accepted too, or the
+value drop, or the
 prepared-parameter slot of a class argument, a named copy or move staged there
 or a fresh result already published into it, as in `h = holder(q)`. A
 failure-free construction, or any construction the fused assignment already
@@ -2024,169 +1715,6 @@ replace the exact mutable referent returned by a source call, as in
 `*cursor = make()`. The referent's loan, not the synthesized place's
 contextual access, owns the permission, and only that loan's canonical
 two-phase activation may sit between the publication and the `Assign`.
-
-The success class of such an Expected often has no default constructor. An
-ordinary SSA local would value-initialize the native wrapper and invent that
-construction, so the declaration fails closed instead, as for a fixed array
-whose element class has none. A failure-free producer, whose plain call
-returns the Expected by value, therefore constructs a staged slot from that
-return value. The guard stays as a backstop: a shape with no exact
-publication rejects body emission rather than emitting native code that cannot
-compile.
-
-A whole cleanup-free placement Expected binding (one whose success
-alternative is a class) moved into a new binding, as in
-`auto moved = std::move(original);`, is constructed the same way. MIR gives the
-moved value no drop and no lifecycle event, only the source's ownership
-transition, and the adjacent `Initialize` activates the new binding's own drop,
-as a copy's does. The `Move` therefore constructs the new binding's lifetime
-slot from the source, and the `Initialize` emits nothing more. The moved-from
-source keeps its own binding drop and is destroyed at its scope exit, as after
-a copy. An owning Expected moves through its value drop and the `Initialize`'s
-`Reparent` instead.
-
-A copy into a new binding, as in `auto copy = original;`, takes the same route
-at its `Load`. MIR's copy of a whole binding has no defined failure, lifecycle
-event or value drop, and the adjacent `Initialize` activates the new binding's
-own drop. The `Load` copy-constructs the new binding's lifetime slot from the
-source, and each binding keeps its own drop. This serves a byte-preserving
-native-record payload and any cleanup-free class success payload alike. A
-scalar-success Expected, even one with a class error, keeps its ordinary
-carrier for both copies and moves, so its bindings stay ordinary locals that
-other assignments and observations already handle.
-
-The slot also serves an Expected call result that initializes a constructor
-field as that field's selected member initializer, immediately after the
-producer succeeds. The constructor initializer metadata must name exactly that
-field and the producer's value. As for a cleanup-free class result, the field's
-empty representation ends and the field is constructed from the moved wrapper.
-An owning Expected result, such as one whose payload holds a `std::string`,
-reaches its field the same way from its value-rooted slot. The producer's
-success edge may activate only that result's own obligation, and the field's
-`Initialize` must reparent it into the field's construction rollback. After the
-field is constructed from the moved wrapper, the slot's moved-from shell
-retires without a semantic drop, and a later member's failure drains the
-field through MIR's rollback.
-Two cleanup-free Expected call results joined by a conditional publish into the
-join's conditional temporary. MIR gives that temporary no drop, so each
-producer constructs it directly. A failure-free call does this immediately
-before its Initialize, and a checked call on the Invoke success edge leading to
-the Initialize. A callable value invocation (a closure literal, a capturing
-closure or a callable parameter) is such a checked call: its exact lambda
-instance propagates through the callable failure ABI and constructs the
-temporary at its construction address. An arm may also copy or move a named
-`expected` binding. The Load or Move then constructs the temporary directly,
-immediately before the arm's Initialize, and the source keeps its own binding
-drop. For an owning join, the moved value's drop is reparented into the
-temporary's drop at that Initialize, as a source call's owning result is.
-`expectedConditionalArmSlot` names the temporary that each such producer
-constructs. Grouping the join's transport, as in
-`(ok ? a() : b()).has_value()`, names the same storage, so a state test,
-extraction or by-value consumer reads the join directly. Before each
-publication, the previous representation is retired, which keeps a loop from
-constructing the storage twice. The last one ends at scope exit.
-The join's single move may also be consumed by an `Assign` that replaces an
-existing binding, or a field chain rooted in one, of the join's exact type,
-as in `r = ok ? a() : b();`. After MIR's paired `CleanupBeforeAssign`, the
-binding's live storage is move-assigned from the join temporary, as a new
-binding is constructed from it. Who ends the temporary's moved-from shell
-follows MIR's events: a passive join has no obligation, so the shell ends at
-the assignment and a loop may construct the join again; an owning join's
-`Replace` takes the temporary's obligation, and MIR's later `Drop` of the
-temporary ends the shell. A nested join moved into the enclosing join's
-temporary has its obligation reparented, or has none, so no later `Drop`
-names it; its shell ends at that `Initialize`.
-
-The same representation-only slot serves a cleanup-free call temporary that
-is observed once in place. The single use is either the state test
-(`ExpectedHasValue`, as in `if (make_item())` or `.has_value()`) or the
-receiver of a checked `value()` or `error()` extraction. MIR gives the
-extraction no loan, so nothing borrows the wrapper past that read. The
-producer constructs the slot, the observer reads the wrapper through `get()`,
-and the generated representation is retired right after that read, on both of
-a checked extraction's edges. A scalar result is copied out. A class payload
-is moved out of the temporary: into its binding, prepared argument or returned
-result, through the direct extraction that `std::move(binding).value()` already
-uses, or into the payload's own field-read slot when only a field of it is
-read, as in `make_item().value().number`. An owning temporary instead keeps
-MIR's value-rooted slot and full-expression Drop, and a checked scalar
-extraction reads it in place there.
-
-A named binding of the same cleanup-free placement Expected that is copied into
-either consumer is staged the same way. This is the copied-binding Return rule
-with an argument consumer. MIR's `Load` copies one whole binding exactly: it
-has no defined failure, lifecycle event, generated drop or value-rooted place.
-The copy is constructed in its own representation-only slot at the `Load`, so
-later argument preparation cannot change what the consumer receives. A by-value
-parameter is a named binding too. The native wrapper is never
-default-constructed, which a payload with its own default constructor would
-reject. The consumer moves the copy's wrapper, never the binding, which keeps
-its value. The moved-from representation is retired after the call or
-construction. The consumer proofs and cleanup-free alternative conditions are
-the ones above. Semantics currently rejects copying an Expected whose payload
-needs cleanup, because that payload is move-only. If such a copy were admitted,
-it would still fail closed here.
-
-The same cleanup-free placement call result may instead replace one whole
-mutable binding or an exact checked mutable referent of its type. MIR pairs that
-`Assign` with a
-`CleanupBeforeAssign`, whose recipe must be passive: no node has a destructor,
-owned pointee, closure, fixed array, polymorphic or recursive cleanup, or
-active cleanup. An integral enum alternative is such a node, as it is for the
-cleanup-free alternative rule. That cleanup executes nothing and cannot fail. The producer's
-success edge must reach that exact pair directly, allowing only the selected
-referent loan's neutral two-phase activation before the pair. The producer
-constructs the slot on success. The `Assign`
-move-assigns the staged wrapper into the binding, and the moved-from
-representation is retired immediately. A failing producer never constructs the
-slot and leaves the binding to MIR's failure cleanup. Native move assignment
-needs each class alternative's generated move constructor and move assignment.
-
-Other sources replace such a binding through the native wrapper's own
-assignment, after the same passive pair and with no value-initialized Expected
-local. A copy or move of another whole binding fuses into `destination =
-source` or `destination = std::move(source)`, extending the existing class copy
-and move assignment fusions. Each class alternative needs its generated copy or
-move constructor and assignment. A storage-free `Unexpected` constructs inline
-at the `Assign`, as it does at a binding initializer or a `Return`. A fresh
-cleanup-free construction of the success type fuses into the wrapper's
-converting assignment, extending the fresh class assignment fusion. An owning
-placement call result instead stays in its value-rooted slot. The `Assign` must
-carry MIR's `Replace` event from the result's value drop to the binding's drop.
-MIR's active `CleanupBeforeAssign` first retires the old value on its own
-success edge. The `Assign` then moves the slot's wrapper in, and the slot's
-`Drop` ends only the moved-from representation. On the cleanup's failure edge
-the result keeps its obligation and is cleaned there.
-
-For checked-reference replacement, the exact mutable parameter reference or
-selected mutable-reference-returning call supplies the destination. A referent's
-enclosing owner retains cleanup, so its owning `Replace` has target zero rather
-than a new binding obligation. The paired old-value cleanup, held RHS, loan
-activation/end and later moved-from-shell Drop keep their original MIR schedule.
-Read-only access, a different producer/dependency, an unpaired cleanup or a forged
-ownership handoff cannot acquire publication support from native assignability.
-
-Owning sources keep MIR's active, possibly fallible replacement cleanup, which
-retires the old value on its own success edge. A move out of another owning
-Expected binding stages in its value-rooted slot as a moved class does: the
-`Move` hands the source obligation to the slot, the `Assign` carries `Replace`
-into the binding, and the slot's `Drop` ends only the moved-from
-representation. An owning payload construction stages in its value-rooted slot
-as a class prvalue does. Because it converts into a distinct wrapper type,
-MIR's `Assign` transfers the staged obligation out with `TransferOut` rather
-than `Replace`, and no `Drop` follows. The `Assign` therefore ends the
-moved-from shell itself after the wrapper's converting move assignment. A
-storage-free `Unexpected` accepts the exact pair whether or not its cleanup is
-active; the wrapper's assignment then ends only the old alternative's
-representation. An `Unexpected` wrapping a fresh cleanup-free class
-construction spells that construction inline at a binding initializer or
-replacement, as at a `Return`. The construction, wrapper and publication must
-be adjacent, with only a passive replacement pair between them, so the
-construction never moves past observable cleanup. When an owning binding's
-active cleanup separates that construction from its replacement, the error is
-instead constructed at its own MIR position in a representation-only class
-slot, before the cleanup runs. The `Assign` moves it into the `Unexpected` and
-retires the slot, so a loop may construct it again.
 
 Constructor initializer lists and ABI-shaped wrappers may be assembled by
 `CppEmitter`, but their executable operations, ordering, cleanup, and failure
@@ -2467,7 +1995,7 @@ the destination and cleanup remain checked. Native virtual boundary bridges
 placement-construct class results in uninitialized storage instead of first
 default-constructing an object and overwriting it.
 
-An unused cleanup-free nominal or Expected result also receives
+An unused cleanup-free nominal result also receives
 uninitialized output storage, from a transformed or a failure-free source call,
 such as `[[discard]] make_value()` or a comma's discarded left operand.
 Selection requires no SSA uses, value-rooted places, semantic result-drop
@@ -3458,8 +2986,7 @@ with generated move construction, assignment and destruction. Its source must
 have the existing exact uninitialized publication-slot proof and no semantic
 drop obligation; the destination must retain its resolved type and mutable
 field identity. The writer neither default-constructs an SSA class nor invents
-cleanup authority. This permits an `expected` record extraction to reach a
-field without requiring the record to have a default constructor.
+cleanup authority.
 The same resolved mutable-field predicate supports an adjacent parameter
 `Load`/discarded `Assign` copy when the record has generated copy construction,
 assignment and destruction with only passive scalar/enum/pointer fields. Its
@@ -3618,10 +3145,9 @@ owner can start null and be allocated in an explicit initialization method
 after construction. Remaining schedule/routing profiles need focused evidence;
 the classification is not a blanket prohibition on generated defaults.
 
-Obligation-free class values in a move capture or an owning `Expected` payload
-remain concrete MIR values rather than backend-recognized library types. The
-C++ backend may materialize the exact closure environment, direct payload
-return slot, or unprojected extraction place only after proving unique use,
+Obligation-free class values in a move capture remain concrete MIR values
+rather than backend-recognized library types. The C++ backend may materialize
+the exact closure environment only after proving unique use,
 matching concrete type, passive lifecycle, and the recorded full-expression
 boundary. Active cleanup and additional projections stay on their existing
 lifetime-slot paths.
@@ -3646,13 +3172,6 @@ emitter does not recognize the owning wrapper or container name. Apart from
 the checked-array and checked-reference replacement extensions below, non-field projections,
 conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
-
-A consuming owning `Expected` value/error extraction
-uses that same call-result slot and exact `Replace`/shell-drop witness. Its
-receiver envelope has a separately proved moved-value/drop lifetime; choosing
-the payload's destination cannot invent or suppress receiver cleanup. A failed
-state check leaves the old destination untouched, and failed old-value cleanup
-retains the active extracted payload for MIR's failure cleanup.
 
 For a constructed or moved RHS replacing a field through a returned mutable
 reference, the exact receiver stage may be an ordinary non-failing call or a
@@ -3831,12 +3350,6 @@ free functions and borrowed-receiver methods/operators. The receiver proof
 accepts either an exact `CallInput` borrow or the direct typed borrow retained
 by operator MIR; it still verifies owner identity, access and receiver capability.
 No owning lifetime or receiver consumption is inferred from native syntax.
-A passive error record immediately wrapped in `Unexpected` and returned uses
-the same storage when construction has an Invoke edge. Only its unique success
-continuation may wrap and return it; intervening executable work, additional
-uses, borrowed state and active cleanup remain outside this passive proof.
-The constructor executes before the wrapper, and failure leaves the caller's
-Expected result uninitialized.
 
 For the adjacent-assignment proof, a cleanup-free class prvalue has no staging
 obligation: no place or drop obligation owns the constructed value and the
@@ -3914,17 +3427,6 @@ Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
 generated copy/destruction traits, field drop facts, and the absence of active
 cleanup or state-bearing bases remain required.
-
-A cleanup-free moved error returned through `unexpected` uses the existing
-representation-only class SSA slot: movement occurs at its MIR instruction,
-before the source shell ends, and the single wrapper/return consumes the slot.
-The proof requires generated failure-free movement, no active cleanup or
-borrowed state, one adjacent wrapper and only inert lifecycle/source-shell
-cleanup before return. It does not delay reading a moved source until return
-or invent a semantic destructor obligation. A consuming checked Expected
-extraction feeding that same single return consumer reuses the cleanup-free
-receiver proof and publishes into the slot only after the state check succeeds;
-the original carrier shell remains live until its MIR-authored cleanup.
 
 ### Declarations And ABI
 
@@ -4088,7 +3590,9 @@ user accessors and forwarding functions use the same rule as library helpers.
 Integer overflow detection has one representation shared by every checked
 family. The `mir_checked_add/subtract/multiply_v1` failure helpers and the
 terminating `add`/`subtract`/`multiply` helpers use it. So do the
-`expected`-returning `checked_*` intrinsics and the `saturating_*` intrinsics.
+`gti_internal::integer_*_overflows` intrinsics, which the source `checked_*`
+functions test before returning an `expected`, and the `saturating_*`
+intrinsics.
 The preamble's `integer_add_overflows`, `integer_subtract_overflows` and
 `integer_multiply_overflows` are exact predicates over operands already
 converted to the result type. Under GCC and Clang they lower to
@@ -4359,7 +3863,7 @@ another source Drop schedule.
 During that exact emergency handoff, a worker-local marker prevents native
 stack retirement from running source lifecycle bodies, payload storage loops,
 shared releases, unlocks, or joins omitted by the verified emergency path.
-Native expected/variant/array/closure/unique shells recursively reach guarded
+Native variant/array/closure/unique shells recursively reach guarded
 GTI payload/carrier boundaries; their scalar storage deallocation does not
 authorize additional source cleanup. Live thread states are quarantined and
 locked mutex representations are left undestroyed. The generated and defensive

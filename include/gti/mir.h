@@ -520,9 +520,6 @@ struct MirDropType {
   // failure drains remaining children; a second failure terminates immediately
   // with both records. Entering during failure returns on the first new
   // failure.
-  // Expected has two positional alternative recipes (success, error), and
-  // Unexpected has one (error). Passive/void alternatives retain an empty
-  // recipe with their exact type; only the live alternative is executed.
   std::vector<MirDropType> aggregate;
   bool requiresActiveCleanup = false;
 
@@ -614,13 +611,11 @@ enum class MirOperation {
   Index,
   Identity,
   Convert,
-  ExpectedHasValue,
   Closure,
   NativeCallback,
   FunctionItem,
   PayloadConstruct,
   PayloadExtract,
-  Unexpected,
   AddressOf,
   PointerAdd,
   PointerSubtract,
@@ -1079,7 +1074,6 @@ struct MirRangeIteration {
   FunctionId dereferenceFunction = 0;
   MirDropObligationId elementOwnerDrop = 0;
   MirDropObligationId elementSourceDrop = 0;
-  MirValueId expectedPayloadExtraction = 0;
   MirDropObligationId ownerDrop = 0;
   MirBlockId conditionEntryBlock = 0;
   MirBlockId conditionBlock = 0;
@@ -1089,7 +1083,6 @@ struct MirRangeIteration {
   MirBlockId exitBlock = 0;
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
-  bool expectedPayloadProjection = false;
   bool materializesElementValue = false;
   std::optional<MirRangeEndpointParking> endpointParking;
 
@@ -1221,14 +1214,8 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
 // subobject into `this` without arming rollback routes no defined-failure
 // edges at all.
 [[nodiscard]] bool mirBodyRoutesFailureEdges(const MirBody &body);
-enum class MirFailureControlFlowPosition {
-  None,
-  FullExpressionRoot,
-  PreparedCallArgumentRoot,
-};
 [[nodiscard]] bool
-requiresMirFailureControlFlow(const MirInstruction &instruction,
-                              MirFailureControlFlowPosition position);
+requiresMirFailureControlFlow(const MirInstruction &instruction);
 struct MirFieldDrop {
   HirBindingId field = 0;
   SymbolId symbol = 0;

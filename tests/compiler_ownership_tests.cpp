@@ -15697,10 +15697,8 @@ int main() {
        owningTemporary.hir.functionInstances()) {
     for (const lang::HirStatement &statement : function.body.statements) {
       if (statement.rangeIteration) {
-        exactOwningTemporary =
-            exactOwningTemporary ||
-            (statement.rangeIteration->ownsRangeTemporary &&
-             !statement.rangeIteration->expectedPayloadProjection);
+        exactOwningTemporary = exactOwningTemporary ||
+                               statement.rangeIteration->ownsRangeTemporary;
       }
     }
   }

@@ -586,10 +586,9 @@ const lang::MirInstruction *definitionOf(const lang::MirBody &body,
   return nullptr;
 }
 
-// Whether a Return returns a value loaded from a Temporary carrier, either
-// directly or wrapped as Unexpected: the tail of a shared exit ladder.
-bool returnsCarrier(const lang::MirBody &body, const lang::MirBlock &block,
-                    bool unexpected) {
+// Whether a Return returns a value loaded from a Temporary carrier: the tail
+// of a shared exit ladder.
+bool returnsCarrier(const lang::MirBody &body, const lang::MirBlock &block) {
   if (block.terminator.kind != lang::MirTerminatorKind::Return ||
       !block.terminator.value ||
       block.terminator.value->kind != lang::MirOperandKind::Value)
@@ -598,16 +597,6 @@ bool returnsCarrier(const lang::MirBody &body, const lang::MirBlock &block,
       definitionOf(body, block.terminator.value->value);
   if (definition == nullptr)
     return false;
-  if (unexpected) {
-    if (definition->kind != lang::MirInstructionKind::Compute ||
-        definition->operation != lang::MirOperation::Unexpected ||
-        definition->operands.size() != 1 ||
-        definition->operands.front().kind != lang::MirOperandKind::Value)
-      return false;
-    definition = definitionOf(body, definition->operands.front().value);
-    if (definition == nullptr)
-      return false;
-  }
   return definition->kind == lang::MirInstructionKind::Load &&
          definition->operands.size() == 1 &&
          definition->operands.front().kind == lang::MirOperandKind::Copy &&
@@ -781,11 +770,8 @@ void testSharedExitKinds() {
   const lang::MirBody *run = functionBody(frontend, "run");
   if (run != nullptr) {
     bool successTail = false;
-    bool errorTail = false;
-    for (const lang::MirBlock &block : run->blocks) {
-      successTail = successTail || returnsCarrier(*run, block, false);
-      errorTail = errorTail || returnsCarrier(*run, block, true);
-    }
+    for (const lang::MirBlock &block : run->blocks)
+      successTail = successTail || returnsCarrier(*run, block);
     const std::vector<std::size_t> counts = predecessorCounts(*run);
     std::size_t joinedRungs = 0;
     for (const lang::MirBlock &block : run->blocks) {
@@ -797,8 +783,7 @@ void testSharedExitKinds() {
       joinedRungs += drops && counts[block.id] >= 2;
     }
     std::cout << "run: carried success tail " << successTail
-              << ", carried error tail " << errorTail << ", joined rungs "
-              << joinedRungs << " (pending RT-12)\n";
+              << ", joined rungs " << joinedRungs << " (pending RT-12)\n";
   }
 }
 
@@ -863,8 +848,7 @@ int main() {
                std::to_string(returnTerminators(*body)) + " returns, " +
                std::to_string(normalDrops(*body)) + " drops)");
     for (const lang::MirBlock &block : body->blocks) {
-      expect(!returnsCarrier(*body, block, false) &&
-                 !returnsCarrier(*body, block, true),
+      expect(!returnsCarrier(*body, block),
              std::string(expected.name) + " returns no carried value");
     }
   }

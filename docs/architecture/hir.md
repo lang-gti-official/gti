@@ -270,49 +270,13 @@ ordinary concrete classes containing aliases without substituting a
 representative instantiation's field type or construction operation into a
 source template.
 
-Consuming `expected<T, E>` combinators receive their exact operation, mapper
-identity, and result type from semantics. `transform_error`, `transform`, and
-`and_then` share one expansion into a state test,
-mutually exclusive active-alternative extraction/move paths, an ordinary
-call to the selected function or concrete lambda on the applicable path, an
-Unexpected wrapper, and an Expected-valued conditional join. Error mapping
-changes `E`, success mapping changes `T`, and success chaining retains the
-mapper's complete expected result with the same exact error type. The mapper's ordinary
-defined-failure edge and the existing full-expression lifecycle pass govern
-cleanup. `void` success constructs the empty success alternative without a
-payload extraction. Synthetic values retain stable IDs; lowering does not keep
-pointers into the values vector across appends.
-For a void-returning success mapper, a value's ordered `sequencedInputs`
-complete the ordinary void call before default construction publishes the
-`expected<void, E>` success. A comma alias sequences its left operand the same
-way. These are structural evaluation dependencies whose results are
-discarded, not a backend expected special case. They share the full-expression
+A value's ordered `sequencedInputs` complete before the value itself; a comma
+alias sequences its left operand this way. These are structural evaluation
+dependencies whose results are discarded. They share the full-expression
 lifetime; verification rejects missing, duplicate, cyclic, nonreturning, or
-cross-expression dependencies and verifies the selected void mapper is not
-lost. Reachability, lifecycle assignment, and synthetic-default checks include
-these graph edges. MIR schedules the existing call and construction operations.
-
-The conditional's explicit `conditionalInputs` retain receiver-then-mapper
-evaluation before branching. They participate in full-expression assignment,
-module reachability, and parent-edge checks; synthetic default values cannot
-carry them. Plan verification ties the ordered pair to the selected semantic
-call's source expressions and rejects missing, reordered or unrelated inputs.
-MIR emits them once on the incoming path. Lambda target/environment identity,
-read invocation capability, and callable failure propagation reuse ordinary
-lambda call lowering, not a second callable ABI. A named environment is reused;
-fresh owning captures remain live for cleanup even when the error arm is skipped.
-An explicitly moved lambda receiver uses a `MoveValue` stage independently of
-its read-only invocation capability. Its value obligation retains cleanup for
-the full expression; the receiver stage does not transfer that obligation.
-
-Borrowed success extraction preserves the semantic read-only place category.
-`expected<T&, E>` propagation uses an `ExpectedValue` call carrying
-receiver-origin borrow authority and never adds a success `Move`. Only its
-error transport follows the carrier's value category. Borrowed `expect` uses
-the same extraction as the single normally completing arm of its conditional;
-the other arm is terminal panic. HIR verification checks the exact receiver,
-referent type, access, plan and transfer identities, including the absence of
-a referent copy/move. No public type spelling supplies these rules.
+cross-expression dependencies. Reachability, lifecycle assignment, and
+synthetic-default checks include these graph edges. MIR schedules the existing
+call and construction operations.
 
 Prefix `?` through `std::tryable`
 ([ADR 029](../decisions/029-tryable-propagation.md)) lowers to a
@@ -359,13 +323,7 @@ field declaration and rejects missing, reordered or substituted defaults. This
 does not add implicit initialization for fields without a declaration default.
 Selected defaults retain existing scalar initialization conversions through one
 semantic compatibility rule; literal-dependent narrowing is still selected in
-semantics, never reevaluated by an IR verifier. Owning/passive `expected` field
-initialization selects the exact success or error alternative. MIR publishes
-the destination wrapper as a distinct typed lifetime using the same
-`TransferOut`/`Initialize` protocol as local initialization, with rollback for
-the complete field type rather than its input payload. A passive selected
-alternative still receives the field's exact variant cleanup schedule; this
-does not extend borrowed-success conversion rules.
+semantics, never reevaluated by an IR verifier.
 The generated identity survives in MIR and is checked against the detached
 constructor catalog, so a backend cannot infer or erase it from parameter arity.
 Concrete class rows independently retain the semantic obligation to use a
@@ -380,11 +338,9 @@ checks and publication rules.
 
 Selected initializer source values retain their resolved expression types;
 the field target type need not be identical when semantic initialization
-permits a conversion. HIR checks the existing context-free scalar, null, or
-selected expected-alternative conversion rather than retagging the source
-value. Literal-dependent range decisions remain in semantic contextual typing.
-Owning expected initialization preserves the payload and completed wrapper as
-distinct lifetime identities for MIR transfer and rollback.
+permits a conversion. HIR checks the existing context-free scalar or null
+conversion rather than retagging the source value. Literal-dependent range
+decisions remain in semantic contextual typing.
 
 Generated base and field construction share one semantic schedule obligation,
 `ClassLifecycleInfo::generatedDefaultInitializers`. A fieldless derived owner
@@ -752,13 +708,13 @@ The backend consumes the verified MIR group, not these HIR records alone.
 
 An unsafe expression is the same grouping value after frontend permission
 checking. Exact unsafe operations on its operand retain their ordinary
-semantic/HIR/MIR markers and verifier requirements. Class/Expected fresh-result
+semantic/HIR/MIR markers and verifier requirements. Class fresh-result
 aliases and callable environment identity therefore follow the rules below;
 the unsafe wrapper creates no additional object, drop obligation, runtime
 instruction or backend-specific lowering path.
 
 Same-type fresh-result construction, and grouping or a builtin comma whose
-value is a class or Expected object, are non-executing source aliases. A comma
+value is a class object, are non-executing source aliases. A comma
 denotes its right operand; its left operand becomes the first of the
 producer's ordered `sequencedInputs`, so it completes, with its result
 discarded and its temporaries kept for the full expression, before the
@@ -784,7 +740,7 @@ A parenthesized lambda whose type, category, access and traits equal its
 operand's creates no second closure either. Lowering returns the operand's
 value and records the wrapper in `HirBody::sourceAliases`, so a binding,
 argument, copy or immediate call of `(lambda)` consumes the producer's own
-closure value, as lambda-call callees and expected mappers already did.
+closure value, as lambda-call callees already did.
 
 MIR consequently receives the same actual producer and initialization/loan/drop
 schedule as the unwrapped expression. It verifies those executable operations
@@ -822,13 +778,6 @@ root. That value carries the same ownership event, exact place identity,
 borrow transport, and intrinsic identity as explicit `std::move`; HIR does not
 reinterpret the return spelling or infer last use. Copyable concrete generic
 instances retain their ordinary place value and therefore remain copies.
-
-For the bounded named-Expected payload range, `HirRangeIteration` carries
-`expectedPayloadProjection` in addition to its exact source value and range
-loan. Verification requires that marker to equal the semantic range fact, the
-source to be exact `ExpectedValue` with receiver-origin read access, and the
-hidden owner to be reference storage. A backend therefore cannot authorize a
-general retained Expected reference by rediscovering source call syntax.
 
 For a selected call or construction with omitted arguments, HIR lowers the
 semantic model's exact default-expression suffix at the caller after every
