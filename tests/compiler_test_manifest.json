@@ -734,6 +734,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testDuplicateDiagnosticsMerge",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testRecoveryFindingDiagnostics",
       "suite": "diagnostics"
     },

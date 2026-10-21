@@ -1374,6 +1374,39 @@ int main() {
 }
 )gti",
            "GTI-S2029", "has a body, so a type satisfies it only");
+  // A documented concept explains its own failures: its blocks are how a type
+  // satisfies it, not what a caller must provide.
+  {
+    const auto result = analyze(R"gti(
+/// A gauge reports one reading.
+concept gauge<T> {
+  int read(T& item);
+};
+int sample<T>(T& item) requires gauge<T> { return 0; }
+class Plank {};
+int main() {
+  Plank plank{};
+  return sample(plank);
+}
+)gti");
+    const auto failure = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [](const auto &diagnostic) { return diagnostic.code == "GTI-S2029"; });
+    const auto hinted = [&](const auto &predicate) {
+      return failure != result.diagnostics.end() &&
+             std::any_of(failure->hints.begin(), failure->hints.end(),
+                         predicate);
+    };
+    if (failure == result.diagnostics.end())
+      dump(result);
+    expect(!result.canGenerateCode() && hinted([](const std::string &hint) {
+      return hint == "A gauge reports one reading.";
+    }) && !hinted([](const std::string &hint) {
+      return hint.find("has a body") != std::string::npos;
+    }),
+           "a documented concept's summary explains an unsatisfied "
+           "requirement");
+  }
   rejected(measurable + R"gti(
 int main() {
   Rope rope{1};
