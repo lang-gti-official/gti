@@ -5343,9 +5343,11 @@ int main() {
       break;
     }
   }
-  expect(constructor != nullptr && constructor->mayRaiseDefinedFailure,
-         "the concrete generic constructor should retain both conservative "
-         "owned-parameter initializers");
+  // Moving a scalar formal records no lifecycle and cannot fail, so the
+  // concrete instance is proved failure-free and uses the ordinary form.
+  expect(constructor != nullptr && !constructor->mayRaiseDefinedFailure,
+         "the concrete generic constructor should retain both owned-parameter "
+         "initializers and prove failure-free");
   if (constructor == nullptr) {
     return;
   }
@@ -5373,10 +5375,11 @@ int main() {
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
                                      .owner = constructor->id};
-  expect(emitter.supportsFailureBodyText(address) &&
+  expect(emitter.supportsBodyText(address) &&
+             !emitter.supportsFailureBodyText(address) &&
              emitter.analyzeProgram().ready(),
-         "the exact passive move schedule should make the constructor and "
-         "its caller ready for C++ text emission");
+         "the exact passive move schedule should make the ordinary "
+         "constructor and its caller ready for C++ text emission");
 
   const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
   expect(!artifact.contents.empty() &&

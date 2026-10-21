@@ -9,6 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.453.4 — Moving plain values no longer makes code failure-capable
+
+- Moving a plain value, such as `int32_t y = std::move(x);` or a constructor
+  initializer `tag(std::move(tag))`, no longer makes the enclosing function
+  or constructor able to fail. Callers now construct and call such code
+  directly, without a hidden success flag, failure record and status branch.
+  This includes `unexpected(error)` with an integer or other plain error, so
+  `return unexpected(4);` in a function returning `expected<T, int32_t>` is
+  now an ordinary call.
+- Fix a wrong result when a function returns an object constructed from a
+  moved plain parameter, as in
+  `Holder make(int32_t value) { return Holder(std::move(value)); }`. The
+  returned object was built from zero instead of the parameter's value.
+- Fix uncompilable generated code when a constructor copies a parameter into
+  one field and then moves the same parameter into a later field, as in
+  `Copied(int32_t tag) : first(tag), second(std::move(tag)) {}`. The build
+  failed in the native compiler with "use of undeclared identifier".
+
 ## 0.453.3 — Constructors that move a text view after other initializers
 
 - Fix the internal compiler error `GTI-B0001` ("backend failed while
