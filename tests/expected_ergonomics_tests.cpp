@@ -86,6 +86,22 @@ void reject(const std::string &source, std::string_view code,
         "source errors do not escape to the backend");
 }
 
+// As reject, and the diagnostic is the program's only error: nothing is
+// reported about consequences of the failure inside the prelude.
+void rejectOnly(const std::string &source, std::string_view code,
+                std::string_view anchor, std::string_view explanation) {
+  const auto result = analyze(source);
+  const auto errors = std::count_if(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [](const auto &diagnostic) {
+        return diagnostic.severity == lang::DiagnosticSeverity::Error;
+      });
+  if (errors != 1)
+    diagnostics(result);
+  check(errors == 1, "the failure is one error, without consequences");
+  reject(source, code, anchor, explanation);
+}
+
 void testDiagnostics() {
   const std::string producer = "expected<int, int> read() { return 7; }\n";
   for (const std::string member : {"transform", "and_then"}) {
@@ -138,11 +154,57 @@ void testDiagnostics() {
                   "same error type as the result it maps.",
           "and_then explains its mapper contract in one hint");
   }
-  // A reference-returning mapper makes the result borrow the temporary
-  // mapper argument, which the general fresh-argument rule rejects.
-  reject("int value = 7; int& map(int input) { return value; }\n" + producer +
-             "int main() { [[discard]] read().transform(map); return 0; }\n",
-         "GTI-S2017", "map", "Bind the value to a local");
+  // A reference-returning mapper would make the consuming member return a
+  // borrow its consumed receiver cannot keep alive. That selected signature
+  // is rejected once, naming the result, before its arguments are checked.
+  rejectOnly("int value = 7; int& map(int input) { return value; }\n" +
+                 producer +
+                 "int main() { [[discard]] read().transform(map); return 0; "
+                 "}\n",
+             "GTI-S2022", ")",
+             "A consuming method cannot return a reference or tracked "
+             "borrowed state; this call returns 'expected<int32_t&, "
+             "int32_t>'.");
+  // A callable class has no reflectable result, so the call names no result
+  // type; it is rejected once, before any library instance is formed.
+  for (const std::string member : {"transform", "transform_error"}) {
+    rejectOnly(producer +
+                   "struct Mapper { int operator()(int value) { return value; "
+                   "} };\n"
+                   "int main() { Mapper mapper{}; [[discard]] read()." +
+                   member + "(mapper); return 0; }\n",
+               "GTI-S2023", ")", "does not select an overloaded operator()");
+  }
+  // The result class's own assertion rejects a void error type where the
+  // program requires that instance; its layout and members add nothing.
+  rejectOnly("int main() { expected<int, void> result = 1; return 0; }\n",
+             "GTI-S2079", "result",
+             "Static assertion failed. An 'expected' error type cannot be "
+             "'void'.");
+  // A nested conditional carrier that a library operator cannot store is
+  // reported at the assignment that requested the operator.
+  const std::string nestedCarrier = R"(int main() {
+  mut expected<expected<int&, int>, int> nested = unexpected(1);
+  {
+    int local = 5;
+    expected<int&, int> inner = local;
+    nested = std::move(inner);
+  }
+  return 0;
+}
+)";
+  rejectOnly(nestedCarrier, "GTI-S2067", "=",
+             "conditionally retains references");
+  const auto nested = analyze(nestedCarrier);
+  check(!nested.diagnostics.empty() &&
+            std::any_of(nested.diagnostics.front().related.begin(),
+                        nested.diagnostics.front().related.end(),
+                        [](const lang::RelatedDiagnostic &related) {
+                          return related.message ==
+                                     "Reported inside this library instance." &&
+                                 related.span.source.ends_with("prelude.gti");
+                        }),
+        "the payload error keeps its library location as related information");
   // A void success passes no value, so a one-parameter mapper's call arity
   // fails inside the selected mapping instance, reported at the request.
   reject("expected<void, int> read() { return; }\n"

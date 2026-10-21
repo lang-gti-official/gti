@@ -2254,6 +2254,11 @@ private:
 
   [[nodiscard]] static const Variable *movedVariable(const ExprPtr &expression);
 
+  // GTI-S2003 for a return whose value would be copied although its type is
+  // move-only: a named local or parameter is told to move explicitly.
+  void reportMoveOnlyReturnCopy(const ExprPtr &value,
+                                const SemanticType &valueType);
+
   enum class ImplicitReturnMoveStatus {
     NotEligible,
     Moved,
@@ -2878,6 +2883,29 @@ private:
   [[nodiscard]] bool containsExactType(const SemanticType &type,
                                        const SemanticType &candidate) const;
 
+  // Whether `std::meta::callable_return_type` cannot reflect `subject`: a
+  // concrete type with no callable signature, such as a class whose
+  // operator() it does not select. Its written use reports GTI-S2023.
+  [[nodiscard]] static bool
+  callableReturnSubjectUnsupported(const SemanticType &subject);
+
+  // Whether `type` contains a callable-result projection over such a subject.
+  [[nodiscard]] bool
+  containsUnsupportedCallableReturn(const SemanticType &type) const;
+
+  // Whether a candidate's signature contains such a projection.
+  [[nodiscard]] bool
+  signatureReflectsUnsupportedCallable(const CallableCandidate &function) const;
+
+  // Reports GTI-S2023 at `site` when instantiating `declared` as
+  // `instantiated` made its signature reflect such a callable's result, so
+  // the call names no result type. A written projection is reported where
+  // it is written instead.
+  [[nodiscard]] bool
+  reportUnsupportedCallableReturn(const CallableCandidate &declared,
+                                  const CallableCandidate &instantiated,
+                                  const Token &site);
+
   [[nodiscard]] bool containsDisallowedCallableCaptureState(
       const SemanticType &type, std::unordered_set<ClassId> &visiting,
       bool reviewedRawState = false, bool checkedBorrows = false) const;
@@ -3000,6 +3028,14 @@ private:
                            const ExprPtr &callee, const Token &paren,
                            std::span<const ExprPtr> arguments,
                            CallReceiverMode receiverMode);
+
+  // Whether a consuming method's (instantiated) result is a reference or
+  // carries tracked borrowed state, which its consumed receiver cannot keep
+  // alive. GTI-S2022 names that result type.
+  [[nodiscard]] bool
+  consumingResultCarriesBorrow(const CallableCandidate &function) const;
+  void reportConsumingBorrowedResult(const CallableCandidate &function,
+                                     const Token &paren);
 
   [[nodiscard]] std::vector<CallableCandidate>
   structuralOperatorCandidates(const SemanticType &receiver,
@@ -3605,6 +3641,37 @@ private:
                       const std::vector<std::string> &scope);
 
   void analyzeConcreteClassStaticAssertions(const StmtList &members);
+
+  [[nodiscard]] bool
+  declaresConcreteClassStaticAssertions(const StmtList &members) const;
+
+  // Whether the concrete class instance whose context is prepared fails one
+  // of its own static assertions. They state what every analysis of the
+  // instance assumes: its field analysis reports the failure, and analyses
+  // of its methods, constructors and destructor report only their own
+  // static assertions. Evaluated at most once per instance and request
+  // outside that field analysis.
+  [[nodiscard]] bool
+  concreteClassAssertionsFail(ClassId classId,
+                              const std::vector<SemanticType> &typeArguments,
+                              const std::vector<CompileTimeValue> &values);
+
+  void recordConcreteClassAssertionOutcome(
+      ClassId classId, const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &values, bool failed);
+
+  // Whether an earlier analysis in this request learned that the instance's
+  // assertions fail (true) or hold (false).
+  [[nodiscard]] std::optional<bool> knownConcreteClassAssertionOutcome(
+      ClassId classId, const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &values) const;
+
+  // Brackets a concrete instance analysis. A failed static assertion states
+  // why the instance is invalid: when one of its own fails, or its owner
+  // class instance's does (`ownerRejected`), the analysis reports only its
+  // static assertions, not the consequences of the broken precondition.
+  void beginAssertionTracking();
+  void endAssertionTracking(bool ownerRejected);
 
   void prepareInstanceAnalysis();
 
@@ -5847,6 +5914,8 @@ private:
     const FunctionDecl *currentFunctionDeclaration = nullptr;
     std::optional<SemanticType> contextualInitializerType;
     const Expr *contextualInitializerExpression = nullptr;
+    // The value of the return statement whose declared type it initializes.
+    const Expr *contextualReturnValue = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
     std::optional<ResultUse> contextualResultUse;
@@ -5870,6 +5939,19 @@ private:
     // Set while this analyzer reanalyses an instance whose reanalysis is
     // already open further up the staging chain, which owns its assertions.
     bool assertionsOwnedUpChain = false;
+    // Whether each concrete class instance with static assertions fails one,
+    // keyed by its field-initializer reanalysis; see
+    // concreteClassAssertionsFail().
+    std::unordered_map<InstanceAnalysisKey, bool, InstanceAnalysisKeyHash>
+        classAssertionOutcomes;
+    // While a concrete instance is analysed, each static assertion's own
+    // diagnostics are also copied here. If one fails, or the instance's class
+    // assertion did, they are all the analysis reports; see
+    // beginAssertionTracking().
+    bool trackAssertionDiagnostics = false;
+    bool trackedAssertionFailed = false;
+    std::size_t assertionTrackingStart = 0;
+    std::vector<SemanticDiagnostic> assertionDiagnostics;
     std::shared_ptr<CompleteReturnQueryState> completeReturnQueries;
     std::shared_ptr<RawResultQuery> collectingRawResult;
     std::size_t rawAccessObservation = 0;
@@ -6161,6 +6243,11 @@ private:
         contextualInitializerType;
     decltype(RequestSessionState::contextualInitializerExpression)
         contextualInitializerExpression{};
+    decltype(RequestSessionState::contextualReturnValue)
+        contextualReturnValue{};
+    // A nested body analysis is not part of the enclosing instance's own
+    // assertions.
+    bool trackAssertionDiagnostics = false;
     decltype(RequestSessionState::contextualOperatorIntegerType)
         contextualOperatorIntegerType;
     decltype(RequestSessionState::contextualCallableResult)
@@ -6241,6 +6328,7 @@ private:
       requestSession.contextualInitializerType;
   const Expr *&contextualInitializerExpression =
       requestSession.contextualInitializerExpression;
+  const Expr *&contextualReturnValue = requestSession.contextualReturnValue;
   std::optional<SemanticType> &contextualOperatorIntegerType =
       requestSession.contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> &contextualCallableResult =

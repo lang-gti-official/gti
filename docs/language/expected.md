@@ -13,6 +13,10 @@ returns the error constructor argument, a `std::unexpected_value<E>`.
 Construction, observers, mapping and propagation
 use general class, enum and protocol rules, not native C++ `std::expected`.
 Like a built-in type, it is available in every program without an include.
+`E` names the stored error, so it cannot be `void`: each profile's own class
+assertion rejects `expected<T, void>` where a program first requires it, with
+`GTI-S2079` ("An 'expected' error type cannot be 'void'.") and no further
+errors from that instance.
 
 Results also compose in `constexpr` functions when both alternatives are
 supported passive constant values (`T` may be `void`). The same construction,
@@ -40,9 +44,11 @@ expected<void, std::string_view> initialise(bool fail) {
 ```
 
 Wrapping a success value preserves its ordinary ownership rules: returning a
-named move-only payload requires `return std::move(payload);`. Returning a fresh
-value directly is also permitted. The expected wrapper does not introduce an
-implicit copy or an implicit move.
+named move-only payload requires `return std::move(payload);`. Without it, the
+return reports its copy (`GTI-S2003`) at the payload with that hint, as any
+return that converts a move-only value does. Returning a fresh value directly
+is also permitted. The expected wrapper does not introduce an implicit copy or
+an implicit move.
 
 A local owning expected may be initialized directly from its exact error type:
 `expected<T, E> result = unexpected(error);`. Only `E` is constructed on that
@@ -354,19 +360,17 @@ call without copying its environment; a fresh lambda, a namespace function
 item, or an explicitly moved closure binds as a call-scoped temporary that the
 enclosing full expression destroys. The mapped type is
 `std::meta::callable_return_type<F>`, so a callable class's `operator()` is not
-selected as a mapper. The mapper receives the moved success value through an
-ordinary exact call, without conversions. Results and source alternatives must
-be movable owned values (or void successes); a reference or other borrowed
-mapped result would make the consuming member return borrowed state and is
-rejected. Fallible-borrow receivers do not offer these members.
+selected as a mapper; such a call is rejected with `GTI-S2023`. The mapper
+receives the moved success value through an ordinary exact call, without
+conversions. Results and source alternatives must be movable owned values (or
+void successes). A mapper returning a reference or other borrowed value would
+make the consuming member return borrowed state, so the call is rejected once
+with `GTI-S2022`, which names that result type. Fallible-borrow receivers do
+not offer these members.
 
-The existing result-carrier containment boundary also applies to inferred
-combinator results: an owning payload enum cannot be a direct `expected`
-alternative. Such a mapping receives `GTI-S2067` at the mapper rather than
-reaching backend generation. An ordinary class or struct may own that enum
-through its verified field lifecycle; this is the same structural boundary as
-an explicitly declared expected return or local, not a mapper-specific type
-exception.
+An owning payload enum is an ordinary mapped value: the source class stores it
+as an alternative through its verified field lifecycle, exactly as an
+explicitly declared expected return or local does.
 
 Receiver evaluation, then mapper-expression evaluation, precede the state
 test. Capture construction is therefore eager even when invocation is skipped.
@@ -408,10 +412,15 @@ or propagated with the ordinary prefix `?`. There is no separate `?.` operator.
 
 The mapper follows the same read-callable `F&` rule. It receives the moved
 `E` through an ordinary exact call, without an implicit conversion. The source
-alternatives must be movable, and the mapped error must be a non-void owned
-value without borrowed state. Callable classes are not mappers, and
-`expected<T&, E>` receivers do not offer this member. No additional include is
-required.
+alternatives must be movable, and the mapped error must be an owned movable
+value. A reference result is rejected at the call with `GTI-S2022`, as for
+`transform`. A `void` result fails the member's own assertion, "A
+'transform_error' mapper must return an error value, not 'void'.", together
+with the `void` error type's assertion; both are reported at the call and
+nothing else is. These checks apply to each concrete call, so a generic
+caller whose mapper result is still a type parameter remains valid. Callable
+classes are not mappers (`GTI-S2023` at the call), and `expected<T&, E>`
+receivers do not offer this member. No additional include is required.
 
 ```gti
 expected<int, app_error> load_inline(bool fail) {

@@ -2883,6 +2883,68 @@ auto SemanticVisitor::Impl::containsExactType(
                      });
 }
 
+auto SemanticVisitor::Impl::callableReturnSubjectUnsupported(
+    const SemanticType &subject) -> bool {
+  return subject != SemanticType::Unknown &&
+         !containsOpenTypeParameter(subject) && !subject.hasLambdaShape() &&
+         !subject.hasFunctionItemShape() && !subject.hasNativeFunctionShape() &&
+         subject.kind != SemanticType::FunctionSignature;
+}
+
+auto SemanticVisitor::Impl::containsUnsupportedCallableReturn(
+    const SemanticType &type) const -> bool {
+  if (type.kind == SemanticType::Class && type.classId != 0 &&
+      type.classId <= classes.size() &&
+      classInfo(type.classId).compilerType ==
+          CompilerTypeKind::MetaCallableReturnType &&
+      type.arguments.size() == 1 &&
+      callableReturnSubjectUnsupported(type.arguments.front())) {
+    return true;
+  }
+  return std::any_of(type.arguments.begin(), type.arguments.end(),
+                     [&](const SemanticType &argument) {
+                       return containsUnsupportedCallableReturn(argument);
+                     });
+}
+
+auto SemanticVisitor::Impl::signatureReflectsUnsupportedCallable(
+    const CallableCandidate &function) const -> bool {
+  const auto unsupported = [&](const SemanticType &type) {
+    return containsUnsupportedCallableReturn(type);
+  };
+  return unsupported(function.returnType) ||
+         std::any_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(), unsupported) ||
+         std::any_of(function.requirements.begin(), function.requirements.end(),
+                     [&](const AppliedConceptRequirement &requirement) {
+                       return std::any_of(requirement.arguments.begin(),
+                                          requirement.arguments.end(),
+                                          unsupported);
+                     });
+}
+
+auto SemanticVisitor::Impl::reportUnsupportedCallableReturn(
+    const CallableCandidate &declared, const CallableCandidate &instantiated,
+    const Token &site) -> bool {
+  if (signatureReflectsUnsupportedCallable(declared) ||
+      !signatureReflectsUnsupportedCallable(instantiated)) {
+    return false;
+  }
+  // This instantiation's signature names no result type, so the call is
+  // rejected here rather than by every use of that type inside the callee.
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2023", DiagnosticPhase::Semantics, site,
+      "Callable return-type reflection requires a function signature, a "
+      "selected function item, a native function pointer, or a lambda type; "
+      "it does not select an overloaded operator().");
+  if (instantiated.declaration != nullptr)
+    diagnostic.related.push_back(
+        {tokenSpan(instantiated.declaration->name()),
+         "The selected function's signature reflects its callable's result."});
+  diagnostics.emplace_back(std::move(diagnostic));
+  return true;
+}
+
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const SemanticType &type, std::unordered_set<ClassId> &visiting,
     bool reviewedRawState, bool checkedBorrows) const -> bool {
@@ -4651,20 +4713,32 @@ auto SemanticVisitor::Impl::constructorSignatureSpelling(
   return result;
 }
 
+auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
+    const CallableCandidate &function) const -> bool {
+  return function.receiverMutability == ReceiverMutability::Consuming &&
+         !conditionalReferenceReturn(function.returnType,
+                                     function.parameterTypes,
+                                     function.dispatchOwner) &&
+         (function.returnType.kind == SemanticType::Reference ||
+          function.returnBorrowOrigin != BorrowOriginKind::None ||
+          typeTraits(function.returnType).containsBorrowedState);
+}
+
+auto SemanticVisitor::Impl::reportConsumingBorrowedResult(
+    const CallableCandidate &function, const Token &paren) -> void {
+  report(paren,
+         "A consuming method cannot return a reference or tracked borrowed "
+         "state; this call returns '" +
+             typeSpelling(function.returnType) + "'.",
+         "GTI-S2022");
+}
+
 auto SemanticVisitor::Impl::validateSelectedFunction(
     const CallableCandidate &function, const ExprPtr &callee,
     const Token &paren, std::span<const ExprPtr> arguments,
     CallReceiverMode receiverMode) -> bool {
-  if (function.receiverMutability == ReceiverMutability::Consuming &&
-      !conditionalReferenceReturn(function.returnType, function.parameterTypes,
-                                  function.dispatchOwner) &&
-      (function.returnType.kind == SemanticType::Reference ||
-       function.returnBorrowOrigin != BorrowOriginKind::None ||
-       typeTraits(function.returnType).containsBorrowedState)) {
-    report(paren,
-           "A consuming method cannot return a reference or tracked borrowed "
-           "state.",
-           "GTI-S2022");
+  if (consumingResultCarriesBorrow(function)) {
+    reportConsumingBorrowedResult(function, paren);
     return false;
   }
   if (function.receiverMutability == ReceiverMutability::Consuming &&

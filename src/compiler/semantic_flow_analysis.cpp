@@ -3661,8 +3661,10 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
   SemanticType resolvedType = typeOf(type);
   if (const std::optional<SemanticType> parameter =
           resolveTypeParameter(type.name)) {
+    // A substitution can itself still be symbolic, such as a callable-result
+    // query over an open parameter; the condition then stays dependent.
     if (analyzingDependentConstantCondition &&
-        parameter->kind == SemanticType::TypeParameter) {
+        containsOpenTypeParameter(*parameter)) {
       constantConditionGenericDependency = true;
     }
     const GenericParameterInfo *info =
@@ -5856,7 +5858,9 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                "' conditionally retains references; a class carrying a "
                "guarded dependency set cannot be an enum payload yet.",
            "GTI-S2067");
-    currentType = enumerator.symbol.type;
+    // The rejected value has no checked dependency set, so storing or
+    // assigning it would only fail again on this same payload.
+    currentType = SemanticType::Unknown;
     return;
   }
   // A payload constructor evaluates its fields in the same ordered input

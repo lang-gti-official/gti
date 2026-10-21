@@ -622,6 +622,80 @@ int main() { return 0; }
          "implicit return movement should exclude fields, structured-binding "
          "projections, and immovable values rather than weakening their "
          "diagnostics");
+
+  // A return that initializes its declared type through an implicit
+  // constructor copies a named move-only value like any other return. The
+  // return reports that copy, not an argument of a constructor call the
+  // source never wrote.
+  const std::string contextualSource = R"(
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+};
+class Wrapper {
+  Owner owner;
+public:
+  implicit Wrapper(Owner owner) : owner(std::move(owner)) {}
+};
+class Holder {
+  Owner value;
+public:
+  Holder() : value(Owner()) {}
+  Wrapper wrap() { return this.value; }
+};
+Wrapper wrap_local() {
+  Owner local = Owner();
+  return local;
+}
+Wrapper wrap_parameter(Owner input) { return input; }
+Wrapper wrap_moved() {
+  Owner moved = Owner();
+  return std::move(moved);
+}
+int main() { return 0; }
+)";
+  const lang::FrontendResult contextual = lang::Frontend().analyze(
+      "contextual-return-copy.gti", contextualSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  // The diagnostic names `token` inside `statement`, with exactly one hint.
+  const auto returnCopy = [&](std::string_view statement,
+                              std::string_view token, std::string_view message,
+                              std::string_view hint) {
+    const std::size_t start =
+        contextualSource.find(statement) + statement.find(token);
+    return std::count_if(
+               contextual.diagnostics.begin(), contextual.diagnostics.end(),
+               [&](const lang::Diagnostic &diagnostic) {
+                 return diagnostic.code == "GTI-S2003" &&
+                        diagnostic.message == message &&
+                        diagnostic.primary.start == start &&
+                        diagnostic.primary.end == start + token.size() &&
+                        diagnostic.hints.size() == 1 &&
+                        diagnostic.hints.front() == hint &&
+                        diagnostic.related.empty() && diagnostic.fixes.empty();
+               }) == 1;
+  };
+  expect(!contextual.canGenerateCode() && contextual.diagnostics.size() == 3 &&
+             returnCopy("return local;", "local",
+                        "Cannot return 'local' by copy because type 'Owner' "
+                        "is move-only.",
+                        "Use 'return std::move(local);' to transfer "
+                        "ownership.") &&
+             returnCopy("return input;", "input",
+                        "Cannot return 'input' by copy because type 'Owner' "
+                        "is move-only.",
+                        "Use 'return std::move(input);' to transfer "
+                        "ownership.") &&
+             returnCopy("return this.value;", "value",
+                        "Returning this value would copy move-only type "
+                        "'Owner'.",
+                        "Return a fresh value or transfer an eligible owner "
+                        "explicitly with std::move(...)."),
+         "a return's implicit construction reports a move-only copy as the "
+         "return's own GTI-S2003, at the returned value");
 }
 
 void testEdgeSensitiveMoveFlow() {
@@ -18881,27 +18955,23 @@ int main() {
                        }) == 5,
          "expected validation should produce focused diagnostics");
 
-  // A void error alternative is rejected by the general payload rule when the
-  // concrete result layout is formed, before any backend representation.
+  // The result class's own static assertion rejects a void error alternative
+  // when the concrete instance is formed. That failure is the only error: the
+  // instance's layout and members do not report its consequences.
   const lang::FrontendResult voidError = lang::Frontend().analyze(
       "void-expected-error.gti",
       "expected<int, void> invalid_error() { return 1; }\n"
       "int main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!voidError.semanticValid &&
-             std::any_of(voidError.diagnostics.begin(),
-                         voidError.diagnostics.end(),
-                         [](const lang::Diagnostic &diagnostic) {
-                           return diagnostic.code == "GTI-S2067" &&
-                                  diagnostic.message.find("'void'") !=
-                                      std::string::npos;
-                         }) &&
-             std::none_of(voidError.diagnostics.begin(),
-                          voidError.diagnostics.end(),
-                          [](const lang::Diagnostic &diagnostic) {
-                            return diagnostic.code.starts_with("GTI-B");
-                          }),
-         "a void error alternative is a semantic payload error");
+  expect(!voidError.semanticValid && voidError.diagnostics.size() == 1 &&
+             voidError.diagnostics.front().code == "GTI-S2079" &&
+             voidError.diagnostics.front().message ==
+                 "Static assertion failed. An 'expected' error type cannot "
+                 "be 'void'." &&
+             voidError.diagnostics.front().primary.source.ends_with(
+                 "void-expected-error.gti"),
+         "a void error alternative is rejected once, by the result class's "
+         "own assertion, at the program that names it");
 }
 
 void testFallibleBorrows() {

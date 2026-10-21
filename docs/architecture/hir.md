@@ -170,6 +170,13 @@ discovery limits, semantic selection, or executable HIR/MIR behavior.
 An error inside a trusted library instance that user code first required is
 re-anchored the same way. Its primary becomes the requesting site, and the
 library location becomes a "Reported inside this library instance." note.
+A named call requests its instance at the callee name. An overloaded operator
+requests its instance at the operator token, such as the `=` of an assignment
+that selects `operator=`, and a contextual conversion at its converted
+operand, so their library-internal errors are re-anchored too. A warning,
+such as a raw-pointer audit finding, describes the library's own code and
+keeps its library location, so the audit's library-finding policy still
+applies to it.
 Several internal failures of one request can then share a primary. Reports
 that differ only in their library locations merge into one diagnostic that
 lists each location. Reports from different concrete instances keep their own
