@@ -1976,7 +1976,19 @@ destructor component can prove `false` for bounded source bodies
 over the admitted scalar/class operations. A second closed proof admits exact
 source constructors whose base-free passive-scalar class has one verified
 initializer stage per declared field, their matching source destructors, and
-free-function graphs over those scalar/class values. This is only the defined-
+free-function graphs over those scalar/class values. Both proofs admit a
+`Move` of a trivially dropped, borrow-free passive value, such as
+`int32_t y = std::move(x);` or a constructor initializer `tag(std::move(tag))`:
+it carries no lifecycle event and no failure origin, its operand moves a place
+the proof already admits, and it copies the value while leaving that place
+unavailable, exactly as failure-free as a `Load`. Lowering records the move's
+HIR ownership event again on the records that consume that HIR value, such as
+its call input and full-expression boundary; the function proof admits such a
+record only when its event equals the event of the exact `Move` it repeats.
+The constructor proof admits a moved formal's owned-parameter initializer
+when that formal's type is passive. A class move still needs its lifecycle
+events, and a real failure source beside a move keeps the body conservative.
+This is only the defined-
 failure dimension by itself. Every function, constructor, or destructor whose
 definition provenance is a declaration (and every runtime-bound function) is
 verified as an exact bodyless skeleton: one empty reachable entry block ending

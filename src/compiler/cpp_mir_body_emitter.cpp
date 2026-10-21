@@ -3940,6 +3940,15 @@ passiveScalarFieldSibling(const MirProgram &program,
           parameterIndex >= constructor.parameterTypes.size() ||
           constructor.parameterTypes[parameterIndex] != field.type)
         return std::nullopt;
+      // The native list moves an owned formal before this body Load runs,
+      // and never declares the formal's shell. Copying a formal that an
+      // owned initializer moves needs the body-ordered route instead.
+      if (std::any_of(constructor.initializers.begin(),
+                      constructor.initializers.end(),
+                      [&](const MirConstructorInitializer &candidate) {
+                        return candidate.ownedParameter == parameterIndex;
+                      }))
+        return std::nullopt;
     }
     selected = PassiveScalarFieldSibling{.producerInstruction = producer.id,
                                          .initializeInstruction = initialize.id,
@@ -14073,6 +14082,93 @@ bodyStagedOptionalStorageParameter(const MirProgram &program,
 [[nodiscard]] const MirClassInstance *
 passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 
+// A field whose moved formal has a trivially dropped passive type (a scalar,
+// enum, pointer, text view, function item or fixed array of such values):
+// moving it records no lifecycle, so either constructor form may publish the
+// move in body order. A generated-copy record keeps its own passive-move route.
+[[nodiscard]] bool dropFreeParameterMoveField(const MirProgram &program,
+                                              const MirClassFieldInfo &field) {
+  return passiveGeneratedCopyClass(program, field.type) == nullptr &&
+         passiveConstructorAggregateType(field.type) &&
+         field.dropKind == DropKind::Trivial && !field.requiresActiveCleanup;
+}
+
+[[nodiscard]] bool
+formalEntryLoanEndInstruction(const MirConstructorInstance &constructor,
+                              const MirInstruction &instruction);
+
+// A drop-free value carrying borrowed state, such as a text view, enters the
+// constructor with its caller's dependency as the formal's entry loan. A
+// by-value field of such a type may hold only an ownerless value (semantics
+// rejects anything else), so its publication transfers no dependency and MIR
+// records no Stored loan for that field: the entry loan only ends, on every
+// exit. Prove exactly that shape. The formal carries the borrowed state
+// through one entry loan with no producer, escape, field or derived loan, and
+// every record naming that loan is its comment-only EndBorrow. No loan
+// publishes into the field or derives from the moved value. A carrier that
+// retains its dependency in the field keeps a Stored publication and is not
+// this family.
+[[nodiscard]] bool
+formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
+                        const MirPlace &source, const MirValue &moved,
+                        const MirInstruction &move, SymbolId field) {
+  const MirBody &body = constructor.body;
+  const MirLoan *entry = nullptr;
+  for (const MirLoan &loan : body.loans) {
+    if (loan.storedField == field || loan.producedBy == move.hirValue) {
+      return false;
+    }
+    if (!loan.protectsSource(source.id)) {
+      continue;
+    }
+    if (entry != nullptr || loan.source != source.id || !loan.entry ||
+        loan.escapes || loan.producedBy != 0 || loan.storedField != 0 ||
+        loan.lifecycleBound || loan.twoPhase ||
+        !loan.additionalDependencies.empty()) {
+      return false;
+    }
+    entry = &loan;
+  }
+  if (entry == nullptr || !source.traits.containsBorrowedState ||
+      moved.borrowDependencies) {
+    return false;
+  }
+  for (const MirLoan &loan : body.loans) {
+    if (loan.parent == entry->id || loan.storedDependency == entry->id ||
+        std::any_of(loan.additionalDependencies.begin(),
+                    loan.additionalDependencies.end(),
+                    [&](const MirLoanDependency &dependency) {
+                      return dependency.parent == entry->id;
+                    })) {
+      return false;
+    }
+  }
+  const auto namesEntry = [&](const MirOperand &operand) {
+    return operand.kind == MirOperandKind::Loan && operand.loan == entry->id;
+  };
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (((instruction.loan && *instruction.loan == entry->id) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       namesEntry) ||
+           (instruction.receiver && namesEntry(*instruction.receiver))) &&
+          !formalEntryLoanEndInstruction(constructor, instruction)) {
+        return false;
+      }
+    }
+    const MirTerminator &terminator = block.terminator;
+    if ((terminator.returnLoan && *terminator.returnLoan == entry->id) ||
+        (terminator.value && namesEntry(*terminator.value)) ||
+        std::any_of(terminator.targetArguments.begin(),
+                    terminator.targetArguments.end(), namesEntry) ||
+        std::any_of(terminator.elseArguments.begin(),
+                    terminator.elseArguments.end(), namesEntry)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // An owned parameter normally publishes through the native member-initializer
 // list, but that would reorder a later move ahead of earlier MIR work. The
 // failure-form constructor may instead begin with private empty fields and
@@ -14081,11 +14177,17 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 // ConstructionRollback stage and full-expression boundary recorded by MIR.
 // Cleanup-free generated moves have the same ordered publication but no value
 // or rollback obligations; prove that absence instead of inventing lifecycle.
-// A trivially dropped, borrow-free scalar, enum, pointer or array value has no
-// parameter shell drop either: MIR records no obligation for its formal, its
-// moved value or its field, so the proof demands that complete absence.
+// A trivially dropped scalar, enum, pointer or array value has no parameter
+// shell drop either: MIR records no obligation for its formal, its moved value
+// or its field, so the proof demands that complete absence. MIR stages a text
+// view or a function item without an Initialize: the constructor record
+// publishes its exact Move (mirRecordPublishedConstructorInitializer), which
+// the body emits in MIR order. Borrowed state is admitted only as
+// formalEntryLoanOnlyMove's entry loan. Only these drop-free moves stage in an
+// ordinary-form body (dropFreeOnly).
 [[nodiscard]] bool bodyStagedOwnedParameterFieldInitializers(
-    const MirProgram &program, const MirConstructorInstance &constructor) {
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    bool dropFreeOnly = false) {
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
   if (owner == nullptr) {
     return false;
@@ -14129,10 +14231,10 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         passiveClass->moveConstructor == SpecialMemberStatus::Generated &&
         passiveClass->traits.movable &&
         !passiveClass->traits.containsBorrowedState;
-    const bool dropFreeMove =
-        passiveClass == nullptr &&
-        passiveConstructorAggregateType(initializer.targetType) &&
-        field->dropKind == DropKind::Trivial && !field->requiresActiveCleanup;
+    const bool dropFreeMove = dropFreeParameterMoveField(program, *field);
+    if (dropFreeOnly && !dropFreeMove) {
+      return false;
+    }
     const std::size_t lifecycleCount = passiveMove || dropFreeMove ? 0 : 1;
 
     const MirInstruction *initialize = nullptr;
@@ -14166,18 +14268,43 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         destination = candidate;
       }
     }
-    if (initialize == nullptr || destination == nullptr) {
+    // Without an Initialize, only a drop-free value's exact Move may carry
+    // the record publication; its result has no other consumer.
+    const MirInstruction *recordMove = nullptr;
+    if (initialize == nullptr && dropFreeMove) {
+      for (const MirBlock &block : constructor.body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != MirInstructionKind::Move ||
+              mirRecordPublishedConstructorInitializer(
+                  program, constructor.body, constructor.id, instruction) !=
+                  &initializer) {
+            continue;
+          }
+          if (recordMove != nullptr) {
+            return false;
+          }
+          recordMove = &instruction;
+        }
+      }
+    }
+    if (initialize == nullptr &&
+        (recordMove == nullptr || !recordMove->result)) {
       return false;
     }
 
-    const MirValueId movedValue = initialize->operands.front().value;
+    const MirValueId movedValue = initialize != nullptr
+                                      ? initialize->operands.front().value
+                                      : *recordMove->result;
     const MirValue *value = constructor.body.findValue(movedValue);
     const MirInstruction *move =
         value == nullptr ? nullptr
                          : findInstruction(constructor.body, value->definition);
     if (value == nullptr || move == nullptr ||
-        constructorFieldMoveInitialize(constructor.body, movedValue) !=
-            initialize ||
+        (initialize != nullptr
+             ? constructorFieldMoveInitialize(constructor.body, movedValue) !=
+                   initialize
+             : move != recordMove ||
+                   !onlyRootRecordUses(constructor.body, movedValue)) ||
         value->sourceValue != initializer.arguments.front() ||
         value->info.type != initializer.targetType ||
         move->kind != MirInstructionKind::Move || !move->result ||
@@ -14207,9 +14334,12 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
       return false;
     }
     if (dropFreeMove) {
-      // The formal, the moved value and the field are all trivially dropped
-      // and carry no borrowed state, and no obligation names any place of
-      // them: MIR has nothing to transfer, reparent or roll back.
+      // The formal, the moved value and the field are all trivially dropped,
+      // and no obligation names any place of them: MIR has nothing to
+      // transfer, reparent or roll back. Borrowed state may only be the
+      // formal's entry loan, which ends without reaching the field.
+      const bool borrowed = source->traits.containsBorrowedState ||
+                            value->info.traits.containsBorrowedState;
       const auto namesInitializerState = [&](MirPlaceId id) {
         const MirPlace *place = constructor.body.findPlace(id);
         return place != nullptr &&
@@ -14223,9 +14353,11 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
                  place->projections.front().field == initializer.field));
       };
       if (source->traits.drop != DropKind::Trivial ||
-          source->traits.containsBorrowedState ||
           value->info.traits.drop != DropKind::Trivial ||
-          value->info.traits.containsBorrowedState ||
+          (borrowed && ((destination != nullptr &&
+                         destination->traits.containsBorrowedState) ||
+                        !formalEntryLoanOnlyMove(constructor, *source, *value,
+                                                 *move, initializer.field))) ||
           std::any_of(constructor.body.dropObligations.begin(),
                       constructor.body.dropObligations.end(),
                       [&](const MirDropObligation &drop) {
@@ -14262,7 +14394,7 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         valueDrop = &drop;
       }
       if (drop.kind == MirDropObligationKind::ConstructionRollback &&
-          drop.place == destination->id &&
+          destination != nullptr && drop.place == destination->id &&
           drop.dropType.type == initializer.targetType &&
           !drop.initiallyActive) {
         if (rollbackDrop != nullptr) {
@@ -23559,6 +23691,32 @@ bool cppMirFailureConstructorEmptyFieldsEligible(
                               program, field.type,
                               EmptyFieldUse::Construction)));
                })));
+}
+
+bool cppMirOrdinaryBodyStagedParameterMoves(
+    const MirProgram &program, const MirConstructorInstance &constructor) {
+  const MirClassInstance *owner = program.findClassInstance(constructor.owner);
+  if (owner == nullptr ||
+      constructor.definitionKind != MirDefinitionKind::Source ||
+      constructor.mayRaiseDefinedFailure ||
+      !cppMirFailureConstructorEmptyFieldsEligible(program, owner->id)) {
+    return false;
+  }
+  // Natively hoisted references, bases and copies execute before the body.
+  // Copies must form the complete first-field prefix, and no reference may be
+  // bound natively, so no MIR work is reordered across either.
+  const auto storedReferences =
+      cppMirStoredReferenceBindings(program, constructor);
+  const auto copies = cppMirCopyParameterFieldBindings(program, constructor);
+  return storedReferences && storedReferences->empty() &&
+         cppMirBaseParameterInitializerBindings(program, constructor) &&
+         copies &&
+         std::all_of(copies->begin(), copies->end(),
+                     [&](const CppMirCopyParameterFieldBinding &binding) {
+                       return failureConstructorCopiedFieldPrefix(
+                           program, constructor, *owner, binding);
+                     }) &&
+         bodyStagedOwnedParameterFieldInitializers(program, constructor, true);
 }
 
 std::optional<std::vector<SemanticType>> cppMirFlattenConcreteParameterTypes(
@@ -41097,6 +41255,18 @@ private:
                         "borrowed argument place");
                   }
                   emitPlaceExpression(facts, *place);
+                } else if (const MirPlace *chainSource =
+                               construct->operands[index].kind ==
+                                       MirOperandKind::Value
+                                   ? movedPlaceChainSource(
+                                         facts.body,
+                                         construct->operands[index].value,
+                                         *construct)
+                                   : nullptr) {
+                  // A moved-place chain never materialized its links.
+                  output << "std::move(";
+                  emitStoragePlaceValue(facts, *chainSource);
+                  output << ')';
                 } else {
                   emitOperand(construct->operands[index]);
                 }
@@ -41215,6 +41385,20 @@ private:
                ++index) {
             if (index != 0) {
               output << ", ";
+            }
+            // A moved-place chain staged into this construction never
+            // materialized its links; spell the move over its place, as
+            // every other construction argument list does.
+            if (const MirPlace *chainSource =
+                    construct->operands[index].kind == MirOperandKind::Value
+                        ? movedPlaceChainSource(
+                              facts.body, construct->operands[index].value,
+                              *construct)
+                        : nullptr) {
+              output << "std::move(";
+              emitStoragePlaceValue(facts, *chainSource);
+              output << ')';
+              continue;
             }
             // A borrow-staged argument never materialized a local; the
             // constructor call spells its place directly.
@@ -44055,18 +44239,32 @@ namespace {
 std::optional<std::vector<CppMirCopyParameterFieldBinding>>
 cppMirCopyParameterFieldBindings(const MirProgram &program,
                                  const MirConstructorInstance &constructor) {
+  const MirClassInstance *owner = program.findClassInstance(constructor.owner);
+  if (owner == nullptr) {
+    return std::nullopt;
+  }
+
   // A transformed constructor can publish owned fields in body order. Keep
   // passive parameter reads in that same MIR schedule rather than extracting
   // them into a competing native initializer-list schedule. In particular,
   // plain enum reads carry ownership metadata just like class reads, but do
   // not need native copy construction. Class-valued copies retain their
-  // separate exact construction proof below.
-  const bool bodyOrderedOwner =
-      constructor.mayRaiseDefinedFailure &&
-      std::any_of(constructor.initializers.begin(),
-                  constructor.initializers.end(), [](const auto &initializer) {
-                    return initializer.ownedParameter.has_value();
-                  });
+  // separate exact construction proof below. The failure form can stage any
+  // owned move in body order and the ordinary form a drop-free passive one
+  // (cppMirOrdinaryBodyStagedParameterMoves), so both forms of a constructor
+  // share this schedule whichever route publishes its owned fields.
+  const bool bodyOrderedOwner = std::any_of(
+      constructor.initializers.begin(), constructor.initializers.end(),
+      [&](const MirConstructorInitializer &initializer) {
+        return initializer.ownedParameter.has_value() &&
+               (constructor.mayRaiseDefinedFailure ||
+                std::any_of(owner->declaredFields.begin(),
+                            owner->declaredFields.end(),
+                            [&](const MirClassFieldInfo &field) {
+                              return field.symbol == initializer.field &&
+                                     dropFreeParameterMoveField(program, field);
+                            }));
+      });
   const auto scalarParameterType = [](const SemanticType &type) {
     switch (type.kind) {
     case SemanticType::Int8:
@@ -44109,11 +44307,6 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
            cleanupFreeCopyableFixedArray(program, type) ||
            passiveBorrowedCopy || type.kind == SemanticType::Lambda;
   };
-
-  const MirClassInstance *owner = program.findClassInstance(constructor.owner);
-  if (owner == nullptr) {
-    return std::nullopt;
-  }
 
   std::vector<CppMirCopyParameterFieldBinding> bindings;
   for (std::size_t initializerIndex = 0;
@@ -47916,7 +48109,54 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
       // list then publishes the field exactly where MIR moves the formal, in
       // both constructor forms; whether ending the published field with the
       // caller's object is observation-free remains the failure-form proof's
-      // separate per-field question.
+      // separate per-field question. Without failure records nothing can
+      // abort before the move, but the native list still runs ahead of every
+      // earlier initializer the body stages. That is exact only while no
+      // other record names the formal: an earlier read, such as a text
+      // view's receiver or call argument, would address a parameter the list
+      // has already consumed. Its lexical shell Drop is the one exception.
+      const auto formalUntouched = [&] {
+        const auto namesFormal = [&](MirPlaceId id) {
+          const MirPlace *place = constructor.body.findPlace(id);
+          return place != nullptr && place->root == MirPlaceRootKind::Binding &&
+                 place->binding == source->binding;
+        };
+        const auto operandNamesFormal = [&](const MirOperand &operand) {
+          return operand.place != 0 && namesFormal(operand.place);
+        };
+        for (const MirBlock &block : constructor.body.blocks) {
+          for (const MirInstruction &instruction : block.instructions) {
+            if (instruction.id == move->id ||
+                (instruction.kind == MirInstructionKind::Drop &&
+                 instruction.destination == source->id &&
+                 !instruction.receiver && instruction.operands.empty())) {
+              continue;
+            }
+            if ((instruction.destination &&
+                 namesFormal(*instruction.destination)) ||
+                (instruction.successResultDestination &&
+                 namesFormal(*instruction.successResultDestination)) ||
+                (instruction.retainedOwnerPlace &&
+                 namesFormal(*instruction.retainedOwnerPlace)) ||
+                (instruction.receiver &&
+                 operandNamesFormal(*instruction.receiver)) ||
+                std::any_of(instruction.operands.begin(),
+                            instruction.operands.end(), operandNamesFormal)) {
+              return false;
+            }
+          }
+          const MirTerminator &terminator = block.terminator;
+          if ((terminator.value && operandNamesFormal(*terminator.value)) ||
+              std::any_of(terminator.targetArguments.begin(),
+                          terminator.targetArguments.end(),
+                          operandNamesFormal) ||
+              std::any_of(terminator.elseArguments.begin(),
+                          terminator.elseArguments.end(), operandNamesFormal)) {
+            return false;
+          }
+        }
+        return true;
+      };
       const auto prologueMove = [&] {
         const MirBlock *entry =
             constructor.body.findBlock(constructor.body.entry);
@@ -47944,9 +48184,11 @@ cppMirOwnedParameterFieldBindings(const MirProgram &program,
       };
       if (field->requiresActiveCleanup || !move->lifecycle.empty() ||
           !onlyRootRecordUses(constructor.body, movedValue->id) ||
-          (!constructor.body.failureRecords.empty() &&
-           !constructedFieldOwnedSiblingMove(program, constructor, move->id) &&
-           !prologueMove())) {
+          !(constructor.body.failureRecords.empty()
+                ? formalUntouched() || prologueMove()
+                : constructedFieldOwnedSiblingMove(program, constructor,
+                                                   move->id) ||
+                      prologueMove())) {
         return std::nullopt;
       }
     }
@@ -48954,9 +49196,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     // Owned-parameter fields are likewise emitted in the native
     // member-initializer list. Admission and spelling must share the exact
-    // move/drop proof so the body never consumes the parameter twice.
+    // move/drop proof so the body never consumes the parameter twice. A
+    // drop-free move that cannot be hoisted publishes in body order instead.
     if (!cppMirOwnedParameterFieldBindings(program_, *constructor) &&
-        !(failureForm && exactFailureBoundary)) {
+        !(failureForm ? exactFailureBoundary
+                      : cppMirOrdinaryBodyStagedParameterMoves(program_,
+                                                               *constructor))) {
       return false;
     }
     if (!cppMirCopyParameterFieldBindings(program_, *constructor)) {
