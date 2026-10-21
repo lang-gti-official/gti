@@ -151,14 +151,12 @@ enum class TokenKind : std::uint8_t {
   DOUBLE,
   BOOL,
   CHAR,
-  EXPECTED,
   NULLPTR_TYPE,
   VOID,
 
   // Special keywords.
   THIS,
   NULLPTR,
-  UNEXPECTED,
 
   END_OF_FILE,
 };
@@ -224,7 +222,7 @@ inline constexpr bool isKeywordToken(TokenKind kind) {
       kind != TokenKind::AND && kind != TokenKind::ALIGNOF &&
       kind != TokenKind::OR && kind != TokenKind::SIZEOF;
   const bool specialKeyword =
-      kind >= TokenKind::THIS && kind <= TokenKind::UNEXPECTED;
+      kind >= TokenKind::THIS && kind <= TokenKind::NULLPTR;
   return ordinaryKeyword || specialKeyword;
 }
 
@@ -585,8 +583,6 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "BOOL";
   case TokenKind::CHAR:
     return "CHAR";
-  case TokenKind::EXPECTED:
-    return "EXPECTED";
   case TokenKind::NULLPTR_TYPE:
     return "NULLPTR_TYPE";
   case TokenKind::VOID:
@@ -596,8 +592,6 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "THIS";
   case TokenKind::NULLPTR:
     return "NULLPTR";
-  case TokenKind::UNEXPECTED:
-    return "UNEXPECTED";
 
   case TokenKind::END_OF_FILE:
     return "END_OF_FILE";

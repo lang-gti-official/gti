@@ -604,8 +604,6 @@ bool isMirBlockParameterType(const SemanticType &type) {
   case SemanticType::FunctionItem:
   case SemanticType::NativeFunction:
   case SemanticType::Lambda:
-  case SemanticType::Expected:
-  case SemanticType::Unexpected:
     return false;
   }
   return false;
@@ -1028,18 +1026,6 @@ programConstantMatchesType(const ConstantValue &constant,
                            return programConstantMatchesType(
                                element, type.arguments.front(), program);
                          });
-    }
-    if (type.kind == SemanticType::Expected ||
-        type.kind == SemanticType::Unexpected) {
-      const auto validated = convertConstantToType(constant, type);
-      if (!validated || *validated.value != constant)
-        return false;
-      const auto &node = *aggregate->value;
-      if (node.elements.empty())
-        return true;
-      const bool error = node.kind == ConstantAggregateKind::ExpectedError;
-      return programConstantMatchesType(node.elements[0],
-                                        type.arguments[error ? 1 : 0], program);
     }
     if (type.kind == SemanticType::Enum &&
         aggregate->value->kind == ConstantAggregateKind::PayloadEnum) {
@@ -7309,8 +7295,7 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
   return true;
 }
 
-bool requiresMirFailureControlFlow(const MirInstruction &instruction,
-                                   MirFailureControlFlowPosition position) {
+bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   // A terminal allocation detector either completes this instruction or
   // aborts the process. It has no record handoff, cleanup successor or Invoke.
   if (!instruction.definedFailure.mayUnwind())
@@ -7405,8 +7390,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
        instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
        instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
        instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
-       instruction.intrinsic == IntrinsicKind::SharedOwnerBorrow ||
-       instruction.intrinsic == IntrinsicKind::ExpectedValue) &&
+       instruction.intrinsic == IntrinsicKind::SharedOwnerBorrow) &&
       !instruction.localFailureSites.empty() &&
       !instruction.definedFailure.localOrigins.empty();
   // A checked element write reinitializing an always-available trivially
@@ -7434,20 +7418,12 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
       !instruction.successResultDrop &&
       (instruction.definedFailure.propagation != FailurePropagationKind::None ||
        locallyFailingBorrowIntrinsic);
-  const bool fallibleBorrowCarrier =
-      instruction.info.type.kind == SemanticType::Expected &&
-      instruction.info.type.arguments.size() == 2 &&
-      instruction.info.type.arguments.front().kind == SemanticType::Reference &&
-      instruction.info.type.arguments.front().referenceAccess ==
-          AccessMode::ReadOnly &&
-      instruction.info.type.arguments.front().arguments.size() == 1;
   const bool transferredBorrowedCallResult =
       borrowedInvocation && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
       instruction.successResultDrop && instruction.result &&
       (instruction.info.type.kind == SemanticType::Class ||
-       instruction.info.type.kind == SemanticType::Enum ||
-       fallibleBorrowCarrier) &&
+       instruction.info.type.kind == SemanticType::Enum) &&
       instruction.info.category == ValueCategory::Value &&
       instruction.info.traits.movable &&
       instruction.info.traits.containsBorrowedState &&
@@ -7501,74 +7477,8 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   if (instruction.successResultDrop) {
     return true;
   }
-  // Expected<passive, E> crosses the transformed failure boundary through a
-  // value out-parameter. It therefore has no semantic result drop to arm:
-  // the callee publishes only on its successful Invoke edge, after which the
-  // value can feed either a direct return or another cleanup-free expression.
-  // An enum payload is the same passive value; a cleanup-owning payload enum
-  // would instead carry the result drop handled above. Nested result values
-  // need exactly the same success-only publication and
-  // failure routing. This is an IR control-flow requirement, not proof that a
-  // backend may copy or default-construct any particular representation.
-  // Expected<Class, E> uses the explicit placement-result contract below.
-  const auto passiveExpectedPayload = [](const auto &self,
-                                         const SemanticType &type) -> bool {
-    switch (type.kind) {
-    case SemanticType::StringView:
-    case SemanticType::RawPointer:
-      return true;
-    case SemanticType::Expected:
-      return type.arguments.size() == 2 && self(self, type.arguments.front()) &&
-             type.arguments.back() != SemanticType::Void &&
-             self(self, type.arguments.back());
-    case SemanticType::Enum:
-    case SemanticType::Void:
-    case SemanticType::Int8:
-    case SemanticType::Int16:
-    case SemanticType::Int32:
-    case SemanticType::Int64:
-    case SemanticType::UInt8:
-    case SemanticType::UInt16:
-    case SemanticType::UInt32:
-    case SemanticType::UInt64:
-    case SemanticType::Float:
-    case SemanticType::Double:
-    case SemanticType::Bool:
-    case SemanticType::Char:
-      return true;
-    default:
-      return false;
-    }
-  };
-  if (instruction.kind == MirInstructionKind::Call && instruction.result &&
-      instruction.info.type.kind == SemanticType::Expected &&
-      instruction.info.type.arguments.size() == 2 &&
-      passiveExpectedPayload(passiveExpectedPayload,
-                             instruction.info.type.arguments.front()) &&
-      instruction.info.traits.drop == DropKind::Lexical) {
-    return true;
-  }
-  // A typed thread join returns Expected<Result, thread_errc> while also
-  // carrying the joined worker's defined-failure channel. When Result is a
-  // class and the join is returned directly from the private wrapper, HIR has
-  // no temporary drop identity to arm: the backend's placement result owns
-  // the successful value. The Invoke is still mandatory so a worker failure
-  // reaches the wrapper's failure record instead of being mistaken for an
-  // ordinary Expected error.
-  if (position == MirFailureControlFlowPosition::FullExpressionRoot &&
-      instruction.kind == MirInstructionKind::Call && instruction.result &&
-      instruction.intrinsic == IntrinsicKind::ThreadJoin &&
-      instruction.definedFailure.propagation ==
-          FailurePropagationKind::TaskJoin &&
-      instruction.info.type.kind == SemanticType::Expected &&
-      instruction.info.type.arguments.size() == 2 &&
-      instruction.info.type.arguments.front().kind == SemanticType::Class &&
-      instruction.info.traits.drop == DropKind::Lexical) {
-    return true;
-  }
-  // A class-valued call (including an Expected with a class alternative) can
-  // lack a result-drop identity when it returns directly or produces a
-  // cleanup-free value for a later consumer. Failure
+  // A class-valued call can lack a result-drop identity when it returns
+  // directly or produces a cleanup-free value for a later consumer. Failure
   // still needs an Invoke in either position: no result exists until success,
   // and existing parameters/scopes must unwind before propagation. Storage
   // publication is independently owned by the result's consumer/obligation;
@@ -7581,14 +7491,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction,
   // The consumer still owns publication, exactly as for a class-valued call.
   if ((instruction.kind == MirInstructionKind::Call ||
        instruction.kind == MirInstructionKind::Construct) &&
-      instruction.result &&
-      (instruction.info.type.kind == SemanticType::Class ||
-       (instruction.kind == MirInstructionKind::Call &&
-        instruction.info.type.kind == SemanticType::Expected &&
-        instruction.info.type.arguments.size() == 2 &&
-        (instruction.info.type.arguments.front().kind == SemanticType::Class ||
-         instruction.info.type.arguments.back().kind ==
-             SemanticType::Class))) &&
+      instruction.result && instruction.info.type.kind == SemanticType::Class &&
       instruction.info.traits.drop == DropKind::Lexical) {
     return true;
   }
@@ -8394,38 +8297,6 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     const MirBlock *increment = body.findBlock(range.incrementBlock);
     const MirBlock *cleanup = body.findBlock(range.cleanupBlock);
     const MirBlock *exit = body.findBlock(range.exitBlock);
-    const MirValue *payloadExtraction =
-        body.findValue(range.expectedPayloadExtraction);
-    const MirInstruction *payloadProducer = nullptr;
-    const MirBlock *payloadDefinitionBlock = nullptr;
-    if (payloadExtraction != nullptr && payloadExtraction->definition != 0) {
-      payloadDefinitionBlock =
-          body.findBlock(payloadExtraction->definitionBlock);
-      for (const MirBlock &candidateBlock : body.blocks) {
-        const auto found = std::find_if(candidateBlock.instructions.begin(),
-                                        candidateBlock.instructions.end(),
-                                        [&](const MirInstruction &instruction) {
-                                          return instruction.id ==
-                                                 payloadExtraction->definition;
-                                        });
-        if (found != candidateBlock.instructions.end()) {
-          payloadProducer = &*found;
-          break;
-        }
-      }
-    }
-    const std::size_t payloadRoots =
-        payloadExtraction == nullptr
-            ? 0
-            : std::count_if(body.places.begin(), body.places.end(),
-                            [&](const MirPlace &place) {
-                              return place.root == MirPlaceRootKind::Loan &&
-                                     place.loan == range.rangeLoan &&
-                                     place.projections.empty() &&
-                                     place.type == range.rangeType &&
-                                     place.sourceValue ==
-                                         payloadExtraction->sourceValue;
-                            });
     if (range.id != index + 1 || range.hirStatement == 0 ||
         !sourceRanges.insert(range.hirStatement).second ||
         range.coreLoop == 0 || ownerPlace == nullptr || rangePlace == nullptr ||
@@ -8943,47 +8814,6 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "range owner cleanup targets a different place");
       }
-    }
-    const MirPlace *rangeLoanSource = body.findPlace(rangeLoan->source);
-    const bool exactExpectedPayloadProjection =
-        !range.expectedPayloadProjection
-            ? range.expectedPayloadExtraction == 0
-            : payloadExtraction != nullptr && payloadProducer != nullptr &&
-                  payloadProducer->kind == MirInstructionKind::Call &&
-                  payloadProducer->intrinsic == IntrinsicKind::ExpectedValue &&
-                  payloadProducer->borrowOrigin == BorrowOriginKind::Receiver &&
-                  payloadProducer->borrowAccess == AccessMode::ReadOnly &&
-                  payloadProducer->receiver &&
-                  payloadProducer->receiver->kind ==
-                      MirOperandKind::BorrowRead &&
-                  payloadProducer->receiver->place == rangeLoan->source &&
-                  payloadProducer->operands.empty() &&
-                  payloadProducer->result == range.expectedPayloadExtraction &&
-                  payloadProducer->loan == range.rangeLoan &&
-                  payloadProducer->localFailureSites.size() == 1 &&
-                  payloadProducer->definedFailure.localOrigins.size() == 1 &&
-                  payloadProducer->definedFailure.propagation ==
-                      FailurePropagationKind::None &&
-                  payloadDefinitionBlock != nullptr &&
-                  payloadDefinitionBlock->terminator.kind ==
-                      MirTerminatorKind::Invoke &&
-                  payloadDefinitionBlock->terminator.invokeInstruction ==
-                      payloadProducer->id &&
-                  rangeLoan->kind == MirLoanKind::CallResult &&
-                  rangeLoan->producedBy == payloadExtraction->sourceValue &&
-                  rangeLoanSource != nullptr &&
-                  rangeLoanSource->type.kind == SemanticType::Expected &&
-                  rangeLoanSource->type.arguments.size() == 2 &&
-                  rangeLoanSource->type.arguments.front() == range.rangeType &&
-                  payloadExtraction->info.type == range.rangeType &&
-                  payloadExtraction->info.category == ValueCategory::Place &&
-                  payloadRoots == 1 &&
-                  dominance->dominates(payloadExtraction->definitionBlock,
-                                       range.conditionEntryBlock);
-    if (!exactExpectedPayloadProjection) {
-      return failure(body, owner,
-                     "expected-payload range lost its checked extraction, "
-                     "rooted loan, or dominance proof");
     }
   }
   return {};
@@ -9692,13 +9522,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Aggregate:
     case MirOperation::Identity:
     case MirOperation::Convert:
-    case MirOperation::ExpectedHasValue:
     case MirOperation::Closure:
     case MirOperation::NativeCallback:
     case MirOperation::FunctionItem:
     case MirOperation::PayloadConstruct:
     case MirOperation::PayloadExtract:
-    case MirOperation::Unexpected:
     case MirOperation::AddressOf:
     case MirOperation::Positive:
     case MirOperation::Negate:
@@ -9728,8 +9556,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     switch (operation) {
     case MirOperation::Identity:
     case MirOperation::Convert:
-    case MirOperation::ExpectedHasValue:
-    case MirOperation::Unexpected:
     case MirOperation::Positive:
     case MirOperation::Negate:
     case MirOperation::LogicalNot:
@@ -9907,25 +9733,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (instruction.operation == MirOperation::Identity) {
       return instruction.operands.size() == 1 &&
              instruction.operands.front().type == resultType;
-    }
-    if (instruction.operation == MirOperation::ExpectedHasValue) {
-      if (instruction.operands.size() != 1 ||
-          resultType != SemanticType::Bool) {
-        return false;
-      }
-      const MirOperand &operand = instruction.operands.front();
-      if (operand.type.kind != SemanticType::Expected ||
-          operand.type.arguments.size() != 2) {
-        return false;
-      }
-      if (operand.kind == MirOperandKind::Value) {
-        return true;
-      }
-      if (operand.kind != MirOperandKind::BorrowRead) {
-        return false;
-      }
-      const MirPlace *place = body.findPlace(operand.place);
-      return place != nullptr && place->type == operand.type;
     }
     if (isUnaryOperation(instruction.operation)) {
       return instruction.operands.size() == 1;
@@ -10675,12 +10482,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->constructorKind != ConstructorKind::Ordinary &&
           !producer->constructorTarget && !producer->functionTarget &&
           !producer->lambdaTarget && producer->intrinsic == IntrinsicKind::None;
-      const bool expectedExtraction =
-          producer != nullptr && producer->kind == MirInstructionKind::Call &&
-          (producer->intrinsic == IntrinsicKind::ExpectedValue ||
-           producer->intrinsic == IntrinsicKind::ExpectedError) &&
-          !producer->functionTarget && !producer->lambdaTarget &&
-          !producer->constructorTarget;
       const bool joinedTemporary =
           producer != nullptr && place != nullptr &&
           place->root == MirPlaceRootKind::Temporary &&
@@ -10712,8 +10513,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           producer->info.category != ValueCategory::Value ||
           !sameCallInputTraits(producer->info.traits, input.info.traits) ||
           (!ordinaryConstruction && !ordinaryCall && !lambdaCall &&
-           !expectedExtraction && !specialConstruction && !generatedDefault &&
-           !joinedTemporary)) {
+           !specialConstruction && !generatedDefault && !joinedTemporary)) {
         return false;
       }
 
@@ -11754,26 +11554,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
   }
 
-  // A return carrier remains callee-owned until cleanup succeeds. Expected
-  // publication can consume either its success payload or its exact
-  // Unexpected<Error> wrapper; neither is the completed Expected yet.
+  // A return carrier remains callee-owned until cleanup succeeds.
   const auto isReturnCarrierType = [&](const SemanticType &type) {
-    const bool fallibleBorrowPayload =
-        body.returnType.kind == SemanticType::Expected &&
-        body.returnType.arguments.size() == 2 &&
-        body.returnType.arguments.front().kind == SemanticType::Reference &&
-        body.returnType.arguments.front().referenceAccess ==
-            AccessMode::ReadOnly &&
-        body.returnType.arguments.front().arguments.size() == 1 &&
-        type == body.returnType.arguments.front().arguments.front();
-    return type == body.returnType ||
-           (body.returnType.kind == SemanticType::Expected &&
-            body.returnType.arguments.size() == 2 &&
-            (type == body.returnType.arguments.front() ||
-             fallibleBorrowPayload ||
-             (type.kind == SemanticType::Unexpected &&
-              type.arguments.size() == 1 &&
-              type.arguments.front() == body.returnType.arguments.back())));
+    return type == body.returnType;
   };
   // Conditional and propagated owning values are materialized in a join
   // temporary, then transported by one exact Move SSA result. Their pending
@@ -11874,21 +11657,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         !dropType.aggregate.front().captureIndex && !dropType.classInstance &&
         !dropType.lambdaInstance && !dropType.uniquePointeeClass &&
         !dropType.polymorphicCleanup;
-    const bool alternativeRecipe =
-        ((dropType.type.kind == SemanticType::Expected &&
-          dropType.type.arguments.size() == 2) ||
-         (dropType.type.kind == SemanticType::Unexpected &&
-          dropType.type.arguments.size() == 1)) &&
-        dropType.aggregate.size() == dropType.type.arguments.size() &&
-        !dropType.classInstance && !dropType.lambdaInstance &&
-        !dropType.destructor && !dropType.fixedArray &&
-        !dropType.uniquePointeeClass && !dropType.polymorphicCleanup &&
-        std::equal(dropType.aggregate.begin(), dropType.aggregate.end(),
-                   dropType.type.arguments.begin(),
-                   [](const auto &child, const auto &type) {
-                     return child.type == type && child.uniqueOwnerField == 0 &&
-                            !child.uniqueOwnerBase && !child.captureIndex;
-                   });
     if (obligation.id != index + 1 ||
         obligation.constructionOrder != index + 1 || !validHirIdentity ||
         place == nullptr || place->type != obligation.dropType.type ||
@@ -11957,8 +11725,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         (obligation.dropType.polymorphicCleanup &&
          !obligation.dropType.uniquePointeeClass) ||
         (!obligation.dropType.aggregate.empty() &&
-         !obligation.dropType.uniquePointeeClass && !alternativeRecipe &&
-         !arrayRecipe && obligation.dropType.type.kind != SemanticType::Enum &&
+         !obligation.dropType.uniquePointeeClass && !arrayRecipe &&
+         obligation.dropType.type.kind != SemanticType::Enum &&
          !(obligation.dropType.type.kind == SemanticType::Lambda &&
            obligation.dropType.lambdaInstance &&
            !obligation.dropType.classInstance &&
@@ -12132,7 +11900,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               consuming =
                   instruction.operation == MirOperation::Aggregate ||
                   instruction.operation == MirOperation::PayloadConstruct ||
-                  instruction.operation == MirOperation::Unexpected ||
                   (instruction.operation == MirOperation::Closure &&
                    index < instruction.closureCaptureModes.size() &&
                    instruction.closureCaptureModes[index] ==
@@ -12658,26 +12425,6 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                        "instruction has an invalid shape or reference",
                        block.id, instruction.id);
       }
-      if (instruction.intrinsic == IntrinsicKind::ExpectedValue &&
-          instruction.receiver &&
-          instruction.receiver->type.kind == SemanticType::Expected &&
-          instruction.receiver->type.arguments.size() == 2 &&
-          instruction.receiver->type.arguments.front().kind ==
-              SemanticType::Reference) {
-        // A fallible reference stores an external address. Its extraction
-        // must preserve the carrier's actual owner, never its shell storage.
-        // Follow only explicit loan publication and copy/move transport.
-        const MirLoan *extracted =
-            instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
-        if (extracted == nullptr ||
-            !mir_detail::fallibleReferenceOwnerTransport(body, instruction,
-                                                         *extracted)) {
-          return failure(
-              body, owner,
-              "fallible reference extraction lost its carrier's external owner",
-              block.id, instruction.id);
-        }
-      }
       if (instruction.fullExpressionEnd != 0) {
         if (instruction.fullExpressionEnd > body.fullExpressions.size()) {
           return failure(body, owner,
@@ -13192,59 +12939,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         const bool parameterEntryReturnTransfer =
             mir_detail::referenceParameterReturnPublication(body, block,
                                                             instruction);
-        // expected<T&, E> publishes the same pointer-and-provenance handoff
-        // as a plain reference return, but its public result type is the
-        // fallible carrier rather than Reference itself. The source loan is
-        // retired at this exact boundary; the fresh parentless Return loan is
-        // the only capability that escapes the body.
-        const bool fallibleBorrowReturnTransfer = [&] {
-          if (body.returnType.kind != SemanticType::Expected ||
-              body.returnType.arguments.size() != 2 ||
-              body.returnType.arguments.front().kind !=
-                  SemanticType::Reference ||
-              body.returnType.arguments.front().referenceAccess !=
-                  AccessMode::ReadOnly ||
-              body.returnType.arguments.front().arguments.size() != 1 ||
-              produced.kind != MirLoanKind::Return || produced.entry ||
-              !produced.escapes || produced.parent != 0 ||
-              source.kind != MirOperandKind::Loan || source.place != 0 ||
-              source.value != 0 || instruction.hirValue == 0 ||
-              instruction.hirValue != produced.producedBy ||
-              instruction.info.type != source.type ||
-              (source.type !=
-                   body.returnType.arguments.front().arguments.front() &&
-               source.type != body.returnType)) {
-            return false;
-          }
-          const MirLoan *retained = body.findLoan(source.loan);
-          if (retained == nullptr || retained->id == produced.id ||
-              // Referent publication uses the stronger runtime-alias proof.
-              // A complete carrier already stores its exact runtime pointer.
-              (retained->kind == MirLoanKind::Parameter &&
-               source.type != body.returnType) ||
-              retained->escapes || retained->source != produced.source ||
-              (retained->access != produced.access &&
-               retained->access != AccessMode::Mutable)) {
-            return false;
-          }
-          const auto current =
-              std::find_if(block.instructions.begin(), block.instructions.end(),
-                           [&](const MirInstruction &candidate) {
-                             return candidate.id == instruction.id;
-                           });
-          if (current == block.instructions.end() ||
-              std::next(current) == block.instructions.end()) {
-            return false;
-          }
-          const MirInstruction &retire = *std::next(current);
-          return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
-                 *retire.loan == source.loan &&
-                 retire.hirValue == instruction.hirValue;
-        }();
         if ((produced.parent == 0 && source.kind == MirOperandKind::Loan &&
              !storedCarrierReturnTransfer && !callResultReturnTransfer &&
              !selectedReferenceReturnTransfer &&
-             !parameterEntryReturnTransfer && !fallibleBorrowReturnTransfer) ||
+             !parameterEntryReturnTransfer) ||
             (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
                                       source.loan != produced.parent))) {
           return failure(body, owner,
@@ -13438,12 +13136,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           block.instructions.empty() ||
           block.instructions.back().id != block.terminator.invokeInstruction ||
           !supportsMirFailureControlFlow(body.kind) ||
-          (!requiresMirFailureControlFlow(
-               *invocation->second,
-               MirFailureControlFlowPosition::FullExpressionRoot) &&
-           !requiresMirFailureControlFlow(
-               *invocation->second,
-               MirFailureControlFlowPosition::PreparedCallArgumentRoot))) {
+          !requiresMirFailureControlFlow(*invocation->second)) {
         return failure(body, owner,
                        "invoke terminator does not match its exact operation, "
                        "record, or successors",
@@ -14977,17 +14670,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   };
   for (const auto &[instructionId, instruction] : instructionsById) {
     const std::size_t invokeCount = invokedInstructions[instructionId];
-    const bool fullExpressionRoot = isFullExpressionRoot(*instruction);
     const std::optional<PreparedCallArgumentContext> argumentContext =
         preparedCallArgumentContext(*instruction);
-    const MirFailureControlFlowPosition position =
-        fullExpressionRoot ? MirFailureControlFlowPosition::FullExpressionRoot
-        : argumentContext.has_value()
-            ? MirFailureControlFlowPosition::PreparedCallArgumentRoot
-            : MirFailureControlFlowPosition::None;
-    const bool requiresEdge =
-        mirBodyRoutesFailureEdges(body) &&
-        requiresMirFailureControlFlow(*instruction, position);
+    const bool requiresEdge = mirBodyRoutesFailureEdges(body) &&
+                              requiresMirFailureControlFlow(*instruction);
     if ((requiresEdge && invokeCount != 1) ||
         (!requiresEdge && invokeCount != 0)) {
       return failure(body, owner,

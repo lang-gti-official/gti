@@ -693,8 +693,6 @@ public:
 
   void visitUnaryExpr(const Unary &expr) override;
 
-  void visitUnexpectedExpr(const Unexpected &expr) override;
-
   void visitVariableExpr(const Variable &expr) override;
 
 private:
@@ -2135,11 +2133,6 @@ private:
   [[nodiscard]] bool
   isDirectStoredReferenceType(const SemanticType &type) const;
 
-  [[nodiscard]] bool isFallibleBorrowType(const SemanticType &type) const;
-
-  [[nodiscard]] std::optional<SemanticType>
-  fallibleBorrowReferent(const SemanticType &type) const;
-
   [[nodiscard]] std::optional<SemanticType>
   storedReferenceReferent(const SemanticType &type) const;
 
@@ -3297,11 +3290,6 @@ private:
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
       std::vector<const ConstructorInfo *> *candidateProbe);
-
-  void analyzeExpectedMemberCall(const Call &call, const Get &member,
-                                 const SemanticType &expected,
-                                 const std::vector<SemanticType> &argumentTypes,
-                                 const Token &paren);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
@@ -5375,8 +5363,6 @@ private:
 
   [[nodiscard]] static bool isContextuallyBool(const SemanticType &type);
 
-  [[nodiscard]] static bool isExpectedVoid(const SemanticType &type);
-
   [[nodiscard]] SemanticType numericResult(SemanticType left,
                                            SemanticType right,
                                            const Expr *leftExpression,
@@ -5789,10 +5775,6 @@ private:
     std::unordered_set<std::string> currentDefaultParameterNames;
     bool analyzingCallCallee = false;
     const Call *immediateCallReceiver = nullptr;
-    // Non-null only while analysing the compiler-generated read-only range
-    // owner initializer. An exact expected.value() at this identity may
-    // publish the bounded receiver-rooted payload borrow.
-    const Expr *expectedPayloadRangeCandidate = nullptr;
     bool analyzingPackFoldElement = false;
     bool analyzingDependentConstantCondition = false;
     bool constantConditionGenericDependency = false;
@@ -6179,8 +6161,6 @@ private:
       requestSession.currentDefaultParameterNames;
   bool &analyzingCallCallee = requestSession.analyzingCallCallee;
   const Call *&immediateCallReceiver = requestSession.immediateCallReceiver;
-  const Expr *&expectedPayloadRangeCandidate =
-      requestSession.expectedPayloadRangeCandidate;
   bool &analyzingPackFoldElement = requestSession.analyzingPackFoldElement;
   bool &analyzingDependentConstantCondition =
       requestSession.analyzingDependentConstantCondition;

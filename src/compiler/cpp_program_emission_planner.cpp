@@ -107,7 +107,6 @@ public:
 
     const CppSupportPreambleFeatures supportFeatures{
         .standard = standard,
-        .expected = loweredProgramContainsTypeKind(SemanticType::Expected),
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
         .cThreads = mir.requiresCThreadRuntime(),
@@ -254,67 +253,6 @@ public:
     return contains(type.arguments) ||
            contains(type.lambdaEnclosingClassTypes) ||
            contains(type.lambdaEnclosingFunctionTypes);
-  }
-
-  [[nodiscard]] bool
-  loweredProgramContainsTypeKind(SemanticType::Kind kind) const {
-    if (std::any_of(loweredProgram.symbols().begin(),
-                    loweredProgram.symbols().end(),
-                    [&](const LoweredSymbol &symbol) {
-                      return loweredTypeContainsKind(symbol.type, kind);
-                    })) {
-      return true;
-    }
-    for (const LoweredDeclaration &row : loweredProgram.declarations()) {
-      if (const auto *alias =
-              std::get_if<LoweredTypeAliasDeclaration>(&row.payload);
-          alias != nullptr && loweredTypeContainsKind(alias->type, kind)) {
-        return true;
-      }
-      if (const auto *enumeration =
-              std::get_if<LoweredEnumDeclaration>(&row.payload)) {
-        if (loweredTypeContainsKind(enumeration->underlyingType, kind) ||
-            std::any_of(enumeration->enumerators.begin(),
-                        enumeration->enumerators.end(),
-                        [&](const LoweredEnumerator &enumerator) {
-                          return std::any_of(enumerator.payloadTypes.begin(),
-                                             enumerator.payloadTypes.end(),
-                                             [&](const SemanticType &type) {
-                                               return loweredTypeContainsKind(
-                                                   type, kind);
-                                             });
-                        })) {
-          return true;
-        }
-      }
-      if (const auto *function =
-              std::get_if<LoweredFunctionDeclaration>(&row.payload)) {
-        if (loweredTypeContainsKind(function->returnType, kind) ||
-            std::any_of(function->parameters.begin(),
-                        function->parameters.end(),
-                        [&](const LoweredParameter &parameter) {
-                          return loweredTypeContainsKind(parameter.type, kind);
-                        })) {
-          return true;
-        }
-      }
-      if (const auto *constructor =
-              std::get_if<LoweredConstructorDeclaration>(&row.payload);
-          constructor != nullptr &&
-          std::any_of(constructor->parameters.begin(),
-                      constructor->parameters.end(),
-                      [&](const LoweredParameter &parameter) {
-                        return loweredTypeContainsKind(parameter.type, kind);
-                      })) {
-        return true;
-      }
-      if (const auto *storage =
-              std::get_if<LoweredStorageDeclaration>(&row.payload);
-          storage != nullptr && loweredTypeContainsKind(storage->type, kind)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   [[nodiscard]] bool loweredProgramContainsRuntimeBinding() const {
@@ -4832,8 +4770,6 @@ public:
         }
         return;
       case SemanticType::Array:
-      case SemanticType::Expected:
-      case SemanticType::Unexpected:
         for (const SemanticType &argument : type.arguments) {
           self(self, argument, result);
         }
@@ -5260,9 +5196,7 @@ public:
           (type.kind != SemanticType::Class &&
            type.kind != SemanticType::UniqueOwner &&
            type.kind != SemanticType::RawPointer &&
-           type.kind != SemanticType::Reference &&
-           type.kind != SemanticType::Expected &&
-           type.kind != SemanticType::Unexpected))
+           type.kind != SemanticType::Reference))
         return 0;
       for (const SemanticType &argument : type.arguments)
         if (const HirLambdaId identity = self(self, argument))
@@ -6259,9 +6193,7 @@ public:
     const bool placementResult =
         instance.returnType.kind == SemanticType::Class ||
         instance.returnType.kind == SemanticType::Lambda ||
-        cppMirOwningArrayPlacementResult(mir, instance.returnType) ||
-        cppMirExpectedClassPlacementResult(mir, *generalEmissionMap,
-                                           instance.returnType);
+        cppMirOwningArrayPlacementResult(mir, instance.returnType);
     const MirFunctionInstance *root =
         cppMirVirtualFailureContractRoot(mir, instance);
     if (root == nullptr ||
@@ -6459,9 +6391,7 @@ public:
     const bool placementResult =
         instance.returnType.kind == SemanticType::Class ||
         instance.returnType.kind == SemanticType::Lambda ||
-        cppMirOwningArrayPlacementResult(mir, instance.returnType) ||
-        cppMirExpectedClassPlacementResult(mir, *generalEmissionMap,
-                                           instance.returnType);
+        cppMirOwningArrayPlacementResult(mir, instance.returnType);
     writeIndent();
     if (explicitSpecialization) {
       output << "template <> ";
@@ -9738,31 +9668,6 @@ public:
           *aggregate->value->exactType != *type) {
         throw std::logic_error(
             "aggregate constant differs from its exact semantic type");
-      }
-      if (type->kind == SemanticType::Expected ||
-          type->kind == SemanticType::Unexpected) {
-        const auto checked = convertConstantToType(constant, *type);
-        if (!checked || *checked.value != constant)
-          throw std::logic_error(
-              "result constant differs from its exact active alternative");
-        const auto &node = *aggregate->value;
-        const bool expected = type->kind == SemanticType::Expected;
-        const bool success =
-            node.kind == ConstantAggregateKind::ExpectedSuccess;
-        if (expected) {
-          emitSemanticType(*type);
-          output << '{';
-        }
-        if (!success)
-          output << "::gti_internal::backend::unexpected(";
-        if (!node.elements.empty())
-          emitConstant(node.elements[0],
-                       &type->arguments[expected && !success ? 1 : 0]);
-        if (!success)
-          output << ')';
-        if (expected)
-          output << '}';
-        return;
       }
       if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum) {
         const auto *enumeration = mir.findPayloadEnum(*type);
