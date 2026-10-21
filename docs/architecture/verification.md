@@ -26,6 +26,64 @@ branch rejected with `GTI-S2045`: a range-for's hidden reference binding has a
 retained loan, so its read was mistaken for a dependent carrier. A carrier
 must now be a binding of the class type itself.
 
+## Constructor copies after formal writes (0.453.5)
+
+`constructor_copy_after_formal_write_runtime` runs
+`constructor_copy_after_formal_write.gti`. User-defined constructors copy a
+formal into a field after an earlier initializer changed it: a `mut int32_t&`
+call that can fail and one that cannot, `+=`, `++`, a plain assignment, a
+lambda capturing `[mut &d]`, a field constructor writing through its reference
+parameter, a plain enum and a raw pointer changed through references, a
+generated-copy struct changed by a call, a `mut` method, a field borrow and a
+field assignment, a fixed-array element, and a generic `Shelf<T>` with a struct
+and an `int32_t`. A formal assigned and then moved, whose constructor cannot
+fail since 0.453.4, keeps the move after the assignment in the ordinary form. A
+copy taken before the write and the copy of an untouched formal stay native,
+and a write on one branch reaches the copy only on that path. A struct copied
+beside a moved string and a struct copied from a reference formal now build;
+both stopped with `GTI-B0001`. A field built from the formal after a write, a
+write inside a constructed field's own arguments and a base whose computed
+argument writes the formal check the routes that were already correct. A
+division by zero after the copies exits with status 70 and its diagnostic. Each
+result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The
+0.453.4 compiler stops the fixture with `GTI-B0001`; without the two newly
+supported classes it builds and prints the entry values (21 for 22, 11 for 17,
+61 for 66, 1010 for 1111, 111 for 121, 401 for 440, 112 for 145), while the
+already-correct lines match.
+
+In `cpp_mir_body_emitter_text`, `testCopiedFormalAfterEarlierWrite` checks
+that the copy proof keeps only copies no earlier write reaches, and that
+turning the write's `BorrowWrite` into `BorrowRead` makes the copy native
+again. Both forms of the scalar and the struct constructor must start the
+field empty and publish it after the call, the struct through a transient.
+Both forms must admit the body-ordered struct copy, and a drifted `Read` on
+its `Load` must fail closed, as `cpp_mir_body_emitter_preflight` already
+requires for the native copy. With the new copy check removed, the
+publication assertions fail.
+
+A differential `--emit-cpp` against main `b40ccce4`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1808 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Two programs
+changed. The new fixture went from `GTI-B0001` to success.
+`effectful_base_arguments.gti` copies `initial` into `input_after` after its
+base's computed arguments ran `++initial`. That copy read the prepared
+snapshot `__gti_prepared.parameter_0` in the member-initializer list; it now
+runs in body order from the restored formal and stores the same value, which
+`base_constructor_stage_runtime` checks. Every other program emits
+byte-identical C++, and pairs that fail with both compilers report identical
+diagnostics. The summed emission time was 2779.4 s before and 2789.1 s after.
+An earlier run against `b0a1f524` changed the same two programs. Locally,
+56 constructor, emitter and field CTest gates pass on the reconciled head,
+including `cpp_mir_body_emitter_corpus`. On `ubuntu-8`, with a GCC
+14-built compiler, the new runtime test, the three emitter suites,
+`mixed_constructor_parameter_runtime`,
+`moved_passive_constructor_field_runtime` and
+`generic_callable_transport_runtime` pass.
+
+A record-published closure copy is checked the same way, but a closure has no
+empty state, so such a copy after a write would have no route. No source
+reaches it: semantics rejects mutable access to a callable formal.
+
 ## Failure-free passive moves (0.453.4)
 
 `optimizer_foundation` adds `testPassiveMoveDefinedFailureEffects`. Virtual
