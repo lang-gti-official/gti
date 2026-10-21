@@ -319,20 +319,26 @@ namespace std {
 // Results are ordinary source classes in the global prelude vocabulary.
 #include <std/meta>
 
-namespace std::detail {
+namespace std {
+/// The failure value `unexpected(error)` returns. An `expected` with the
+/// same error type converts from it.
 class unexpected_value<E> {
   mut E payload;
 public:
   constexpr unexpected_value(E value) : payload(std::move(value)) {}
   constexpr E error() && { return std::move(this.payload); }
 };
+}
 
+namespace std::detail {
 enum expected_state<T, E> { value(T payload), error(E failure) };
 enum expected_void_state<E> { value, error(E failure) };
 
 // Source-level evidence used by and_then: the mapped result belongs to this
 // result family with the same error type. No compiler type-name recognition.
 struct expected_error_identity<E> {};
+/// An `and_then` mapper must return an `expected` with the same error type
+/// as the result it maps.
 concept expected_result<R, Error> { typename value_type; };
 
 // A void invocation publishes an empty success; a value invocation moves its
@@ -364,8 +370,8 @@ public:
 };
 }
 
-constexpr std::detail::unexpected_value<E> unexpected<E>(E value) {
-  return std::detail::unexpected_value<E>(std::move(value));
+constexpr std::unexpected_value<E> unexpected<E>(E value) {
+  return std::unexpected_value<E>(std::move(value));
 }
 
 class expected<T, E> {
@@ -373,13 +379,13 @@ class expected<T, E> {
 public:
   implicit constexpr expected(T value)
       : state(std::detail::expected_state<T, E>::value(std::move(value))) {}
-  implicit constexpr expected(mut std::detail::unexpected_value<E> failure)
+  implicit constexpr expected(mut std::unexpected_value<E> failure)
       : state(std::detail::expected_state<T, E>::error(std::move(failure).error())) {}
 
   constexpr void operator=(T value) mut {
     this.state = std::detail::expected_state<T, E>::value(std::move(value));
   }
-  constexpr void operator=(mut std::detail::unexpected_value<E> failure) mut {
+  constexpr void operator=(mut std::unexpected_value<E> failure) mut {
     this.state = std::detail::expected_state<T, E>::error(std::move(failure).error());
   }
 
@@ -482,10 +488,10 @@ class expected<void, E> {
   mut std::detail::expected_void_state<E> state;
 public:
   implicit constexpr expected() : state(std::detail::expected_void_state<E>::value) {}
-  implicit constexpr expected(mut std::detail::unexpected_value<E> failure)
+  implicit constexpr expected(mut std::unexpected_value<E> failure)
       : state(std::detail::expected_void_state<E>::error(std::move(failure).error())) {}
 
-  constexpr void operator=(mut std::detail::unexpected_value<E> failure) mut {
+  constexpr void operator=(mut std::unexpected_value<E> failure) mut {
     this.state = std::detail::expected_void_state<E>::error(std::move(failure).error());
   }
 
@@ -564,7 +570,7 @@ class expected<T&, E> {
 public:
   implicit expected(T& value)
       : state(std::detail::expected_state<T&, E>::value(value)) {}
-  implicit expected(mut std::detail::unexpected_value<E> failure)
+  implicit expected(mut std::unexpected_value<E> failure)
       : state(std::detail::expected_state<T&, E>::error(std::move(failure).error())) {}
 
   bool has_value() {
@@ -621,7 +627,7 @@ for <T, E> concept std::detail::expected_result<expected<T, E>, std::detail::exp
 
 for <T, E> concept std::tryable<expected<T, E>> {
   using value_type = T;
-  using residual_type = std::detail::unexpected_value<E>;
+  using residual_type = std::unexpected_value<E>;
   constexpr bool has_value(expected<T, E>& value) { return value.has_value(); }
   [[borrowed_from(value)]] constexpr T take_value(expected<T, E> value) {
     if constexpr (std::meta::type<T>().is_void()) {

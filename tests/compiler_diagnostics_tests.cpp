@@ -2925,6 +2925,51 @@ int main() {
          "known operand mismatches retain their diagnostic");
 }
 
+// An exact repeat reports once: a library instance that fails at several
+// internal sites for one request, or semantics checking one written type
+// twice, keeps one diagnostic with every related location.
+void testDuplicateDiagnosticsMerge() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto count = [](const lang::FrontendResult &result,
+                        std::string_view code) {
+    return std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                         [&](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == code;
+                         });
+  };
+  const auto mapper = lang::Frontend().analyze(
+      "duplicate-library-instance.gti", R"(
+expected<int32_t, int32_t> load() { return 1; }
+class Mapper { public: int32_t operator()(int32_t value) { return value; } };
+int main() {
+  auto result = load().transform(Mapper());
+  return 0;
+}
+)",
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  const auto reflected =
+      std::find_if(mapper.diagnostics.begin(), mapper.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2023";
+                   });
+  const auto libraryNotes =
+      reflected == mapper.diagnostics.end()
+          ? 0
+          : std::count_if(reflected->related.begin(), reflected->related.end(),
+                          [](const lang::RelatedDiagnostic &related) {
+                            return related.message ==
+                                   "Reported inside this library instance.";
+                          });
+  expect(!mapper.canGenerateCode() && count(mapper, "GTI-S2023") == 1 &&
+             libraryNotes > 1,
+         "one library request reports one diagnostic with each internal site");
+  const auto pack = lang::Frontend().analyze(
+      "duplicate-semantic.gti", "class Pack<Args...> {}; int main() { "
+                                "Pack<int[2]&> value{}; return 0; }");
+  expect(!pack.canGenerateCode() && count(pack, "GTI-S2017") == 1,
+         "a type checked twice reports its error once");
+}
+
 lang::FrontendResult analyzeDiagnosticFixture(
     std::string_view name,
     lang::RawPointerAuditMode audit = lang::RawPointerAuditMode::Off) {
@@ -3287,6 +3332,7 @@ constexpr NamedTest kTests[] = {
     {"testUnknownFunctionAttributeClassification",
      testUnknownFunctionAttributeClassification},
     {"testUnknownTypeCascadeSuppression", testUnknownTypeCascadeSuppression},
+    {"testDuplicateDiagnosticsMerge", testDuplicateDiagnosticsMerge},
     {"testRecoveryFindingDiagnostics", testRecoveryFindingDiagnostics},
     {"testGenericArgumentDiagnosticGuidance",
      testGenericArgumentDiagnosticGuidance},

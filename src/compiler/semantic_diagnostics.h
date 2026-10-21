@@ -12,6 +12,7 @@
 #include "gti/semantic_model.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -76,6 +77,8 @@ struct SemanticConstraintFailure {
   // A matching block exists, but a concrete reference result does not retain
   // the protocol's declaration-relative origin contract.
   std::optional<Token> conformanceBorrowOperation;
+  // The concept's own documentation, which states what satisfies it.
+  std::optional<std::string> conceptDocumentation;
 };
 
 class SemanticDiagnosticReporter {

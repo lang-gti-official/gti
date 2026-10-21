@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.453.0 — Clearer `expected` diagnostics
+
+- A diagnostic repeated exactly, with the same code, message and location,
+  now reports once. Library errors are the main case. A library instance that
+  failed at several internal sites for one call used to print the same error
+  for each site; it now prints one error, with each site as a note. Mapping
+  an `expected` through a callable class is an example.
+- A documented concept now explains its own unsatisfied requirements. When no
+  `for concept` block matches a type, the hint is the first paragraph of the
+  concept's `///` documentation, in place of the generic explanation of
+  blocks. For example, an `and_then` mapper that returns a different error
+  type now gets "An `and_then` mapper must return an `expected` with the same
+  error type as the result it maps."
+- `unexpected(error)` now returns the public `std::unexpected_value<E>`, so
+  diagnostics name that type instead of `std::detail::unexpected_value<E>`.
+
 ## 0.452.0 — Checked references to raw pointers
 
 - A checked reference may now name a raw-pointer slot. `T*&` and `const T*&`

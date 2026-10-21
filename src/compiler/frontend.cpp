@@ -958,7 +958,31 @@ void Frontend::appendParserDiagnostics(
 template <typename DiagnosticType>
 void Frontend::append(std::vector<Diagnostic> &destination,
                       const std::vector<DiagnosticType> &source) {
-  destination.insert(destination.end(), source.begin(), source.end());
+  for (const DiagnosticType &item : source) {
+    Diagnostic diagnostic = item;
+    // An exact repeat reports once, as when one library instance fails at
+    // several internal sites for the same request; it keeps every location.
+    const auto same =
+        std::find_if(destination.begin(), destination.end(),
+                     [&](const Diagnostic &existing) {
+                       return existing.primary == diagnostic.primary &&
+                              existing.code == diagnostic.code &&
+                              existing.severity == diagnostic.severity &&
+                              existing.message == diagnostic.message;
+                     });
+    if (same == destination.end()) {
+      destination.push_back(std::move(diagnostic));
+      continue;
+    }
+    for (RelatedDiagnostic &related : diagnostic.related) {
+      if (std::none_of(same->related.begin(), same->related.end(),
+                       [&](const RelatedDiagnostic &existing) {
+                         return existing.span == related.span &&
+                                existing.message == related.message;
+                       }))
+        same->related.push_back(std::move(related));
+    }
+  }
 }
 
 } // namespace lang

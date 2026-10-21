@@ -1091,7 +1091,8 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
       .leafApplication = requirement.syntax,
       .applicationArgumentIndex = 0,
       .missingConformance = true,
-      .conformanceArguments = requirement.arguments};
+      .conformanceArguments = requirement.arguments,
+      .conceptDocumentation = conceptInfo.declaration->documentationMarkdown()};
   if (requirement.arguments.size() != conceptInfo.parameterIds.size()) {
     return failure;
   }
