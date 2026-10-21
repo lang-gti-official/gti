@@ -15,6 +15,18 @@ shared model instead of building feature-specific semantic systems.
 
 ## Near-Term Priorities
 
+### Declaration and statement snippets — implemented
+
+Compiler-owned completion templates now cover class/struct skeletons, generic
+classes, interfaces, scoped enums, namespaces, aliases, functions, owner-named
+constructors/destructors, read-only/mutable methods, fields and common statements.
+The parser owns their placement context, and normal semantic completion remains
+the authority for symbols. LSP-capable snippet clients receive linked placeholders
+and tab stops; clients without that capability retain plain symbol completion.
+The focused compiler and protocol gates compile expanded catalog templates and
+check recovery, cache reuse, UTF-16 edits and lifecycle behavior. There is no new
+language feature or project index. See the canonical LSP architecture contract.
+
 ### General missing-include actions — implemented
 
 Project, direct-dependency and standard-library declarations now share compiler

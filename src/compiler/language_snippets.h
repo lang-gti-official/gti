@@ -2,6 +2,8 @@
 
 #include "gti/language_queries.h"
 
+#include <string_view>
+
 namespace lang {
 
 // Static syntax templates selected exclusively from parser-owned boundaries.

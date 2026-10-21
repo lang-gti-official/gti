@@ -3528,6 +3528,7 @@ private:
                 {.entryPath = request.entryPath,
                  .source = request.source,
                  .byteOffset = request.byteOffset,
+                 .includeSnippets = request.snippetSupport,
                  .target = project.configuration.target(),
                  .configurationFlags =
                      project.configuration.configurationFlags(),

@@ -1,5 +1,19 @@
 # Compiler Verification
 
+## Editor code snippets
+
+`code_snippets` checks parser-owned declaration/member/statement boundaries,
+complete keyword triggers, nested owner names, prefix filtering, whole-word
+replacement, excluded expressions/trivia/literals/directives/inactive code, and
+parsed-cache retention of completion placement. `lsp_code_snippets` checks real
+JSON-RPC capability negotiation, snippet kind/format and linked placeholders,
+UTF-16 edits, dirty incomplete source, close/reopen and the non-snippet client's
+ordinary function-name fallback. It expands every catalog template in its
+applicable contexts and compiles the resulting programs with the optimized GTI
+compiler, so examples in the completion menu cannot silently drift into C++
+syntax. The full `lsp_protocol`, project/configuration, cache and frontend gates
+remain regression coverage for the shared completion and lexical paths.
+
 ## Text views moved after initializer work (0.453.3)
 
 `moved_passive_constructor_field_runtime` now also runs a generic `Viewed<F>`

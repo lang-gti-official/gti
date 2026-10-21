@@ -79,13 +79,13 @@ std::vector<Token> Lexer::scanForCompletion(std::string sourceText,
   for (Token &token : result) {
     const std::size_t end = token.position + token.lexeme.size();
     if (token.lexeme.empty() || !isAlpha(token.lexeme.front()) ||
-        byteOffset < token.position ||
-        byteOffset > end) {
+        byteOffset < token.position || byteOffset > end) {
       continue;
     }
     token.lexeme = source.substr(token.position, byteOffset - token.position);
     // Keyword-prefix completion is editor syntax, not an identifier admitted
-    // to ordinary parsing. This also makes a complete `class`/`if` trigger work.
+    // to ordinary parsing. This also makes a complete `class`/`if` trigger
+    // work.
     token.kind = TokenKind::IDENTIFIER;
     token.completion = true;
     return result;

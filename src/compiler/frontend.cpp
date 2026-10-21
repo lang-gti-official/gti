@@ -426,12 +426,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
         if (options.cache) {
-          options.cache->storeParsed(key, estimatedInputBytes,
-                                     {.declarations = unitDeclarations,
-                                      .diagnostics = parser.errors(),
-                                      .hadError = parser.hadError(),
-                                      .completionContext =
-                                          parser.completionContext()});
+          options.cache->storeParsed(
+              key, estimatedInputBytes,
+              {.declarations = unitDeclarations,
+               .diagnostics = parser.errors(),
+               .hadError = parser.hadError(),
+               .completionContext = parser.completionContext()});
         }
       }
       unit->declarationCount = unitDeclarations.size();
