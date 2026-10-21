@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.453.3 — Moving plain values no longer makes code failure-capable
+## 0.453.4 — Moving plain values no longer makes code failure-capable
 
 - Moving a plain value, such as `int32_t y = std::move(x);` or a constructor
   initializer `tag(std::move(tag))`, no longer makes the enclosing function
@@ -26,6 +26,26 @@ for what minor and patch releases mean.
   one field and then moves the same parameter into a later field, as in
   `Copied(int32_t tag) : first(tag), second(std::move(tag)) {}`. The build
   failed in the native compiler with "use of undeclared identifier".
+
+## 0.453.3 — Constructors that move a text view after other initializers
+
+- Fix the internal compiler error `GTI-B0001` ("backend failed while
+  generating a representation") when a constructor moves a `std::string_view`
+  or `c_string` parameter into a field after another member initializer, as in
+  `shelf(std::string_view name) : v(std::vector<int32_t>()),
+  name(std::move(name)) {}`. The earlier initializer could build a field that
+  can fail or compute a checked value, and the constructor body could fail
+  after the move. Generic classes such as `Shelf<T>` with
+  `T = std::string_view` were affected too, as was a function name moved into
+  a field of a generic class this way. Copying the parameter already worked.
+- Fix the same constructors when an earlier initializer reads the view, as in
+  `Sized(std::string_view name) : length(name.size()), name(std::move(name))
+  {}`. The generated C++ failed to compile ("backend failed while compiling
+  and linking the executable").
+- Moving a class that holds a reference field, such as
+  `class Cursor { int32_t& current; ... }`, into a field after an initializer
+  that can fail is still rejected with `GTI-B0001`, as copying or constructing
+  one there is. So is moving a lambda there.
 
 ## 0.453.2 — Class assertions with reflected constants
 
