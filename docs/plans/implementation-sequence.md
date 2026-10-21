@@ -9216,7 +9216,7 @@ follow-ups:
   access.
 - Diagnostics: 0.453.0 merges repeated reports, adds the concept
   `[[unsatisfied("...")]]` explanation, and names `std::unexpected_value`.
-  Done in 0.453.5, each reported at the program's own code: a reference
+  Done in 0.453.6, each reported at the program's own code: a reference
   mapper result is one `GTI-S2022` naming the consuming member's result, a
   callable-class mapper is one `GTI-S2023`, each profile's class assertion
   rejects a `void` error type as the instance's only error (`GTI-S2079`), a
