@@ -34,7 +34,23 @@ With the entry-loan witness disabled, the derived-loan and formal forgeries
 fail, as does the 0.453.1 borrowed-state forgery. The stored-field forgery is
 also refused by the stored-reference pairing.
 
-DIFFERENTIAL_PLACEHOLDER
+A differential `--emit-cpp` against main `b0a1f524` ran on `ubuntu-8` with
+GCC 15.2 compilers and one `GTI_STDLIB_PATH` for both. It covered the 1,806
+programs in `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3.
+2,870 runs emit byte-identical C++, and the 740 runs that fail with both
+compilers report identical diagnostics. Only the new fixture changes status,
+from `GTI-B0001` to success, at both levels. The summed emission time was
+3,727 s before and 3,744 s after. Before the reconcile below, the 11 focused
+tests of the verify selection also passed on `ubuntu-6` with GCC 15.2. Current
+main does not build with GCC 15.2,
+because a `-Wdangling-pointer` false positive in
+`semantic_call_resolution.cpp` is treated as an error, so both Linux builds
+added `-Wno-dangling-pointer`. After reconciling with main `33220490`, which
+retires the built-in `expected` path, the differential was repeated on macOS
+against that main. It gave the same counts, with no text or diagnostic changes
+and the same two fixture status changes, and the summed emission time was
+2,595.0 s before and 2,596.9 s after. The 11 focused tests also passed on the
+reconciled head.
 
 Some shapes stay outside the route and still stop with `GTI-B0001`:
 - a class with a reference field (a user-defined borrowed carrier) moved,
