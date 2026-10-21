@@ -619,6 +619,11 @@ int main() { auto wrapped = dangling(); if (!wrapped) { return 1; }
   unsafe { return std::assume_ref(wrapped.value(), wrapped); } })",
                              R"(
 #include <std/memory>
+expected<int, const int*> dangling() { int dead = 7; return unexpected(&dead); }
+int main() { auto wrapped = dangling(); if (wrapped) { return 1; }
+  unsafe { return *wrapped.error(); } })",
+                             R"(
+#include <std/memory>
 struct Address { const int* pointer = nullptr; };
 expected<Address, int> dangling() { int dead = 7; Address result{.pointer = &dead}; return result; }
 int main() { auto wrapped = dangling(); if (!wrapped) { return 1; }
@@ -650,6 +655,11 @@ int main() { int live = 7; expected<const int*, int> wrapped = &live;
   unsafe { return std::assume_ref(wrapped.value(), live); } })",
                              R"(
 #include <std/memory>
+expected<int, const int*> address_of(int& owner) { return unexpected(&owner); }
+int main() { int live = 7; auto wrapped = address_of(live); if (wrapped) { return 1; }
+  unsafe { return std::assume_ref(wrapped.error(), live); } })",
+                             R"(
+#include <std/memory>
 enum class Event { address(const int* value), empty };
 Event address_of(int& owner) { return Event::address(&owner); }
 int main() { int live = 7; auto event = address_of(live); switch (event) {
@@ -672,29 +682,6 @@ int main() { auto wrapped = dangling(); auto copy = wrapped;
     expect(result.canGenerateCode(),
            "tagged raw observers retain the actual owner and inert transport");
   }
-}
-
-// The source result class has no raw-pointer error profile yet: GTI has no
-// checked reference to a raw pointer, so error() cannot observe one. The
-// instance's own rejection is reported at the requesting call.
-void rawPointerErrorProfile() {
-  const auto result = analyze(R"(
-#include <std/memory>
-expected<int, const int*> address_of(int& owner) { return unexpected(&owner); }
-int main() { int live = 7; auto wrapped = address_of(live); if (wrapped) { return 1; }
-  unsafe { return std::assume_ref(wrapped.error(), live); } })",
-                              lang::RawPointerAuditMode::Warn);
-  expect(!result.canGenerateCode() &&
-             std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                         [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2056" &&
-                                  !diagnostic.related.empty();
-                         }) &&
-             std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
-                          [](const auto &diagnostic) {
-                            return diagnostic.code.starts_with("GTI-B");
-                          }),
-         "a raw-pointer error alternative is rejected in semantics");
 }
 
 void sourceRawWriteControlFlow() {
@@ -1140,7 +1127,6 @@ int main() {
   staticFieldRawWrites();
   sourceRawWriteControlFlow();
   taggedRawOrigins();
-  rawPointerErrorProfile();
   repeatedSemanticRequest();
   producedResults();
   const auto publicBridge = analyze(R"(

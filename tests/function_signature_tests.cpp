@@ -903,8 +903,9 @@ void invalidClassTypePacks() {
        "GTI-S2093"},
       {"class Pack<Args...> {}; int main() { Pack<void&> value{}; return 0; }",
        "GTI-S2017"},
-      {"class Pack<Args...> {}; int main() { Pack<int*&> value{}; return 0; }",
-       "GTI-S2056"},
+      {"class Pack<Args...> {}; int main() { Pack<int[2]&> value{}; return "
+       "0; }",
+       "GTI-S2017"},
       {"class Box<T> { T field{}; }; int main() { Box<int&> value{}; return 0; "
        "}",
        "GTI-S2045"},

@@ -955,6 +955,10 @@ add_test(NAME readonly_range_over_mutable_result_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/readonly_range_over_mutable_result.gti" --ownership-checks)
 set_tests_properties(readonly_range_over_mutable_result_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME raw_pointer_slot_references_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/raw_pointer_slot_references.gti" --ownership-checks)
+set_tests_properties(raw_pointer_slot_references_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME use_based_accessor_selection_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/use_based_accessor_selection.gti" --ownership-checks)

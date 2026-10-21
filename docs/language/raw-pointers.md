@@ -90,11 +90,14 @@ it does for every other GTI value:
 pointer layer, `T* const*` means a pointer to a read-only pointer slot, whereas
 `const T**` means a writable slot holding a pointer to read-only `T`.
 GTI has not introduced general C++-style `const` values or trailing
-`T* const` binding declarators. An ordinary GTI raw-pointer variable or field
-must have an explicit initializer. Native `[[c_abi]]` record fields instead
-follow their passive representation contract and cannot declare GTI field
-initializers.
-Use `nullptr` when no address is available yet.
+`T* const` binding declarators. An ordinary GTI raw-pointer variable, or a
+field whose declared type is a raw pointer, must have an explicit initializer.
+Native `[[c_abi]]` record fields instead follow their passive representation
+contract and cannot declare GTI field initializers.
+Use `nullptr` when no address is available yet. A generic field whose type
+parameter becomes a raw pointer in an instance, such as `mut E payload;` with
+`E = const int32_t*`, needs no declaration initializer: like every field, each
+constructor must initialize it.
 
 Nested pointers compose in locals, parameters, fields, aliases, generic
 arguments and unannotated returns. Taking the address of a mutable `T*`
@@ -105,9 +108,31 @@ pointer slot itself. Adding outer qualification requires an exact inner type:
 `T**` can become `T* const*`, but never implicitly `const T**`.
 Example 124 demonstrates real C writeback and GTI forwarding.
 
-Checked references to raw pointers, anonymous/general function-pointer
-declarators, pointer-to-array types, and implicit array-to-pointer decay remain
-rejected. Fixed arrays may contain nested pointer values; address individual
+A checked reference may also name a pointer slot. `T*&` and `const T*&` read
+the stored address; `mut T*&` and `mut const T*&` may also reseat it:
+
+```gti
+void point(mut const int32_t*& slot, int32_t& target) { slot = &target; }
+```
+
+The reference is an ordinary checked borrow of the slot, not of the pointee,
+so reading or reseating through it is safe while every dereference, index or
+member access through the stored address remains lexical `unsafe`. Generic
+code instantiates the same way: `*owner` of a `std::unique_ptr<int32_t*>`
+and `error()` of an `expected<T, const U*>` return a checked reference to the
+stored pointer. Raw-address facts follow the slot, so an address written
+through a mutable reference parameter reaches the caller's pointer, and the
+audit reports a callee that stores the address of its own local.
+
+Such a reference names a pointer slot that GTI represents: a local, parameter,
+ordinary field, payload or generic storage. An element of a fixed pointer
+array, including the element of a `for (auto& p : pointers)` loop, and a field
+of a `[[c_abi]]` record or union hold a native pointer object instead, so a
+reference to one is rejected (`GTI-S2056`). Copy the pointer, as
+`for (auto p : pointers)` does, or take the slot's address.
+
+Anonymous/general function-pointer declarators, pointer-to-array types, and
+implicit array-to-pointer decay remain rejected. Fixed arrays may contain nested pointer values; address individual
 elements explicitly. Recursive pointer syntax shares the parser's existing
 structural resource budget rather than a special two-level language limit.
 

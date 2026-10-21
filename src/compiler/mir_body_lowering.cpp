@@ -4113,13 +4113,27 @@ private:
                         .sourceValue = value.id});
   }
 
+  // The value an already emitted operand reads. A call's reference result is
+  // read through its call-result loan, so the operand is the loaded referent
+  // rather than the call's own result value.
+  [[nodiscard]] MirValueId emittedOperandValue(HirValueId id) {
+    if (const auto found = materializedValues.find(id);
+        found != materializedValues.end())
+      return found->second;
+    return mirValueFor(id);
+  }
+
+  [[nodiscard]] MirValueId operandValue(HirValueId id) {
+    (void)valueOperand(id);
+    return emittedOperandValue(id);
+  }
+
   [[nodiscard]] MirPlaceId rawPointerPlace(HirValueId pointer,
                                            const HirValue &value,
                                            MirProjectionKind projection,
                                            MirValueId index = 0) {
-    (void)valueOperand(pointer);
     MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Value,
-                                    .value = mirValueFor(pointer),
+                                    .value = operandValue(pointer),
                                     .type = value.info.type,
                                     .access = value.info.access,
                                     .traits = value.info.traits,
@@ -4241,16 +4255,15 @@ private:
       } else if (value->operands.size() >= 2 &&
                  value->unsafeOperation == UnsafeOperationKind::RawIndex) {
         (void)valueOperand(value->operands[0]);
-        (void)valueOperand(value->operands[1]);
+        const MirValueId index = operandValue(value->operands[1]);
         place = rawPointerPlace(value->operands[0], *value,
-                                MirProjectionKind::RawIndex,
-                                mirValueFor(value->operands[1]));
+                                MirProjectionKind::RawIndex, index);
       } else if (value->operands.size() >= 2) {
         place = clonePlace(placeForValue(value->operands[0]), *value);
         if (place != 0) {
           output.places[place - 1].projections.push_back(
               {.kind = MirProjectionKind::Index,
-               .index = mirValueFor(value->operands[1])});
+               .index = emittedOperandValue(value->operands[1])});
         }
       }
       break;
@@ -4388,10 +4401,9 @@ private:
         MirPlaceId place = 0;
         if (value.unsafeOperation == UnsafeOperationKind::RawIndex) {
           (void)valueOperand(value.operands[0]);
-          (void)valueOperand(value.operands[1]);
+          const MirValueId index = operandValue(value.operands[1]);
           place = rawPointerPlace(value.operands[0], value,
-                                  MirProjectionKind::RawIndex,
-                                  mirValueFor(value.operands[1]));
+                                  MirProjectionKind::RawIndex, index);
         } else {
           place = clonePlace(placeForValue(value.operands[0]), value);
         }
@@ -4401,7 +4413,7 @@ private:
           if (value.unsafeOperation != UnsafeOperationKind::RawIndex) {
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Index,
-                 .index = mirValueFor(value.operands[1])});
+                 .index = emittedOperandValue(value.operands[1])});
           }
         }
         return place;
@@ -5228,14 +5240,14 @@ private:
         valid = false;
         return {};
       }
-      (void)valueOperand(pointerId);
+      const MirValueId pointerValue = operandValue(pointerId);
       if (terminated()) {
         return {};
       }
       const SemanticType pointee = pointer->info.type.arguments.front();
       const AccessMode pointeeAccess = pointer->info.type.pointerAccess;
       const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Value,
-                                            .value = mirValueFor(pointerId),
+                                            .value = pointerValue,
                                             .type = pointee,
                                             .access = pointeeAccess,
                                             .traits = semanticTraits(pointee),
