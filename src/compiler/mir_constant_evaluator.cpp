@@ -240,14 +240,6 @@ private:
                          [&](const auto &element) {
                            return storageType(element, depth + 1);
                          });
-    if (type.kind == SemanticType::Expected)
-      return type.arguments.size() == 2 &&
-             (type.arguments[0] == SemanticType::Void ||
-              storageType(type.arguments[0], depth + 1)) &&
-             storageType(type.arguments[1], depth + 1);
-    if (type.kind == SemanticType::Unexpected)
-      return type.arguments.size() == 1 &&
-             storageType(type.arguments[0], depth + 1);
     if (type.kind == SemanticType::Array)
       return type.arguments.size() == 1 && type.arrayLengthParameterId == 0 &&
              storageType(type.arguments[0], depth + 1);
@@ -748,15 +740,6 @@ private:
         if (!valid)
           return valid;
       }
-    } else if (type.kind == SemanticType::Expected ||
-               type.kind == SemanticType::Unexpected) {
-      if (!aggregate->value->elements.empty()) {
-        const bool error =
-            aggregate->value->kind == ConstantAggregateKind::ExpectedError;
-        const auto payload = exactValue(aggregate->value->elements[0],
-                                        type.arguments[error ? 1 : 0]);
-        return payload ? converted : payload;
-      }
     } else if (const auto *instance = record(type)) {
       if (aggregate->value->fields.size() != instance->declaredFields.size())
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -817,9 +800,6 @@ private:
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate || !aggregate->value ||
         (aggregate->value->kind != ConstantAggregateKind::Array &&
-         aggregate->value->kind != ConstantAggregateKind::ExpectedSuccess &&
-         aggregate->value->kind != ConstantAggregateKind::ExpectedError &&
-         aggregate->value->kind != ConstantAggregateKind::Unexpected &&
          aggregate->value->kind != ConstantAggregateKind::PayloadEnum))
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
@@ -964,12 +944,6 @@ private:
       return arrayValue(type, {});
     if (type.kind == SemanticType::Enum)
       return enumValue(type, {});
-    if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
-      if (type.arguments[0] == SemanticType::Void)
-        return makeConstantResult(type, true);
-      auto payload = defaultValue(type.arguments[0]);
-      return payload ? makeConstantResult(type, true, payload.value) : payload;
-    }
     if (const auto domain = constantIntegerDomain(type))
       return {.value = makeConstantInteger({}, *domain)};
     if (const auto format = semanticFloatFormat(type))
@@ -1089,15 +1063,6 @@ private:
     if (instruction.operation == MirOperation::Aggregate &&
         type.kind == SemanticType::Array)
       return arrayValue(type, values);
-    if (instruction.operation == MirOperation::Aggregate &&
-        type.kind == SemanticType::Expected && values.empty())
-      return defaultValue(type);
-    if (instruction.operation == MirOperation::Unexpected && values.size() == 1)
-      return makeConstantResult(type, false, values[0]);
-    if (instruction.operation == MirOperation::ExpectedHasValue &&
-        values.size() == 1) {
-      return constantResultHasValue(values[0]);
-    }
     if (instruction.operation == MirOperation::Literal && instruction.literal) {
       return evaluateConstantLiteral(*instruction.literal,
                                      constantIntegerDomain(type));
@@ -1194,32 +1159,6 @@ private:
           return result;
       }
       return {};
-    }
-    if (recipe.type.kind == SemanticType::Expected ||
-        recipe.type.kind == SemanticType::Unexpected) {
-      // State inspection does not read a payload already moved through an
-      // extraction. Its recursive cleanup checks the retired payload path.
-      const auto &backing = storage(location);
-      const auto value =
-          backing && location.epoch == epoch(location)
-              ? project(*backing, location.path, *location.type, 0)
-              : ConstantEvaluation{};
-      if (!value)
-        return fail(caller, value.failure);
-      const auto *node = std::get_if<ConstantAggregateValue>(&*value.value);
-      if (!node || !node->value)
-        return fail(caller, ConstantEvaluationFailure::InvalidOperands);
-      const std::size_t alternative =
-          node->value->kind == ConstantAggregateKind::ExpectedError ? 1 : 0;
-      if (alternative >= recipe.aggregate.size())
-        return fail(caller, ConstantEvaluationFailure::InvalidOperands);
-      if (!recipe.aggregate[alternative].requiresActiveCleanup)
-        return {};
-      location.path.push_back(
-          {.kind = MirProjectionKind::Index, .constantIndex = 0});
-      location.type = &recipe.aggregate[alternative].type;
-      return destroy(recipe.aggregate[alternative], std::move(location), caller,
-                     depth + 1);
     }
     if (recipe.type.kind == SemanticType::Enum) {
       const auto &backing = storage(location);
@@ -1737,48 +1676,6 @@ private:
         if (!r)
           return fail(frame, r.failure);
         voidResult = true;
-      } else if (instruction.receiver &&
-                 (instruction.intrinsic == IntrinsicKind::ExpectedValue ||
-                  instruction.intrinsic == IntrinsicKind::ExpectedError ||
-                  instruction.intrinsic == IntrinsicKind::ExpectedValueOr)) {
-        const auto result = operand(frame, *instruction.receiver);
-        if (!result)
-          return fail(frame, result.failure);
-        const auto state = constantResultHasValue(*result.value);
-        if (!state)
-          return fail(frame, state.failure);
-        const bool success = std::get<bool>(*state.value);
-        if (instruction.intrinsic == IntrinsicKind::ExpectedValueOr) {
-          if (arguments.size() != 1)
-            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
-          evaluated = success ? constantResultPayload(*result.value, true)
-                              : convertConstantToType(arguments[0],
-                                                      instruction.info.type);
-        } else if (!arguments.empty() ||
-                   success != (instruction.intrinsic ==
-                               IntrinsicKind::ExpectedValue)) {
-          return fail(frame, ConstantEvaluationFailure::InvalidOperands,
-                      "Constant evaluation cannot extract the inactive result "
-                      "alternative.");
-        } else if (instruction.info.type == SemanticType::Void) {
-          voidResult = true;
-        } else {
-          evaluated = constantResultPayload(*result.value, success);
-          if (evaluated &&
-              (instruction.loan ||
-               instruction.info.category == ValueCategory::Place ||
-               instruction.info.type.kind == SemanticType::Reference)) {
-            Location location;
-            const auto located =
-                locateOperand(frame, *instruction.receiver, location);
-            if (located.failure != ConstantEvaluationFailure::None)
-              return fail(frame, located.failure);
-            location.path.push_back(
-                {.kind = MirProjectionKind::Index, .constantIndex = 0});
-            location.type = &observedType(instruction.info.type);
-            reference = std::move(location);
-          }
-        }
       } else if (const auto arithmetic =
                      integerArithmeticIntrinsic(instruction.intrinsic);
                  arithmetic && !instruction.receiver && arguments.size() == 2) {
@@ -2420,12 +2317,6 @@ private:
         }
         if (returnType == SemanticType::Void)
           return {.voidResult = true};
-        if (!terminator.value && returnType.kind == SemanticType::Expected &&
-            returnType.arguments.size() == 2 &&
-            returnType.arguments[0] == SemanticType::Void) {
-          const auto success = makeConstantResult(returnType, true);
-          return {.value = success.value, .failure = success.failure};
-        }
         const auto result = terminator.value ? operand(frame, *terminator.value)
                                              : ConstantEvaluation{};
         if (!result)

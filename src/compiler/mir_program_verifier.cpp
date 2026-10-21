@@ -862,43 +862,6 @@ concreteMirTypeTraits(const MirProgram &program, const SemanticType &type,
     traits.shareCapable = pointee->shareCapable;
     return traits;
   }
-  if (type.kind == SemanticType::Expected ||
-      type.kind == SemanticType::Unexpected) {
-    const std::size_t alternatives =
-        type.kind == SemanticType::Expected ? 2 : 1;
-    if (type.arguments.size() != alternatives)
-      return std::nullopt;
-    SemanticTypeTraits traits = semanticTraits(type);
-    traits.relocation = RelocationKind::Structural;
-    // Unresolved nominal children make semanticTraits conservative. Resolved
-    // semantics instead folds capabilities from true over actual components.
-    traits.transferCapable = true;
-    traits.shareCapable = true;
-    for (std::size_t index = 0; index < alternatives; ++index) {
-      const auto &alternative = type.arguments[index];
-      if (type.kind == SemanticType::Expected && index == 0 &&
-          alternative == SemanticType::Void)
-        continue;
-      const auto child = concreteMirTypeTraits(program, alternative, depth + 1);
-      if (!child)
-        return std::nullopt;
-      if (child->ownership == OwnershipKind::Unique ||
-          (traits.ownership == OwnershipKind::Value &&
-           child->ownership == OwnershipKind::Shared))
-        traits.ownership = child->ownership;
-      traits.copyable = traits.copyable && child->copyable;
-      traits.movable = traits.movable && child->movable;
-      traits.copyAssignable = traits.copyAssignable && child->copyAssignable;
-      traits.moveAssignable = traits.moveAssignable && child->moveAssignable;
-      traits.containsBorrowedState =
-          traits.containsBorrowedState || child->containsBorrowedState;
-      traits.transferCapable = traits.transferCapable && child->transferCapable;
-      traits.shareCapable = traits.shareCapable && child->shareCapable;
-      if (child->relocation == RelocationKind::Unavailable)
-        traits.relocation = RelocationKind::Unavailable;
-    }
-    return traits;
-  }
   if (type.kind != SemanticType::Lambda)
     return semanticTraits(type);
   const auto lambda = std::find_if(program.lambdaInstances().begin(),
@@ -979,14 +942,9 @@ storagePayloadTraits(const MirProgram &program, const SemanticType &type,
     for (const auto &field : owner->declaredFields)
       if (!include(field.type, false))
         return std::nullopt;
-  } else if (type.kind == SemanticType::Array ||
-             type.kind == SemanticType::Expected ||
-             type.kind == SemanticType::Unexpected) {
+  } else if (type.kind == SemanticType::Array) {
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       const auto &component = type.arguments[index];
-      if (type.kind == SemanticType::Expected && index == 0 &&
-          component == SemanticType::Void)
-        continue;
       if (!include(component))
         return std::nullopt;
     }
@@ -1009,17 +967,12 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
       type.kind == SemanticType::TypePack)
     return std::nullopt;
   if (type.kind == SemanticType::Array ||
-      type.kind == SemanticType::UniqueOwner ||
-      type.kind == SemanticType::Expected ||
-      type.kind == SemanticType::Unexpected) {
+      type.kind == SemanticType::UniqueOwner) {
     if (type.arguments.empty())
       return std::nullopt;
     ConcurrencyCapabilities result{.transferCapable = true,
                                    .shareCapable = true};
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-      if (type.kind == SemanticType::Expected && index == 0 &&
-          type.arguments[index] == SemanticType::Void)
-        continue;
       const auto child =
           conditionalCapabilities(program, type.arguments[index], depth + 1);
       if (!child)
@@ -1925,18 +1878,6 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             exactProducer = lambda != nullptr &&
                             lambda->returnType == receiverPlace->type &&
                             !producer->info.traits.containsBorrowedState;
-          }
-          if (!producer->functionTarget && receiverClass != nullptr &&
-              (producer->intrinsic == IntrinsicKind::ExpectedValue ||
-               producer->intrinsic == IntrinsicKind::ExpectedError) &&
-              producer->receiver &&
-              producer->receiver->kind == MirOperandKind::Value &&
-              producer->receiver->type.kind == SemanticType::Expected &&
-              producer->receiver->type.arguments.size() == 2) {
-            const std::size_t alternative =
-                producer->intrinsic == IntrinsicKind::ExpectedValue ? 0 : 1;
-            exactProducer = producer->receiver->type.arguments[alternative] ==
-                            receiverPlace->type;
           }
           if (!producer->functionTarget && receiverClass != nullptr &&
               receiverClass->defaultConstructor ==
@@ -6050,16 +5991,6 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         } else if (instance.returnType.kind == SemanticType::Reference &&
                    instance.returnType.arguments.size() == 1) {
           resultReferent = instance.returnType.arguments.front();
-        } else if (instance.returnType.kind == SemanticType::Expected &&
-                   instance.returnType.arguments.size() == 2 &&
-                   instance.returnType.arguments.front().kind ==
-                       SemanticType::Reference &&
-                   instance.returnType.arguments.front().referenceAccess ==
-                       AccessMode::ReadOnly &&
-                   instance.returnType.arguments.front().arguments.size() ==
-                       1) {
-          resultReferent =
-              instance.returnType.arguments.front().arguments.front();
         } else if (const std::optional<SemanticType> returnedCarrier =
                        [&]() -> std::optional<SemanticType> {
                      const auto carrier = findStoredCarrierReference(
@@ -6207,21 +6138,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !definition->info.traits.containsBorrowedState && !definition->loan &&
           !definition->destination && !definition->receiver &&
           definition->lifecycle.empty();
-      const bool fallibleBorrowErrorReturn =
-          instance.returnType.kind == SemanticType::Expected &&
-          instance.returnType.arguments.size() == 2 &&
-          instance.returnType.arguments.front().kind ==
-              SemanticType::Reference &&
-          instance.returnType.arguments.front().referenceAccess ==
-              AccessMode::ReadOnly &&
-          instance.returnType.arguments.front().arguments.size() == 1 &&
-          block.terminator.value &&
-          block.terminator.value->type.kind == SemanticType::Unexpected &&
-          block.terminator.value->type.arguments.size() == 1 &&
-          block.terminator.value->type.arguments.front() ==
-              instance.returnType.arguments.back();
-      if (fallibleBorrowErrorReturn || independentTextLiteral ||
-          independentStoredText ||
+      if (independentTextLiteral || independentStoredText ||
           ((instance.returnType.kind == SemanticType::Enum ||
             instance.returnType.kind == SemanticType::Class) &&
            emptyReturn && emptyReturn(block.id))) {
@@ -6419,8 +6336,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     const bool consumesAbstractEntry =
         (!exactReferenceRelay &&
          (!storedCarrierReference ||
-          (instance.returnType.kind == SemanticType::Reference ||
-           instance.returnType.kind == SemanticType::Expected)) &&
+          (instance.returnType.kind == SemanticType::Reference)) &&
          !abstractCarrierValue) ||
         (storedCarrierEntryLoan != nullptr &&
          std::any_of(body.blocks.begin(), body.blocks.end(),
@@ -6441,19 +6357,9 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
                      }));
     if ((storedCarrierReference || dynamicTextCarrier) &&
         consumesAbstractEntry && instance.returnBorrowParameters.empty()) {
-      const bool fallibleReference =
-          instance.returnType.kind == SemanticType::Expected &&
-          instance.returnType.arguments.size() == 2 &&
-          instance.returnType.arguments.front().kind ==
-              SemanticType::Reference &&
-          instance.returnType.arguments.front().referenceAccess ==
-              AccessMode::ReadOnly &&
-          instance.returnType.arguments.front().arguments.size() == 1;
       const SemanticType expectedPayload =
           instance.returnType.kind == SemanticType::Reference
               ? instance.returnType.arguments.front()
-          : fallibleReference
-              ? instance.returnType.arguments.front().arguments.front()
               : instance.returnType;
       const MirInstruction *transfer = nullptr;
       for (const MirBlock &candidateBlock : body.blocks) {
@@ -6500,8 +6406,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
             "dependency payload type",
             block.id);
       }
-      if (instance.returnType.kind == SemanticType::Reference ||
-          fallibleReference) {
+      if (instance.returnType.kind == SemanticType::Reference) {
         const MirOperand &published = transfer->operands.front();
         const MirPlace *runtime = body.findPlace(published.place);
         const bool exactDesignatedReferent =
@@ -7227,23 +7132,8 @@ verifyMirPayloadEnums(const MirProgram &program) {
     case SemanticType::SharedPointer:
       return true;
     case SemanticType::Array:
-    case SemanticType::Unexpected:
       return type.arguments.size() == 1 ? query(type.arguments.front(), query)
                                         : std::nullopt;
-    case SemanticType::Expected:
-      for (const SemanticType &argument : type.arguments) {
-        if (argument == SemanticType::Void) {
-          continue;
-        }
-        const std::optional<bool> active = query(argument, query);
-        if (!active) {
-          return std::nullopt;
-        }
-        if (*active) {
-          return true;
-        }
-      }
-      return false;
     case SemanticType::Class: {
       const auto found = std::find_if(program.classInstances().begin(),
                                       program.classInstances().end(),
@@ -17009,23 +16899,8 @@ verifyMirProgramContracts(const MirProgram &program) {
     case SemanticType::SharedPointer:
       return true;
     case SemanticType::Array:
-    case SemanticType::Unexpected:
       return type.arguments.size() == 1 ? query(type.arguments.front(), query)
                                         : std::nullopt;
-    case SemanticType::Expected: {
-      bool unknown = false;
-      for (const SemanticType &argument : type.arguments) {
-        if (argument == SemanticType::Void) {
-          continue;
-        }
-        const std::optional<bool> active = query(argument, query);
-        if (active && *active) {
-          return true;
-        }
-        unknown = unknown || !active;
-      }
-      return unknown ? std::nullopt : std::optional<bool>{false};
-    }
     case SemanticType::Enum: {
       const MirPayloadEnum *enumeration = program.findPayloadEnum(type);
       return enumeration == nullptr
@@ -18625,10 +18500,6 @@ verifyMirProgramContracts(const MirProgram &program) {
         const auto traits = concreteMirTypeTraits(program, type);
         return traits && !traits->containsBorrowedState;
       }
-      case SemanticType::Expected: {
-        const auto traits = concreteMirTypeTraits(program, type);
-        return traits && !traits->containsBorrowedState;
-      }
       case SemanticType::Enum: {
         const auto *enumeration = program.findPayloadEnum(type);
         return !enumeration ||
@@ -18915,8 +18786,6 @@ verifyMirProgramContracts(const MirProgram &program) {
             sourceValue->info.type == instruction.operands.front().type &&
             (instruction.operands.front().type == initializer.targetType ||
              isImplicitScalarInitializationConversion(
-                 initializer.targetType, instruction.operands.front().type) ||
-             isImplicitExpectedInitializationConversion(
                  initializer.targetType, instruction.operands.front().type)) &&
             instruction.info.type == initializer.targetType &&
             destination != nullptr &&
@@ -19173,8 +19042,7 @@ verifyMirProgramContracts(const MirProgram &program) {
            initializer.targetType.kind == SemanticType::Class ||
            initializer.targetType.kind == SemanticType::Lambda ||
            initializer.targetType.kind == SemanticType::Enum ||
-           initializer.targetType.kind == SemanticType::Array ||
-           initializer.targetType.kind == SemanticType::Expected) &&
+           initializer.targetType.kind == SemanticType::Array) &&
           !field->requiresActiveCleanup;
       // A lexical field completed from one owning argument may publish an
       // explicit rollback-armed stage; whether it does depends on the
@@ -19545,9 +19413,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       for (const auto &variant : enumeration->variants)
         for (const auto &field : variant.payloadTypes)
           finite = finite && self(self, field);
-    } else if (type.kind == SemanticType::Array ||
-               type.kind == SemanticType::Expected ||
-               type.kind == SemanticType::Unexpected) {
+    } else if (type.kind == SemanticType::Array) {
       for (const auto &part : type.arguments)
         finite = finite && self(self, part);
     } else if (type.kind == SemanticType::Class) {

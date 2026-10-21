@@ -56,9 +56,6 @@ using ConstantValue =
 enum class ConstantAggregateKind {
   Array,
   Object,
-  ExpectedSuccess,
-  ExpectedError,
-  Unexpected,
   // Executor-local symbolic ownership. Never accepted by constant conversion
   // or publication; only the MIR evaluator may create/resolve these nodes.
   // identity is a request-local allocation ID, not a host or target address.
@@ -128,16 +125,6 @@ struct ConstantEvaluation {
 
 [[nodiscard]] ConstantEvaluation
 convertConstantToType(const ConstantValue &value, const SemanticType &target);
-
-// Result constants retain the complete nominal types and only their active
-// alternative. Void success has no payload; no reference identity is stored.
-[[nodiscard]] ConstantEvaluation
-makeConstantResult(const SemanticType &type, bool success,
-                   std::optional<ConstantValue> payload = {});
-[[nodiscard]] ConstantEvaluation
-constantResultHasValue(const ConstantValue &value);
-[[nodiscard]] ConstantEvaluation
-constantResultPayload(const ConstantValue &value, bool success);
 
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,
                                                   CheckedIntegerDomain domain);

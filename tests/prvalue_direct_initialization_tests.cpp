@@ -37,8 +37,6 @@ void eraseOperation(lang::HirProgram &program, lang::HirBody &body,
     }
     for (auto &id : value.operands)
       redirect(id);
-    for (auto &id : value.conditionalInputs)
-      redirect(id);
     for (auto &id : value.sequencedInputs)
       redirect(id);
     optional(value.receiver);

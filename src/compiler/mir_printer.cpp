@@ -1987,15 +1987,12 @@ private:
              << " element-owner-drop=drop" << item.elementOwnerDrop
              << " element-source-drop=drop" << item.elementSourceDrop
              << " range-loan=loan" << item.rangeLoan << " element-loan=loan"
-             << item.elementLoan << " expected-payload-extraction=%"
-             << item.expectedPayloadExtraction << " owner-drop=drop"
-             << item.ownerDrop << " blocks=bb" << item.conditionEntryBlock
-             << ",bb" << item.conditionBlock << ",bb" << item.bodyBlock << ",bb"
+             << item.elementLoan << " owner-drop=drop" << item.ownerDrop
+             << " blocks=bb" << item.conditionEntryBlock << ",bb"
+             << item.conditionBlock << ",bb" << item.bodyBlock << ",bb"
              << item.incrementBlock << ",bb" << item.cleanupBlock << ",bb"
              << item.exitBlock << " extent=" << item.arrayLength
-             << " owns-temporary=" << item.ownsRangeTemporary
-             << " expected-payload-projection="
-             << item.expectedPayloadProjection;
+             << " owns-temporary=" << item.ownsRangeTemporary;
       output << " materializes-element-value=" << item.materializesElementValue;
       if (item.endpointParking) {
         const auto &parking = *item.endpointParking;
