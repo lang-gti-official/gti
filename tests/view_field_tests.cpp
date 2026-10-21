@@ -113,9 +113,17 @@ int main() {
            "a publication's result loan designates its one text field");
   }
   // The dependency belongs to each call, never to the constructor itself.
-  for (const auto &constructor : result.hir.constructorInstances())
+  std::size_t textConstructors = 0;
+  for (const auto &constructor : result.hir.constructorInstances()) {
+    if (constructor.source == nullptr ||
+        (constructor.source->name().lexeme != "Token" &&
+         constructor.source->name().lexeme != "Pair"))
+      continue;
+    ++textConstructors;
     expect(constructor.borrowOrigin == lang::BorrowOriginKind::None,
            "a text-storing constructor keeps an empty borrow summary");
+  }
+  expect(textConstructors == 2, "both text-storing constructors are lowered");
 
   if (published.empty())
     return;
