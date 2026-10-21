@@ -15674,6 +15674,9 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 // ConstructionRollback stage and full-expression boundary recorded by MIR.
 // Cleanup-free generated moves have the same ordered publication but no value
 // or rollback obligations; prove that absence instead of inventing lifecycle.
+// A trivially dropped, borrow-free scalar, enum, pointer or array value has no
+// parameter shell drop either: MIR records no obligation for its formal, its
+// moved value or its field, so the proof demands that complete absence.
 [[nodiscard]] bool bodyStagedOwnedParameterFieldInitializers(
     const MirProgram &program, const MirConstructorInstance &constructor) {
   const MirClassInstance *owner = program.findClassInstance(constructor.owner);
@@ -15690,6 +15693,12 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
       continue;
     }
     const std::size_t parameter = *initializer.ownedParameter;
+    const auto field =
+        std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+                     [&](const MirClassFieldInfo &candidate) {
+                       return candidate.symbol == initializer.field &&
+                              candidate.type == initializer.targetType;
+                     });
     if (initializer.kind != ConstructorInitializerTargetKind::Field ||
         initializer.field == 0 || initializer.storesReference ||
         initializer.generatedDefault || initializer.arguments.size() != 1 ||
@@ -15697,11 +15706,11 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         parameter >= constructor.parameterBindings.size() ||
         parameter >= constructor.parameterTypes.size() ||
         initializer.targetType != constructor.parameterTypes[parameter] ||
+        field == owner->declaredFields.end() ||
         std::count_if(owner->declaredFields.begin(),
                       owner->declaredFields.end(),
-                      [&](const MirClassFieldInfo &field) {
-                        return field.symbol == initializer.field &&
-                               field.type == initializer.targetType;
+                      [&](const MirClassFieldInfo &candidate) {
+                        return candidate.symbol == initializer.field;
                       }) != 1) {
       return false;
     }
@@ -15713,7 +15722,11 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         passiveClass->moveConstructor == SpecialMemberStatus::Generated &&
         passiveClass->traits.movable &&
         !passiveClass->traits.containsBorrowedState;
-    const std::size_t lifecycleCount = passiveMove ? 0 : 1;
+    const bool dropFreeMove =
+        passiveClass == nullptr &&
+        passiveConstructorAggregateType(initializer.targetType) &&
+        field->dropKind == DropKind::Trivial && !field->requiresActiveCleanup;
+    const std::size_t lifecycleCount = passiveMove || dropFreeMove ? 0 : 1;
 
     const MirInstruction *initialize = nullptr;
     const MirPlace *destination = nullptr;
@@ -15786,6 +15799,36 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         move->ownership->place != *source->key) {
       return false;
     }
+    if (dropFreeMove) {
+      // The formal, the moved value and the field are all trivially dropped
+      // and carry no borrowed state, and no obligation names any place of
+      // them: MIR has nothing to transfer, reparent or roll back.
+      const auto namesInitializerState = [&](MirPlaceId id) {
+        const MirPlace *place = constructor.body.findPlace(id);
+        return place != nullptr &&
+               ((place->root == MirPlaceRootKind::Binding &&
+                 place->binding == source->binding) ||
+                (place->root == MirPlaceRootKind::Value &&
+                 place->value == movedValue) ||
+                (place->root == MirPlaceRootKind::This &&
+                 !place->projections.empty() &&
+                 place->projections.front().kind == MirProjectionKind::Field &&
+                 place->projections.front().field == initializer.field));
+      };
+      if (source->traits.drop != DropKind::Trivial ||
+          source->traits.containsBorrowedState ||
+          value->info.traits.drop != DropKind::Trivial ||
+          value->info.traits.containsBorrowedState ||
+          std::any_of(constructor.body.dropObligations.begin(),
+                      constructor.body.dropObligations.end(),
+                      [&](const MirDropObligation &drop) {
+                        return namesInitializerState(drop.place) ||
+                               (drop.binding != 0 &&
+                                drop.binding == source->binding);
+                      })) {
+        return false;
+      }
+    }
 
     const MirDropObligation *parameterDrop = nullptr;
     const MirDropObligation *valueDrop = nullptr;
@@ -15821,7 +15864,7 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
         rollbackDrop = &drop;
       }
     }
-    if (parameterDrop == nullptr) {
+    if (!dropFreeMove && parameterDrop == nullptr) {
       return false;
     }
     if (passiveMove) {
@@ -15829,7 +15872,7 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
           parameterDrop->dropType.requiresActiveCleanup) {
         return false;
       }
-    } else {
+    } else if (!dropFreeMove) {
       if (valueDrop == nullptr || rollbackDrop == nullptr) {
         return false;
       }
