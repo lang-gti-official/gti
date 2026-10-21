@@ -310,6 +310,14 @@
       "suite": "text"
     },
     {
+      "name": "testMovedChainReturnConstruction",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedPassiveFieldInPlainConstructor",
+      "suite": "text"
+    },
+    {
       "name": "testInlineCapturingLiteralAsAlgorithmArgument",
       "suite": "text"
     },

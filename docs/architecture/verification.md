@@ -26,6 +26,70 @@ branch rejected with `GTI-S2045`: a range-for's hidden reference binding has a
 retained loan, so its read was mistaken for a dependent carrier. A carrier
 must now be a binding of the class type itself.
 
+## Failure-free passive moves (0.453.4)
+
+`optimizer_foundation` adds `testPassiveMoveDefinedFailureEffects`. Virtual
+methods that move an `int32_t` or a `bool` into a local, a call argument or a
+result, and constructors that move a scalar formal first or after a computed
+sibling, must summarize failure-free; checked arithmetic on a moved value
+keeps its method or constructor failure-capable. The moved argument's call
+input must repeat its `Move`'s exact ownership event, and the proved callee is
+called without a failure edge. Forging borrowed state on the move, changing
+the call input's event, dropping the `Move`'s own event, adding lifecycle work
+to a constructor's move or misnaming its owned parameter each makes the
+derived summary conservative, and verification then rejects the stored
+failure-free claim.
+
+In `cpp_mir_body_emitter_text`, `testMovedPassiveFieldInPlainConstructor`
+requires the ordinary form for constructors that move a formal after a
+computed and a called sibling or after a copy of the same formal: the native
+owned-field proof refuses them, `cppMirOrdinaryBodyStagedParameterMoves`
+admits them, and the emitted constructor starts the field empty and moves the
+formal once, after the call, with no failure form left. A leading move keeps
+its native publication while a scalar copy after the call stays in the MIR
+body schedule. The failure form of a copy ahead of its own move reads the
+declared formal shell before the body moves it. Borrowed state, or a
+failure-capable summary, leaves the ordinary route.
+`testMovedChainReturnConstruction` requires `return Holder(std::move(value));`
+and `unexpected(int32_t)` to construct from `std::move` over the formal, and
+the Expected replacement tests now accept the plain `unexpected()` producer.
+`failure_free_passive_moves_runtime` runs `failure_free_passive_moves.gti` in
+C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan: free and virtual functions,
+`unexpected()` with an `int32_t` error, and constructors in both forms, with
+divisions selected to fail before a move, between a copy and its move, in a
+virtual method after its move, and after a built `Tracked` field. The 0.453.3
+compiler cannot build it (`Copied` emits an undeclared formal shell). With
+the summary change alone, without the returned-construction fix, the scalar
+error read zero.
+
+A differential `--emit-cpp` against main `dd4087b5`, both compilers built from
+one tree and one standard library, covered 1844 programs in `examples`,
+`tests/fixtures`, `tests/coverage`, `benchmarks` and the local language audit
+at O0 and O3, and was repeated with the same result against main `33220490`,
+after the built-in expected retirement, and `38781322`, after the moved text
+view staging. The last run left out
+`tests/coverage/stress/namespace-depth-63.gti`, on which both compilers exceed
+the 600 s limit. No exit status or diagnostic code changed, including the 718
+pairs that fail with both compilers. 314 outputs in 157 programs changed, and
+each only removed failure forms: failure-constructor overloads fell from 66,800
+to 64,932 mentions, failure-form calls from 151,444 to 150,886, success flags
+from 376,092 to 372,916, and emitted C++ by 1.44 MB (0.27%). Built and run with
+both compilers, all changed programs except the new fixture produce identical
+status, stdout and stderr. Their summed `__text` fell by 71,672 bytes (0.18%)
+at O0 and rose by 48 bytes at O3, where a few newly plain callees inline
+differently (at most 428 bytes in one program). Summed build times were 212.2 s
+before and 211.5 s after at O0, and 378.6 s and 375.9 s at O3. A scan for reads
+of never-written emitted locals, including the values an elided moved-place
+chain should never mention, found the same 66 heuristic false positives with
+both compilers. Every `benchmarks/workloads` program emits byte-identical C++
+at O2 and O3. The `runtime-audit/hashmap` probe, whose `map_entry<int32_t,
+int32_t>` lost its failure constructor, keeps identical `__text` and minimum
+runtime at O2 and O3. Probes calling `unexpected()` with scalar errors and
+constructing moved-formal records keep identical O2/O3 `__text`, with medians
+within load noise; a virtual method that moves its argument shrinks by 472
+bytes at O2 and 496 at O3, and the probes shrink by 136 to 524 bytes at O0. The
+full local suite passes on the reconciled head (802 tests).
+
 ## Text views moved after initializer work (0.453.3)
 
 `moved_passive_constructor_field_runtime` now also runs a generic `Viewed<F>`

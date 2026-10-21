@@ -4084,6 +4084,237 @@ int main() { return stable_top(0); }
          "defined-failure summary");
 }
 
+// Moving a trivially dropped, borrow-free value is as failure-free as copying
+// it. Virtual methods reach the operation-by-operation function proof, which
+// admits the Move and the copies of its ownership event on the call input
+// and boundary that consume it. Constructors reach the owned closure, which
+// admits the Move and its owned-parameter initializer. A real failure source
+// beside a move stays conservative, and verification rejects a failure-free
+// claim once the move's exact passive shape is lost.
+void testPassiveMoveDefinedFailureEffects() {
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "passive-move-defined-failure-effects.gti", R"(
+int32_t take(int32_t value) { return value; }
+
+class Shape {
+public:
+  Shape() {}
+  virtual int32_t kept(int32_t x) { int32_t y = std::move(x); return y; }
+  virtual int32_t passed(int32_t x) { return take(std::move(x)); }
+  virtual int32_t returned(int32_t x) { return std::move(x); }
+  virtual bool flagged(bool x) { bool y = std::move(x); return y; }
+  virtual int32_t checked(int32_t x) { int32_t y = std::move(x); return y + 1; }
+};
+
+class Tagged {
+public:
+  int32_t tag;
+  Tagged(int32_t tag) : tag(std::move(tag)) {}
+};
+
+class Ordered {
+public:
+  bool odd;
+  int32_t tag;
+  Ordered(int32_t tag) : odd((tag & 1) == 1), tag(std::move(tag)) {}
+};
+
+class Bumped {
+public:
+  int32_t tag;
+  Bumped(int32_t tag) : tag(std::move(tag) + 1) {}
+};
+
+int main() {
+  Shape shape = Shape();
+  Tagged tagged = Tagged(3);
+  Ordered ordered = Ordered(5);
+  Bumped bumped = Bumped(6);
+  return shape.kept(1) + shape.passed(2) + shape.returned(3) +
+         (shape.flagged(true) ? 1 : 0) + shape.checked(4) + tagged.tag +
+         ordered.tag + bumped.tag - 27;
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "the passive-move failure-effect fixture should produce verified "
+         "MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto function = [&](const std::string &name) {
+    const lang::HirFunctionInstance *hir = findHirFunction(frontend, name);
+    return hir == nullptr
+               ? static_cast<const lang::MirFunctionInstance *>(nullptr)
+               : frontend.mir.findFunctionInstance(hir->id);
+  };
+  const auto constructor = [&](std::string_view owner) {
+    const auto found =
+        std::find_if(frontend.hir.classInstances().begin(),
+                     frontend.hir.classInstances().end(),
+                     [&](const lang::HirClassInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == owner;
+                     });
+    const lang::MirConstructorInstance *selected = nullptr;
+    for (const lang::MirConstructorInstance &candidate :
+         frontend.mir.constructorInstances()) {
+      if (found != frontend.hir.classInstances().end() &&
+          candidate.owner == found->id) {
+        selected = &candidate;
+      }
+    }
+    return selected;
+  };
+  const lang::MirFunctionInstance *kept = function("kept");
+  const lang::MirFunctionInstance *passed = function("passed");
+  const lang::MirFunctionInstance *returned = function("returned");
+  const lang::MirFunctionInstance *flagged = function("flagged");
+  const lang::MirFunctionInstance *checked = function("checked");
+  const lang::MirFunctionInstance *take = function("take");
+  const lang::MirConstructorInstance *tagged = constructor("Tagged");
+  const lang::MirConstructorInstance *ordered = constructor("Ordered");
+  const lang::MirConstructorInstance *bumped = constructor("Bumped");
+  expect(kept != nullptr && passed != nullptr && returned != nullptr &&
+             flagged != nullptr && kept->virtualMethod &&
+             !kept->mayRaiseDefinedFailure && !passed->mayRaiseDefinedFailure &&
+             !returned->mayRaiseDefinedFailure &&
+             !flagged->mayRaiseDefinedFailure,
+         "virtual methods that move a scalar into a local, an argument or a "
+         "result should be proved failure-free");
+  expect(checked != nullptr && checked->mayRaiseDefinedFailure,
+         "checked arithmetic beside a move must keep its failure effect");
+  expect(tagged != nullptr && ordered != nullptr &&
+             !tagged->mayRaiseDefinedFailure &&
+             !ordered->mayRaiseDefinedFailure,
+         "constructors that move a scalar formal, also after a computed "
+         "sibling, should be proved failure-free");
+  expect(bumped != nullptr && bumped->mayRaiseDefinedFailure,
+         "a checked operation on a moved formal must keep the constructor's "
+         "failure effect");
+  if (kept == nullptr || passed == nullptr || take == nullptr ||
+      tagged == nullptr) {
+    return;
+  }
+
+  // The argument's call input carries the move's ownership event, and the
+  // proved callee is called without a failure edge.
+  const auto findInstruction = [](const lang::MirBody &body,
+                                  lang::MirInstructionKind kind) {
+    const lang::MirInstruction *selected = nullptr;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        if (instruction.kind == kind && selected == nullptr)
+          selected = &instruction;
+    return selected;
+  };
+  const lang::MirInstruction *move =
+      findInstruction(passed->body, lang::MirInstructionKind::Move);
+  const lang::MirInstruction *input =
+      findInstruction(passed->body, lang::MirInstructionKind::CallInput);
+  const lang::MirInstruction *call =
+      findInstruction(passed->body, lang::MirInstructionKind::Call);
+  expect(move != nullptr && input != nullptr && call != nullptr &&
+             move->ownership && input->ownership &&
+             move->ownership->kind == lang::OwnershipEventKind::Move &&
+             *input->ownership == *move->ownership &&
+             input->hirValue == move->hirValue &&
+             call->functionTarget == take->id &&
+             call->definedFailure.propagation ==
+                 lang::FailurePropagationKind::None,
+         "the moved argument's call input should repeat the move's exact "
+         "ownership event, and the proved call needs no failure edge");
+
+  // Each mutation loses the exact passive move shape, so the derived summary
+  // turns conservative and the stored failure-free claim no longer verifies.
+  const auto functionMutation = [&](const lang::MirFunctionInstance &target,
+                                    const auto &mutate) {
+    lang::MirProgram mutated = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        mutated.functionInstances());
+    bool applied = false;
+    for (lang::MirBlock &block : functions[target.id - 1].body.blocks)
+      for (lang::MirInstruction &instruction : block.instructions)
+        applied = mutate(instruction) || applied;
+    return std::pair{applied, std::move(mutated)};
+  };
+  const auto expectFunctionRefused =
+      [&](const lang::MirFunctionInstance &target, const auto &mutate,
+          const std::string &message) {
+        const auto [applied, mutated] = functionMutation(target, mutate);
+        const lang::MirDefinedFailureEffects effects =
+            lang::deriveMirDefinedFailureEffects(mutated);
+        expect(applied && effects.functions[target.id - 1] &&
+                   !lang::verifyMirProgram(mutated).valid(),
+               message);
+      };
+  expectFunctionRefused(
+      *kept,
+      [](lang::MirInstruction &instruction) {
+        if (instruction.kind != lang::MirInstructionKind::Move)
+          return false;
+        instruction.info.traits.containsBorrowedState = true;
+        return true;
+      },
+      "a moved value carrying borrowed state is not a passive move");
+  expectFunctionRefused(
+      *passed,
+      [](lang::MirInstruction &instruction) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            !instruction.ownership)
+          return false;
+        instruction.ownership->before = lang::OwnershipStateSet::MaybeMoved;
+        return true;
+      },
+      "a call input whose event differs from its move's is not admitted");
+  expectFunctionRefused(
+      *passed,
+      [](lang::MirInstruction &instruction) {
+        if (instruction.kind != lang::MirInstructionKind::Move)
+          return false;
+        instruction.ownership.reset();
+        return true;
+      },
+      "a call input's move event needs the exact move it repeats");
+
+  lang::MirProgram lifecycleMove = frontend.mir;
+  auto &constructors = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      lifecycleMove.constructorInstances());
+  bool lifecycleApplied = false;
+  for (lang::MirBlock &block : constructors[tagged->id - 1].body.blocks)
+    for (lang::MirInstruction &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Move) {
+        instruction.lifecycle.push_back(
+            {.kind = lang::MirLifecycleEventKind::Move});
+        lifecycleApplied = true;
+      }
+  expect(lifecycleApplied &&
+             lang::deriveMirDefinedFailureEffects(lifecycleMove)
+                 .constructors[tagged->id - 1] &&
+             !lang::verifyMirProgram(lifecycleMove).valid(),
+         "a passive constructor move with lifecycle work is not failure-free");
+
+  lang::MirProgram misboundParameter = frontend.mir;
+  auto &misbound = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      misboundParameter.constructorInstances());
+  bool parameterApplied = false;
+  for (lang::MirConstructorInitializer &initializer :
+       misbound[tagged->id - 1].initializers)
+    if (initializer.ownedParameter) {
+      initializer.ownedParameter =
+          misbound[tagged->id - 1].parameterTypes.size();
+      parameterApplied = true;
+    }
+  expect(parameterApplied &&
+             lang::deriveMirDefinedFailureEffects(misboundParameter)
+                 .constructors[tagged->id - 1],
+         "an owned-parameter initializer must name its exact passive formal");
+}
+
 void testSynchronizationMirContract() {
   const std::string source = R"(
 void work() {}
@@ -9013,6 +9244,7 @@ int main() {
   testMirEffectClassification();
   testDefinedFailureIdentityAndPropagation();
   testScalarDefinedFailureEffectClosure();
+  testPassiveMoveDefinedFailureEffects();
   testSynchronizationMirContract();
   testCarrierShellDependencyMirFlow();
   testCopiedCarrierPublicationProof();

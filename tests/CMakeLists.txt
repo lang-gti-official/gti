@@ -1108,6 +1108,11 @@ add_test(NAME view_fields_runtime
                  "${PROJECT_SOURCE_DIR}/tests/view_fields_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(view_fields_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME failure_free_passive_moves_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_moves_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(failure_free_passive_moves_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME declaration_owned_defaults_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"
