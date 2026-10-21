@@ -373,7 +373,13 @@ constexpr std::unexpected_value<E> unexpected<E>(E value) {
   return std::unexpected_value<E>(std::move(value));
 }
 
+// Every profile needs an error alternative to store, so its own assertion
+// rejects a void E where a program first requires the instance; its layout
+// and members then report nothing further. The condition reads the type kind
+// that std::meta::type<E>().is_void() compares (17) directly, because staging
+// that constexpr call for every instance measurably slows compilation.
 class expected<T, E> {
+  static_assert(gti_internal::meta_type_kind<E>() != uint64_t(17), "An 'expected' error type cannot be 'void'.");
   mut std::detail::expected_state<T, E> state;
 public:
   implicit constexpr expected(T value)
@@ -464,6 +470,7 @@ public:
   }
 
   expected<T, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    static_assert(gti_internal::meta_type_kind<std::meta::callable_return_type<F>>() != uint64_t(17), "A 'transform_error' mapper must return an error value, not 'void'.");
     switch (std::move(this.state)) {
     case std::detail::expected_state<T, E>::value(value):
       return expected<T, std::meta::callable_return_type<F>>(std::move(value));
@@ -484,6 +491,7 @@ public:
 };
 
 class expected<void, E> {
+  static_assert(gti_internal::meta_type_kind<E>() != uint64_t(17), "An 'expected' error type cannot be 'void'.");
   mut std::detail::expected_void_state<E> state;
 public:
   implicit constexpr expected() : state(std::detail::expected_void_state<E>::value) {}
@@ -545,6 +553,7 @@ public:
   }
 
   expected<void, std::meta::callable_return_type<F>> transform_error<F>(F& mapper) && {
+    static_assert(gti_internal::meta_type_kind<std::meta::callable_return_type<F>>() != uint64_t(17), "A 'transform_error' mapper must return an error value, not 'void'.");
     switch (std::move(this.state)) {
     case std::detail::expected_void_state<E>::value:
       return expected<void, std::meta::callable_return_type<F>>();
@@ -565,6 +574,7 @@ public:
 };
 
 class expected<T&, E> {
+  static_assert(gti_internal::meta_type_kind<E>() != uint64_t(17), "An 'expected' error type cannot be 'void'.");
   mut std::detail::expected_state<T&, E> state;
 public:
   implicit expected(T& value)

@@ -595,6 +595,7 @@ class Box<T> {
   mut T value;
 public:
   Box(T value) : value(value) {}
+  T get() { return this.value; }
 };
 )";
   for (const lang::TrustedBodyAnalysis trustedBodies :
@@ -611,14 +612,16 @@ public:
            mode + ": a reflected class assertion holds for an instance whose "
                   "class and constructor both reanalyse it");
 
-    const auto rejected =
-        analyzeSource(root, directory, "class-assert-void-" + mode + ".gti",
-                      box + "int unwrap(Box<void> &box) { return 0; }\n"
-                            "int main() { return 0; }\n",
-                      trustedBodies);
+    // The failed assertion is the instance's only error: neither its void
+    // field nor the method used through it reports a consequence.
+    const auto rejected = analyzeSource(
+        root, directory, "class-assert-void-" + mode + ".gti",
+        box + "int unwrap(Box<void> &box) { box.get(); return 0; }\n"
+              "int main() { return 0; }\n",
+        trustedBodies);
     const lang::Diagnostic *failure =
         rejected.diagnostics.empty() ? nullptr : &rejected.diagnostics.front();
-    expect(!rejected.hirValid && countCode(rejected, "GTI-S2079") == 1 &&
+    expect(!rejected.hirValid && rejected.diagnostics.size() == 1 &&
                failure != nullptr && failure->code == "GTI-S2079" &&
                failure->message == "Static assertion failed. no void" &&
                std::any_of(failure->related.begin(), failure->related.end(),
@@ -626,8 +629,8 @@ public:
                              return related.message ==
                                     "Concrete substitution: 'T' = 'void'.";
                            }),
-           mode + ": an invalid type argument is rejected first, with the "
-                  "class assertion's own message");
+           mode + ": an invalid type argument is rejected by the class "
+                  "assertion's own message, as the instance's only error");
 
     // Reflecting on the instance itself, or on an instance whose assertion
     // reflects back, reanalyses it in the staged worker, and so does an

@@ -738,6 +738,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testRejectedInstanceCascades",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testRecoveryFindingDiagnostics",
       "suite": "diagnostics"
     },

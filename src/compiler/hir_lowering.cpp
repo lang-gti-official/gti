@@ -4304,7 +4304,8 @@ private:
           ownerType.kind == SemanticType::Class
               ? ownerType.valueArguments
               : std::vector<CompileTimeValue>{},
-          {}, {}, resolved.returnType, resolved.parameterTypes);
+          {}, {}, resolved.returnType, resolved.parameterTypes,
+          operatorInstantiationSite(value.source));
     }
 
     if (!value.functionTarget ||
@@ -4439,6 +4440,54 @@ private:
     if (const auto *member = exprAs<Get>(callee))
       return tokenSpan(member->name());
     return tokenSpan(call.leftParen() ? *call.leftParen() : call.paren());
+  }
+
+  // An overloaded operator or contextual conversion requests its instance
+  // where it is written: the operator token, or the converted operand, as a
+  // named call requests one at its callee name.
+  [[nodiscard]] static std::optional<SourceSpan>
+  operatorInstantiationSite(const Expr *expression) {
+    if (expression == nullptr)
+      return std::nullopt;
+    switch (expression->exprKind()) {
+    case ExprKind::Call:
+      return callInstantiationSite(static_cast<const Call &>(*expression));
+    case ExprKind::Assign:
+      return tokenSpan(static_cast<const Assign &>(*expression).oper());
+    case ExprKind::Binary:
+      return tokenSpan(static_cast<const Binary &>(*expression).oper());
+    case ExprKind::Logical:
+      return tokenSpan(static_cast<const Logical &>(*expression).oper());
+    case ExprKind::Unary:
+      return tokenSpan(static_cast<const Unary &>(*expression).oper());
+    case ExprKind::Postfix:
+      return tokenSpan(static_cast<const Postfix &>(*expression).oper());
+    case ExprKind::PlaceSet:
+      return tokenSpan(static_cast<const PlaceSet &>(*expression).oper());
+    case ExprKind::Index:
+      return tokenSpan(static_cast<const Index &>(*expression).bracket());
+    case ExprKind::IndexSet:
+      return tokenSpan(static_cast<const IndexSet &>(*expression).bracket());
+    case ExprKind::DereferenceSet:
+      return tokenSpan(
+          static_cast<const DereferenceSet &>(*expression).dereference());
+    case ExprKind::Get:
+      return tokenSpan(static_cast<const Get &>(*expression).name());
+    case ExprKind::Set:
+      return tokenSpan(static_cast<const Set &>(*expression).name());
+    case ExprKind::Variable:
+      return tokenSpan(static_cast<const Variable &>(*expression).name());
+    case ExprKind::QualifiedName:
+      return tokenSpan(
+          static_cast<const QualifiedName &>(*expression).name().last());
+    case ExprKind::This:
+      return tokenSpan(static_cast<const This &>(*expression).keyword());
+    case ExprKind::Grouping:
+      return operatorInstantiationSite(
+          static_cast<const Grouping &>(*expression).expression().get());
+    default:
+      return std::nullopt;
+    }
   }
 
   [[nodiscard]] std::optional<SourceLocationLiteral>
@@ -6429,7 +6478,8 @@ private:
                 : classValueArguments;
         value.functionTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes);
+                            {}, resolved->returnType, resolved->parameterTypes,
+                            operatorInstantiationSite(raw));
       }
     }
     // The conversion applied to this value is a further call; its dispatch
@@ -6453,7 +6503,8 @@ private:
                 : classValueArguments;
         contextualConversionTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes);
+                            {}, resolved->returnType, resolved->parameterTypes,
+                            operatorInstantiationSite(raw));
       }
     }
     // A function target is this instance's exact selection. A generic

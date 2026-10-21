@@ -9,6 +9,38 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.453.3 — Clearer errors for `expected` mistakes
+
+- A `transform` or `transform_error` mapper that returns a reference is now
+  one error at the call that names the result, such as
+  `error[GTI-S2022]: A consuming method cannot return a reference or tracked
+  borrowed state; this call returns 'expected<int32_t&, int32_t>'.` It used
+  to add an error about binding the mapper to a temporary.
+- A `transform_error` mapper that returns `void` now reports
+  `error[GTI-S2079]: Static assertion failed. A 'transform_error' mapper must
+  return an error value, not 'void'.` and the `void` error type's assertion,
+  both at the call. It used to print eight errors from inside the prelude.
+- `expected<int, void>` is rejected once, where your program first uses it:
+  `error[GTI-S2079]: Static assertion failed. An 'expected' error type cannot
+  be 'void'.` It used to report up to four errors about a payload field
+  inside the prelude. In general, when a generic class's or function's own
+  `static_assert` fails for a type argument, that instance reports nothing
+  else except its other static assertions.
+- Passing a callable class, one with `operator()`, to `transform`,
+  `transform_error` or another generic function whose signature uses
+  `std::meta::callable_return_type` now reports `error[GTI-S2023]` once, at
+  the call. It used to add an error from inside the library, or a type
+  mismatch naming `std::meta::callable_return_type<Mapper>`.
+- `return text;` from a function returning `expected<std::string, error>` now
+  reports `error[GTI-S2003]: Cannot return 'text' by copy because type
+  'std::string' is move-only.` with "help: Use 'return std::move(text);' to
+  transfer ownership." This holds for any class built by an implicit
+  constructor. It used to report a constructor argument you never wrote.
+- An error inside a library operator now points at your code. Assigning a
+  nested borrowing result, as in `nested = std::move(inner);`, reports its
+  payload error at that `=`, with the prelude location as a note, and without
+  the misleading assignment error that followed it.
+
 ## 0.453.2 — Class assertions with reflected constants
 
 - Fix a compiler crash (bus error, exit 138) when a generic class's
