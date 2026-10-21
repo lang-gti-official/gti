@@ -1282,6 +1282,202 @@ int main() {
          "both late closure instances should keep their own constructor");
 }
 
+void testMovedPassiveFieldAfterFallibleSibling() {
+  // A scalar and a plain enum moved after a fallible field and a fallible
+  // computed sibling have no drop record at all. They cannot be hoisted into
+  // the member-initializer list, so the failure form keeps each exact move in
+  // its verified body and starts the field from its empty state.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-passive-field.gti", R"(
+#include <std/utility>
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+enum class Shade { light, dark };
+
+class Gauge {
+public:
+  Ledger ledger;
+  bool odd;
+  int32_t tag;
+  Shade shade;
+  Gauge(int32_t tag, Shade shade, int32_t divisor)
+      : ledger(Ledger(tag, divisor)), odd(tag % 2 == 1), tag(std::move(tag)),
+        shade(std::move(shade)) {}
+};
+
+int main() {
+  Gauge gauge = Gauge(7, Shade::dark, 1);
+  return gauge.shade == Shade::dark && gauge.odd
+             ? gauge.tag + gauge.ledger.id - 74
+             : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved-passive-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto ownedInitializers =
+      [](const lang::MirConstructorInstance &constructor) {
+        return std::count_if(
+            constructor.initializers.begin(), constructor.initializers.end(),
+            [](const lang::MirConstructorInitializer &initializer) {
+              return initializer.ownedParameter.has_value();
+            });
+      };
+  const lang::MirConstructorInstance *gauge = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (ownedInitializers(constructor) == 2) {
+      gauge = &constructor;
+    }
+  }
+  expect(gauge != nullptr && gauge->mayRaiseDefinedFailure &&
+             !gauge->body.failureRecords.empty() &&
+             !lang::cppMirOwnedParameterFieldBindings(frontend.mir, *gauge),
+         "moves recorded after fallible work are not native publications");
+  if (gauge == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = gauge->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "the failure form keeps drop-free moves in its verified body");
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("drop-free moves after a fallible sibling "
+                              "should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::size_t start = text.find(
+      "Gauge::Gauge(::gti_internal::backend::mir_failure_constructor_tag_v1<");
+  const std::size_t end =
+      start == std::string::npos ? start : text.find("\n  }\n", start);
+  const std::string body = end == std::string::npos
+                               ? std::string()
+                               : text.substr(start, end - start);
+  const auto count = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  // Each moved field begins empty and MIR moves its formal exactly once,
+  // after the ledger and the checked remainder; a failure in between rolls
+  // back only the ledger.
+  const std::size_t remainder = body.find("mir_checked_remainder_v1");
+  const std::size_t firstMove = body.find(" = std::move(__gti_mir_p_");
+  expect(count("tag(::gti_internal::backend::mir_empty_state_v1<std::remove_"
+               "cv_t<decltype(tag)>>())") == 1 &&
+             count("shade(::gti_internal::backend::mir_empty_state_v1<std::"
+                   "remove_cv_t<decltype(shade)>>())") == 1 &&
+             count("std::move(__gti_mir_arg_") == 0 &&
+             count(" = std::move(__gti_mir_p_") == 2 &&
+             count("mir_rollback_field_v1(") == 1 &&
+             remainder != std::string::npos && firstMove != std::string::npos &&
+             body.find("::__gti_program::Ledger(") < remainder &&
+             remainder < firstMove,
+         "the failure-form constructor publishes each moved field in MIR "
+         "order from its empty state");
+
+  // Borrowed state is outside the drop-free route.
+  {
+    lang::MirProgram mutated = frontend.mir;
+    bool forged = false;
+    for (const auto &constructor : mutated.constructorInstances()) {
+      if (constructor.id != gauge->id) {
+        continue;
+      }
+      auto &changed = const_cast<lang::MirConstructorInstance &>(constructor);
+      for (lang::MirValue &value : changed.body.values) {
+        const lang::MirInstruction *definition = nullptr;
+        for (const lang::MirBlock &block : changed.body.blocks) {
+          for (const lang::MirInstruction &instruction : block.instructions) {
+            if (instruction.id == value.definition) {
+              definition = &instruction;
+            }
+          }
+        }
+        if (!forged && definition != nullptr &&
+            definition->kind == lang::MirInstructionKind::Move &&
+            value.info.type == lang::SemanticType::Int32) {
+          value.info.traits.containsBorrowedState = true;
+          forged = true;
+        }
+      }
+    }
+    expect(forged && !lang::CppMirBodyEmitter(mutated, map)
+                          .supportsFailureBodyText(address),
+           "a moved value carrying borrowed state must not be body-staged as "
+           "drop-free");
+  }
+
+  // A moved view still carries a loan of its caller's text: moving it after
+  // fallible work stays outside this route.
+  const lang::FrontendResult view =
+      analyzeWithStandardLibrary("cpp-mir-moved-view-field.gti", R"(
+#include <std/string>
+#include <std/utility>
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+class Label {
+public:
+  Ledger ledger;
+  std::string_view name;
+  Label(std::string_view name, int32_t divisor)
+      : ledger(Ledger(1, divisor)), name(std::move(name)) {}
+};
+
+int main() {
+  Label label = Label("abc", 1);
+  return label.name.size() == 3 ? 0 : 1;
+}
+)");
+  expect(view.canGenerateCode(),
+         "the moved-view-field fixture should pass the frontend");
+  if (!view.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap viewMap(buildRows(view, view.mir));
+  std::size_t viewConstructors = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       view.mir.constructorInstances()) {
+    if (ownedInitializers(constructor) != 1 ||
+        constructor.parameterTypes.empty() ||
+        constructor.parameterTypes.front().kind !=
+            lang::SemanticType::StringView) {
+      continue;
+    }
+    ++viewConstructors;
+    expect(
+        !lang::CppMirBodyEmitter(view.mir, viewMap)
+             .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
+                                       .owner = constructor.id}),
+        "a moved borrowed carrier after fallible work is not drop-free");
+  }
+  expect(viewConstructors == 1, "the view fixture keeps its constructor");
+}
+
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
@@ -7562,6 +7758,8 @@ constexpr NamedTest kTests[] = {
      testCopiedFormalReusedInConstructorBody},
     {"testMovedClosureFieldInFallibleConstructor",
      testMovedClosureFieldInFallibleConstructor},
+    {"testMovedPassiveFieldAfterFallibleSibling",
+     testMovedPassiveFieldAfterFallibleSibling},
     {"testInlineCapturingLiteralAsAlgorithmArgument",
      testInlineCapturingLiteralAsAlgorithmArgument},
     {"testInlineCaptureControlFlowProofFailsClosed",
