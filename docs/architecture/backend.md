@@ -3100,7 +3100,19 @@ class moves with passive scalar/enum fields: the exact parameter Move, field
 Initialize, and full-expression boundary remain mandatory, while value and
 construction-rollback obligations must be absent. Its inert parameter shell
 drop remains recorded. Custom lifecycle, borrowed state, and active cleanup
-do not use this passive route.
+do not use this passive route. A trivially dropped, borrow-free scalar, enum
+(including a payload enum whose payloads are trivially dropped), raw pointer
+or fixed array of such values has no parameter shell drop either: no
+obligation names its formal, its moved value or its field, and its `Move` and
+`Initialize` carry no lifecycle event. The proof requires that complete
+absence. The field then starts from its passive empty state in the
+member-initializer list, and the exact `Move` and `Initialize` publish it in
+MIR order, as in `Gauge(int32_t tag) : ledger(Ledger(tag, divisor)),
+odd(tag % 2 == 1), tag(std::move(tag))`. The MIR failure summary does not yet
+prove a non-class `Move` failure-free, so such a constructor is always
+failure-capable and takes this failure form; the ordinary form keeps the
+native-publication rule. A moved text view keeps its caller's loan and stays
+outside this route.
 
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,

@@ -1,0 +1,188 @@
+// A constructor moves a passive formal into a field after initializer work it
+// must not be hoisted across: a field built by a constructor that can fail,
+// or a computed or called sibling. An integer, bool, float, char, plain enum,
+// raw pointer, fixed array, or payload enum with a scalar payload has no drop
+// record for its formal, its moved value or its field. The failure-form
+// constructor therefore keeps the exact move in its verified body: the field
+// starts from its empty state and is published where MIR moves the formal.
+// Work before the move, a later sibling, or the constructor body can still
+// fail, and the owning field built first is then dropped exactly once. Owning
+// moves, generated-copy struct moves and a scalar moved first share the same
+// body-ordered schedule, and a move after an initializer that writes the
+// formal sees the written value.
+// Copying these formals already compiled; moving them was GTI-B0001.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() { std::println("close ledger"); }
+};
+
+enum class Shade { light, dark };
+enum class Reading { value(int32_t amount), missing };
+
+int32_t amount(Reading reading) {
+  switch (reading) {
+    case Reading::value(auto& amount): return amount;
+    case Reading::missing: return 0;
+  }
+}
+
+bool odd(int32_t value) { return value % 2 == 1; }
+
+// A user-defined owning field whose constructor can fail precedes the move.
+class Stocked {
+public:
+  Ledger ledger;
+  int32_t tag;
+  Stocked(int32_t tag) : ledger(Ledger(tag, divisor_for(1))), tag(std::move(tag)) {}
+};
+
+// Each passive kind, moved after a library owner.
+class Labels {
+public:
+  std::vector<int32_t> items;
+  bool flag;
+  float weight;
+  char letter;
+  Shade shade;
+  const int32_t* target = nullptr;
+  int32_t[3] counts;
+  Labels(bool flag, float weight, char letter, Shade shade,
+         const int32_t* target, int32_t[3] counts)
+      : items(std::vector<int32_t>()), flag(std::move(flag)),
+        weight(std::move(weight)), letter(std::move(letter)),
+        shade(std::move(shade)), target(std::move(target)),
+        counts(std::move(counts)) {}
+};
+
+// A fallible owning field, a computed and a called sibling precede the move,
+// and a sibling after it can fail.
+class Measured {
+public:
+  Ledger ledger;
+  bool small;
+  bool odd_tag;
+  int32_t tag;
+  int32_t quotient;
+  Measured(int32_t tag)
+      : ledger(Ledger(tag, 1)), small(tag < 10), odd_tag(odd(tag)),
+        tag(std::move(tag)), quotient(60 / divisor_for(2)) {}
+};
+
+// The constructor body can fail after the move.
+class Named {
+public:
+  std::string name;
+  Ledger ledger;
+  int32_t tag;
+  mut int32_t quotient;
+  Named(int32_t tag)
+      : name(std::string("named")), ledger(Ledger(tag, 1)), tag(std::move(tag)),
+        quotient(0) {
+    this.quotient = 60 / divisor_for(3);
+  }
+};
+
+// A generic owner moves its type parameter's value after a fallible field.
+class Shelf<T> {
+public:
+  Ledger ledger;
+  T value;
+  Shelf(T value) : ledger(Ledger(1, divisor_for(4))), value(std::move(value)) {}
+};
+
+struct Point {
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+
+// An owning move, a moved scalar and a moved generated-copy struct share the
+// body-staged schedule after a fallible field.
+class Bundle {
+public:
+  Ledger ledger;
+  std::vector<int32_t> values;
+  int32_t tag;
+  Point point;
+  Bundle(std::vector<int32_t> values, int32_t tag, Point point)
+      : ledger(Ledger(tag, divisor_for(5))), values(std::move(values)),
+        tag(std::move(tag)), point(std::move(point)) {}
+};
+
+// A scalar moved first stays in body order once a later owning move must
+// follow fallible work.
+class Headed {
+public:
+  int32_t tag;
+  Ledger ledger;
+  std::string name;
+  Headed(int32_t tag, int32_t id, std::string name)
+      : tag(std::move(tag)), ledger(Ledger(id, divisor_for(6))),
+        name(std::move(name)) {}
+};
+
+int32_t bump(mut int32_t& value) {
+  value = value + 1;
+  return value;
+}
+
+// An earlier initializer writes the formal through a mutable reference. The
+// move runs after it in the body, so the field sees the updated value.
+class Bumped {
+public:
+  int32_t first;
+  int32_t second;
+  Bumped(mut int32_t seed) : first(bump(seed)), second(std::move(seed)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Stocked stocked = Stocked(7);
+  std::println(stocked.tag + stocked.ledger.id);
+
+  int32_t anchor = 5;
+  int32_t[3] counts = {1, 2, 4};
+  Labels labels = Labels(true, 2.5, 'g', Shade::dark, &anchor, counts);
+  bool passive = labels.flag && labels.weight > 2.0 && labels.letter == 'g' &&
+                 labels.shade == Shade::dark && labels.target == &anchor &&
+                 labels.items.size() == 0;
+  std::println(passive ? 1 : 0);
+  std::println(labels.counts[0] + labels.counts[1] + labels.counts[2]);
+
+  Measured measured = Measured(9);
+  std::println(measured.small && measured.odd_tag ? 1 : 0);
+  std::println(measured.tag + measured.quotient);
+
+  Named named = Named(11);
+  std::println(named.tag + named.quotient);
+
+  Shelf<int32_t> number = Shelf<int32_t>(13);
+  std::println(number.value + number.ledger.id);
+  Shelf<Reading> reading = Shelf<Reading>(Reading::value(17));
+  std::println(amount(reading.value));
+
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  Point point{4, 5};
+  Bundle bundle = Bundle(std::move(values), 19, point);
+  std::println(bundle.tag + bundle.point.x + bundle.point.y + bundle.ledger.id);
+  std::println(bundle.values.size());
+
+  Headed headed = Headed(23, 2, std::string("headed"));
+  std::println(headed.tag + headed.ledger.id);
+  std::println(headed.name.size());
+
+  Bumped bumped = Bumped(1);
+  std::println(bumped.first * 10 + bumped.second);
+  return 0;
+}
