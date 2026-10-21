@@ -2149,6 +2149,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (viable.empty() && rejectedArguments.size() == 1) {
         const RejectedConstructorArgument &rejected = rejectedArguments.front();
         const std::size_t index = rejected.argumentIndex;
+        // A return that initializes its declared type from a named move-only
+        // value copies that value as any other return would; no constructor
+        // call is written, so no constructor argument is reported.
+        if (contextualReturnValue != nullptr && arguments.size() == 1 &&
+            arguments[index].expression != nullptr &&
+            arguments[index].expression->get() == contextualReturnValue &&
+            rejected.parameterTypes[index] == arguments[index].type &&
+            isMoveOnlyOwnerType(arguments[index].type)) {
+          reportMoveOnlyReturnCopy(*arguments[index].expression,
+                                   arguments[index].type);
+          currentType = constructedType;
+          return;
+        }
         const std::size_t diagnosticCount = diagnostics.size();
         reportCallArgumentMismatch(index, rejected.parameterTypes[index],
                                    arguments[index].type,
@@ -4060,11 +4073,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   const ClassInfo &declaration = classInfo(*classId);
   if (declaration.compilerType == CompilerTypeKind::MetaCallableReturnType &&
       type.arguments.size() == 1) {
-    const SemanticType subject = typeOf(type.arguments.front());
-    if (subject != SemanticType::Unknown &&
-        !containsOpenTypeParameter(subject) && !subject.hasLambdaShape() &&
-        !subject.hasFunctionItemShape() && !subject.hasNativeFunctionShape() &&
-        subject.kind != SemanticType::FunctionSignature) {
+    if (callableReturnSubjectUnsupported(typeOf(type.arguments.front()))) {
       report(type.name.last(),
              "Callable return-type reflection requires a function signature, "
              "a selected function item, a native function pointer, or a lambda "
@@ -7082,6 +7091,98 @@ auto SemanticVisitor::Impl::analyzeConcreteClassStaticAssertions(
   }
 }
 
+auto SemanticVisitor::Impl::declaresConcreteClassStaticAssertions(
+    const StmtList &members) const -> bool {
+  return std::any_of(
+      members.begin(), members.end(), [&](const StmtPtr &member) {
+        if (const auto *conditional = stmtAs<ConditionalStmt>(member.get())) {
+          const StmtList *branch = conditional->activeBranch(target);
+          return branch != nullptr &&
+                 declaresConcreteClassStaticAssertions(*branch);
+        }
+        return stmtAs<StaticAssertDecl>(member.get()) != nullptr;
+      });
+}
+
+auto SemanticVisitor::Impl::concreteClassAssertionsFail(
+    ClassId classId, const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &values) -> bool {
+  const ClassInfo &owner = classInfo(classId);
+  if (owner.genericParameters.empty() || owner.declaration == nullptr ||
+      !declaresConcreteClassStaticAssertions(owner.declaration->members())) {
+    return false;
+  }
+  if (const std::optional<bool> known =
+          knownConcreteClassAssertionOutcome(classId, typeArguments, values))
+    return *known;
+  // The instance's field analysis reports these assertions; this analysis
+  // only learns whether one fails.
+  const auto start = static_cast<std::ptrdiff_t>(diagnostics.size());
+  analyzeConcreteClassStaticAssertions(owner.declaration->members());
+  const bool failed =
+      std::any_of(diagnostics.begin() + start, diagnostics.end(),
+                  [](const SemanticDiagnostic &diagnostic) {
+                    return diagnostic.severity == DiagnosticSeverity::Error;
+                  });
+  diagnostics.erase(diagnostics.begin() + start, diagnostics.end());
+  recordConcreteClassAssertionOutcome(classId, typeArguments, values, failed);
+  return failed;
+}
+
+auto SemanticVisitor::Impl::knownConcreteClassAssertionOutcome(
+    ClassId classId, const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &values) const -> std::optional<bool> {
+  if (requestSession.classAssertionOutcomes.empty())
+    return std::nullopt;
+  const auto found = requestSession.classAssertionOutcomes.find(
+      InstanceAnalysisKey{.kind = InstanceAnalysisKind::ClassFieldInitializers,
+                          .declaration = classId,
+                          .classTypes = typeArguments,
+                          .classValues = values});
+  if (found == requestSession.classAssertionOutcomes.end())
+    return std::nullopt;
+  return found->second;
+}
+
+auto SemanticVisitor::Impl::recordConcreteClassAssertionOutcome(
+    ClassId classId, const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &values, bool failed) -> void {
+  // An analysis nested in an open reanalysis of the same instance skips the
+  // assertions its enclosing reanalysis owns, so it learns nothing.
+  if (requestSession.assertionsOwnedUpChain)
+    return;
+  requestSession.classAssertionOutcomes.insert_or_assign(
+      InstanceAnalysisKey{.kind = InstanceAnalysisKind::ClassFieldInitializers,
+                          .declaration = classId,
+                          .classTypes = typeArguments,
+                          .classValues = values},
+      failed);
+}
+
+auto SemanticVisitor::Impl::beginAssertionTracking() -> void {
+  requestSession.assertionDiagnostics.clear();
+  requestSession.trackedAssertionFailed = false;
+  requestSession.assertionTrackingStart = diagnostics.size();
+  requestSession.trackAssertionDiagnostics = true;
+}
+
+auto SemanticVisitor::Impl::endAssertionTracking(bool ownerRejected) -> void {
+  requestSession.trackAssertionDiagnostics = false;
+  if (ownerRejected || requestSession.trackedAssertionFailed) {
+    diagnostics.erase(
+        diagnostics.begin() +
+            static_cast<std::ptrdiff_t>(std::min(
+                requestSession.assertionTrackingStart, diagnostics.size())),
+        diagnostics.end());
+    diagnostics.insert(
+        diagnostics.end(),
+        std::make_move_iterator(requestSession.assertionDiagnostics.begin()),
+        std::make_move_iterator(requestSession.assertionDiagnostics.end()));
+  }
+  requestSession.assertionDiagnostics.clear();
+  requestSession.trackedAssertionFailed = false;
+}
+
 auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   diagnostics.clear();
   scopes.clear();
@@ -7115,6 +7216,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   nextPlaceSelectionId = 1;
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;
+  contextualReturnValue = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
   contextualResultUse.reset();
