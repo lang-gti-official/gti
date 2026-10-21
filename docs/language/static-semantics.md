@@ -874,6 +874,32 @@ consuming overload is preferred for those forms. A named value is never
 implicitly consumed. Read-only, mutable, and consuming overloads may coexist;
 arithmetic/bitwise value operators admit read-only and consuming forms.
 
+An accessor pair is the exception to the mutable preference: a read-only
+overload returning `T&` and an otherwise exact `mut` overload returning
+`mut T&` to the same referent, as a method, `operator[]` or `operator*`. On a
+mutable receiver the pair selects its `mut` form only when the use of its
+result may need mutable access; otherwise it selects the read-only form, which
+borrows the receiver as shared. A use is read-only when the result, or a field
+or fixed-array element reached from it, is only read:
+
+- it initializes a read-only reference, including a read-only reference
+  parameter or return;
+- it is copied into a value of its own type, or converted between built-in
+  types, as a by-value variable, parameter or return;
+- it is a condition, an operand of `!`, `&&` or `||`, or an operand of a
+  built-in operator;
+- it is the receiver of a member or operator whose overloads all have
+  read-only receivers, or the argument of an operator whose parameters all
+  read it.
+
+A use through another accessor pair is that pair's own use, and a range-for
+loop uses its range as its element binding requests. Every other use selects
+the `mut` form, including assignment, increment, `mut` bindings and arguments,
+mutating members, and uses the compiler does not classify. While a read-only
+result is live, other reads of the same receiver remain valid, and a mutable
+use conflicts with it as with any shared borrow. The rule is structural: a
+user-defined class, `std::vector` and `expected` behave the same way.
+
 A concrete self-contained class or struct value produced directly by an
 ordinary constructor or by-value GTI function call is a fresh temporary
 receiver. For one direct ordinary non-static method call, including reusable

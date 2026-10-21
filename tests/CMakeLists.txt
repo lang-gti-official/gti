@@ -955,6 +955,10 @@ add_test(NAME readonly_range_over_mutable_result_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/readonly_range_over_mutable_result.gti" --ownership-checks)
 set_tests_properties(readonly_range_over_mutable_result_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME use_based_accessor_selection_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/use_based_accessor_selection.gti" --ownership-checks)
+set_tests_properties(use_based_accessor_selection_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME reflected_contextual_construction_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/reflected_contextual_construction.gti" --ownership-checks)

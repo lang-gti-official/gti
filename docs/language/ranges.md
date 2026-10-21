@@ -186,15 +186,16 @@ int count(expected<std::string, int32_t> result) {
 
 On a named carrier, including a field or a reference parameter, the accessor
 returns a checked reference tied to its receiver, and the loop retains that
-reference as its owner. A mutable carrier selects the mutable accessor; its
-loop may request mutable elements, and a read-only loop still binds only
-read-only elements. A fresh result such as `make_result().value()` selects the
-consuming accessor and transfers the owned payload into the ordinary owned
-range temporary. The extraction's wrong-state failure, `GTI-R0009`, occurs
-before the loop starts. While the traversal is live, replacing or mutating the
-carrier is rejected as for any other borrowed owner. No part of this is
-specific to `expected`; a user-defined carrier with the same accessors behaves
-the same way.
+reference as its owner. On a mutable carrier, a loop that requests mutable
+elements selects the mutable accessor and a read-only loop selects the
+read-only one, so nested read-only loops over the same carrier are valid (see
+[accessor pairs](static-semantics.md#36-calls-and-overloads)). A fresh result
+such as `make_result().value()` selects the consuming accessor and transfers
+the owned payload into the ordinary owned range temporary. The extraction's
+wrong-state failure, `GTI-R0009`, occurs before the loop starts. While the
+traversal is live, replacing or mutating the carrier is rejected as for any
+other borrowed owner. No part of this is specific to `expected`; a
+user-defined carrier with the same accessors behaves the same way.
 
 ## Mutable structural protocol
 

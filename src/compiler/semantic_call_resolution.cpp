@@ -4904,6 +4904,213 @@ auto SemanticVisitor::Impl::structuralOperatorCandidates(
   return result;
 }
 
+auto SemanticVisitor::Impl::consultsResultUse(const Expr *expression) -> bool {
+  if (const auto *binary = exprAs<Binary>(expression))
+    return binary->oper().kind == TokenKind::COMMA;
+  return exprAs<Call>(expression) || exprAs<Get>(expression) ||
+         exprAs<Index>(expression) || exprAs<Grouping>(expression) ||
+         exprAs<ConditionalExpr>(expression) || exprAs<Unary>(expression);
+}
+
+auto SemanticVisitor::Impl::resultUseFor(const Expr &expression) const
+    -> std::optional<ResultUse> {
+  if (contextualResultUse && contextualResultUse->expression == &expression)
+    return contextualResultUse;
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::prependResultUseStep(
+    ResultUseStep step, const std::optional<ResultUse> &parent)
+    -> std::vector<ResultUseStep> {
+  std::vector<ResultUseStep> steps{std::move(step)};
+  if (parent)
+    steps.insert(steps.end(), parent->steps.begin(), parent->steps.end());
+  return steps;
+}
+
+auto SemanticVisitor::Impl::accessorResultUse(const ResultUse &use,
+                                              SemanticType type) const
+    -> ResultUseAccess {
+  for (const ResultUseStep &step : use.steps) {
+    // SemanticType assignment from its own argument is not alias-safe.
+    while (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+      SemanticType referent = type.arguments.front();
+      type = std::move(referent);
+    }
+    if (step.kind == ResultUseStep::Kind::Bind) {
+      // A reference target needs its own access. A value target copies the
+      // result; a conversion from another class could need more.
+      std::optional<ResultUseAccess> bound;
+      for (const SemanticType &target : step.targets) {
+        ResultUseAccess access = ResultUseAccess::Unknown;
+        if (target.kind == SemanticType::Reference)
+          access = target.referenceAccess == AccessMode::Mutable
+                       ? ResultUseAccess::Mutable
+                       : ResultUseAccess::ReadOnly;
+        else if (target == type || containsOpenTypeParameter(target) ||
+                 (classInfo(target) == nullptr && classInfo(type) == nullptr))
+          access = ResultUseAccess::ReadOnly;
+        if (bound && *bound != access)
+          return ResultUseAccess::Unknown;
+        bound = access;
+      }
+      return bound.value_or(ResultUseAccess::Unknown);
+    }
+    const ClassInfo *owner = classInfo(type);
+    if (step.kind == ResultUseStep::Kind::Field) {
+      const auto found = owner == nullptr ? decltype(owner->members.end()){}
+                                          : owner->members.find(step.name);
+      if (owner == nullptr || found == owner->members.end() ||
+          found->second.symbol.type == SemanticType::Function ||
+          found->second.symbol.staticMember)
+        return ResultUseAccess::Unknown;
+      type = substituteSymbol(found->second.symbol, type).type;
+      continue;
+    }
+    if (owner == nullptr) {
+      if (step.kind == ResultUseStep::Kind::Member)
+        return ResultUseAccess::Unknown;
+      // A built-in operator reads its operands, including a raw pointer it
+      // dereferences or indexes. A fixed array's element is part of the
+      // array, so the element's use is the array's.
+      if (step.operation == OverloadedOperator::Subscript &&
+          type.kind == SemanticType::Array && type.arguments.size() == 1) {
+        SemanticType element = type.arguments.front();
+        type = std::move(element);
+        continue;
+      }
+      return ResultUseAccess::ReadOnly;
+    }
+    const auto found = owner->members.find(
+        step.kind == ResultUseStep::Kind::Member
+            ? step.name
+            : std::string(operatorFunctionName(step.operation)));
+    if (found == owner->members.end() ||
+        found->second.symbol.type != SemanticType::Function)
+      return ResultUseAccess::Unknown;
+    std::vector<CallableCandidate> candidates =
+        substituteSymbol(found->second.symbol, type).overloads;
+    std::erase_if(candidates, [](const CallableCandidate &candidate) {
+      return candidate.staticMember;
+    });
+    if (candidates.empty())
+      return ResultUseAccess::Unknown;
+    const auto has = [&](ReceiverMutability mutability) {
+      return std::any_of(candidates.begin(), candidates.end(),
+                         [&](const CallableCandidate &candidate) {
+                           return candidate.receiverMutability == mutability;
+                         });
+    };
+    if (has(ReceiverMutability::Consuming))
+      return ResultUseAccess::Unknown;
+    if (!has(ReceiverMutability::Mutable))
+      return ResultUseAccess::ReadOnly;
+    if (!has(ReceiverMutability::ReadOnly))
+      return ResultUseAccess::Mutable;
+    // An accessor pair: its own selection follows the outer use, so the
+    // walk continues through the referent both forms return.
+    const SemanticType referent =
+        callExpressionType(candidates.front().returnType);
+    if (std::any_of(candidates.begin(), candidates.end(),
+                    [&](const CallableCandidate &candidate) {
+                      return candidate.returnType.kind !=
+                                 SemanticType::Reference ||
+                             callExpressionType(candidate.returnType) !=
+                                 referent;
+                    }))
+      return ResultUseAccess::Unknown;
+    type = referent;
+  }
+  return use.top;
+}
+
+auto SemanticVisitor::Impl::readOnlyAccessorOperator(
+    const std::optional<ResultUse> &use, const SemanticType &receiver,
+    OverloadedOperator operation) const -> bool {
+  const ClassInfo *owner = use ? classInfo(receiver) : nullptr;
+  if (owner == nullptr)
+    return false;
+  const auto found =
+      owner->members.find(std::string(operatorFunctionName(operation)));
+  if (found == owner->members.end() ||
+      found->second.symbol.type != SemanticType::Function)
+    return false;
+  const std::vector<CallableCandidate> candidates =
+      substituteSymbol(found->second.symbol, receiver).overloads;
+  const auto form = [](const CallableCandidate &candidate,
+                       ReceiverMutability receiverMutability,
+                       AccessMode access) {
+    return !candidate.staticMember &&
+           candidate.receiverMutability == receiverMutability &&
+           candidate.returnType.kind == SemanticType::Reference &&
+           candidate.returnType.referenceAccess == access;
+  };
+  const auto readOnly = std::find_if(
+      candidates.begin(), candidates.end(), [&](const auto &candidate) {
+        return form(candidate, ReceiverMutability::ReadOnly,
+                    AccessMode::ReadOnly);
+      });
+  return readOnly != candidates.end() &&
+         std::any_of(candidates.begin(), candidates.end(),
+                     [&](const CallableCandidate &candidate) {
+                       return form(candidate, ReceiverMutability::Mutable,
+                                   AccessMode::Mutable) &&
+                              callExpressionType(candidate.returnType) ==
+                                  callExpressionType(readOnly->returnType);
+                     }) &&
+         accessorResultUse(*use, readOnly->returnType) ==
+             ResultUseAccess::ReadOnly;
+}
+
+auto SemanticVisitor::Impl::argumentResultUses(
+    const Call &expr, const SemanticType &calleeType,
+    const std::optional<Symbol> &callee) const
+    -> std::vector<std::optional<ResultUseStep>> {
+  // Explicit type arguments can make a written `T` parameter a reference.
+  if (!expr.typeArguments().empty())
+    return {};
+  struct Signature {
+    std::span<const SemanticType> parameters;
+    std::size_t required = 0;
+    bool pack = false;
+  };
+  std::vector<Signature> signatures;
+  if (calleeType.kind == SemanticType::Lambda) {
+    const auto parameters = calleeType.lambdaParameterTypes();
+    signatures.push_back({parameters, parameters.size()});
+  } else if (calleeType.kind == SemanticType::FunctionItem) {
+    const auto parameters = calleeType.functionItemParameterTypes();
+    signatures.push_back({parameters, parameters.size()});
+  } else if (calleeType.kind == SemanticType::NativeFunction) {
+    const auto parameters = calleeType.nativeFunctionParameterTypes();
+    signatures.push_back({parameters, parameters.size()});
+  } else if (callee) {
+    for (const CallableCandidate &candidate : callee->overloads)
+      signatures.push_back({candidate.parameterTypes,
+                            candidate.requiredParameterCount,
+                            candidate.parameterPack});
+  }
+  const std::size_t count = expr.arguments().size();
+  std::erase_if(signatures, [&](const Signature &signature) {
+    return count < signature.required ||
+           (count > signature.parameters.size() &&
+            !(signature.pack && !signature.parameters.empty()));
+  });
+  if (signatures.empty())
+    return {};
+  std::vector<std::optional<ResultUseStep>> uses(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    std::vector<SemanticType> targets;
+    for (const Signature &signature : signatures)
+      targets.push_back(signature.pack &&
+                                index + 1 >= signature.parameters.size()
+                            ? signature.parameters.back()
+                            : signature.parameters[index]);
+    uses[index] = bindResultUseStep(std::move(targets));
+  }
+  return uses;
+}
+
 auto SemanticVisitor::Impl::selectStructuralOperator(
     const SemanticType &receiver, OverloadedOperator kind,
     std::span<const SemanticType> parameterTypes, bool mutableReceiver) const

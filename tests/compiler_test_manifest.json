@@ -602,6 +602,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testUseBasedAccessorSelection",
+      "suite": "ownership"
+    },
+    {
       "name": "testFixedWidthIntegers",
       "suite": "constexpr"
     },
