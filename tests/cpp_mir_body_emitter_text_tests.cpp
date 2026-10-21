@@ -1579,8 +1579,9 @@ class Leading {
 public:
   int32_t tag;
   bool odd;
+  int32_t mirrored;
   Leading(int32_t tag, int32_t other)
-      : tag(std::move(tag)), odd(is_odd(other)) {}
+      : tag(std::move(tag)), odd(is_odd(other)), mirrored(other) {}
 };
 
 class CopiedChecked {
@@ -1599,7 +1600,8 @@ int main() {
   CopiedChecked checked = CopiedChecked(2, 30);
   return gauge.odd && gauge.flagged && leading.odd
              ? gauge.tag + copied.first + copied.second + leading.tag +
-                   checked.first + checked.second + checked.quotient - 42
+                   leading.mirrored + checked.first + checked.second +
+                   checked.quotient - 45
              : 1;
 }
 )");
@@ -1654,9 +1656,14 @@ int main() {
   }
   const auto leadingMoves =
       lang::cppMirOwnedParameterFieldBindings(frontend.mir, *leading);
+  const auto leadingCopies =
+      lang::cppMirCopyParameterFieldBindings(frontend.mir, *leading);
   expect(leadingMoves && leadingMoves->size() == 1 &&
              emitter.supportsBodyText(address(*leading)),
          "a leading move keeps its native member-initializer publication");
+  expect(leadingCopies && leadingCopies->empty(),
+         "a scalar copy after the call stays in the MIR body schedule, as it "
+         "did while the moved formal made the constructor failure-capable");
   expect(!lang::cppMirOwnedParameterFieldBindings(frontend.mir, *checked) &&
              emitter.supportsFailureBodyText(address(*checked)),
          "a failure-form copy ahead of its own move publishes in body order");
