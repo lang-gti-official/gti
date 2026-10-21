@@ -326,7 +326,7 @@ int main() { return 0; }
 std::optional<std::string> label(std::string named) { return named; }
 int main() { return 0; }
 )gti",
-           "GTI-S2018", "deleted copy constructor");
+           "GTI-S2003", "Cannot return 'named' by copy");
   rejected(R"gti(
 #include <std/optional>
 int take(std::optional<int> value) { return 0; }

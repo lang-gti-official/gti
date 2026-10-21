@@ -315,7 +315,7 @@ struct Holder {
 Holder wrap() { Owner owner{}; return owner; }
 int main() { return 0; }
 )gti",
-           "GTI-S2018");
+           "GTI-S2003");
   rejected(R"gti(
 struct Borrow {
   int& value;
