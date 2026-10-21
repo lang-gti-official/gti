@@ -3108,11 +3108,26 @@ obligation names its formal, its moved value or its field, and its `Move` and
 absence. The field then starts from its passive empty state in the
 member-initializer list, and the exact `Move` and `Initialize` publish it in
 MIR order, as in `Gauge(int32_t tag) : ledger(Ledger(tag, divisor)),
-odd(tag % 2 == 1), tag(std::move(tag))`. The MIR failure summary does not yet
-prove a non-class `Move` failure-free, so such a constructor is always
-failure-capable and takes this failure form; the ordinary form keeps the
-native-publication rule. A moved text view keeps its caller's loan and stays
-outside this route.
+odd(tag % 2 == 1), tag(std::move(tag))`. A moved text view keeps its caller's
+loan and stays outside this route.
+
+Such a move is itself failure-free (see the MIR failure summary), so a
+constructor whose other work cannot fail, as in
+`Gauge(int32_t tag) : odd((tag & 1) == 1), flagged(is_odd(tag)),
+tag(std::move(tag))`, uses the ordinary form. When the native owned-field
+proof cannot hoist every owned move, `cppMirOrdinaryBodyStagedParameterMoves`
+admits the same body-ordered publication there for drop-free moves only:
+the constructor's summary must be failure-free, its fields must have the
+empty state, no reference may bind natively, and natively copied fields must
+form the complete first-field prefix. Body admission and the planner's
+initializer list consult that one proof. For a constructor that either form
+can body-stage, passive scalar parameter copies stay in the MIR body schedule
+(`cppMirCopyParameterFieldBindings`), whichever form is selected.
+The native owned-field proof also refuses a passive scalar sibling that copies
+the very formal a later initializer moves, as in `Copied(int32_t tag) :
+first(tag), second(std::move(tag))`: the native list would move the formal
+before the body copy ran, and the formal's shell is never declared. That
+constructor publishes in body order in both forms.
 
 An exact by-value parameter copy may also publish one field through the native
 member-initializer list when the copied class has generated copy/destruction,
@@ -3903,6 +3918,14 @@ or invent a semantic destructor obligation. A consuming checked Expected
 extraction feeding that same single return consumer reuses the cleanup-free
 receiver proof and publishes into the slot only after the state check succeeds;
 the original carrier shell remains live until its MIR-authored cleanup.
+
+A moved value staged through plain call inputs into one construction in the
+move's own block, with no record between them touching the source place, is a
+moved-place chain (`movedPlaceChainSource`). Neither the `Move` nor its call
+inputs materialize a local, so every spelling of that construction passes
+`std::move` over the source place, including a construction published at a
+plain or failure-form return, as in `return Holder(std::move(value));` and
+`unexpected(code)` for a scalar error.
 
 ### Declarations And ABI
 
