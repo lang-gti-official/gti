@@ -4310,21 +4310,29 @@ constructorFieldMoveInitialize(const MirBody &body, MirValueId id) {
 // earlier initializer wrote it, keeps the Load's sequencing in an inferred
 // transient that the Initialize then publishes into the field. Only a
 // cleanup-free copy qualifies: neither record carries a lifecycle event and
-// the copied value owns no drop obligation or place of its own.
+// the copied value owns no drop obligation or place of its own. Like the
+// native copy, the Load must be the exact reachable Read of its source.
 [[nodiscard]] const MirInstruction *
 constructorFieldCopyInitialize(const MirBody &body, MirValueId id) {
   const MirValue *value = body.findValue(id);
   const MirInstruction *definition =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
+  const MirPlace *source =
+      definition == nullptr || definition->operands.size() != 1
+          ? nullptr
+          : body.findPlace(definition->operands.front().place);
   if (definition == nullptr || value->info.type.kind != SemanticType::Class ||
-      definition->kind != MirInstructionKind::Load ||
-      definition->operands.size() != 1 ||
+      definition->kind != MirInstructionKind::Load || source == nullptr ||
       definition->operands.front().kind != MirOperandKind::Copy ||
-      definition->operands.front().place == 0 ||
-      body.findPlace(definition->operands.front().place) == nullptr ||
       !definition->lifecycle.empty() ||
       !definition->localFailureSites.empty() ||
-      !definition->definedFailure.empty()) {
+      !definition->definedFailure.empty() || !source->key ||
+      !definition->ownership ||
+      definition->ownership->kind != OwnershipEventKind::Read ||
+      definition->ownership->place != *source->key ||
+      definition->ownership->before != OwnershipStateSet::Available ||
+      definition->ownership->after != OwnershipStateSet::Available ||
+      !definition->ownership->reachable) {
     return nullptr;
   }
   const std::vector<MirValueUse> uses = nonRootRecordUses(body, id);
