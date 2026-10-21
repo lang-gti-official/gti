@@ -304,9 +304,10 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       }
     }
 
-    // Each argument is a closed type, or one class or enum template applied
-    // to block parameters; every block parameter appears in some argument. A
-    // repeated parameter must bind the same type at each of its occurrences.
+    // Each argument is a closed type, or one class or enum template, pointer
+    // or fixed-length array type applied to block parameters; every block
+    // parameter appears in some argument. A repeated parameter must bind the
+    // same type at each of its occurrences.
     beginTypeParameterScope(parameters);
     registeringConformanceParameters = &parameters;
     // Registration needs only the types' identities; validateConformanceTypes
@@ -338,16 +339,17 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
              classInfo(pattern.classId).exactSpecializationPrimary == 0) ||
             (pattern.kind == SemanticType::Enum && pattern.enumId != 0 &&
              pattern.enumId <= enums.size());
-        const bool shape = nominalTemplate && pattern.valueArguments.empty() &&
-                           !pattern.arguments.empty() &&
-                           std::all_of(pattern.arguments.begin(),
-                                       pattern.arguments.end(), ownParameter);
+        const bool shape =
+            (nominalTemplate || builtinConformanceConstructor(pattern)) &&
+            pattern.valueArguments.empty() && !pattern.arguments.empty() &&
+            std::all_of(pattern.arguments.begin(), pattern.arguments.end(),
+                        ownParameter);
         if (!shape) {
           reportConformanceError(
               argument.name.last(),
-              "Each argument of a conformance block is a concrete type or "
-              "one class or enum template applied to the block's "
-              "parameters, such as 'Box<T>'.");
+              "Each argument of a conformance block is a concrete type, or "
+              "one class or enum template, pointer or array type applied to "
+              "the block's parameters, such as 'Box<T>', 'T*' or 'T[3]'.");
           valid = false;
         } else {
           for (const SemanticType &parameter : pattern.arguments) {
@@ -377,7 +379,8 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
 
     if (valid) {
       // An open pattern is owned by its template's package, a closed one by
-      // its top-level nominal type's.
+      // its top-level nominal type's. No package owns a built-in type, so
+      // only the concept's package declares a block over one.
       bool owns =
           samePackageOwnershipDomain(currentSourceUnit, conceptInfo.sourceUnit);
       for (std::size_t position = 0; !owns && position < patterns.size();
@@ -551,6 +554,22 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
                                    "without modifiers.");
         continue;
       }
+      // A concept operation declares no defaults, so its block function may
+      // not offer arguments the concept's interface lacks: a concrete call
+      // and a call through the requirement accept the same arguments. The
+      // function stays bound, so its uses report nothing further.
+      for (const Parameter &parameter : function->parameters()) {
+        if (parameter.hasDefault()) {
+          reportConformanceError(
+              parameter.name,
+              "Conformance block operation '" + function->name().lexeme +
+                  "' cannot declare a default argument; concept '" +
+                  conceptInfo.qualifiedName + "' declares none.",
+              &conceptInfo.operations[*index].declaration->name(),
+              "Operation declared here.");
+          break;
+        }
+      }
       const auto found = catalog.namespaceSymbols.find(
           qualifiedName(conformance.functionScope, function->name().lexeme));
       if (found == catalog.namespaceSymbols.end() ||
@@ -713,8 +732,37 @@ auto SemanticVisitor::Impl::openConformancePattern(const SemanticType &pattern)
   return containsOpenTypeParameter(pattern);
 }
 
+// A built-in type that a pattern may apply to block parameters, as it applies
+// a class or enum template: a raw pointer `T*` or `const T*`, or a
+// fixed-length array `T[3]`. Its type arguments are the pattern's arguments.
+auto SemanticVisitor::Impl::builtinConformanceConstructor(
+    const SemanticType &type) -> bool {
+  switch (type.kind) {
+  case SemanticType::RawPointer:
+    return type.arguments.size() == 1;
+  case SemanticType::Array:
+    // A fixed length; a length parameter is not a type argument.
+    return type.arguments.size() == 1 && type.arrayLength != 0 &&
+           type.arrayLengthParameterId == 0;
+  default:
+    return false;
+  }
+}
+
+// Whether two types apply the same constructor, ignoring its type arguments.
+auto SemanticVisitor::Impl::sameConformanceConstructor(
+    const SemanticType &left, const SemanticType &right) -> bool {
+  return left.kind == right.kind && left.classId == right.classId &&
+         left.enumId == right.enumId &&
+         (left.kind != SemanticType::RawPointer ||
+          left.pointerAccess == right.pointerAccess) &&
+         (left.kind != SemanticType::Array ||
+          (left.arrayLength == right.arrayLength &&
+           left.arrayLengthParameterId == right.arrayLengthParameterId));
+}
+
 // The arguments that make `type` an instance of an open pattern's class or
-// enum template, or nothing when it is not one.
+// enum template or built-in type, or nothing when it is not one.
 auto SemanticVisitor::Impl::patternInstanceArguments(
     const SemanticType &pattern, const SemanticType &type) const
     -> std::optional<std::vector<SemanticType>> {
@@ -723,6 +771,11 @@ auto SemanticVisitor::Impl::patternInstanceArguments(
   }
   if (pattern.kind == SemanticType::Enum && type.kind == SemanticType::Enum &&
       type.enumId == pattern.enumId && type.valueArguments.empty()) {
+    return type.arguments;
+  }
+  if (builtinConformanceConstructor(pattern) &&
+      sameConformanceConstructor(pattern, type) &&
+      type.arguments.size() == pattern.arguments.size()) {
     return type.arguments;
   }
   return std::nullopt;
@@ -786,7 +839,7 @@ auto SemanticVisitor::Impl::matchConformance(
 }
 
 // Whether some concrete arguments match both blocks. Every pattern is a
-// closed type or a class or enum template applied to block parameters, so
+// closed type or a template or built-in type applied to block parameters, so
 // unifying two blocks binds parameters only to closed types or to each
 // other: a union-find over both blocks' parameters, each class carrying at
 // most one closed type, decides it.
@@ -846,8 +899,7 @@ auto SemanticVisitor::Impl::conformancePatternsOverlap(
       continue;
     }
     if (leftOpen && rightOpen) {
-      if (left.kind != right.kind || left.classId != right.classId ||
-          left.enumId != right.enumId ||
+      if (!sameConformanceConstructor(left, right) ||
           left.arguments.size() != right.arguments.size()) {
         return false;
       }
@@ -1152,9 +1204,16 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
     }
     return;
   }
-  if (!matchConformance(id, arguments)) {
+  // The selected block must also accept the arguments, exactly as
+  // `requires` checks it, so a type cannot name an associated type through
+  // a block whose constraints it fails.
+  const std::optional<ConstraintFailure> failure =
+      protocolConformanceFailure({.conceptId = id, .arguments = arguments});
+  if (failure && failure->missingConformance) {
     reportConformanceError(site, "No conformance block 'for concept " +
                                      application + "' is declared.");
+  } else if (failure) {
+    reportConstraintFailure(site, *failure);
   }
 }
 

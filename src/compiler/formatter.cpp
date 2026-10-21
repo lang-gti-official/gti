@@ -1390,15 +1390,43 @@ private:
       } else if (lexemes[index].kind == Kind::Less) {
         if (--depth == 0) {
           const Lexeme *baseType = previousSignificant(lexemes, index);
-          return baseType != nullptr &&
-                 isKnownTypeWord(
-                     lexemes,
-                     static_cast<std::size_t>(baseType - lexemes.data()),
-                     declaredTypes);
+          if (baseType == nullptr || baseType->kind != Kind::Word)
+            return false;
+          if (isKnownTypeWord(
+                  lexemes, static_cast<std::size_t>(baseType - lexemes.data()),
+                  declaredTypes))
+            return true;
+          // An imported generic applied to a known type argument, as
+          // isGenericAngleStart admits it: `expected<T, E>& value`.
+          return startsWithTypeArgument(lexemes, index, declaredTypes);
         }
       }
     }
     return false;
+  }
+
+  // Whether the angle clause opened at `less` begins with a type argument a
+  // comparison cannot: a primitive, a type declared in this file or one of its
+  // generic parameters, followed by a separator, the close, an array extent or
+  // a declarator. A conversion such as `left < int(2) > &right` does not.
+  static bool
+  startsWithTypeArgument(const std::vector<Lexeme> &lexemes, std::size_t less,
+                         const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme *argument = nextSyntaxLexeme(lexemes, less);
+    const Lexeme *afterArgument =
+        argument == nullptr
+            ? nullptr
+            : nextSyntaxLexeme(
+                  lexemes, static_cast<std::size_t>(argument - lexemes.data()));
+    return argument != nullptr && argument->kind == Kind::Word &&
+           (isBuiltinType(argument->text) ||
+            declaredTypes.contains(argument->text)) &&
+           afterArgument != nullptr &&
+           (afterArgument->kind == Kind::Comma ||
+            afterArgument->kind == Kind::Greater ||
+            afterArgument->kind == Kind::LeftBracket ||
+            (afterArgument->kind == Kind::Operator &&
+             (afterArgument->text == "*" || afterArgument->text == "&")));
   }
 
   static bool
@@ -2307,23 +2335,11 @@ private:
                           declaredTypes)) {
         return true;
       }
-      // An imported generic need not be declared in this file. A primitive
-      // type argument identifies its angle clause structurally, without a
-      // special case for a public library name. A numeric conversion such
-      // as `left < int(2) > &right` remains an ordinary expression.
-      const Lexeme *argument = nextSyntaxLexeme(lexemes, index);
-      const Lexeme *afterArgument =
-          argument == nullptr
-              ? nullptr
-              : nextSyntaxLexeme(lexemes, static_cast<std::size_t>(
-                                              argument - lexemes.data()));
-      return argument != nullptr && argument->kind == Kind::Word &&
-             isBuiltinType(argument->text) && afterArgument != nullptr &&
-             (afterArgument->kind == Kind::Comma ||
-              afterArgument->kind == Kind::Greater ||
-              afterArgument->kind == Kind::LeftBracket ||
-              (afterArgument->kind == Kind::Operator &&
-               (afterArgument->text == "*" || afterArgument->text == "&")));
+      // An imported generic need not be declared in this file. A type
+      // argument (primitive, declared in this file, or one of its generic
+      // parameters) identifies its angle clause structurally, without a
+      // special case for a public library name: `expected<T, E>& value`.
+      return startsWithTypeArgument(lexemes, index, declaredTypes);
     }
     if (next->kind != Kind::Word) {
       return false;

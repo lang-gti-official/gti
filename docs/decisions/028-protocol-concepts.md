@@ -138,3 +138,24 @@ A pattern may apply an enum template to block parameters, as it applies a
 class template: `for <T, E> concept C<result<T, E>>`. Selection, overlap and
 coherence are unchanged, and the enum template's package owns the pattern as
 a class template's package does.
+
+## Revision: built-in type patterns and block interfaces (2026-10-21)
+
+A pattern may also apply a raw pointer or a fixed-length array to block
+parameters: `for <T> concept C<T*>` or `for <T> concept C<T[3]>`. Selection
+and overlap treat the built-in type as a template whose arguments are its type
+arguments. A pointer's access and an array's length belong to its identity,
+so `T*` and `const T*` neither overlap nor match each other's instances. An
+array length cannot be a block parameter until blocks take value parameters.
+No package owns a built-in type, so only the concept's package declares a
+block over one. `expected` (a source class template since 0.449.0),
+`std::unique_ptr` and `std::shared_ptr` are standard-library class templates
+and were already patterns.
+
+Two interface rules remove differences between a concrete use and a use
+through a requirement:
+- a block function cannot declare default arguments, which a concept's
+  operations never have;
+- a concrete associated type `C<X>::name` checks the selected block's
+  parameter constraints, as `requires C<X>` and a concrete operation call
+  already did.

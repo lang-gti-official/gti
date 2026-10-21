@@ -6,6 +6,8 @@
 // types used for locals and results, and operations that take ownership of
 // an owning operand, which is released when the operation returns. Phase 1
 // fails inside a block operation, which releases its operand exactly once.
+// Phase 2 selects blocks over the source `expected` class, pointers and a
+// fixed-length array.
 #include <std/string>
 #include <std/vector>
 
@@ -61,6 +63,35 @@ int finish<T>(T box) requires container<T> {
   return container<T>::consume(std::move(box));
 }
 
+// A class-template block over the source `expected`, then blocks over
+// built-in types. An owning `expected` is released once by the operation that
+// consumes it.
+for <T, E> concept container<expected<T, E>> {
+  using element_type = int;
+  int make(expected<T, E>& box) { return box.has_value() ? 1 : 0; }
+  int consume(expected<T, E> box) { return box.has_value() ? 2 : -2; }
+};
+
+concept counted<T> {
+  int count(T value);
+};
+
+for <T> concept counted<T*> {
+  int count(T* value) { return value == nullptr ? 0 : 1; }
+};
+
+for <T> concept counted<const T*> {
+  int count(const T* value) { return value == nullptr ? 0 : 2; }
+};
+
+for <T> concept counted<T[3]> {
+  int count(T value[3]) { return int(value.size()); }
+};
+
+int total<T>(T value) requires counted<T> {
+  return counted<T>::count(std::move(value));
+}
+
 int run(int phase) {
   if (phase == 0) {
     Single single{1};
@@ -71,6 +102,20 @@ int run(int phase) {
     int scaled = build(pair);
     std::println(std::to_string(scaled));
     std::println(std::to_string(finish(std::move(pair))));
+    return 0;
+  }
+  if (phase == 2) {
+    expected<Tracked, int> held = Tracked(4);
+    std::println(std::to_string(build(held)));
+    std::println(std::to_string(finish(std::move(held))));
+    expected<Tracked, int> failed = unexpected(5);
+    std::println(std::to_string(build(failed)));
+    mut int number = 6;
+    int fixed = 7;
+    int numbers[3] = {1, 2, 3};
+    std::println(std::to_string(total(&number)));
+    std::println(std::to_string(total(&fixed)));
+    std::println(std::to_string(total(numbers)));
     return 0;
   }
   Pair<Tracked> failing{Tracked(3), 0};
