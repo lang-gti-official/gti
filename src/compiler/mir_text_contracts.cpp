@@ -17,13 +17,73 @@ bool textType(const SemanticType &type) {
 struct TextSources {
   bool known = false;
   std::set<std::size_t> parameters;
+  // Text fields of formals or of the receiver that this text is read from:
+  // ownerless only under the function's field contract (L-OWN-02).
+  std::set<OwnerlessTextField> fields;
 };
 
 struct TextBody {
   const MirBody &body;
   std::span<const SemanticType> types;
   std::span<const HirBindingId> bindings;
+  // A function whose formals and receiver carry field-level contracts.
+  const MirFunctionInstance *fieldContracts = nullptr;
 };
+
+// A class whose direct text fields may hold a relayed owner's text: no
+// borrowed state, bases, virtual methods or declared destructor. This
+// implies the semantic publication rule, so MIR never derives a field
+// requirement that semantics could not have declared.
+bool textPublishableClass(const MirProgram &program, const SemanticType &type) {
+  if (type.kind != SemanticType::Class)
+    return false;
+  const auto instance = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &candidate) { return candidate.type == type; });
+  return instance != program.classInstances().end() &&
+         !instance->traits.containsBorrowedState && instance->bases.empty() &&
+         !instance->polymorphic &&
+         instance->destructorStatus == SpecialMemberStatus::Generated;
+}
+
+// Whether a function's formal or receiver is read-only: a read-only
+// receiver, a read-only reference, or a by-value formal whose binding place
+// is read-only. Only such a formal takes a relayed value.
+bool readOnlyContractFormal(const MirFunctionInstance &function,
+                            const OwnerlessTextField &formal) {
+  if (formal.receiver)
+    return function.receiverMutability == ReceiverMutability::ReadOnly;
+  if (formal.parameter >= function.parameterTypes.size() ||
+      formal.parameter >= function.parameterBindings.size())
+    return false;
+  const auto &type = function.parameterTypes[formal.parameter];
+  if (type.kind == SemanticType::Reference)
+    return type.referenceAccess == AccessMode::ReadOnly;
+  const auto binding = function.parameterBindings[formal.parameter];
+  return std::any_of(function.body.places.begin(), function.body.places.end(),
+                     [&](const MirPlace &place) {
+                       return place.root == MirPlaceRootKind::Binding &&
+                              place.binding == binding &&
+                              place.projections.empty() &&
+                              place.access == AccessMode::ReadOnly;
+                     });
+}
+
+// A non-generic, non-virtual GTI source function or method of a non-generic
+// class: the functions that carry field-level contracts.
+bool fieldContractFunction(const MirProgram &program,
+                           const MirFunctionInstance &function) {
+  if (function.definitionKind != MirDefinitionKind::Source ||
+      function.virtualMethod || function.overrideMethod ||
+      function.linkage != LanguageLinkage::Gti ||
+      !function.typeArguments.empty() || !function.valueArguments.empty())
+    return false;
+  if (!function.owner)
+    return true;
+  const auto *owner = program.findClassInstance(*function.owner);
+  return owner != nullptr && owner->type.arguments.empty() &&
+         owner->type.valueArguments.empty();
+}
 
 class TextContracts {
 public:
@@ -46,6 +106,9 @@ private:
   const MirProgram &program;
   MirVerificationResult result;
   std::vector<std::set<std::size_t>> requirements;
+  // Derived per function: the formal and receiver text fields it lets
+  // outlive the call (L-OWN-02).
+  std::vector<std::set<OwnerlessTextField>> fieldRequirements;
   std::vector<std::set<std::size_t>> constructorRequirements;
   // Per constructor: the formals that initialize exactly one direct text
   // field and reach no other text initializer, keyed to that field.
@@ -66,6 +129,114 @@ private:
         std::find_if(block->instructions.begin(), block->instructions.end(),
                      [&](const auto &i) { return i.id == value->definition; });
     return found == block->instructions.end() ? nullptr : &*found;
+  }
+
+  // The formal or receiver of a publishable class that `place` names in a
+  // field-contract function: its whole value (field 0), or one of its direct
+  // text fields. Other paths name neither.
+  std::optional<OwnerlessTextField> contractPlace(const TextBody &context,
+                                                  const MirPlace &place) const {
+    if (!context.fieldContracts)
+      return std::nullopt;
+    OwnerlessTextField formal;
+    SemanticType type = SemanticType::Unknown;
+    std::size_t offset = 0;
+    if (place.root == MirPlaceRootKind::This) {
+      const auto &owner = context.fieldContracts->owner;
+      const auto *instance =
+          owner ? program.findClassInstance(*owner) : nullptr;
+      if (!instance || context.fieldContracts->staticMember)
+        return std::nullopt;
+      formal.receiver = true;
+      type = instance->type;
+    } else if (place.root == MirPlaceRootKind::Binding && place.capture == 0) {
+      const auto found = std::find(context.bindings.begin(),
+                                   context.bindings.end(), place.binding);
+      formal.parameter =
+          static_cast<std::size_t>(found - context.bindings.begin());
+      if (found == context.bindings.end() ||
+          formal.parameter >= context.types.size())
+        return std::nullopt;
+      type = context.types[formal.parameter];
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
+        type = SemanticType(type.arguments.front());
+        if (!place.projections.empty() &&
+            place.projections.front().kind == MirProjectionKind::Dereference)
+          offset = 1;
+      }
+    } else {
+      return std::nullopt;
+    }
+    if (!textPublishableClass(program, type) ||
+        !readOnlyContractFormal(*context.fieldContracts, formal))
+      return std::nullopt;
+    if (place.projections.size() == offset)
+      return formal;
+    if (place.projections.size() == offset + 1 &&
+        place.projections[offset].kind == MirProjectionKind::Field &&
+        directTextField(program, type, place.projections[offset].field)) {
+      formal.field = place.projections[offset].field;
+      return formal;
+    }
+    return std::nullopt;
+  }
+
+  // The direct text fields of a formal's or the receiver's class.
+  std::vector<SymbolId>
+  formalTextFields(const TextBody &context,
+                   const OwnerlessTextField &formal) const {
+    SemanticType type = SemanticType::Unknown;
+    if (formal.receiver) {
+      const auto &owner = context.fieldContracts->owner;
+      const auto *instance =
+          owner ? program.findClassInstance(*owner) : nullptr;
+      if (instance)
+        type = instance->type;
+    } else if (formal.parameter < context.types.size()) {
+      type = context.types[formal.parameter];
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+    }
+    std::vector<SymbolId> fields;
+    const auto instance = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &candidate) { return candidate.type == type; });
+    if (instance != program.classInstances().end())
+      for (const auto &field : instance->declaredFields)
+        if (textType(field.type))
+          fields.push_back(field.symbol);
+    return fields;
+  }
+
+  // The text field that a dependent carrier operand's Stored loan designates:
+  // a binding the loan carries, or the construction result it produced.
+  std::optional<SymbolId>
+  dependentDesignation(const MirBody &body, const MirOperand &operand) const {
+    const auto *loan = operand.kind == MirOperandKind::Loan
+                           ? body.findLoan(operand.loan)
+                           : nullptr;
+    const auto *place = body.findPlace(loan ? loan->source : operand.place);
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                        : place && place->root == MirPlaceRootKind::Value
+                            ? body.findValue(place->value)
+                            : nullptr;
+    // Only a text dependency counts: a reference carrier's Stored loan also
+    // designates a field, but its class has type-level borrowed state.
+    const SemanticType *type = value   ? &value->info.type
+                               : place ? &place->type
+                                       : nullptr;
+    for (const auto &candidate : body.loans)
+      if (type && candidate.kind == MirLoanKind::Stored &&
+          candidate.designatedFields.size() == 1 &&
+          directTextField(program, *type, candidate.designatedFields.front()) &&
+          ((place && place->root == MirPlaceRootKind::Binding &&
+            place->projections.empty() &&
+            std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                      place->binding) != candidate.carriers.end()) ||
+           (value && value->sourceValue == candidate.producedBy)))
+        return candidate.designatedFields.front();
+    return std::nullopt;
   }
 
   void fail(const TextBody &context, std::size_t owner,
@@ -90,6 +261,9 @@ private:
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
         return {};
+      if (const auto formal = contractPlace(context, *place);
+          formal && formal->field != 0)
+        return {.known = true, .fields = {*formal}};
       if (isOwnerlessTextFieldProjection(program, context.body, *place))
         return {.known = true};
       // Static storage of text holds only ownerless text: semantics admits
@@ -194,6 +368,7 @@ private:
             answer.known = answer.known && mapped.known;
             answer.parameters.insert(mapped.parameters.begin(),
                                      mapped.parameters.end());
+            answer.fields.insert(mapped.fields.begin(), mapped.fields.end());
           }
         }
         answer.known = answer.known && sawReturn;
@@ -237,6 +412,7 @@ private:
             answer.known = answer.known && source.known;
             answer.parameters.insert(source.parameters.begin(),
                                      source.parameters.end());
+            answer.fields.insert(source.fields.begin(), source.fields.end());
           }
         }
         for (const auto &input : instruction.operands)
@@ -283,6 +459,7 @@ private:
       answer.known = answer.known && source.known;
       answer.parameters.insert(source.parameters.begin(),
                                source.parameters.end());
+      answer.fields.insert(source.fields.begin(), source.fields.end());
     };
     for (const auto &predecessor : context.body.blocks) {
       edge(predecessor.terminator.target,
@@ -330,9 +507,12 @@ private:
     return true;
   }
 
-  std::set<std::size_t> scan(const TextBody &context, std::size_t owner,
-                             bool diagnose) {
+  std::set<std::size_t>
+  scan(const TextBody &context, std::size_t owner, bool diagnose,
+       std::set<OwnerlessTextField> *fieldNeeds = nullptr) {
     std::set<std::size_t> needed;
+    std::set<OwnerlessTextField> ignoredFields;
+    auto &neededFields = fieldNeeds ? *fieldNeeds : ignoredFields;
     const auto require = [&](const MirInstruction &instruction,
                              const MirOperand &operand) {
       const auto source = sources(context, operand);
@@ -340,9 +520,137 @@ private:
         fail(context, owner, &instruction,
              "ownerless text storage or call lacks exact producer evidence");
       needed.insert(source.parameters.begin(), source.parameters.end());
+      neededFields.insert(source.fields.begin(), source.fields.end());
     };
-    for (const auto &block : context.body.blocks)
+    // A whole formal or receiver value: every text field may outlive the call.
+    const auto wholeUse = [&](const MirOperand &operand) {
+      const auto *loan = operand.kind == MirOperandKind::Loan
+                             ? context.body.findLoan(operand.loan)
+                             : nullptr;
+      const auto *place =
+          context.body.findPlace(loan ? loan->source : operand.place);
+      const auto formal = place ? contractPlace(context, *place) : std::nullopt;
+      return formal && formal->field == 0 ? formal : std::nullopt;
+    };
+    const auto requireAllFields = [&](const OwnerlessTextField &formal) {
+      for (const SymbolId field : formalTextFields(context, formal))
+        neededFields.insert({.receiver = formal.receiver,
+                             .parameter = formal.parameter,
+                             .field = field});
+    };
+    // The call that consumes a CallInput's result, and the callee formal or
+    // receiver it binds.
+    const auto consumer = [&](const MirBlock &block,
+                              const MirInstruction &input)
+        -> std::pair<const MirInstruction *, OwnerlessTextField> {
+      if (input.kind != MirInstructionKind::CallInput || !input.result)
+        return {nullptr, {}};
+      for (const auto &candidate : block.instructions) {
+        if (candidate.kind != MirInstructionKind::Call &&
+            candidate.kind != MirInstructionKind::Construct)
+          continue;
+        if (candidate.receiver &&
+            candidate.receiver->kind == MirOperandKind::Value &&
+            candidate.receiver->value == *input.result)
+          return {&candidate, {.receiver = true}};
+        for (std::size_t index = 0; index < candidate.operands.size(); ++index)
+          if (candidate.operands[index].kind == MirOperandKind::Value &&
+              candidate.operands[index].value == *input.result)
+            return {&candidate, {.parameter = index}};
+      }
+      return {nullptr, {}};
+    };
+    // The callee a formal is forwarded into, when it carries field contracts
+    // and takes the same class there.
+    const auto forwardTarget =
+        [&](const MirInstruction *call, const OwnerlessTextField &calleeFormal,
+            const SemanticType &type) -> const MirFunctionInstance * {
+      const auto *target =
+          call && call->kind == MirInstructionKind::Call && call->functionTarget
+              ? program.findFunctionInstance(*call->functionTarget)
+              : nullptr;
+      if (!target || !fieldContractFunction(program, *target) ||
+          !readOnlyContractFormal(*target, calleeFormal))
+        return nullptr;
+      SemanticType formal = SemanticType::Unknown;
+      if (calleeFormal.receiver) {
+        const auto *instance =
+            target->owner ? program.findClassInstance(*target->owner) : nullptr;
+        if (instance && !target->staticMember)
+          formal = instance->type;
+      } else if (calleeFormal.parameter < target->parameterTypes.size()) {
+        formal = target->parameterTypes[calleeFormal.parameter];
+        if (formal.kind == SemanticType::Reference &&
+            formal.arguments.size() == 1)
+          formal = SemanticType(formal.arguments.front());
+      }
+      return formal == type ? target : nullptr;
+    };
+    const auto formalType = [&](const OwnerlessTextField &formal) {
+      if (formal.receiver) {
+        const auto &owner = context.fieldContracts->owner;
+        const auto *instance =
+            owner ? program.findClassInstance(*owner) : nullptr;
+        return instance ? instance->type : SemanticType(SemanticType::Unknown);
+      }
+      SemanticType type = formal.parameter < context.types.size()
+                              ? context.types[formal.parameter]
+                              : SemanticType(SemanticType::Unknown);
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      return type;
+    };
+    for (const auto &block : context.body.blocks) {
       for (const auto &instruction : block.instructions) {
+        // Whole-value uses of a formal or the receiver, and forwarding.
+        if (context.fieldContracts) {
+          const auto visit = [&](const MirOperand &operand) {
+            const auto formal = wholeUse(operand);
+            if (!formal)
+              return;
+            const auto [call, calleeFormal] = consumer(block, instruction);
+            const auto *target =
+                forwardTarget(call, calleeFormal, formalType(*formal));
+            if (!target) {
+              requireAllFields(*formal);
+              return;
+            }
+            for (const auto &field : fieldRequirements[target->id - 1])
+              if (field.receiver == calleeFormal.receiver &&
+                  (field.receiver || field.parameter == calleeFormal.parameter))
+                neededFields.insert({.receiver = formal->receiver,
+                                     .parameter = formal->parameter,
+                                     .field = field.field});
+          };
+          for (const auto &operand : instruction.operands)
+            visit(operand);
+          if (instruction.receiver)
+            visit(*instruction.receiver);
+        }
+        // A dependent value relayed as a formal or receiver: its callee
+        // must carry a contract that lets none of its fields outlive the
+        // call.
+        if (diagnose && instruction.kind == MirInstructionKind::CallInput &&
+            instruction.operands.size() == 1)
+          if (const auto designated = dependentDesignation(
+                  context.body, instruction.operands.front())) {
+            const auto [call, calleeFormal] = consumer(block, instruction);
+            const auto *target =
+                call && call->kind == MirInstructionKind::Call &&
+                        call->functionTarget
+                    ? program.findFunctionInstance(*call->functionTarget)
+                    : nullptr;
+            const OwnerlessTextField field{.receiver = calleeFormal.receiver,
+                                           .parameter = calleeFormal.parameter,
+                                           .field = *designated};
+            if (!target || !fieldContractFunction(program, *target) ||
+                !readOnlyContractFormal(*target, calleeFormal) ||
+                std::binary_search(target->ownerlessTextFields.begin(),
+                                   target->ownerlessTextFields.end(), field))
+              fail(context, owner, &instruction,
+                   "dependent text value is relayed where its text field may "
+                   "outlive the call");
+          }
         const std::set<std::size_t> *required = nullptr;
         if (instruction.kind == MirInstructionKind::Call &&
             instruction.functionTarget && *instruction.functionTarget != 0 &&
@@ -426,6 +734,33 @@ private:
           fail(context, owner, &instruction,
                "function item erases an ownerless text input contract");
       }
+      if (!context.fieldContracts)
+        continue;
+      // A text return without a borrow summary is ownerless storage for the
+      // caller; any other whole formal on an edge escapes the call too.
+      const auto &terminator = block.terminator;
+      const bool ownerlessReturn =
+          terminator.kind == MirTerminatorKind::Return && terminator.value &&
+          textType(context.fieldContracts->returnType) &&
+          context.fieldContracts->returnBorrowOrigin == BorrowOriginKind::None;
+      if (ownerlessReturn) {
+        const auto source = sources(context, *terminator.value);
+        neededFields.insert(source.fields.begin(), source.fields.end());
+      }
+      const auto edge = [&](const MirOperand &operand) {
+        if (const auto formal = wholeUse(operand))
+          requireAllFields(*formal);
+      };
+      if (terminator.value)
+        edge(*terminator.value);
+      for (const auto &operand : terminator.targetArguments)
+        edge(operand);
+      for (const auto &operand : terminator.elseArguments)
+        edge(operand);
+      for (const auto &target : terminator.switchTargets)
+        for (const auto &operand : target.arguments)
+          edge(operand);
+    }
     return needed;
   }
 };
@@ -473,6 +808,7 @@ auto TextContracts::initializerTextInputs(
 
 MirVerificationResult TextContracts::verify() {
   requirements.resize(program.functionInstances().size());
+  fieldRequirements.resize(program.functionInstances().size());
   constructorRequirements.resize(program.constructorInstances().size());
   constructorTextFields.resize(program.constructorInstances().size());
   for (const auto &constructor : program.constructorInstances()) {
@@ -481,23 +817,46 @@ MirVerificationResult TextContracts::verify() {
         std::move(inputs.requirements);
     constructorTextFields[constructor.id - 1] = std::move(inputs.fields);
   }
+  const auto functionContext = [&](const MirFunctionInstance &function) {
+    return TextBody{
+        function.body, function.parameterTypes, function.parameterBindings,
+        fieldContractFunction(program, function) ? &function : nullptr};
+  };
   bool changed = true;
   while (changed) {
     changed = false;
     for (const auto &function : program.functionInstances()) {
-      const auto required = scan(
-          {function.body, function.parameterTypes, function.parameterBindings},
-          function.id, false);
+      std::set<OwnerlessTextField> fields;
+      const auto required =
+          scan(functionContext(function), function.id, false, &fields);
       auto &known = requirements[function.id - 1];
+      auto &knownFields = fieldRequirements[function.id - 1];
       const auto before = known.size();
+      const auto beforeFields = knownFields.size();
       known.insert(required.begin(), required.end());
-      changed = changed || before != known.size();
+      knownFields.insert(fields.begin(), fields.end());
+      changed = changed || before != known.size() ||
+                beforeFields != knownFields.size();
     }
   }
   for (const auto &function : program.functionInstances()) {
-    const TextBody context{function.body, function.parameterTypes,
-                           function.parameterBindings};
+    const TextBody context = functionContext(function);
     (void)scan(context, function.id, true);
+    // Every independently derived field requirement must be declared; a
+    // declared one MIR does not derive only rejects more relays.
+    const auto &declaredFields = function.ownerlessTextFields;
+    if (!context.fieldContracts && !declaredFields.empty())
+      fail(context, function.id, nullptr,
+           "a field-level ownerless text contract is declared on a function "
+           "that cannot carry one");
+    for (const auto &field : fieldRequirements[function.id - 1])
+      if (!std::binary_search(declaredFields.begin(), declaredFields.end(),
+                              field)) {
+        fail(context, function.id, nullptr,
+             "ownerless text field contract omits an independently derived "
+             "requirement");
+        break;
+      }
     std::set<std::size_t> declared;
     for (const auto index : function.ownerlessTextParameters) {
       if (index >= function.parameterTypes.size()) {

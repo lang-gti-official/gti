@@ -9,6 +9,30 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.455.0 — Passing values that view a local owner
+
+- A value whose text field views a local string can now be passed to a
+  function, by value or by reference, and can call its methods, when that
+  function keeps the text within the call. With
+  `Token token = Token(input.view(), 3);`, calling `width(token)` or
+  `token.width()` used to report `error[GTI-S2045]` ("This value holds
+  dynamic text from a local owner"); both now work.
+- The compiler infers each function's contract from its body. A function that
+  stores the field, returns it as independent text, passes it to such a
+  function, or lets the whole value escape keeps requiring ownerless text
+  there. For example, `void keep(Token token) { kept = token.text; }` called
+  with that token reports `error[GTI-S2045]` ("… and 'keep' stores or
+  returns that text as ownerless text"), with a note at `keep`. Calls with
+  values over literals are unaffected.
+- Inside a function or method, reading a text field of a parameter or of
+  `this` now gives a view tied to what the caller passed. Copying such a view
+  into a local and then storing that local in a field or global now reports
+  `error[GTI-S2045]`; store the field directly, or copy the text into a
+  `std::string`.
+- Passing such a value to a constructor, a lambda, a virtual method or a
+  generic function, or returning, capturing or storing it, is still
+  `error[GTI-S2045]`.
+
 ## 0.454.0 — Text fields that view a local owner
 
 - A class or struct value may now hold a view of a named local string in a

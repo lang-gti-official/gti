@@ -2027,6 +2027,45 @@ private:
   // code outside the creating body reads the field as ownerless text.
   [[nodiscard]] bool textPublicationOwner(const SemanticType &type) const;
 
+  // L-OWN-02 phase 1b: field-level ownerless text contracts. A function
+  // states which text fields of its formals and receiver it lets outlive the
+  // call (OwnerlessTextField); a dependent value may be relayed into any
+  // other field.
+  //
+  // The function being analyzed, when it can carry such a contract: a
+  // non-generic, non-virtual GTI function or method body, outside lambdas,
+  // constructors and destructors.
+  [[nodiscard]] const FunctionInfo *textFieldContractScope() const;
+  // Whether `function` can carry a field-level contract, by the same rule.
+  [[nodiscard]] bool
+  textFieldContractFunction(const FunctionInfo &function) const;
+  // Whether formal `index` is read-only: an immutable by-value parameter or
+  // a read-only reference. Only such a formal takes a relayed value.
+  [[nodiscard]] bool
+  readOnlyTextFieldFormal(const FunctionDecl &declaration,
+                          std::span<const SemanticType> types,
+                          std::size_t index) const;
+  // The formal or receiver that `object` names inside a contract scope,
+  // when its class can hold a dependent text value.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  textFieldContractFormal(const Expr &object) const;
+  // The formal or receiver text field that `expression` reads directly.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  ownerlessTextForwardingField(const ExprPtr &expression) const;
+  // The receiver text field that an implicit member read names.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  implicitReceiverTextField(const Variable &variable) const;
+  // The direct text fields of a class, as tooling symbols.
+  [[nodiscard]] std::vector<SymbolId>
+  directTextFieldSymbols(const SemanticType &type) const;
+  void noteTextFieldFormalUse(const Expr &expression,
+                              OwnerlessTextField formal);
+  void consumeTextFieldFormalUse(const ExprPtr &expression);
+  void recordTextFieldCall(const Call &call, const CallableCandidate &target);
+  bool requireOwnerlessTextField(const FunctionDecl *function,
+                                 OwnerlessTextField field);
+  void finalizeTextFieldContracts();
+
   // Whether `field` names a direct text field of the class `type`.
   [[nodiscard]] bool directTextField(const SemanticType &type,
                                      SymbolId field) const;
@@ -5711,6 +5750,30 @@ private:
       bool consumed = false;
       bool diagnosed = false;
     };
+    // A use of a formal or the receiver of a publishable class inside a
+    // contract scope. A field read or a forwarding call consumes it; any
+    // other use lets every text field of the formal outlive the call.
+    struct TextFieldFormalUse {
+      const FunctionDecl *function = nullptr;
+      OwnerlessTextField formal;
+      bool consumed = false;
+    };
+    // A formal or receiver passed on as another function's class formal or
+    // receiver: that callee's requirements on it become the caller's.
+    struct TextFieldForwardUse {
+      const FunctionDecl *caller = nullptr;
+      OwnerlessTextField callerFormal;
+      FunctionId callee = 0;
+      OwnerlessTextField calleeFormal;
+    };
+    // A dependent value passed as a class formal or receiver, with the
+    // fields that hold dynamic text, recorded while its scope is live.
+    struct TextDependentRelay {
+      const Expr *argument = nullptr;
+      FunctionId callee = 0;
+      OwnerlessTextField calleeFormal;
+      std::vector<SymbolId> fields;
+    };
     struct MutableLocalCandidate {
       SymbolId symbol = 0;
       Token keyword;
@@ -5730,6 +5793,10 @@ private:
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
     std::vector<const Expr *> textDependentValueOrder;
     std::unordered_map<const Expr *, TextDependentValueUse> textDependentValues;
+    std::vector<const Expr *> textFieldFormalOrder;
+    std::unordered_map<const Expr *, TextFieldFormalUse> textFieldFormalUses;
+    std::vector<TextFieldForwardUse> textFieldForwardUses;
+    std::vector<TextDependentRelay> textDependentRelays;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
     std::unordered_map<const Expr *, const ParameterDefault *>

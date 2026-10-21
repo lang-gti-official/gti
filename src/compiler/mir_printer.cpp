@@ -599,6 +599,17 @@ public:
         separator(index);
         output << instance.ownerlessTextParameters[index];
       }
+      output << "] ownerless-text-fields=[";
+      for (std::size_t index = 0; index < instance.ownerlessTextFields.size();
+           ++index) {
+        separator(index);
+        const auto &field = instance.ownerlessTextFields[index];
+        if (field.receiver)
+          output << "receiver";
+        else
+          output << field.parameter;
+        output << ':' << field.field;
+      }
       output << "] explicit-return-borrow="
              << instance.explicitReturnBorrowOrigin
              << " return-borrow=" << number(instance.returnBorrowOrigin) << ':'

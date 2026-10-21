@@ -4788,6 +4788,25 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
       cString ? "owner-dependent c_string" : "dynamic std::string_view";
   const std::string subject =
       cString ? "An " + description : "A " + description;
+  // A formal's or the receiver's stored text field returns as ownerless text
+  // under a field requirement on the function (L-OWN-02). Beside a relay it
+  // stays a lifetime-independent alternative, as a literal is (PR #170).
+  if (function != nullptr)
+    if (const auto field = ownerlessTextForwardingField(value)) {
+      (void)requireOwnerlessTextField(function->declaration, *field);
+      // Every caller now supplies ownerless text there, so the returned
+      // read is ownerless, as a stored view read was before.
+      for (const Expr *read = value.get(); read != nullptr;) {
+        if (const ExpressionInfo *readInfo =
+                semanticModel.findExpression(*read))
+          semanticModel.record(*read, expressionInfo(readInfo->type,
+                                                     readInfo->category,
+                                                     readInfo->access));
+        const auto *group = exprAs<Grouping>(read);
+        read = group == nullptr ? nullptr : group->expression().get();
+      }
+      return;
+    }
   if (function == nullptr ||
       function->returnBorrowOrigin == BorrowOriginKind::None) {
     Diagnostic diagnostic = makeDiagnostic(

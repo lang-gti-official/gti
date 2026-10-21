@@ -1,8 +1,8 @@
 // A value may hold a view of a named local owner in a text field. The value
 // carries that owner's read-only dependency, much as a reference field
-// carries its referent's, so no text is copied or allocated. Today such a
-// value stays in the body that creates it: a local binding, a copy, a move or
-// a field read. It cannot be passed, returned, captured or stored.
+// carries its referent's, so no text is copied or allocated. Such a value can
+// be copied, moved and read, and passed to functions and methods that keep
+// its text within the call. It cannot be returned, captured or stored.
 #include <std/string>
 
 // A token views its input; it owns no text.
@@ -19,6 +19,9 @@ struct Note {
   int column;
 };
 
+// Keeps the token's text within the call, so a relayed token is accepted.
+uint64_t measure(Token token) { return token.text.size(); }
+
 int main() {
   std::string line{"count = 42"};
 
@@ -32,6 +35,7 @@ int main() {
   std::string_view text = copy.text;
   std::println(text);
   std::println(note.column);
+  std::println(measure(copy) + name.width());
 
   // While any of these values is live, `line` cannot be mutated, moved or
   // destroyed; for example `line.append("!")` here is rejected.

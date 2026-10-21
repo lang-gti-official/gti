@@ -16,12 +16,14 @@ lang::FrontendResult analyzeText(std::string source) {
 
 const std::string kDeclarations = R"gti(
 #include <std/string>
+mut std::string_view kept = "";
 class Token {
 public:
   std::string_view text;
   int kind;
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   uint64_t width() { return this.text.size(); }
+  void save() { kept = this.text; }
 };
 struct Diag {
   std::string_view text;
@@ -40,9 +42,12 @@ public:
   Logged(std::string_view text) : text(text) {}
   ~Logged() {}
 };
-mut std::string_view kept = "";
 uint64_t measure(Token token) { return token.text.size(); }
 uint64_t inspect(Token& token) { return token.text.size(); }
+void keep(Token token) { kept = token.text; }
+void keepRef(Token& token) { kept = token.text; }
+void relayKeep(Token token) { keep(token); }
+std::string_view first(Token token) { return token.text; }
 )gti";
 
 struct Location {
@@ -182,12 +187,17 @@ void testConfinement() {
     const char *description;
   };
   const Case cases[] = {
-      {"Token token = Token(input.view(), 3); uint64_t n = measure(token);",
-       "GTI-S2045", "a dependent value is not a by-value argument"},
-      {"Token token = Token(input.view(), 3); uint64_t n = inspect(token);",
-       "GTI-S2045", "a dependent value is not a reference argument"},
-      {"Token token = Token(input.view(), 3); uint64_t n = token.width();",
-       "GTI-S2045", "a method cannot read a dependent value's fields"},
+      {"Token token = Token(input.view(), 3); keep(token);", "GTI-S2045",
+       "a by-value relay cannot reach a function that stores the field"},
+      {"Token token = Token(input.view(), 3); keepRef(token);", "GTI-S2045",
+       "a reference relay cannot reach a function that stores the field"},
+      {"Token token = Token(input.view(), 3); relayKeep(token);", "GTI-S2045",
+       "a requirement forwards through a relaying function"},
+      {"Token token = Token(input.view(), 3); token.save();", "GTI-S2045",
+       "a receiver relay cannot reach a method that stores the field"},
+      {"Token token = Token(input.view(), 3); uint64_t n = "
+       "first(token).size();",
+       "GTI-S2045", "a stored-view return is ownerless text"},
       {"Token token = Token(input.view(), 3); kept = token.text;", "GTI-S2045",
        "a dependent field read is not ownerless text"},
       {"Token token = Token(input.view(), 3); mut Token other = "
@@ -235,10 +245,94 @@ int main() { return 0; }
          "a dependent value is not returned in this phase");
 }
 
+void testRelays() {
+  const auto result = analyzeText(kDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  Token literal = Token("literal", 1);
+  keep(literal);
+  relayKeep(literal);
+  return measure(token) + inspect(token) + token.width() ==
+                 30 + first(literal).size() - 7
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a dependent value relays into functions and methods that keep its "
+         "text within the call");
+  if (!result.canGenerateCode())
+    return;
+  // Field contracts: storing functions require the field; readers do not.
+  std::size_t requiring = 0;
+  std::size_t free = 0;
+  const lang::MirFunctionInstance *keep = nullptr;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (function.parameterTypes.size() != 1 ||
+        function.parameterTypes.front().kind == lang::SemanticType::Unknown)
+      continue;
+    if (!function.ownerlessTextFields.empty()) {
+      ++requiring;
+      if (function.parameterTypes.front().kind == lang::SemanticType::Class &&
+          function.returnType.kind == lang::SemanticType::Void &&
+          keep == nullptr)
+        keep = &function;
+    } else {
+      ++free;
+    }
+  }
+  expect(requiring >= 4,
+         "storing and relaying functions carry field contracts");
+  expect(free >= 2, "reading functions carry no field contract");
+  if (keep != nullptr) {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(keep->id))
+        ->ownerlessTextFields.clear();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "an omitted field requirement is rejected by MIR");
+  }
+  // A forged requirement on a reader rejects the dependent relay into it:
+  // MIR checks each relay against the callee's contract itself.
+  const auto published = publications(result.mir);
+  if (published.empty())
+    return;
+  const auto token = instructionAt(const_cast<lang::MirProgram &>(result.mir),
+                                   published.front())
+                         .info.type;
+  std::size_t forged = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (!function.ownerlessTextFields.empty() ||
+        function.parameterTypes.size() != 1 ||
+        function.parameterTypes.front() != token)
+      continue;
+    lang::SymbolId text = 0;
+    for (const auto &instance : result.mir.classInstances())
+      if (instance.type == function.parameterTypes.front())
+        for (const auto &field : instance.declaredFields)
+          if (field.type.kind == lang::SemanticType::StringView && text == 0)
+            text = field.symbol;
+    if (text == 0)
+      continue;
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function.id))
+        ->ownerlessTextFields = {{.parameter = 0, .field = text}};
+    ++forged;
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "a relay into a function requiring the field is rejected by MIR");
+  }
+  expect(forged >= 1, "a reading relay target exists to forge");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
     {"testConfinement", testConfinement},
+    {"testRelays", testRelays},
 };
 } // namespace
 
