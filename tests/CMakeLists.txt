@@ -1103,6 +1103,11 @@ add_test(NAME moved_passive_constructor_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/moved_passive_constructor_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(moved_passive_constructor_field_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME failure_free_passive_moves_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_moves_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(failure_free_passive_moves_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME declaration_owned_defaults_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"

@@ -49370,6 +49370,18 @@ private:
                         "borrowed argument place");
                   }
                   emitPlaceExpression(facts, *place);
+                } else if (const MirPlace *chainSource =
+                               construct->operands[index].kind ==
+                                       MirOperandKind::Value
+                                   ? movedPlaceChainSource(
+                                         facts.body,
+                                         construct->operands[index].value,
+                                         *construct)
+                                   : nullptr) {
+                  // A moved-place chain never materialized its links.
+                  output << "std::move(";
+                  emitStoragePlaceValue(facts, *chainSource);
+                  output << ')';
                 } else {
                   emitOperand(construct->operands[index]);
                 }
@@ -49516,6 +49528,20 @@ private:
             // the moved-from representation when the return leaves scope.
             if (emitConstructionArgumentSlot(facts, *construct,
                                              construct->operands[index])) {
+              continue;
+            }
+            // A moved-place chain staged into this construction never
+            // materialized its links; spell the move over its place, as
+            // every other construction argument list does.
+            if (const MirPlace *chainSource =
+                    construct->operands[index].kind == MirOperandKind::Value
+                        ? movedPlaceChainSource(
+                              facts.body, construct->operands[index].value,
+                              *construct)
+                        : nullptr) {
+              output << "std::move(";
+              emitStoragePlaceValue(facts, *chainSource);
+              output << ')';
               continue;
             }
             // A borrow-staged argument never materialized a local; the
