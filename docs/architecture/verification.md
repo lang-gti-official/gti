@@ -1,5 +1,49 @@
 # Compiler Verification
 
+## Text views moved after initializer work (0.453.3)
+
+`moved_passive_constructor_field_runtime` now also runs a generic `Viewed<F>`
+whose constructor moves a `std::string_view`, a `c_string` and a function name
+after a `Ledger` field that can fail. An earlier sibling reads the view first,
+and the constructor body can fail after the moves. A `Shelf<std::string_view>`
+also moves its view after the shelf's fallible ledger. When the ledger fails
+before the moves, only the ledgers built earlier are dropped. When the body
+fails after them, Viewed's ledger is also rolled back, exactly once. The moved
+C string is read back through `std::string::try_from_c_string`. Each result is
+checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The main compiler
+(`b0a1f524`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`, `testMovedPassiveFieldAfterFallibleSibling` now
+moves a view and a C string after a fallible field and a checked remainder.
+- The native owned-field proof must refuse the constructor.
+- Both moves must be constructor-record publications, with no `Stored` loan
+  for either field.
+- The failure form must emit both moves in MIR order after the ledger and roll
+  back only the ledger.
+- Three forgeries must fail closed: a formal without the borrowed state, a loan
+  derived from the entry loan, and an entry loan that publishes into the field.
+- A `Cursor` with an `int32_t&` field, moved after the same work, must stay
+  unsupported.
+
+`testMovedViewAfterFormalRead` reads a view through its receiver and as a call
+argument before moving it, with no failure record. The native proof must refuse
+it, and the failure form must read the body alias before the move. A sibling
+that does not name the formal keeps the native move.
+
+With the entry-loan witness disabled, the derived-loan and formal forgeries
+fail, as does the 0.453.1 borrowed-state forgery. The stored-field forgery is
+also refused by the stored-reference pairing.
+
+DIFFERENTIAL_PLACEHOLDER
+
+Some shapes stay outside the route and still stop with `GTI-B0001`:
+- a class with a reference field (a user-defined borrowed carrier) moved,
+  copied or constructed after work that can fail;
+- a lambda moved after such work;
+- a borrowed payload enum such as `enum Slot { ready(int32_t& value), empty }`
+  passed by value into a field, which fails earlier, in MIR construction, even
+  with no fallible sibling.
+
 ## Class assertions with staged reflection (0.453.2)
 
 `reflection_semantics` adds `checkClassAssertions`, run under Complete and
