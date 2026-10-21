@@ -1,8 +1,8 @@
 // Dependent class assertions that require staged reflection hold for every
 // concrete instance: the class and its constructor both reanalyse it, an
-// assertion may reflect on its own instance or on one that reflects back,
-// and instances reached by constant evaluation or a global initializer are
-// checked in their isolated workers.
+// assertion (also one in a destructor) may reflect on its own instance or on
+// one that reflects back, and instances reached by constant evaluation or a
+// global initializer are checked in their isolated workers.
 #include <std/meta>
 
 class Box<T> {
@@ -40,6 +40,17 @@ public:
   T get() { return value; }
 };
 
+class Guard<T> {
+  T value;
+public:
+  Guard(T value) : value(value) {}
+  T get() { return value; }
+  ~Guard() {
+    static_assert(std::meta::type<Guard<T>>().field_count() == uint64_t(1),
+                  "guard has one field");
+  }
+};
+
 class Cell<T> {
   static_assert(!std::meta::type<T>().is_void(), "no void cell");
   T value;
@@ -62,12 +73,13 @@ int main() {
   Node<int32_t> node = Node<int32_t>(2);
   Left<int32_t> left = Left<int32_t>(3);
   Right<int32_t> right = Right<int32_t>(4);
+  Guard<int32_t> guard = Guard<int32_t>(5);
   constexpr int32_t cell = read_cell();
   if (!flag.get()) {
     return 1;
   }
-  int64_t total =
-      int64_t(box.get() + node.get() + left.get() + right.get() + cell) +
-      global_cell.get();
-  return total == int64_t(57) ? 0 : 2;
+  int64_t total = int64_t(box.get() + node.get() + left.get() + right.get() +
+                          guard.get() + cell) +
+                  global_cell.get();
+  return total == int64_t(62) ? 0 : 2;
 }

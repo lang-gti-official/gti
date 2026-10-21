@@ -630,8 +630,9 @@ public:
                   "class assertion's own message");
 
     // Reflecting on the instance itself, or on an instance whose assertion
-    // reflects back, reanalyses it in the staged worker; the enclosing
-    // evaluation owns the assertion, which is not evaluated again there.
+    // reflects back, reanalyses it in the staged worker, and so does an
+    // assertion in a destructor that reflects on its class. The enclosing
+    // reanalysis owns the assertion, which is not evaluated again there.
     const auto reflective =
         analyzeSource(root, directory, "class-assert-self-" + mode + ".gti",
                       R"(#include <std/meta>
@@ -656,17 +657,27 @@ class Right<T> {
 public:
   Right(T value) : value(value) {}
 };
+class Guard<T> {
+  T value;
+public:
+  Guard(T value) : value(value) {}
+  ~Guard() {
+    static_assert(std::meta::type<Guard<T>>().field_count() == uint64_t(1),
+                  "guard has one field");
+  }
+};
 int main() {
   Node<int32_t> node = Node<int32_t>(1);
   Left<int32_t> left = Left<int32_t>(2);
   Right<int32_t> right = Right<int32_t>(3);
+  Guard<int32_t> guard = Guard<int32_t>(4);
   return 0;
 }
 )",
                       trustedBodies);
     expect(reflective.diagnostics.empty() && reflective.hirValid,
-           mode + ": a class assertion may reflect on its own instance or on "
-                  "one that reflects back");
+           mode + ": an assertion may reflect on its own class instance or "
+                  "on one that reflects back");
 
     const auto miscounted = analyzeSource(
         root, directory, "class-assert-self-false-" + mode + ".gti",

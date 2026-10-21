@@ -19,7 +19,8 @@ for what minor and patch releases mean.
   now reject an invalid type argument with its own message.
 - Such an assertion may reflect on its own instance, as in
   `static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(1));`,
-  or on a class whose assertion reflects back. This crashed or reported
+  or on a class whose assertion reflects back, and an assertion in a
+  destructor may reflect on its own class. This crashed or reported
   `error[GTI-S2057]` ("The constexpr definition of 'field_count' must be
   available before this constant-evaluated call").
 - A class instance is now checked the same way wherever it is formed. A class

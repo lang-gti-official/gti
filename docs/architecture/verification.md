@@ -7,17 +7,19 @@ Reachable trusted-body analysis. A `Box<T>` whose assertion stages
 `std::meta::type<T>().is_void()` is reanalysed by both its class and its
 constructor; for `Box<void>` the first diagnostic is `GTI-S2079` "no void"
 with the `'T' = 'void'` substitution. Assertions that reflect on their own
-instance, or on a class whose assertion reflects back, pass, and a false
-self-reflecting assertion reports its message once. Instances formed only by
-constant evaluation or by a global initializer are checked in their workers:
-`Tag<void>` formed inside a `constexpr` call is rejected. `testStaticAssertions`
-adds class and function assertions that call a constexpr helper declared after
-them, and class and function instances, reached from a constant evaluation and
-from global initializers, that read a namespace constant, call a constexpr
-helper and select an `if constexpr` arm. `reflection_runtime` compiles and runs
-`reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23. Main `6d502f02`
-crashes the reflection test (SIGBUS) and fails all three `testStaticAssertions`
-additions. Examples 091, 092, 093 and 141 still create one staged worker per
+instance, on a class whose assertion reflects back, or, in a destructor, on
+their own class pass, and a false self-reflecting assertion reports its message
+once. Instances formed only by constant evaluation or by a global initializer
+are checked in their workers: `Tag<void>` formed inside a `constexpr` call is
+rejected. `testStaticAssertions` adds class and function assertions that call
+a constexpr helper declared after them; class and function instances, reached
+from a constant evaluation and from global initializers, that read a namespace
+constant, call a constexpr helper and select an `if constexpr` arm; and a
+function whose assertion evaluates its own instance. `reflection_runtime`
+compiles and runs `reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23.
+Main `6d502f02` crashes the reflection test (SIGBUS) and fails all four
+`testStaticAssertions` additions; a genuine `if constexpr` cycle still reports
+the same staging-depth diagnostics as main. Examples 091, 092, 093 and 141 still create one staged worker per
 compile, and interleaved compile times stay within 2.5% of main.
 
 ## Switches over fixed-array elements (0.448.4)

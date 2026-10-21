@@ -177,9 +177,10 @@ public:
   // into an empty delta that reads through to the detached base, and the
   // bracket then restores the base and identity counters. Analyses are
   // strictly sequential: a bracket must close before the next one opens.
-  // While it is open, reanalysisBase names the detached base.
+  // While it is open, reanalysisBase names the detached base and the
+  // instance is on the staging chain's list of open reanalyses.
   struct InstanceAnalysisScope {
-    explicit InstanceAnalysisScope(Impl &visitor)
+    InstanceAnalysisScope(Impl &visitor, InstanceAnalysisKey instance)
         : visitor(visitor), baseModel(std::move(visitor.semanticModel)),
           baseDiagnostics(std::move(visitor.diagnostics)),
           savedGenericParameterId(visitor.nextGenericParameterId),
@@ -187,7 +188,8 @@ public:
           savedFunctionId(visitor.nextFunctionId),
           savedLambdaId(visitor.nextLambdaId),
           savedSemanticLoanId(visitor.nextSemanticLoanId),
-          savedPlaceSelectionId(visitor.nextPlaceSelectionId) {
+          savedPlaceSelectionId(visitor.nextPlaceSelectionId),
+          openReanalyses(visitor.openReanalyses()) {
       visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel,
                                                visitor.instanceSymbolCeiling);
@@ -195,6 +197,16 @@ public:
         visitor.semanticModel.beginInstanceReuseJournal();
       visitor.diagnostics.clear();
       visitor.reanalysisBase = &baseModel;
+      // A constant that one of the instance's static assertions requires can
+      // need the instance itself (reflecting on its own fields, constructing
+      // it), so staging may reanalyse it in a nested worker. The enclosing
+      // reanalysis owns those assertions and an assertion yields no value,
+      // so the nested one supplies the instance's facts without them.
+      nested = std::find(openReanalyses->begin(), openReanalyses->end(),
+                         instance) != openReanalyses->end();
+      if (!nested)
+        openReanalyses->push_back(std::move(instance));
+      visitor.requestSession.assertionsOwnedUpChain = nested;
     }
 
     ~InstanceAnalysisScope() { visitor.catalog.assertUnchangedSinceSeal(); }
@@ -227,6 +239,9 @@ public:
       visitor.instanceBaseModel = nullptr;
       visitor.reanalysisBase = nullptr;
       visitor.instanceAnalysisActive = false;
+      visitor.requestSession.assertionsOwnedUpChain = false;
+      if (!nested)
+        openReanalyses->pop_back();
       result.model.rebase(&visitor.semanticModel);
       return result;
     }
@@ -240,7 +255,20 @@ public:
     LambdaId savedLambdaId;
     SemanticLoanId savedSemanticLoanId;
     std::size_t savedPlaceSelectionId;
+    std::shared_ptr<std::vector<InstanceAnalysisKey>> openReanalyses;
+    bool nested = false;
   };
+
+  // Concrete instances whose reanalysis is open along the current staging
+  // chain: this analyzer's own and those of the analyzers whose constants
+  // staged into it. Staged workers share the list.
+  [[nodiscard]] std::shared_ptr<std::vector<InstanceAnalysisKey>>
+  openReanalyses() {
+    if (!requestSession.openReanalyses)
+      requestSession.openReanalyses =
+          std::make_shared<std::vector<InstanceAnalysisKey>>();
+    return requestSession.openReanalyses;
+  }
 
   // New concrete-only declarations must not reuse another instance's IDs.
   // Primary declaration IDs remain inherited; the base snapshot stays
@@ -5794,10 +5822,11 @@ private:
     std::vector<CThreadCallUse> cThreadCallUses;
     std::vector<RawBorrowCallUse> rawBorrowCallUses;
     std::shared_ptr<RawResultQueryState> rawResultQueries;
-    // Concrete class instances whose static assertions are being evaluated
-    // along the current staging chain, shared with staged workers; see
-    // analyzeClassFieldInitializers.
-    std::shared_ptr<std::vector<SemanticType>> assertingClassInstances;
+    // See openReanalyses() and InstanceAnalysisScope.
+    std::shared_ptr<std::vector<InstanceAnalysisKey>> openReanalyses;
+    // Set while this analyzer reanalyses an instance whose reanalysis is
+    // already open further up the staging chain, which owns its assertions.
+    bool assertionsOwnedUpChain = false;
     std::shared_ptr<CompleteReturnQueryState> completeReturnQueries;
     std::shared_ptr<RawResultQuery> collectingRawResult;
     std::size_t rawAccessObservation = 0;
@@ -6242,8 +6271,8 @@ private:
   // primary analysis drops the worker. A late-demand batch does not: it
   // completes only deferred trusted bodies, never constexpr ones, so nothing a
   // staged constant can execute changes. Per-evaluation context (the work
-  // budget, raw result queries, the asserting class instances, the lambda
-  // identity floor) is refreshed on every use.
+  // budget, raw result queries, the open reanalyses, the lambda identity
+  // floor) is refreshed on every use.
   struct StagedWorker {
     std::unique_ptr<Impl> impl;
     bool reanalysis = false;
