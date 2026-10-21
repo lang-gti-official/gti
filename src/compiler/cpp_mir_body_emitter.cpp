@@ -15722,8 +15722,8 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       if (((instruction.loan && *instruction.loan == entry->id) ||
-           std::any_of(instruction.operands.begin(),
-                       instruction.operands.end(), namesEntry) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       namesEntry) ||
            (instruction.receiver && namesEntry(*instruction.receiver))) &&
           !formalEntryLoanEndInstruction(constructor, instruction)) {
         return false;
@@ -15925,11 +15925,10 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
       };
       if (source->traits.drop != DropKind::Trivial ||
           value->info.traits.drop != DropKind::Trivial ||
-          (borrowed &&
-           ((destination != nullptr &&
-             destination->traits.containsBorrowedState) ||
-            !formalEntryLoanOnlyMove(constructor, *source, *value, *move,
-                                     initializer.field))) ||
+          (borrowed && ((destination != nullptr &&
+                         destination->traits.containsBorrowedState) ||
+                        !formalEntryLoanOnlyMove(constructor, *source, *value,
+                                                 *move, initializer.field))) ||
           std::any_of(constructor.body.dropObligations.begin(),
                       constructor.body.dropObligations.end(),
                       [&](const MirDropObligation &drop) {

@@ -9,7 +9,10 @@
 // fail, and the owning field built first is then dropped exactly once. Owning
 // moves, generated-copy struct moves and a scalar moved first share the same
 // body-ordered schedule, and a move after an initializer that writes the
-// formal sees the written value.
+// formal sees the written value. A text view or C string, directly or as a
+// generic owner's value, carries only its caller's loan into a field that
+// keeps ownerless text, so it takes the same body-ordered route, even after
+// an earlier sibling reads it.
 // Copying these formals already compiled; moving them was GTI-B0001.
 #include <std/string>
 #include <std/utility>
@@ -145,6 +148,24 @@ public:
   Bumped(mut int32_t seed) : first(bump(seed)), second(std::move(seed)) {}
 };
 
+// A text view and a C string carry only their caller's entry loan. Their
+// by-value fields keep ownerless text, so the moves publish no dependency:
+// MIR records each one as the constructor record's exact Move, which stays in
+// the body after the fallible ledger. An earlier sibling reads the view first.
+class Viewed {
+public:
+  Ledger ledger;
+  uint64_t length;
+  std::string_view name;
+  c_string tag;
+  mut int32_t quotient;
+  Viewed(std::string_view name, c_string tag)
+      : ledger(Ledger(29, divisor_for(7))), length(name.size()),
+        name(std::move(name)), tag(std::move(tag)), quotient(0) {
+    this.quotient = 60 / divisor_for(8);
+  }
+};
+
 int main(int argc, std::vector<std::string> argv) {
   stage = argc - 1;
   Stocked stocked = Stocked(7);
@@ -184,5 +205,16 @@ int main(int argc, std::vector<std::string> argv) {
 
   Bumped bumped = Bumped(1);
   std::println(bumped.first * 10 + bumped.second);
+
+  Shelf<std::string_view> titled = Shelf<std::string_view>("shelf");
+  std::println(int32_t(titled.value.size()) + titled.ledger.id);
+
+  Viewed viewed = Viewed("viewed", "tag");
+  std::println(int32_t(viewed.length) + int32_t(viewed.name.size()) +
+               viewed.ledger.id + viewed.quotient);
+  unsafe {
+    auto tag = std::string::try_from_c_string(viewed.tag);
+    std::println(tag ? int32_t(tag.value().size()) : 0);
+  }
   return 0;
 }
