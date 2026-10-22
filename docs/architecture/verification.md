@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Conditional joins whose arms take a class by value (0.459.3)
+## Conditional joins whose arms take a class by value (0.459.4)
 
 A field read of a conditional temporary whose arms pass a class by value to
 their constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, used
@@ -30,6 +30,64 @@ file under `tests/` and `examples/` against main's compiler, without the
 `namespace-depth-63.gti` stress input. It fails on any text difference, any
 refusal-code change, or any program that stops building, and requires the
 issue-127 fixture to become accepted.
+
+## Assignment result field reads (0.459.3)
+
+`assignment_result_projection_runtime` runs `assignment_result_projection.gti`.
+User-defined structs read a field of a class assignment's result in a function
+(`(p = q).x`, after which `p` holds `q`), in a constructor initializer
+(`first((p = q).x)`), nested (`(s = t).start.y`, also in a constructor), as a
+whole class field copied out (`Point start = (s = t).start;`), through a
+read-only method of a class field (`(s = t).start.digits()`), with a field, a
+constant-index element and a reference-parameter destination, with implicit
+and explicit receiver fields in a `mut` method, and in a loop whose right
+operands are a call result and a construction. `combine((p = q).x, (p =
+r).x)` prints 577: the first argument keeps `q.x` although the second operand
+assigns `p` again. Nested reads of a call result, a lambda call result, a
+conditional and a moved local, and of constructions taking a call or lambda
+call result, cover the producers of issues #195 and #196, which the 0.458.3
+nested field-chain rule reads. A checked addition after the read overflows on
+request and exits with status 70 after every earlier line. Each result is
+checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The 0.458.3
+compiler stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_lifecycle`, `testAssignmentResultFieldView` checks
+that each `Assign` is directly followed by a copy `Load` of its destination,
+that the `Assign`'s result has no use, and that the read's place is rooted at
+the copy, for whole, nested, field and repeated destinations and in the
+constructor form. The emitted text constructs the copy's slot before the read
+and ends it after; with two assignments of one destination, the first read
+precedes the second copy. Turning the copy into a `Move`, or retargeting the
+nested intermediate place so it no longer prefixes the read, refuses the body.
+A destructor-bearing (move-only) destination is refused by MIR lowering with
+"assignment result has no copy of its destination".
+`testNestedClassResultFieldView` reads `build(raw).inner.id`, a lambda call
+result, `std::move(o).inner.id`, `(flag ? a : b).inner.id` and the three-field
+chains `Wrap(build(raw)).outer.inner.id` and `Wrap(make(raw)).outer.inner.id`
+from the value's slot, requires that no intermediate place is spelled, and
+refuses a non-prefix intermediate, guarding that rule for every producer.
+
+A differential `--emit-cpp` against main `010073d5`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1811 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
+fixture changed, from `GTI-B0001` to success. Every other program emits
+byte-identical C++, and the 736 pairs that fail with both compilers report
+identical diagnostics. The summed emission time was 1912.9 s before and
+1916.5 s after. Earlier revisions compared against `d2873bde` and `f0e13a1d`
+changed the same fixture only. On the reconciled head the emitter
+`lifecycle`, `text`, `preflight`, `corpus` and `census` gates,
+`mir_field_determinism` and 19 field-read and class-assignment runtime gates
+pass.
+
+Still `GTI-B0001`, as on main: using a class assignment's whole result
+(`Point r = (p = q);`, `return (p = q);`, a by-value argument or a method
+receiver such as `(p = q).digits()`), a move-only class's assignment result,
+array assignment results and other fresh array values (`(a = b)[1]`, issue
+#204), borrowing a field of a class temporary (`read((p = q).x)` for an
+`int32_t&` parameter, as for `(flag ? p : q).x`), and class stores the backend
+already refuses as statements: into a class-typed global, a dynamically
+indexed element, through an overloaded subscript or through a `[mut &p]`
+capture.
 
 ## Classes holding text views (0.459.1)
 
@@ -166,7 +224,7 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
   without that stress input, and requires the same outcome.
 
 Still refused, both before and after, even for a single-level read (0.459.1 admits
-the text join and 0.459.3 the by-value one; see above):
+the text join and 0.459.4 the by-value one; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
 - a conditional join of a class that holds a text field, as in
