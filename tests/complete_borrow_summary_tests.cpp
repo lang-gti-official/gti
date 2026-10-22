@@ -2130,5 +2130,70 @@ int main() { return 0; }
                  code + ": " + extra);
     }
   }
+  {
+    // A borrowed field takes its carrier from a by-value parameter or builds
+    // it in place. Copying the carrier out of a reference parameter is a
+    // semantic error at that initializer argument, never a MIR failure.
+    const std::string prefix = "#include <std/utility>\n"
+                               "enum Slot { ready(int& value), empty };\n"
+                               "enum MaybeRef<T> { some(T value), none };\n";
+    const std::string fragment =
+        "cannot copy its carrier out of a reference parameter";
+    const auto copiedThroughReference = [&](const std::string &body,
+                                            const std::string &marker) {
+      const std::string source = prefix + body + "\nint main() { return 0; }\n";
+      const auto result = lang::Frontend().analyze(
+          root / "tests/borrowed-field-reference-copy.gti", source,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      const auto at = source.find(marker);
+      const auto diagnostic =
+          std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const auto &d) {
+                         return d.code == "GTI-S2045" &&
+                                d.message.find(fragment) != std::string::npos;
+                       });
+      return !result.canGenerateCode() &&
+             diagnostic != result.diagnostics.end() &&
+             at != std::string::npos && diagnostic->primary.start == at &&
+             diagnostic->primary.end == at + std::string("slot").size() &&
+             std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const auto &d) { return d.code == "GTI-B0001"; });
+    };
+    expect(copiedThroughReference(
+               "class Shelf { Slot slot; public: Shelf(Slot& slot) : "
+               "slot(slot) {} };",
+               "slot) {}"),
+           "copying a borrowed enum out of a reference parameter is GTI-S2045 "
+           "at the argument");
+    expect(copiedThroughReference(
+               "class Shelf { Slot slot; public: Shelf(Slot& slot) : "
+               "slot(std::move(slot)) {} };",
+               "slot)) {}"),
+           "moving a borrowed enum through a reference parameter is GTI-S2045 "
+           "at the argument");
+    expect(
+        copiedThroughReference("class Holder<T> { MaybeRef<T&> state; public: "
+                               "Holder(MaybeRef<T&>& slot) : state(slot) {} };",
+                               "slot) {}"),
+        "a generic carrier copied out of a reference parameter is GTI-S2045");
+    for (const std::string accepted :
+         {"class Shelf { Slot slot; public: Shelf(int& x) : "
+          "slot(Slot::ready(x)) {} };",
+          "class Shelf { Slot slot; public: Shelf(Slot slot) : slot(slot) {} "
+          "};",
+          "class Shelf { Slot slot; public: Shelf(Slot slot) : "
+          "slot(std::move(slot)) {} };"}) {
+      const auto result = lang::Frontend().analyze(
+          root / "tests/borrowed-field-by-value.gti",
+          prefix + accepted + "\nint main() { return 0; }\n",
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(
+          std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const auto &d) {
+                         return d.message.find(fragment) != std::string::npos;
+                       }),
+          "in-place and by-value borrowed fields stay accepted: " + accepted);
+    }
+  }
   return failures ? 1 : 0;
 }
