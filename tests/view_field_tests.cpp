@@ -820,6 +820,313 @@ int main() { return 0; }
          "a dependent temporary's field is not returned in this phase");
 }
 
+const std::string kPublishedDeclarations = R"gti(
+Token makeToken(std::string_view t) { return Token(t, 1); }
+Token viaHelper(std::string_view t) { return makeToken(t); }
+Pair makePair(std::string_view a, std::string_view b) { return Pair(a, b); }
+Token keepsLocal(std::string_view t) { Token x = makeToken(t); return x; }
+)gti";
+
+// A function that returns a fresh value whose text field holds one of its
+// text formals relays it (L-OWN-02 phase 2): each call publishes its own
+// argument's owner there, as a constructor does. This covers generic
+// functions after substitution, such as std::make_pair and unexpected.
+void testPublishedResults() {
+  const auto result = analyzeText("#include <std/utility>\n" + kDeclarations +
+                                  kPublishedDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  Token made = makeToken(input.view());
+  Token composed = viaHelper(input.view());
+  Pair pair = makePair(input.view(), "fixed");
+  kept = pair.second;
+  std::string_view field = makeToken(input.view()).text;
+  std::pair<std::string_view, int> generic = std::make_pair(input.view(), 1);
+  std::unexpected_value<std::string_view> failure = unexpected(input.view());
+  Token literal = makeToken("literal");
+  kept = literal.text;
+  return made.text.size() + composed.text.size() + pair.first.size() +
+                     field.size() + generic.first.size() ==
+                 50 &&
+             kept.size() == 7
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a returned fresh value relays its text formal; each call publishes "
+         "its argument's owner");
+  if (!result.canGenerateCode())
+    return;
+  // The factories, the helper, the pair maker and the generic instances each
+  // relay a formal; MIR derives and checks every relay.
+  std::size_t relaying = 0;
+  const lang::MirFunctionInstance *pairMaker = nullptr;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (function.publishedTextFields.empty())
+      continue;
+    ++relaying;
+    expect(function.ownerlessTextParameters.empty(),
+           "a relayed formal carries no ownerless requirement");
+    if (function.publishedTextFields.size() == 2)
+      pairMaker = &function;
+  }
+  expect(relaying >= 5, "factories and generic instances relay formals");
+  expect(pairMaker != nullptr, "a two-field result relays both formals");
+  const auto found = publications(result.mir);
+  std::vector<Location> calls;
+  for (const auto &location : found) {
+    const auto &instruction =
+        instructionAt(const_cast<lang::MirProgram &>(result.mir), location);
+    if (instruction.kind == lang::MirInstructionKind::Call)
+      calls.push_back(location);
+  }
+  expect(calls.size() == 6, "each dynamic call publishes its argument's owner");
+  const auto loanOf = [](lang::MirProgram &program,
+                         const Location &location) -> lang::MirLoan * {
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        program.findFunctionInstance(location.function));
+    const auto &instruction = instructionAt(program, location);
+    return instruction.loan && *instruction.loan <= function->body.loans.size()
+               ? &function->body.loans[*instruction.loan - 1]
+               : nullptr;
+  };
+  for (const auto &location : calls) {
+    const auto *loan =
+        loanOf(const_cast<lang::MirProgram &>(result.mir), location);
+    const auto &instruction =
+        instructionAt(const_cast<lang::MirProgram &>(result.mir), location);
+    expect(loan != nullptr && loan->kind == lang::MirLoanKind::Stored &&
+               loan->access == lang::AccessMode::ReadOnly &&
+               loan->designatedFields.size() == 1 &&
+               instruction.borrowFields.size() == 1 &&
+               instruction.borrowFields.front().resultFields ==
+                   loan->designatedFields,
+           "a publishing call's loan designates its one published field");
+  }
+  if (calls.empty() || pairMaker == nullptr)
+    return;
+  // Without its relay the callee would store the formal as ownerless text.
+  auto unrelayed = result.mir;
+  for (const auto &function : unrelayed.functionInstances())
+    if (function.id == pairMaker->id)
+      const_cast<lang::MirFunctionInstance &>(function)
+          .publishedTextFields.clear();
+  expect(!lang::verifyMirProgram(unrelayed).valid(),
+         "a callee whose relay is omitted is rejected by MIR");
+  // Without its publication the call's dynamic argument must be ownerless.
+  auto unpublished = result.mir;
+  instructionAt(unpublished, calls.front()).dependentTextPublication = false;
+  expect(!lang::verifyMirProgram(unpublished).valid(),
+         "a call without its publication is rejected by MIR");
+  // Designating the pair's other field makes `kept = pair.second` store
+  // the owner's text, which MIR rejects by itself.
+  auto retargeted = result.mir;
+  for (const auto &location : calls) {
+    const auto &instruction = instructionAt(retargeted, location);
+    const auto *target =
+        instruction.functionTarget
+            ? retargeted.findFunctionInstance(*instruction.functionTarget)
+            : nullptr;
+    if (target != nullptr && target->id == pairMaker->id)
+      loanOf(retargeted, location)->designatedFields = {
+          target->publishedTextFields.back().field};
+  }
+  const auto stored = lang::verifyMirProgram(retargeted);
+  expect(!stored.valid() &&
+             std::any_of(stored.errors.begin(), stored.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("ownerless text") !=
+                                  std::string::npos;
+                         }),
+         "a published field relabeled as dependent is rejected where it is "
+         "stored");
+  // A call semantics marks provisional requires its text arguments to be
+  // ownerless, so the helper's forwarded formal would need a requirement.
+  auto provisional = result.mir;
+  for (const auto &function : provisional.functionInstances())
+    for (auto &block :
+         const_cast<lang::MirFunctionInstance &>(function).body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            !function.publishedTextFields.empty() && instruction.result)
+          instruction.provisionalTextRelays = true;
+  expect(!lang::verifyMirProgram(provisional).valid(),
+         "a provisional relay that semantics did not declare is rejected");
+
+  struct Case {
+    const char *body;
+    const char *code;
+    const char *description;
+  };
+  const Case cases[] = {
+      {"kept = makeToken(input.view()).text;", "GTI-S2045",
+       "a published field is not ownerless text"},
+      {"Token t = makeToken(input.view()); kept = t.text;", "GTI-S2045",
+       "a published value's field is not ownerless text"},
+      {"Token t = makeToken(std::string(\"x\").view());", "GTI-S2045",
+       "a temporary owner cannot be published"},
+      {"Pair p = makePair(input.view(), owner.view());", "GTI-S2045",
+       "a published value holds dynamic text from one owner"},
+      {"Token t = keepsLocal(input.view());", "GTI-S2045",
+       "a formal published into a local requires ownerless text"},
+      {"Token t = makeToken(owner.view()); owner.append(\"!\"); "
+       "uint64_t n = t.text.size();",
+       "GTI-S2017", "the owner stays borrowed while a published value lives"},
+  };
+  for (const auto &entry : cases) {
+    const auto rejectedCase = analyzeText(
+        kDeclarations + kPublishedDeclarations +
+        "int run() { std::string input{\"token text\"}; mut std::string "
+        "owner{\"owner\"}; " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(!rejectedCase.canGenerateCode(), entry.description);
+    expect(hasDiagnosticCode(rejectedCase.diagnostics, entry.code),
+           std::string(entry.description) + " (" + entry.code + ")");
+    expect(std::none_of(rejectedCase.diagnostics.begin(),
+                        rejectedCase.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string(entry.description) + " is diagnosed at source");
+  }
+  const auto leaked = analyzeText(kDeclarations + kPublishedDeclarations +
+                                  R"gti(
+Token leak() { std::string input{"x"}; return makeToken(input.view()); }
+int main() { return 0; }
+)gti");
+  expect(hasDiagnosticCode(leaked.diagnostics, "GTI-S2045"),
+         "a published value of a local owner is not returned");
+}
+
+const std::string kOrderDeclarations = R"gti(
+class Label<T> {
+public:
+  T text;
+  int kind;
+  Label(T text, int kind) : text(text), kind(kind) {}
+};
+class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+Label<T> outerLabel<T>(T input) { return innerLabel(input); }
+Label<T> innerLabel<T>(T input) { return Label<T>(input, 3); }
+Token countdown(std::string_view text, int n) {
+  if (n == 0)
+    return Token(text, n);
+  return countdown(text, n - 1);
+}
+Label<T> countdownLabel<T>(T text, int n) {
+  if (n == 0)
+    return Label<T>(text, n);
+  return countdownLabel(text, n - 1);
+}
+Point walk(std::string_view text, int n) {
+  if (n == 0)
+    return Point(n, 2);
+  std::string local{"abc"};
+  return walk(local.view(), n - 1);
+}
+)gti";
+
+// A generic function relays through a generic call whose callee is declared
+// after it, because the open body records the composition. A recursive call
+// whose result has a text field requires ownerless text; one whose result has
+// none takes any text.
+void testPublishedResultOrder() {
+  const auto result = analyzeText(kDeclarations + kOrderDeclarations + R"gti(
+int main() {
+  std::string input{"ordered"};
+  Label<std::string_view> made = outerLabel(input.view());
+  Token counted = countdown("literal", 2);
+  kept = counted.text;
+  std::string_view literal = "literal";
+  Label<std::string_view> label = countdownLabel(literal, 2);
+  Point point = walk(input.view(), 2);
+  return made.text.size() + label.text.size() == 14 && point.y == 2 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "relays compose in any declaration order; recursion without a text "
+         "result takes dynamic text");
+  if (!result.canGenerateCode())
+    return;
+  const lang::MirFunctionInstance *outer = nullptr;
+  std::size_t genericRelays = 0;
+  std::size_t recursiveRelays = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (function.publishedTextFields.size() != 1)
+      continue;
+    if (function.ownerlessTextParameters == std::vector<std::size_t>{0}) {
+      // The recursive function relays its construction's formal and requires
+      // the formal it passes to itself. A generic one's instance is analyzed
+      // after its open body and relays both; callers are checked against the
+      // open declaration's requirement.
+      ++recursiveRelays;
+      continue;
+    }
+    if (function.typeArguments.size() != 1 ||
+        !function.ownerlessTextParameters.empty())
+      continue;
+    ++genericRelays;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget)
+          if (const auto *target =
+                  result.mir.findFunctionInstance(*instruction.functionTarget);
+              target != nullptr && !target->publishedTextFields.empty())
+            outer = &function;
+  }
+  expect(genericRelays == 3, "the generic instances relay their formal");
+  expect(recursiveRelays == 1,
+         "a recursive call with a text result requires ownerless text");
+  expect(outer != nullptr, "the wrapper relays through its callee's relay");
+  const auto found = publications(result.mir);
+  expect(std::count_if(found.begin(), found.end(),
+                       [&](const Location &location) {
+                         return instructionAt(
+                                    const_cast<lang::MirProgram &>(result.mir),
+                                    location)
+                                    .kind == lang::MirInstructionKind::Call;
+                       }) == 1,
+         "only the dynamic wrapper call publishes its argument's owner");
+  if (outer == nullptr)
+    return;
+  auto unrelayed = result.mir;
+  for (const auto &function : unrelayed.functionInstances())
+    if (function.id == outer->id)
+      const_cast<lang::MirFunctionInstance &>(function)
+          .publishedTextFields.clear();
+  expect(!lang::verifyMirProgram(unrelayed).valid(),
+         "a composed relay that is omitted is rejected by MIR");
+
+  for (const char *body :
+       {"Token t = countdown(input.view(), 2);",
+        "Label<std::string_view> l = countdownLabel(input.view(), 2);"}) {
+    const auto rejected =
+        analyzeText(kDeclarations + kOrderDeclarations +
+                    "int run() { std::string input{\"x\"}; " + body +
+                    " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"),
+           std::string("a recursive text result requires ownerless text: ") +
+               body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + body);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -829,6 +1136,8 @@ constexpr NamedTest kTests[] = {
     {"testFieldResults", testFieldResults},
     {"testPayloads", testPayloads},
     {"testTemporaries", testTemporaries},
+    {"testPublishedResults", testPublishedResults},
+    {"testPublishedResultOrder", testPublishedResultOrder},
 };
 } // namespace
 

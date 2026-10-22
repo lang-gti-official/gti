@@ -45,6 +45,28 @@ for what minor and patch releases mean.
   `t.ref()` reports `error[GTI-S2045]`, because a view copied from the
   reference would not keep `input` borrowed.
 
+## 0.459.0 — Factories that return values over their text
+
+- A function that returns a fresh value over one of its text parameters now
+  hands the caller a value over the argument's owner. With
+  `Token makeToken(std::string_view text) { return Token(text, 1); }`,
+  `Token made = makeToken(input.view());` used to report `error[GTI-S2045]`
+  ("A dynamic std::string_view cannot be passed to a function requiring
+  ownerless text input"); it now works, and `made` keeps `input` borrowed
+  read-only while it is live, as `Token(input.view(), 1)` would.
+- The same holds for generic functions after substitution, so
+  `std::make_pair(input.view(), 1)` and `unexpected(input.view())` work too,
+  and for a function that returns such a call with its own parameter.
+- An ownerless argument gives an ownerless result that can be stored.
+  Storing a field of a value over `input`, as in
+  `kept = makeToken(input.view()).text;`, reports `error[GTI-S2045]`, as do a
+  temporary owner and two owners in one value.
+- A function that uses its parameter any other way, for example keeping it in
+  a local and returning that, still requires ownerless text, and so does a
+  recursive call whose result has a text field.
+- `unexpected(input.view())` gives an `unexpected_value`; converting it into
+  an `expected`, and `optional<std::string_view>`, are still to come.
+
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
 - A constructor can store a borrowed payload enum that it takes by value.

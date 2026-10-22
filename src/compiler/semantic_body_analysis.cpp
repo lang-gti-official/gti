@@ -451,9 +451,11 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   concreteFunction.restoresReferenceResult = false;
   concreteFunction.restoredBorrowFields.clear();
   // A generic formal's ownerless-text obligation binds only text-view
-  // instantiations; this concrete body records its own requirements.
+  // instantiations; this concrete body records its own requirements and
+  // relays.
   concreteFunction.ownerlessTextParameters.clear();
   concreteFunction.ownerlessTextFields.clear();
+  concreteFunction.publishedTextFields.clear();
   const GenericSubstitution substitution{.types = instanceTypeSubstitution,
                                          .values = instanceValueSubstitution};
   concreteFunction.returnType =

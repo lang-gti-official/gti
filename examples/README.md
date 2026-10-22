@@ -243,7 +243,7 @@ is a teaching helper, not a production server.
 | `167-callable-result-types.gti` | computed callable result types used by an unrelated source-defined mapping wrapper; no builtin combinator |
 | `168-source-value-profiles.gti` | disjoint void/reference class profiles, enum-backed constexpr construction and consumption, generic forwarding, and checked borrowing |
 | `169-source-expected.gti` | global source-defined `expected`, value/void/reference results, constexpr, `?`, borrowing mapper captures, error mapping and checked extraction from a temporary result |
-| `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, and an ownerless token that keeps its method calls |
+| `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, and an ownerless token that keeps its method calls |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
