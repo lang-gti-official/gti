@@ -102,12 +102,14 @@ int main() { return states[0].read() + states[1].read() - 7; }
 
 SCALARS = """\
 enum Mode { First, Second };
+using Callback = () -> int32_t;
 thread_local mut Mode mode = Mode::First;
 thread_local mut int32_t values[2] = {3, 4};
 thread_local mut int32_t* address = nullptr;
+thread_local Callback callback = nullptr;
 int main() {
   if (mode != Mode::First || values[0] != 3 || values[1] != 4 ||
-      address != nullptr) return 1;
+      address != nullptr || callback != nullptr) return 1;
   mode = Mode::Second;
   values[1] += 1;
   unsafe {
@@ -312,6 +314,8 @@ def main() -> None:
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 if "thread-local-initializer-v1" not in generated:
                     raise AssertionError("TLS initialization lost its verified MIR body marker")
+                if "constinit thread_local " not in generated:
+                    raise AssertionError("native TLS infrastructure must not use C++ dynamic initialization")
                 print(f"thread-local runtime: {name} {standard} {opt} passed", flush=True)
             print(f"thread-local runtime: {standard} {opt} {native or 'native'} passed", flush=True)
 

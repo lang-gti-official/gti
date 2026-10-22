@@ -3,6 +3,7 @@
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -279,6 +280,56 @@ int main() { int32_t& result = retain(value, 0); return result; }
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "input protection does not invent a shorter-lived result parent");
 }
+void nativeBoundaryIsNotAnUnknownSourceBody() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/native-input.gti", R"(
+extern "C" { int32_t number(); }
+thread_local mut int32_t value = 1;
+void write(mut int32_t& target, int32_t copied) { target = copied; }
+int main() { write(value, number()); return value; }
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "declared native inputs retain their foreign-boundary obligations");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "a scalar native input is not an arbitrary hidden GTI storage write");
+  auto forged = frontend.mir;
+  bool changed = false;
+  for (const auto &instance : forged.functionInstances()) {
+    auto &function = const_cast<lang::MirFunctionInstance &>(instance);
+    if (function.linkage == lang::LanguageLinkage::C &&
+        function.definitionKind != lang::MirDefinitionKind::Source) {
+      function.linkage = lang::LanguageLinkage::Gti;
+      function.externalSymbol.clear();
+      changed = true;
+    }
+  }
+  expect(changed, "fixture owns a declared native target");
+  const auto proof = lang::verifyMirPersistentStorageEffects(forged);
+  expect(!proof.valid(),
+         "removing the native boundary cannot authorize an unknown GTI effect");
+}
+void exactRestorationRemainsAvailable() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/restore.gti", R"(
+#include <std/utility>
+thread_local mut int value = 1;
+int main() { int previous = std::exchange(value, 2); return previous + value; }
+)",
+      {library / "prelude.gti"}, {}, {library});
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "persistent storage may use the existing exact restoration operation");
+  if (frontend.canGenerateCode())
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "restoration proof is not confused with an unrepresented raw Move");
+}
 } // namespace
 
 int main() {
@@ -293,5 +344,7 @@ int main() {
       stagedInputBoundaries(storage, branch);
   persistentTransferIsIndependentlyRejected();
   stagedBorrowMayPublishItsOriginalLifetime();
+  nativeBoundaryIsNotAnUnknownSourceBody();
+  exactRestorationRemainsAvailable();
   return passed ? 0 : 1;
 }
