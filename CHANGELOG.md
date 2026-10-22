@@ -34,6 +34,16 @@ for what minor and patch releases mean.
   }`, and relaying a field through a call with a computed argument, as in
   `return first(t, n - 1);`.
 - New example: [171: recursive text relays](examples/171-recursive-text-relays.gti).
+## 0.459.6 — Consuming a borrowed wrapper on only some paths
+
+- A consuming method of a borrowed wrapper can now run on only some paths:
+  in the right operand of `||` or `&&`, in one arm of `?:`, or in one branch
+  of an `if`. For a class holding `enum Slot { ready(int& value), empty }`
+  with `int& take() &&`, `if (!h.has_value() || std::move(h).take() != owner)`
+  used to report `error[GTI-B0001]` (an internal compiler error); it now
+  works. Using the wrapper afterwards still reports `error[GTI-S2018]`. A
+  wrapper with a destructor consumed this way still reports
+
 ## 0.459.5 — Borrowed fields copied through references
 
 - A constructor that copies a borrowed payload enum out of a reference
