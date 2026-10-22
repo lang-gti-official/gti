@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Borrowed carriers stored after other fields (0.459.8)
+## Borrowed carriers stored after other fields (0.460.1)
 
 Deferred field storage (backend: a passive bound shell after other fields
 lives in an anonymous union and is published at its MIR point) is covered at

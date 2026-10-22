@@ -838,6 +838,17 @@ struct OwnerlessTextField {
                           const OwnerlessTextField &) = default;
 };
 
+// A by-value text formal that a function returns in a direct text field of a
+// fresh result (L-OWN-02): a call's result holds that argument's text there,
+// so a dynamic argument publishes its owner at the field.
+struct PublishedTextField {
+  std::size_t parameter = 0;
+  SymbolId field = 0;
+
+  friend auto operator<=>(const PublishedTextField &,
+                          const PublishedTextField &) = default;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -882,6 +893,9 @@ struct FunctionInfo {
   std::vector<std::size_t> ownerlessTextParameters;
   // Sorted and unique; inferred like ownerlessTextParameters.
   std::vector<OwnerlessTextField> ownerlessTextFields;
+  // Sorted and unique: formals a returned construction or call relays
+  // instead of requiring them ownerless.
+  std::vector<PublishedTextField> publishedTextFields;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1379,6 +1393,13 @@ struct ResolvedCallInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // The callee returns a dynamic argument in a text field of its fresh result
+  // (its publishedTextFields), so the result carries that argument's owner
+  // there (L-OWN-02). Its borrow facts describe this call only.
+  bool dependentTextPublication = false;
+  // The callee's body was still being analyzed (recursion), so its relays
+  // were not final: every text argument of this call must be ownerless.
+  bool provisionalTextRelays = false;
   std::optional<BorrowOriginPlace> borrowPlace;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
@@ -2074,6 +2095,9 @@ public:
   [[nodiscard]] const std::vector<OwnerlessTextField> &requiredFields() const {
     return requiredFields_;
   }
+  [[nodiscard]] const std::vector<PublishedTextField> &published() const {
+    return published_;
+  }
   [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
 
 private:
@@ -2083,12 +2107,14 @@ private:
       : source_(function.bodyDeclaration()), function_(function.id),
         parameters_(function.parameterTypes),
         required_(function.ownerlessTextParameters),
-        requiredFields_(function.ownerlessTextFields), snapshot_(snapshot) {}
+        requiredFields_(function.ownerlessTextFields),
+        published_(function.publishedTextFields), snapshot_(snapshot) {}
   const FunctionDecl *source_;
   FunctionId function_;
   std::vector<SemanticType> parameters_;
   std::vector<std::size_t> required_;
   std::vector<OwnerlessTextField> requiredFields_;
+  std::vector<PublishedTextField> published_;
   std::uint64_t snapshot_;
 };
 
