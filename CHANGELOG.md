@@ -9,6 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.459.0 — Thread-local storage
+
+- `thread_local` defines distinct per-thread storage at namespace scope, in a
+  non-generic static data member, or inside an ordinary function. Both
+  `static thread_local` and `thread_local static` are accepted. Mutable TLS
+  does not require a mutex or a share-capable type.
+- Dynamic values initialize on first use and retire in reverse initialization
+  order on their owning thread. GTI owns construction, rollback and cleanup,
+  including worker failure and the initial thread's exit. Recursive first use,
+  initialization during shutdown, and dynamic first use on an unattached
+  foreign thread produce defined `GTI-R0013` failures.
+- Checked TLS references follow ordinary borrowing rules, including helper
+  calls, reentrant callbacks, scoped workers and destructor effects. They
+  cannot escape their owning thread through an owned task/result. Primitive
+  literal-initialized TLS needs no dynamic GTI guard or cleanup registration.
+- See [the TLS contract and current structural boundaries](docs/language/concurrency.md#thread-local-storage)
+  and [runnable example 171](examples/171-thread-local-storage.gti).
+
 ## 0.458.2 — Recursive functions that return text
 
 - A recursive function returning `std::string_view` or `c_string`, such as
