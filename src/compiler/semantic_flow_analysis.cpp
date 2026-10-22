@@ -1793,6 +1793,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
         resolved->returnType.arguments.size() == 1) {
+      // A reference relay designates its receiver's text field, which holds a
+      // relayed owner's text, or a contract formal's field here (L-OWN-02).
+      if (const auto field = textReferenceRelay(call, *resolved);
+          field && borrowedTextType(type)) {
+        const ExpressionInfo *sourceInfo =
+            field->origin == nullptr
+                ? nullptr
+                : semanticModel.findExpression(**field->origin);
+        std::vector<SymbolId> held;
+        if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+          held = textDependentFields(**field->origin);
+        if (fieldSourcedTextFormal(*field) ||
+            std::find(held.begin(), held.end(), field->field) != held.end())
+          return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
+                                        resolved->returnType.referenceAccess);
+      }
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }

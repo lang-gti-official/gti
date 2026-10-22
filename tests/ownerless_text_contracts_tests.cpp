@@ -560,9 +560,80 @@ int main() {
          "source");
 }
 
+// A method that returns a reference to its receiver's text field relays that
+// field (returnedTextReference): on a value over a local owner its result is
+// a view of the owner, as a read of the field is, and a view copied from it
+// keeps the owner borrowed.
+void testTextReferenceRelays() {
+  const auto result = analyzeText(kReferenceAccessors + R"gti(
+int main() {
+  std::string input{"relayed"};
+  Token t = Token(input.view(), 1);
+  std::println(t.ref());
+  std::string_view v = t.ref();
+  std::println(v);
+  return width(t) == 7 && v.size() == 7 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a reference relay's result views the receiver's owner");
+  if (!result.canGenerateCode())
+    return;
+  // The copied view carries the relay's result loan, whose stored
+  // dependency is the owner's loan designating the relayed field. Like a view
+  // copied from a field read, its retention is a semantic decision: MIR
+  // checks the loan's shape, not which bindings must carry it.
+  bool carried = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    const auto &loans = function.body.loans;
+    for (const auto &loan : loans)
+      carried = carried ||
+                (loan.kind == lang::MirLoanKind::CallResult &&
+                 loan.carriers.size() == 1 && loan.storedDependency != 0 &&
+                 loan.storedDependency <= loans.size() &&
+                 loans[loan.storedDependency - 1].kind ==
+                     lang::MirLoanKind::Stored &&
+                 loans[loan.storedDependency - 1].designatedFields.size() == 1);
+  }
+  expect(carried, "the copied view carries the relay's loan, which depends "
+                  "on the owner's loan");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"kept = t.ref();", "GTI-S2045"},
+           Case{"keep(t);", "GTI-S2045"},
+           Case{"std::string_view v = t.ref(); input.append(\"!\"); "
+                "uint64_t n = v.size();",
+                "GTI-S2017"},
+           Case{"std::string_view& r = t.ref(); Token u = std::move(t); "
+                "uint64_t n = r.size();",
+                "GTI-S2017"},
+       }) {
+    const auto rejected = analyzeText(
+        kReferenceAccessors +
+        "int run() { mut std::string input{\"input\"}; Token t = "
+        "Token(input.view(), 1); " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a relayed view is checked at source: ") + entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testTextReferenceAccessors", testTextReferenceAccessors},
+    {"testTextReferenceRelays", testTextReferenceRelays},
     {"testOwnerlessTextAliasWrites", testOwnerlessTextAliasWrites},
     {"testRecursiveOwnerlessReturns", testRecursiveOwnerlessReturns},
     {"testPermutingRecursiveFieldContracts",
