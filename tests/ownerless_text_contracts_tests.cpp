@@ -142,7 +142,7 @@ bool functionError(const lang::MirVerificationResult &result,
                      });
 }
 
-// The function whose returns read the string literal `text`.
+// The function whose body holds the string literal `text`.
 const lang::MirFunctionInstance *
 returningLiteral(const lang::MirProgram &program, std::string_view text) {
   for (const auto &function : program.functionInstances())
@@ -156,8 +156,9 @@ returningLiteral(const lang::MirProgram &program, std::string_view text) {
   return nullptr;
 }
 
-// Replaces the string literal `text` that a function returns with a load of
-// its first formal, copied from a load the body already performs.
+// Replaces the string literal `text` in a function's body, which each of these
+// functions returns, with a load of its first formal, copied from a load the
+// body already performs.
 bool returnFirstFormal(lang::MirProgram &program,
                        lang::HirFunctionInstanceId id, std::string_view text) {
   auto *function =
@@ -420,6 +421,44 @@ int main() {
            "result proof");
 }
 
+void testRecursiveTextSummaryScaling() {
+  // A summary is computed once per function, and once per pass of a set of
+  // mutually recursive functions. Evaluating every call path separately
+  // takes exponential time in the depth of this chain, whose returns each
+  // call the next function twice, and in the size of this set, whose every
+  // function calls every other.
+  std::string source;
+  constexpr int depth = 18;
+  source += "std::string_view c" + std::to_string(depth) +
+            "(std::string_view s, int n) { return \"leaf\"; }\n";
+  for (int index = depth - 1; index >= 0; --index) {
+    const auto next = "c" + std::to_string(index + 1);
+    source += "std::string_view c" + std::to_string(index) +
+              "(std::string_view s, int n) {\n  if (n == 0) { return " + next +
+              "(s, n); }\n  return " + next + "(s, n - 1);\n}\n";
+  }
+  constexpr int members = 8;
+  for (int index = 0; index < members; ++index) {
+    source +=
+        "std::string_view d" + std::to_string(index) +
+        "(std::string_view s, int n) {\n  if (n == 0) { return \"d\"; }\n";
+    for (int other = 0; other < members; ++other)
+      if (other != index)
+        source += "  if (n == " + std::to_string(other + 1) + ") { return d" +
+                  std::to_string(other) + "(s, n - 1); }\n";
+    source += "  return d" + std::to_string((index + 1) % members) +
+              "(s, n - 1);\n}\n";
+  }
+  source += "int main() { return c0(\"x\", 1).size() + d0(\"x\", 3).size() == "
+            "5 ? 0 : 1; }\n";
+  const auto result = analyzeText(source);
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a deep call chain and a set of mutually recursive functions that "
+         "all call each other return ownerless text");
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testOwnerlessTextAliasWrites", testOwnerlessTextAliasWrites},
@@ -428,6 +467,7 @@ constexpr NamedTest kTests[] = {
      testPermutingRecursiveFieldContracts},
     {"testRecursiveOwnerlessReturnMutations",
      testRecursiveOwnerlessReturnMutations},
+    {"testRecursiveTextSummaryScaling", testRecursiveTextSummaryScaling},
 };
 } // namespace
 
