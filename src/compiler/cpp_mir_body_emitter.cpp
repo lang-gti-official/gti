@@ -8924,9 +8924,12 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     return {};
   }
   if (representationOnly) {
-    // A call's prepared input transfers were proved above.
+    // A call's prepared input transfers were proved above. A construction
+    // may likewise hand its by-value arguments to the constructor; those
+    // exact transfers are its only lifecycle events.
     if (value->info.traits != passive->traits || valueDrop != nullptr ||
-        (!sourceCall && !callableCall && !construct->lifecycle.empty())) {
+        (!sourceCall && !callableCall && !construct->lifecycle.empty() &&
+         !onlyPreparedInputTransfers(body, *construct))) {
       return {};
     }
   } else {

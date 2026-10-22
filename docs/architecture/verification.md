@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Borrowed carriers stored after other fields (0.459.7)
+## Borrowed carriers stored after other fields (0.459.8)
 
 Deferred field storage (backend: a passive bound shell after other fields
 lives in an anonymous union and is published at its MIR point) is covered at
@@ -40,9 +40,9 @@ body route would admit, since that route trusts verified MIR. All of them are
 rejected. The emitter census lists the new test and
 `testMovedBorrowedPayloadAfterFallibleSibling`, which the manifest lacked.
 
-An `--emit-cpp` differential at -O0 and -O3 over the 1,816 programs in
+An `--emit-cpp` differential at -O0 and -O3 over the 1,817 programs in
 `tests/fixtures`, `tests/coverage` and `examples`, against main's compiler
-(`7ac95ca4a`) with one `GTI_STDLIB_PATH`:
+(`c973f7cf2`) with one `GTI_STDLIB_PATH`:
 - Only `deferred_bound_fields.gti` changes status, from `GTI-B0001` to
   success; the 738 other failing runs report identical diagnostics.
 - Nine programs change text. Eight gain deferred storage for carrier fields
@@ -54,6 +54,39 @@ An `--emit-cpp` differential at -O0 and -O3 over the 1,816 programs in
 - Built with both compilers, the six of these that run standalone produce
   identical exit status and output at -O0 and -O3; the three
   `user_dual_range_*` fixtures pass their `user_dual_range_lifetime` harness.
+
+## Conditional joins whose arms take a class by value (0.459.7)
+
+A field read of a conditional temporary whose arms pass a class by value to
+their constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, used
+to report `GTI-B0001`, even for a single-level read. Traces of the join-arm
+recognizer showed each arm construction's prepared-argument `TransferOut`
+events, which only call arms accepted. Construction arms now accept the same
+exact transfers (`onlyPreparedInputTransfers`); an arm with no lifecycle event
+is admitted as before.
+
+- `testCleanupFreeJoinTransferAndTextArms` emits a by-value join and a join of
+  a class holding a text view (passive since 0.459.1). Both publish their two
+  arms into one representation-only join storage, which the joined value's
+  move empties and retires on the next line; the by-value arms hand their
+  staged arguments over with `take()`. Four MIR mutations stay refused: a
+  doubled, a conditional, and an `Initialize` arm transfer, and a
+  borrowed-state text arm.
+- `issue_127_constructor_temporary_field_runtime` adds six joins in every
+  mode: a by-value join read through `.word.kind`, the same join in a loop,
+  and text joins read as a scalar, as a view, through `.size()` and through a
+  read-only method. It counts 14 more constructions. The emitted C++ ends six
+  join storages after their moves; the method call borrows the join storage.
+- A join over owner-dependent text, `(c ? word_t(owner.view(), 1) :
+  word_t(owner.view(), 2)).kind`, is still `GTI-S2045` in semantics.
+
+An `--emit-cpp` differential over every `.gti` file under `tests/` and
+`examples/` (1,837 files, without the `namespace-depth-63.gti` stress input),
+against main's compiler at 0.459.3 on the same sources:
+- 1,462 programs build with both compilers and emit byte-identical C++, and
+  374 fail with both, with the same error codes.
+- Only `issue_127_constructor_temporary_field.gti` changes status: it now
+  builds. No other program is newly accepted.
 
 ## Consuming a borrowed wrapper on only some paths (0.459.6)
 
@@ -301,7 +334,8 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
 - The recorded validation repeats the differential against main at 0.458.2,
   without that stress input, and requires the same outcome.
 
-Still refused, both before and after, even for a single-level read:
+Still refused, both before and after, even for a single-level read (0.459.1 admits
+the text join and 0.459.7 the by-value one; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
 - a conditional join of a class that holds a text field, as in
