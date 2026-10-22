@@ -2085,6 +2085,9 @@ private:
   directTextFieldSymbols(const SemanticType &type) const;
   void noteTextFieldFormalUse(const Expr &expression,
                               OwnerlessTextField formal);
+  // A returned reference that a call borrowed from a contract formal or the
+  // receiver lets that whole formal escape: a whole use (L-OWN-02).
+  void noteReturnedFormalReference(const Expr &returned);
   void consumeTextFieldFormalUse(const ExprPtr &expression);
   void recordTextFieldCall(const Call &call, const CallableCandidate &target);
   bool requireOwnerlessTextField(const FunctionDecl *function,

@@ -13,6 +13,9 @@
 - MIR rejects `keep` with its field contract cleared, `ownerless text field
   contract omits an independently derived requirement`. It derives the
   requirement through the returned reference by itself.
+- `int& kindOf() { return this.kindRef(); }` verifies with a whole-receiver
+  requirement, and MIR rejects it with that requirement cleared. Main
+  reported `GTI-B0001` for it, the same omitted-requirement error.
 - A value over a local owner is `GTI-S2045` at source, never `GTI-B`. That
   holds as a receiver, with `t.ref()` read or stored, and as an argument, in
   `keep(t)` and `width(t)`. A temporary receiver, `Token("literal", 1).ref()`,
