@@ -1,0 +1,96 @@
+#include <std/panic>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A borrowed carrier consumed on only some paths: inside the right operand of
+// || and &&, one arm of ?:, one branch of an if, and both branches. The path
+// that skips the consuming call retires the carrier's group before the join.
+enum ReadingSlot { ready(int& value), empty };
+
+class StoredReading {
+  mut ReadingSlot slot;
+public:
+  implicit StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
+  StoredReading() : slot(ReadingSlot::empty) {}
+  bool has_value() {
+    switch (this.slot) {
+    case ReadingSlot::ready: return true;
+    case ReadingSlot::empty: return false;
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+    case ReadingSlot::ready(auto& value): return value;
+    case ReadingSlot::empty: std::panic("empty reading");
+    }
+  }
+};
+
+// An unrelated generic carrier with the same consuming accessor.
+enum MaybeRef<T> { some(T value), none };
+
+class Cell<T> {
+  mut MaybeRef<T&> state;
+public:
+  Cell(T& value) : state(MaybeRef<T&>::some(value)) {}
+  Cell() : state(MaybeRef<T&>::none) {}
+  bool full() {
+    switch (this.state) {
+    case MaybeRef<T&>::some: return true;
+    case MaybeRef<T&>::none: return false;
+    }
+  }
+  T& take() && {
+    switch (this.state) {
+    case MaybeRef<T&>::some(auto& value): return value;
+    case MaybeRef<T&>::none: std::panic("empty cell");
+    }
+  }
+};
+
+int pick(StoredReading reading, bool use) {
+  return use ? std::move(reading).take() : -1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int owner = 42;
+  mut auto either = StoredReading(owner);
+  if (!either.has_value() || std::move(either).take() != owner)
+    return 1;
+  mut auto both = StoredReading(owner);
+  if (!(both.has_value() && std::move(both).take() == owner))
+    return 2;
+  mut auto chosen = StoredReading(owner);
+  int got = chosen.has_value() ? std::move(chosen).take() : 0;
+  if (got != owner)
+    return 3;
+  mut auto branch = StoredReading(owner);
+  if (argc < 5) {
+    if (std::move(branch).take() != owner)
+      return 4;
+  }
+  mut auto split = StoredReading(owner);
+  mut int value = 0;
+  if (argc < 5) {
+    value = std::move(split).take();
+  } else {
+    value = std::move(split).take() + 1;
+  }
+  if (value != owner)
+    return 5;
+  // The empty carrier never reaches its consuming call.
+  mut auto unset = StoredReading();
+  if (unset.has_value() && std::move(unset).take() == owner)
+    return 6;
+  if (pick(StoredReading(owner), true) != owner ||
+      pick(StoredReading(owner), false) != -1)
+    return 7;
+  int other = 9;
+  mut auto cell = Cell<int>(other);
+  mut auto vacant = Cell<int>();
+  if (!cell.full() || std::move(cell).take() != other)
+    return 8;
+  int fallback = vacant.full() ? std::move(vacant).take() : -9;
+  return fallback == -9 ? 0 : 9;
+}
