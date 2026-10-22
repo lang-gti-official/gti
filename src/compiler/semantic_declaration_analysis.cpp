@@ -7910,25 +7910,185 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
   currentClass = function.ownerClass == 0
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
+  // A switch on a receiver payload-enum field may return one text payload's
+  // reference binding as a whole arm.
+  std::unordered_map<const Expr *, OwnerlessTextField> payloadReturns;
+  const auto visit = [&](const auto &self, const Stmt *statement) -> void {
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
+      for (const StmtPtr &nested : block->statements())
+        self(self, nested.get());
+    } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+      self(self, branch->thenBranch().get());
+      self(self, branch->elseBranch().get());
+    } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+      for (const SwitchArm &arm : selection->arms()) {
+        if (const auto relay = payloadReferenceRelayArm(
+                *selection, arm, function, ownerType, conditional))
+          payloadReturns.emplace(
+              stmtAs<ReturnStmt>(arm.statements.front().get())->value().get(),
+              *relay);
+        for (const StmtPtr &nested : arm.statements)
+          self(self, nested.get());
+      }
+    }
+  };
+  visit(visit, function.bodyDeclaration()->body().get());
   std::optional<OwnerlessTextField> result;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
-    const auto source =
-        returned == nullptr
-            ? std::nullopt
-            : predeclaredTextFieldSource(*returned, function, 0, ownerType,
-                                         conditional);
-    if (!source || source->origin != BorrowOriginKind::Receiver ||
-        (result && result->field != source->field)) {
+    std::optional<OwnerlessTextField> entry;
+    if (const auto found = returned == nullptr
+                               ? payloadReturns.end()
+                               : payloadReturns.find(returned->get());
+        found != payloadReturns.end())
+      entry = found->second;
+    else if (const auto source =
+                 returned == nullptr
+                     ? std::nullopt
+                     : predeclaredTextFieldSource(*returned, function, 0,
+                                                  ownerType, conditional);
+             source && source->origin == BorrowOriginKind::Receiver)
+      entry = OwnerlessTextField{.receiver = true, .field = source->field};
+    else if (returned != nullptr)
+      entry = composedTextReference(*returned, function, ownerType);
+    if (!entry || (result && *result != *entry)) {
       valid = false;
       break;
     }
-    result = OwnerlessTextField{.receiver = true, .field = source->field};
+    result = entry;
   }
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
   return valid ? result : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::composedTextReference(const ExprPtr &returned,
+                                                  const FunctionInfo &function,
+                                                  const SemanticType &ownerType)
+    -> std::optional<OwnerlessTextField> {
+  const Expr *current = returned.get();
+  while (const auto *group = exprAs<Grouping>(current))
+    current = group->expression() ? group->expression().get() : nullptr;
+  const auto *call = exprAs<Call>(current);
+  if (call == nullptr || !call->arguments().empty() ||
+      !call->typeArguments().empty() || function.ownerClass == 0 ||
+      function.staticMember || function.bodyDeclaration() == nullptr ||
+      function.bodyDeclaration()->receiverMutability() !=
+          ReceiverMutability::ReadOnly)
+    return std::nullopt;
+  const Token *name = nullptr;
+  if (const auto *member = exprAs<Get>(call->callee().get());
+      member != nullptr && member->access().kind != TokenKind::ARROW &&
+      member->object() && exprAs<This>(member->object().get()) != nullptr)
+    name = &member->name();
+  if (name == nullptr)
+    return std::nullopt;
+  const ClassInfo &owner = classInfo(function.ownerClass);
+  const auto found = owner.members.find(name->lexeme);
+  if (found == owner.members.end())
+    return std::nullopt;
+  // A read-only receiver selects the read-only overload; exactly one may
+  // take no arguments.
+  const CallableCandidate *selected = nullptr;
+  for (const CallableCandidate &candidate : found->second.symbol.overloads) {
+    if (candidate.staticMember || candidate.parameterPack ||
+        !candidate.parameterTypes.empty() ||
+        candidate.receiverMutability != ReceiverMutability::ReadOnly ||
+        candidate.virtualMethod || candidate.overrideMethod)
+      continue;
+    if (selected != nullptr)
+      return std::nullopt;
+    selected = &candidate;
+  }
+  // Finding the callee is bookkeeping, not a use of its body.
+  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+  const FunctionInfo *callee =
+      selected == nullptr ? nullptr : semanticModel.findFunction(selected->id);
+  if (callee == nullptr && selected != nullptr && instanceBaseModel != nullptr)
+    callee = instanceBaseModel->findFunction(selected->id);
+  if (callee == nullptr || callee->bodyDeclaration() == nullptr ||
+      std::find(textReferenceSummaryStack.begin(),
+                textReferenceSummaryStack.end(),
+                callee->bodyDeclaration()) != textReferenceSummaryStack.end())
+    return std::nullopt;
+  textReferenceSummaryStack.push_back(callee->bodyDeclaration());
+  auto relay = textReferenceReturnSummary(*callee, ownerType);
+  textReferenceSummaryStack.pop_back();
+  return relay;
+}
+
+auto SemanticVisitor::Impl::payloadReferenceRelayArm(
+    const SwitchStmt &selection, const SwitchArm &arm,
+    const FunctionInfo &function, const SemanticType &ownerType,
+    bool conditional) const -> std::optional<OwnerlessTextField> {
+  if (arm.labels.size() != 1 || arm.statements.size() != 1 ||
+      function.ownerClass == 0 || function.staticMember ||
+      function.bodyDeclaration() == nullptr ||
+      function.bodyDeclaration()->receiverMutability() !=
+          ReceiverMutability::ReadOnly)
+    return std::nullopt;
+  const auto *returned = stmtAs<ReturnStmt>(arm.statements.front().get());
+  const auto *name =
+      returned == nullptr ? nullptr : exprAs<Variable>(returned->value().get());
+  const auto *pattern = exprAs<Call>(arm.labels.front().value.get());
+  const auto *variant = pattern == nullptr
+                            ? nullptr
+                            : exprAs<QualifiedName>(pattern->callee().get());
+  const Expr *subject = selection.expression().get();
+  while (const auto *group = exprAs<Grouping>(subject))
+    subject = group->expression() ? group->expression().get() : nullptr;
+  const auto *get = exprAs<Get>(subject);
+  if (name == nullptr || variant == nullptr || get == nullptr ||
+      get->access().kind == TokenKind::ARROW || !get->object() ||
+      exprAs<This>(get->object().get()) == nullptr)
+    return std::nullopt;
+  std::optional<std::size_t> index;
+  for (std::size_t position = 0; position < pattern->arguments().size();
+       ++position) {
+    const auto *binding =
+        exprAs<Variable>(pattern->arguments()[position].get());
+    if (binding != nullptr && binding->name().lexeme == name->name().lexeme) {
+      if (!binding->isReferencePattern() || binding->isMutablePattern())
+        return std::nullopt;
+      index = position;
+    }
+  }
+  const SemanticType owner = ownerType.kind == SemanticType::Class &&
+                                     ownerType.classId == function.ownerClass
+                                 ? ownerType
+                                 : openClassType(function.ownerClass);
+  const ClassInfo *info = classInfo(owner);
+  const auto member = info == nullptr ? decltype(info->members.end()){}
+                                      : info->members.find(get->name().lexeme);
+  if (!index || info == nullptr || member == info->members.end() ||
+      member->second.symbol.staticMember ||
+      member->second.symbol.bindingKind != SemanticBindingKind::Field ||
+      !textPublicationOwner(owner))
+    return std::nullopt;
+  const auto fieldType =
+      substituteType(member->second.symbol.type, classSubstitution(owner));
+  const auto enumeration = enumTypeFor(fieldType);
+  if (!enumeration || variant->name().segments.empty())
+    return std::nullopt;
+  for (const auto &candidate : enumeration->enumerators) {
+    if (candidate.declaration == nullptr ||
+        candidate.declaration->name.lexeme != variant->name().last().lexeme ||
+        *index >= candidate.payloadSymbols.size() ||
+        *index >= candidate.payloadTypes.size())
+      continue;
+    const auto type = substituteType(candidate.payloadTypes[*index],
+                                     enumSubstitution(fieldType));
+    if (type.kind != SemanticType::StringView &&
+        type.kind != SemanticType::CString &&
+        !(conditional && type.kind == SemanticType::TypeParameter))
+      return std::nullopt;
+    return OwnerlessTextField{
+        .receiver = true,
+        .field = symbolForDeclaration(member->second.symbol.declaration),
+        .payload = candidate.payloadSymbols[*index]};
+  }
+  return std::nullopt;
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(

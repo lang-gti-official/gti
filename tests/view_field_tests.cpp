@@ -1494,6 +1494,320 @@ int main() {
   }
 }
 
+// A generic class method's type-parameter formal is opaque to its open
+// analysis: in an instance whose argument type has text fields, any use may
+// let the whole value escape, as `std::vector<T>::push_back` stores it.
+void testTypeParameterFormals() {
+  const auto result = analyzeText(kDeclarations + R"gti(
+#include <std/vector>
+int main() {
+  mut std::vector<Token> tokens{};
+  tokens.push_back(Token("literal", 1));
+  return tokens.size() == 1 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a container stores an ownerless value with text fields");
+  std::size_t whole = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (!function.owner || function.parameterTypes.size() != 1 ||
+        function.parameterTypes.front().kind != lang::SemanticType::Class ||
+        function.ownerlessTextFields.empty())
+      continue;
+    ++whole;
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function.id))
+        ->ownerlessTextFields.clear();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "MIR derives the whole use of a type-parameter formal");
+  }
+  expect(whole >= 1, "push_back requires its argument's text fields");
+  const auto rejected = analyzeText(kDeclarations + R"gti(
+#include <std/vector>
+int run() {
+  std::string owner{"owner"};
+  Token token = Token(owner.view(), 1);
+  mut std::vector<Token> tokens{};
+  tokens.push_back(token);
+  return 0;
+}
+int main() { return run(); }
+)gti");
+  expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
+             std::none_of(rejected.diagnostics.begin(),
+                          rejected.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "a container cannot store a value over a local owner");
+}
+
+const std::string kPayloadPaths = R"gti(
+#include <std/optional>
+#include <std/panic>
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  int column;
+  Line(std::string_view text, int column)
+      : word(Word::text(text)), column(column) {}
+  bool hasText() {
+    switch (this.word) {
+    case Word::text: return true;
+    case Word::none: return false;
+    }
+  }
+  void save() {
+    switch (this.word) {
+    case Word::text(value): kept = value; break;
+    case Word::none: break;
+    }
+  }
+};
+enum Slot<T> { full(T value), empty };
+class Holder<T> {
+public:
+  Slot<T> slot;
+  Holder(T value) : slot(Slot<T>::full(std::move(value))) {}
+  T& get() {
+    switch (this.slot) {
+    case Slot<T>::full(auto& value): return value;
+    case Slot<T>::empty: std::panic("empty");
+    }
+  }
+  T& again() { return this.get(); }
+};
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  std::string_view& alias() { return this.ref(); }
+};
+void keepLine(Line line) {
+  switch (line.word) {
+  case Word::text(value): kept = value; break;
+  case Word::none: break;
+  }
+}
+void keepDeref(std::optional<std::string_view>& value) { kept = *value; }
+uint64_t width(std::optional<std::string_view>& value) {
+  return (*value).size();
+}
+)gti";
+
+// The dependent case of each payload-path shape is diagnosed at source.
+void expectPayloadRejected(const std::string &setup, const std::string &body,
+                           const char *code) {
+  const auto rejected = analyzeText(
+      kPayloadPaths + "int run() { mut std::string owner{\"owner\"}; " + setup +
+      " " + body + " return 0; }\nint main() { return run(); }\n");
+  expect(hasDiagnosticCode(rejected.diagnostics, code),
+         std::string("a dependent payload path is checked at source: ") + body);
+  expect(std::none_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      }),
+         std::string("diagnosed at source: ") + body);
+}
+
+// A constructor that stores its text formal as a field's payload publishes
+// the argument's owner at [field, payload] (L-OWN-02). A switch on the field
+// observes the payload, a payload accessor relays the path, and a method
+// returning another accessor's reference composes its relay.
+void testPayloadPaths() {
+  const auto result = analyzeText(kPayloadPaths + R"gti(
+int main() {
+  std::string input{"payload"};
+  Line line = Line(input.view(), 3);
+  mut uint64_t total = 0;
+  switch (line.word) {
+  case Word::text(value): total = total + value.size(); break;
+  case Word::none: break;
+  }
+  if (line.hasText()) {
+    total = total + 1;
+  }
+  Holder<std::string_view> holder = Holder<std::string_view>(input.view());
+  std::string_view again = holder.again();
+  Holder<int> number = Holder<int>(2);
+  Token token = Token(input.view(), 1);
+  total = total + holder.get().size() + again.size() + token.alias().size();
+  return total + uint64_t(number.again()) == 31 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "dependent values observe and relay payload paths");
+  if (!result.canGenerateCode())
+    return;
+  // Each constructor publication designates a path through its payload enum
+  // field; MIR verifies the path against the constructor's own initializer.
+  std::size_t nested = 0;
+  for (const auto &location : publications(result.mir)) {
+    auto changed = result.mir;
+    auto &instruction = instructionAt(changed, location);
+    if (instruction.kind != lang::MirInstructionKind::Construct ||
+        !instruction.loan)
+      continue;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(location.function));
+    auto loan =
+        std::find_if(function->body.loans.begin(), function->body.loans.end(),
+                     [&](const auto &candidate) {
+                       return candidate.id == *instruction.loan;
+                     });
+    if (loan == function->body.loans.end() ||
+        loan->designatedFields.size() != 2)
+      continue;
+    ++nested;
+    loan->designatedFields.pop_back();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "MIR rejects a payload publication that designates the field "
+           "alone");
+  }
+  expect(nested == 2, "both constructor payload inputs publish a path");
+
+  // A switch binding a contract formal's payload requires it ownerless; MIR
+  // derives the requirement where the payload escapes.
+  const auto stored = analyzeText(kPayloadPaths + R"gti(
+int main() {
+  Line line = Line("literal", 1);
+  keepLine(line);
+  line.save();
+  std::optional<std::string_view> maybe = std::optional<std::string_view>("x");
+  keepDeref(maybe);
+  return kept.size() == 1 ? 0 : 1;
+}
+)gti");
+  if (!stored.canGenerateCode())
+    printDiagnostics(stored);
+  expect(stored.canGenerateCode(), "ownerless values store their payloads");
+  std::size_t payloadContracts = 0;
+  for (const auto &function : stored.mir.functionInstances()) {
+    if (std::none_of(function.ownerlessTextFields.begin(),
+                     function.ownerlessTextFields.end(),
+                     [](const auto &field) { return field.payload != 0; }))
+      continue;
+    ++payloadContracts;
+    auto changed = stored.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function.id))
+        ->ownerlessTextFields.clear();
+    expect(!lang::verifyMirProgram(changed).valid(),
+           "MIR derives a payload requirement independently");
+  }
+  expect(payloadContracts >= 3,
+         "keepLine, save and keepDeref require their payloads");
+
+  const std::string line = "Line line = Line(owner.view(), 1);";
+  const std::string holder = "Holder<std::string_view> holder = "
+                             "Holder<std::string_view>(owner.view());";
+  struct Case {
+    const std::string *setup;
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{&line,
+                "switch (line.word) { case Word::text(value): kept = value; "
+                "break; case Word::none: break; }",
+                "GTI-S2045"},
+           Case{&line, "Word word = line.word;", "GTI-S2045"},
+           Case{&line, "keepLine(line);", "GTI-S2045"},
+           Case{&line, "line.save();", "GTI-S2045"},
+           Case{&line,
+                "Line moved = std::move(line); switch (moved.word) { case "
+                "Word::text(value): kept = value; break; case Word::none: "
+                "break; }",
+                "GTI-S2045"},
+           Case{&line,
+                "owner.append(\"!\"); switch (line.word) { case "
+                "Word::text(value): break; case Word::none: break; }",
+                "GTI-S2017"},
+           Case{&holder, "kept = holder.get();", "GTI-S2045"},
+           Case{&holder, "std::string_view view = holder.again(); kept = view;",
+                "GTI-S2045"},
+           Case{&holder,
+                "std::string_view view = holder.again(); "
+                "owner.append(\"!\"); uint64_t n = view.size();",
+                "GTI-S2017"},
+       })
+    expectPayloadRejected(*entry.setup, entry.body, entry.code);
+  expectPayloadRejected("Token token = Token(owner.view(), 1);",
+                        "kept = token.alias();", "GTI-S2045");
+}
+
+// `std::optional<std::string_view>` and `expected<std::string_view, E>` are
+// the same shape: a constructor payload input, a tag-only `has_value`, a
+// payload accessor and operators composing it.
+void testOptionalViews() {
+  const auto result = analyzeText(kPayloadPaths + R"gti(
+int main() {
+  std::string input{"optional"};
+  std::optional<std::string_view> maybe =
+      std::optional<std::string_view>(input.view());
+  mut uint64_t total = 0;
+  if (maybe && maybe.has_value()) {
+    std::string_view view = *maybe;
+    total = maybe.value().size() + view.size() + width(maybe);
+  }
+  expected<std::string_view, int> result =
+      expected<std::string_view, int>(input.view());
+  if (result) {
+    total = total + result.value().size();
+  }
+  return total == 32 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "an optional or expected over a local owner's text observes it");
+
+  const std::string maybe = "std::optional<std::string_view> maybe = "
+                            "std::optional<std::string_view>(owner.view());";
+  const std::string result2 = "expected<std::string_view, int> result = "
+                              "expected<std::string_view, int>(owner.view());";
+  struct Case {
+    const std::string *setup;
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{&maybe, "kept = maybe.value();", "GTI-S2045"},
+           Case{&maybe, "kept = *maybe;", "GTI-S2045"},
+           Case{&maybe, "std::string_view view = *maybe; kept = view;",
+                "GTI-S2045"},
+           Case{&maybe,
+                "std::string_view view = *maybe; owner.append(\"!\"); "
+                "uint64_t n = view.size();",
+                "GTI-S2017"},
+           Case{&maybe,
+                "std::string_view view = maybe.value(); owner.append(\"!\"); "
+                "uint64_t n = view.size();",
+                "GTI-S2017"},
+           Case{&maybe, "uint64_t n = maybe.value_or(\"none\").size();",
+                "GTI-S2045"},
+           Case{&maybe, "keepDeref(maybe);", "GTI-S2045"},
+           Case{&maybe,
+                "mut std::optional<std::string_view> other = "
+                "std::optional<std::string_view>(\"x\"); other = "
+                "std::move(maybe);",
+                "GTI-S2045"},
+           Case{&result2, "kept = result.value();", "GTI-S2045"},
+       })
+    expectPayloadRejected(*entry.setup, entry.body, entry.code);
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -1507,6 +1821,9 @@ constexpr NamedTest kTests[] = {
     {"testPublishedResultOrder", testPublishedResultOrder},
     {"testRecursiveRelays", testRecursiveRelays},
     {"testGenericClassContracts", testGenericClassContracts},
+    {"testTypeParameterFormals", testTypeParameterFormals},
+    {"testPayloadPaths", testPayloadPaths},
+    {"testOptionalViews", testOptionalViews},
 };
 } // namespace
 

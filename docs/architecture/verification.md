@@ -1,5 +1,50 @@
 # Compiler Verification
 
+## Nested publication through payload-enum fields (0.463.0)
+
+`view_fields` covers the paths in three tests.
+- `testPayloadPaths`: a `Line` whose constructor stores its formal as
+  `Word::text`'s payload and a generic `Holder<T>` storing `Slot<T>::full`
+  publish at `[field, payload]`, over a local owner. `switch (line.word)`,
+  `line.hasText()`, `holder.get()`, the composed `holder.again()` and
+  `token.alias()` verify. MIR rejects each publication with the payload
+  dropped from its loan's path. With literal values, `keepLine`, `Line::save`
+  and `keepDeref` verify, and MIR rejects each with its payload requirement
+  cleared.
+- The dependent forms are rejected at source, never with `GTI-B`. Storing
+  the switch binding, `Word word = line.word;`, `keepLine(line)`,
+  `line.save()`, storing through a moved copy, `kept = holder.get()`,
+  `kept = token.alias()` and storing a view copied from `holder.again()`
+  are `GTI-S2045`. Appending to the owner while the value or a copied view
+  lives is `GTI-S2017`.
+- `testOptionalViews`: over a local owner, `if (maybe)`, `has_value()`,
+  `*maybe`, `value()`, `width(maybe)` reading `(*value).size()`, and an
+  `expected<std::string_view, int>`'s `if (result)` and `value()` verify.
+  Storing `value()` or `*maybe`, directly or through a copied view,
+  `value_or`, `keepDeref(maybe)`, assigning the value over another optional,
+  and storing `result.value()` are `GTI-S2045`. Appending to the owner while
+  a copied view lives is `GTI-S2017`. Before the dereference relay was
+  classified, `std::string_view view = *maybe;` followed by an append
+  compiled into a dangling view. MIR still does not check binding carriers,
+  so only these source rules prevent that.
+- `testTypeParameterFormals`: `std::vector<Token>::push_back` of a literal
+  value verifies (`GTI-B0001` in 0.462.0), MIR rejects its instance with the
+  whole-formal requirement cleared, and pushing a value over a local owner
+  is `GTI-S2045`.
+
+`optional_compiler_contract` now expects an optional over literal text to be
+returned, and one over a local owner to be `GTI-S2045` as a dependent value.
+`ownerless_text_contracts` expects `std::println(t.alias())` on a dependent
+value to verify. `view_field_payloads_runtime` runs the fixture in every
+mode. `c105_classes_payload_enum_workaround` in the coverage corpus, a
+`std::vector` of a class with a text-payload enum field, guards the
+type-parameter formal rule.
+
+The same-root differential against main at 0.462.0 covered 1,354 programs
+in `tests/fixtures/`, `tests/coverage/` and `examples/`. 1,352 emit
+byte-identical C++, with no text differences. Only example 170 and the new
+`view_field_payloads` fixture change status: they now build.
+
 ## Reference relays and generic class contracts (0.462.0)
 
 `ownerless_text_contracts` covers relays in `testTextReferenceRelays`.

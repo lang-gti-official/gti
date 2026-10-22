@@ -1656,6 +1656,26 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             semanticModel.findOperator(expr)) {
       if (resolved->returnType.kind == SemanticType::Reference &&
           resolved->returnType.arguments.size() == 1) {
+        // A dereference's reference relay designates the operand's text field
+        // or payload, as a call's does (L-OWN-02).
+        if (const auto *unary = exprAs<Unary>(&expr))
+          if (const auto field = operatorTextReferenceRelay(*unary);
+              field && borrowedTextType(type)) {
+            const ExpressionInfo *sourceInfo =
+                semanticModel.findExpression(**field->origin);
+            std::vector<std::vector<SymbolId>> held;
+            if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+              held = textDependentPaths(**field->origin);
+            const auto designated =
+                field->payload == 0
+                    ? std::vector<SymbolId>{field->field}
+                    : std::vector<SymbolId>{field->field, field->payload};
+            if (fieldSourcedTextFormal(*field) ||
+                std::find(held.begin(), held.end(), designated) != held.end())
+              return ownerDependentTextInfo(
+                  std::move(type), ValueCategory::Place,
+                  resolved->returnType.referenceAccess);
+          }
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
@@ -1783,6 +1803,20 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                       mutableAccess ? AccessMode::Mutable
                                                     : AccessMode::ReadOnly);
     }
+    // A payload-enum field through which the dependency designates a text
+    // payload is itself a dependent value, observed by a switch.
+    if (type.kind == SemanticType::Enum && member != nullptr &&
+        objectInfo != nullptr && get.access().kind != TokenKind::ARROW &&
+        isTextDependentValue(*objectInfo)) {
+      const auto field = symbolForDeclaration(member->symbol.declaration);
+      const auto paths = textDependentPaths(*get.object());
+      if (std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+            return path.size() > 1 && path.front() == field;
+          }))
+        return textDependentValueInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
@@ -1801,11 +1835,15 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             field->origin == nullptr
                 ? nullptr
                 : semanticModel.findExpression(**field->origin);
-        std::vector<SymbolId> held;
+        std::vector<std::vector<SymbolId>> held;
         if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
-          held = textDependentFields(**field->origin);
+          held = textDependentPaths(**field->origin);
+        const auto designated =
+            field->payload == 0
+                ? std::vector<SymbolId>{field->field}
+                : std::vector<SymbolId>{field->field, field->payload};
         if (fieldSourcedTextFormal(*field) ||
-            std::find(held.begin(), held.end(), field->field) != held.end())
+            std::find(held.begin(), held.end(), designated) != held.end())
           return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
                                         resolved->returnType.referenceAccess);
       }
@@ -5899,9 +5937,9 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                                                    enumerator.variantIndex;
                                           })
                            : decltype(enumeration->enumerators.begin()){};
+  // A generic enum's concrete instance publishes like any other.
   const bool publishable =
       enumeration && variant != enumeration->enumerators.end() &&
-      enumerator.symbol.type.arguments.empty() &&
       !containsOpenTypeParameter(enumerator.symbol.type) &&
       !typeTraits(enumerator.symbol.type).containsBorrowedState;
   std::vector<BorrowedFieldOrigin> textOrigins;
@@ -5909,8 +5947,12 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
     const auto &field = enumerator.payloadTypes[index];
+    // A constructor's text input formal is published by each call instead.
+    const auto &inputs = requestSession.constructorTextPayloadArguments;
     if ((field == SemanticType::StringView || field == SemanticType::CString) &&
-        isOwnerDependentTextExpression(call.arguments()[index])) {
+        isOwnerDependentTextExpression(call.arguments()[index]) &&
+        std::find(inputs.begin(), inputs.end(),
+                  call.arguments()[index].get()) == inputs.end()) {
       const SymbolId payload =
           publishable && index < variant->payloadSymbols.size()
               ? variant->payloadSymbols[index]

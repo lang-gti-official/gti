@@ -547,14 +547,21 @@ int main() {
         "return std::optional<std::string_view>(" +
             argument + "); }\nint main() { auto result = escape(); return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(
-        !text.canGenerateCode() &&
-            hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
-            hasDiagnostic(text.diagnostics, "stored in a payload-enum field") &&
-            !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
-        "optional publication cannot store a potentially owner-dependent "
-        "text parameter; literal arguments do not bypass that generic "
-        "parameter boundary");
+    // The constructor publishes its argument's owner at the payload
+    // (L-OWN-02): a value over literal text may leave, one over a local
+    // owner may not.
+    if (argument == "\"static\"") {
+      expect(text.canGenerateCode() && lang::verifyMirProgram(text.mir).valid(),
+             "an optional over literal text holds ownerless text and may be "
+             "returned");
+      continue;
+    }
+    expect(!text.canGenerateCode() &&
+               hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
+               hasDiagnostic(text.diagnostics,
+                             "holds dynamic text from a local owner") &&
+               !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
+           "an optional over a local owner's text cannot be returned");
   }
 
   const auto literalPayload = lang::Frontend().analyze(
@@ -662,7 +669,7 @@ int main() { auto result = escape(); return 0; }
   expect(!cText.canGenerateCode() &&
              hasDiagnosticCode(cText.diagnostics, "GTI-S2045") &&
              hasDiagnostic(cText.diagnostics,
-                           "owner-dependent c_string cannot be stored") &&
+                           "holds dynamic text from a local owner") &&
              !hasDiagnosticCode(cText.diagnostics, "GTI-B0001"),
          "optional storage applies the same dependency rule to C-string "
          "views without relying on a public library spelling");

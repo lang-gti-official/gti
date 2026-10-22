@@ -9,6 +9,41 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.463.0 — Optional and expected views of a local owner
+
+- `std::optional<std::string_view>` could not be used at all: even
+  `std::optional<std::string_view> o = lit;` over a literal-backed view, or
+  `std::optional<std::string_view>("static")`, reported `error[GTI-S2045]`
+  inside the library's constructor. The same held for
+  `expected<std::string_view, E>` built from a value. Both now work over
+  literal text, may be stored and returned, and `o.value()`, `*o` and `if (o)`
+  read them.
+- Built over a local owner, as in `std::optional<std::string_view> o =
+  std::optional<std::string_view>(input.view());`, the value now views
+  `input`: `o.has_value()`, `if (o)`, `o.value()` and `*o` give views of
+  `input` and keep it borrowed, and functions that only read the value accept
+  it. Storing the text, as in `kept = *o;`, passing the value to a function
+  that stores it, `o.value_or(...)`, and returning the value report
+  `error[GTI-S2045]`. An implicit conversion such as
+  `std::optional<std::string_view> o = input.view();` still requires
+  ownerless text.
+- The same works for your own classes. A constructor that stores its text
+  parameter as a payload of an enum field, such as
+  `Line(std::string_view text) : word(Word::text(text)) {}`, used to report
+  `error[GTI-S2045]` for every call; it now publishes the argument's owner
+  there. A `switch (line.word)` on such a value binds a view of the owner, a
+  method returning a reference to the payload (`case Slot<T>::full(auto& v):
+  return v;`) reads it, and a method that returns such a method's reference,
+  such as `std::string_view& alias() { return this.ref(); }`, now works on a
+  value over a local owner too. Copying the field out (`Word w = line.word;`)
+  reports `error[GTI-S2045]`.
+- A generic payload enum such as `enum Slot<T> { full(T value), empty }` now
+  holds a local owner's text in a local value, as a non-generic one does.
+- Storing a value with a `std::string_view` field in a container, as in
+  `std::vector<Token> tokens{}; tokens.push_back(Token("a", 1));`, reported
+  `error[GTI-B0001]` in 0.462.0; it compiles again. Pushing a value over a
+  local owner reports `error[GTI-S2045]`.
+
 ## 0.462.0 — Reference accessors and generic methods on values that view an owner
 
 - A method that returns a reference to a text field, such as

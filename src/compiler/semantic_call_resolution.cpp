@@ -6967,6 +6967,23 @@ auto SemanticVisitor::Impl::resolveOperator(
       .site = token};
   applyRawOperatorInvocation(site, rawInvocation, contextual,
                              projection || kind == OverloadedOperator::Arrow);
+  // The operator's reference relay for this receiver's class, and its
+  // receiver's and operands' relays (L-OWN-02).
+  if (selected.returnType.kind == SemanticType::Reference) {
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    const FunctionInfo *declaration = semanticModel.findFunction(selected.id);
+    if (declaration == nullptr && instanceBaseModel != nullptr)
+      declaration = instanceBaseModel->findFunction(selected.id);
+    if (declaration != nullptr) {
+      FunctionInfo concrete = *declaration;
+      concrete.returnType = selected.returnType;
+      concrete.parameterTypes = selected.parameterTypes;
+      resolved.returnedTextReference =
+          textReferenceReturnSummary(concrete, receiverType);
+    }
+  }
+  if (!receiverState && receiver)
+    recordTextFieldOperator(receiver, arguments, selected);
   if (contextual) {
     // The site's own analysis recorded the effects of computing its value;
     // the conversion applied to that value is a further call.
