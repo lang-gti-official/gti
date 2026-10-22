@@ -51,6 +51,25 @@ repository outside `stdlib/` and the hanging `namespace-depth-63` stress file:
   `GTI-S2045` on main to building.
 - No other run changes status, emitted C++ or diagnostics.
 - Neither compiler reports `GTI-B0001`.
+## Consuming a borrowed wrapper on only some paths (0.459.6)
+
+`consuming_receiver_types` adds `checkConditionalCarrierConsumption` over
+`conditional_carrier_consume.gti`. It consumes a borrowed wrapper in the right
+operand of `||` and `&&`, in one arm of `?:`, in one branch of an `if`, in both
+branches, in a by-value parameter, and through an unrelated generic carrier,
+`Cell<T>` over `MaybeRef<T&>`. The fixture verifies and emits. Every
+`EndBorrow` of a stored group that ends in more than one block is tombstoned
+in turn, and each forged program fails verification; the fixture has at least
+eight such retirements. `borrow_origin_runtime` runs the fixture in all eight
+native modes, and `tryable_propagation_runtime` runs example 165, which now
+consumes a wrapper under `||`.
+
+An emitted-C++ differential compared the compiler at main 6b587a959 with the
+candidate built on it over 1,950 corpus programs at `-O0` and `-O3`. Only
+example 165 and the new fixture changed, both from `GTI-B0001` to accepted;
+every other program, accepted or rejected, produced the same output. The MIR
+and lowered-program censuses are unchanged.
+
 ## Borrowed fields copied through references (0.459.5)
 
 `complete_borrow_summaries` checks the new `GTI-S2045` for a borrowed enum
