@@ -1,5 +1,56 @@
 # Compiler Verification
 
+## Recursive text relays (0.461.0)
+
+`view_fields` covers recursion in `testRecursiveRelays`.
+- Each relay family compiles:
+  - a text formal, through a recursion (`first`), a mutual recursion
+    (`even`/`odd`) and a generic instance (`relay<std::string_view>`);
+  - a formal's text field, through `textOf`;
+  - the receiver's field, through the method `skip`;
+  - compositions through another relay with a computed argument (`outer`,
+    `outerText`).
+
+  Each self-recursive relay names one origin and requires no ownerless text.
+- Two MIR mutations are rejected independently: removing the recursive call's
+  result loan, and clearing the relay contract of a recursion that returns its
+  formal.
+- Source rejections, with no backend error:
+  - storing a recursive relay's result;
+  - mutating the owner while a recursive, mutual, field or receiver relay's
+    result is live;
+  - a recursion that permutes text formals;
+  - a permuting field recursion given a dynamic argument;
+  - returning a local owner's view through a recursion.
+- `recursive_text_relays_runtime` runs the relays in every mode, and example
+  171 runs at O0 and O3.
+- `instance_reuse` and `borrowing_composition_lsp` pass unchanged.
+
+Discrimination:
+- Built from main's compiler sources, `testRecursiveRelays` fails at its first
+  expectation.
+- Main's MIR also rejected two non-recursive compositions with `GTI-B0001`:
+  - `return id(s, n);` was rejected because the return-loan check required a
+    direct transfer of the formal's entry loan.
+  - `return first(t, n - 1);` was rejected because `TextContracts` looked for a
+    `CallInput`'s consumer only in its own block, so the checked `n - 1` hid
+    the call.
+
+The semantic summary is not monotone in its final form: one field source
+proposes a relay, and two propose a requirement. Iterating final summaries
+could therefore oscillate on a permuting field recursion. The fixpoint
+accumulates the sources (`TextRelaySources`) and derives the summary from
+them. A call to a completed ownerless summary outside a recursive set still
+reads as unknown provenance, so no non-recursive contract changes.
+
+An `--emit-cpp` differential at O0 and O3 ran against main's compiler at
+`d2a6ca6b` on the same sources. It covers every `.gti` program in the
+repository outside `stdlib/` and the hanging `namespace-depth-63` stress file:
+1,950 programs, 3,900 runs.
+- Only example 171 and the `recursive_text_relays` fixture change, from
+  `GTI-S2045` on main to building.
+- No other run changes status, emitted C++ or diagnostics.
+- Neither compiler reports `GTI-B0001`.
 ## Conditional joins whose arms take a class by value (0.459.7)
 
 A field read of a conditional temporary whose arms pass a class by value to
