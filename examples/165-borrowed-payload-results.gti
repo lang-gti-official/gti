@@ -212,6 +212,11 @@ int main(int argc, std::vector<std::string> argv) {
   auto label = make_label("static label");
   if (std::move(label).take() != "static label")
     return 2;
+  // A consuming call may sit in the right operand of ||. The path that skips
+  // it retires the wrapper's dependency before the two paths join.
+  mut auto maybe = StoredReading(owner);
+  if (!maybe.has_value() || std::move(maybe).take() != owner)
+    return 4;
   // make_label(a_local_string.view()) is rejected: forwarding through a
   // generic function cannot erase a dynamic text-owner dependency.
   std::println(std::to_string(inspect(owner, false).code));
