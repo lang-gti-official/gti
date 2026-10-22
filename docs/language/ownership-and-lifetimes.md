@@ -2326,12 +2326,26 @@ same return dependency after substituting the exact parameter and return
 types. A literal-backed argument remains an ownerless static view and needs no
 runtime loan; a dynamic argument transfers its existing owner dependency to
 the result. That retained loan prevents mutation, movement, or destruction of
-the owner until the last local carrier ends. A function whose returns reach a
-call to itself, directly or through other functions, does not yet relay a
-parameter's view: returning one there reports `GTI-S2045`. Its text result is
-ownerless when its other returns are, as for
-`std::string_view loop(std::string_view s, int n)` returning `"done"` or
-`loop(s, n - 1)`. A dynamic view cannot escape a
+the owner until the last local carrier ends. A recursive call relays what its
+function relays, so a function whose returns reach a call to itself, directly
+or through other functions, relays the parameter its other returns relay, and
+its result is ownerless when they are:
+
+```gti
+std::string_view first(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return first(s, n - 1);  // relays s, as the first return does
+}
+
+std::string line{"count = 42"};
+std::string_view head = first(line.view(), 3);  // views line
+```
+
+A recursion that permutes its parameters, returning `s` beside
+`pick(t, s, n - 1)`, may return either one and relays neither: `return s`
+reports `GTI-S2045`. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
 storage, or be nested in a global, static, array, or dynamic container. It
 reaches a field only through the owner-tracked view fields described below.
@@ -2412,10 +2426,12 @@ that field; another field of the same value stays ownerless. The relay applies
 only when every return of the function that may hold dynamic text reads the
 same field of the same formal or receiver, possibly through such a function.
 A function that returns that field beside another source, or two different
-fields, keeps the requirement above instead. So does a function whose returns
-reach a call to itself, directly or through other functions. Some depth of the
-recursion may return any formal that it passes along, so a recursion that
-permutes its formals requires ownerless text in each of them:
+fields, keeps the requirement above instead. A recursive call relays what its
+function relays, so a recursion that returns one field of the same formal or
+the receiver at every depth relays it, as `textOf(Token t, int n)` returning
+`t.text` or `textOf(t, n - 1)` does. A recursion that permutes its formals
+may return any of them, so it relays none and requires ownerless text in
+each:
 
 ```gti
 std::string_view pick(Token a, Token b, int n) {

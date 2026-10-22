@@ -1834,6 +1834,15 @@ function whose returns are all stored views or literals summarizes no owner
 dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
+A dynamic alternative may also return another text relay's result, such as
+`return id(s, n);` or a recursive `return first(s, n - 1);`. Its Return loan
+then transfers that call's own `Stored` result loan instead of the formal's
+entry loan. The transferred loan must have the entry's exact source, access and
+additional dependencies, with no parent or designated field. Its unique
+producer must be a `Call` with an Argument origin and no field mapping, and the
+returned value must be that call's result. `verifyMirBorrowProducers` already
+proves that such a call's result loan names its selected input, so the formal
+is the only owner either way.
 The success loan always uses read-only access, including when the enclosing
 method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
@@ -1902,7 +1911,9 @@ In a function that can carry a field-level contract (`fieldContractFunction`),
   become requirements;
 - each other use of the whole formal or receiver requires all of its text
   fields, except a `CallInput` that a call consumes as a same-class formal or
-  receiver of an in-scope callee, which inherits that callee's requirements;
+  receiver of an in-scope callee, which inherits that callee's requirements.
+  The consuming call may be in a later block than its input, after a checked
+  argument such as `n - 1`;
 - a fixpoint shared with the text-formal requirements closes forwarding.
 
 The derived set must be contained in the declared contract. A declared
