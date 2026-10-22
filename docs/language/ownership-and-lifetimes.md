@@ -553,6 +553,20 @@ checked erased references participate in the same rule. A returned borrow stays
 protected through cleanup of the returning function's automatic objects and
 return-expression temporaries.
 
+Temporary cleanup follows the common full-expression roots, not just discarded
+expression statements. Conditions, loop conditions and steps, binding and
+constructor initializers, and return expressions use the same producer and
+ownership-transfer facts. Moving a fresh result into a destination does not run
+its eventual destructor at the initializer boundary. Replacing an already live
+object, however, checks its old cleanup at that operation, and a propagating
+failure checks cleanup of inputs that have not yet transferred.
+
+Destructive movement out of persistent storage is not admitted without a
+contract that restores its availability across calls. This extends the existing
+global/static move-state boundary to block-local `thread_local` storage and its
+projections. Copying and ordinary assignment are distinct operations; this rule
+does not forbid updating a live thread-local value.
+
 A GTI invocation without a closed source target set currently cannot run while
 such a persistent-storage loan is live. Its explicit reference input is not
 itself forbidden, but does not prove the absence of hidden ambient storage

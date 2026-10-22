@@ -2081,6 +2081,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       openClassType(owner.id), &stmt, parameterTypes);
   for (const ConstructorInitializer &initializer : stmt.initializers()) {
     semanticModel.recordFullExpression(initializer);
+    struct FullExpressionCleanupScope {
+      Impl &analyzer;
+      std::size_t frame;
+      ~FullExpressionCleanupScope() {
+        analyzer.finishProgramFullExpression(frame);
+      }
+    } fullExpression{*this, beginProgramFullExpression(initializer)};
     const Token &target = initializer.target.name.last();
     std::optional<std::size_t> fieldIndex;
     const VariableDecl *field = nullptr;
@@ -2458,8 +2465,8 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
 
   analyze(stmt.body()->statements());
   finalizeLoanFlow();
-  recordProgramCleanupEffects(SemanticType::classType(owner.id),
-                              tokenSpan(stmt.tilde()), false);
+  recordProgramExecutedCleanupEffects(SemanticType::classType(owner.id),
+                                      tokenSpan(stmt.tilde()), false);
 
   endScope();
   --destructorDepth;
@@ -2544,13 +2551,7 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
   semanticModel.recordFullExpression(stmt, stmt.expression());
-  const auto owner = currentProgramEffectOwner;
-  const auto cleanupStart = programEffects[owner].edges.size();
-  const auto unknownCleanupStart = programEffects[owner].unknown.size();
   const SemanticType resultType = analyze(stmt.expression());
-  recordFullExpressionStorageBorrowCleanup(
-      tokenSpan(expressionToken(stmt.expression())), cleanupStart,
-      unknownCleanupStart);
   consumeTextDependentValue(stmt.expression());
   const Call *call = directCall(stmt.expression());
 
@@ -4597,11 +4598,6 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
            "GTI-S2021");
     return;
   }
-  const auto temporaryEffectOwner = currentProgramEffectOwner;
-  const auto temporaryEdgeStart =
-      programEffects[temporaryEffectOwner].edges.size();
-  const auto temporaryUnknownStart =
-      programEffects[temporaryEffectOwner].unknown.size();
   if (currentReturnType == SemanticType::Void) {
     if (stmt.value()) {
       const SemanticType valueType = analyze(stmt.value());
@@ -4674,8 +4670,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       semanticModel.recordBorrowDependencySet(
           *stmt.value(), {.dependencies = std::move(dependencies)});
     }
-    recordReturnedStorageBorrowCleanup(stmt, temporaryEdgeStart,
-                                       temporaryUnknownStart);
+    recordReturnedStorageBorrowCleanup(stmt);
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -4723,8 +4718,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       }
     }
   }
-  recordReturnedStorageBorrowCleanup(stmt, temporaryEdgeStart,
-                                     temporaryUnknownStart);
+  recordReturnedStorageBorrowCleanup(stmt);
   requireInitializedReceiver(stmt.keyword());
 }
 
@@ -8041,6 +8035,7 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
                                           contextualType ==
                                               SemanticType::Unknown);
   thenUse.reset();
+  consumeProgramTemporary(expr.thenExpression());
   const ScopeStack thenScopes = scopes;
 
   // An enclosing assignment may hold a place rooted in the current scopes.
@@ -8056,6 +8051,7 @@ auto SemanticVisitor::Impl::visitConditionalExpr(const ConditionalExpr &expr)
                 expr.elseExpression(), elseExpectation,
                 elseExpectation == SemanticType::Unknown);
   elseUse.reset();
+  consumeProgramTemporary(expr.elseExpression());
   --loanFlow.rawConditionalExpressionDepth;
   const ScopeStack elseScopes = scopes;
 
@@ -9336,6 +9332,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
     const std::size_t diagnosticsBeforeInitializer = diagnostics.size();
     const SemanticType initializerType = analyze(capture.initializer);
+    if (!isBorrowingCapture(mode))
+      consumeProgramTemporary(capture.initializer);
     if (!isBorrowingCapture(mode)) {
       const auto sourcePlace = retainedLoanPlace(capture.initializer);
       for (const auto &previous : captureDependencies)
@@ -13141,7 +13139,8 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
           "The constexpr evaluator could not resolve a local binding."));
     }
     const SemanticType bindingType = constexprType(binding->type, context);
-    if (declaration->isStatic() || !isSupportedConstexprType(bindingType)) {
+    if (declaration->isStatic() || declaration->isThreadLocal() ||
+        !isSupportedConstexprType(bindingType)) {
       return constexprStatementFailure(constexprFailure(
           declaration->name(), ConstantEvaluationFailure::UnsupportedType,
           "Executed constexpr function locals must be automatic supported "

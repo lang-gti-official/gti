@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import pathlib
 import subprocess
@@ -62,7 +63,20 @@ int main() {
 }
 """
 
+LOCAL_BORROW = STATE + """\
+State& local_state() {
+  thread_local State value = State(3);
+  return value;
+}
+int main() {
+  State& held = local_state();
+  if (held.read() != 3 || local_state().read() != 3) return 1;
+  return 0;
+}
+"""
+
 IMMOVABLE = """\
+#include <std/format>
 class Resource {
 public:
   Resource() = default;
@@ -73,6 +87,17 @@ public:
 };
 thread_local mut Resource resource{};
 int main() { return resource.read() - 7; }
+"""
+
+UNIQUE_OWNER = """\
+#include <std/memory>
+thread_local std::unique_ptr<int> number = std::make_unique<int>(7);
+int main() { return *number - 7; }
+"""
+
+OWNING_ARRAY = STATE + """\
+thread_local mut State states[2] = {State(3), State(4)};
+int main() { return states[0].read() + states[1].read() - 7; }
 """
 
 SCALARS = """\
@@ -135,6 +160,7 @@ int main() {
 
 CLEANUP_FAILURE = """\
 #include <std/thread>
+#include <std/format>
 class Fail {
 public:
   Fail() = default;
@@ -204,7 +230,10 @@ int main() { return end.read() - 1; }
 
 def run(command: list[str], expected: int = 0) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
-    environment["ASAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1:detect_leaks=1"
+    # Apple's system ASan runtime has no LeakSanitizer. Linux keeps leak
+    # checking enabled; both platforms retain address and undefined checks.
+    leaks = "0" if sys.platform == "darwin" else "1"
+    environment["ASAN_OPTIONS"] = f"halt_on_error=1:abort_on_error=1:detect_leaks={leaks}"
     environment["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
     result = subprocess.run(command, capture_output=True, text=True,
                             timeout=180, env=environment)
@@ -215,10 +244,17 @@ def run(command: list[str], expected: int = 0) -> subprocess.CompletedProcess[st
 
 
 def main() -> None:
-    compiler = pathlib.Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=pathlib.Path)
+    parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument("--mode", type=int, action="append", dest="modes", choices=range(7))
+    options = parser.parse_args()
+    compiler = options.compiler.resolve()
     cases = [
         ("initial", INITIAL, "single-threaded", 0,
          "init 1\ninit 2\ndrop 2\ndrop 1\n", None),
+        ("local_borrow", LOCAL_BORROW, "single-threaded", 0,
+         "init 3\ndrop 3\n", None),
         ("worker", SUCCESS, "concurrent", 0,
          "init 2\ninit 1\nworker 2 1 1 1\ndrop 1\ndrop 2\njoined\n"
          "init 1\ninit 2\ndrop 2\ndrop 1\n", None),
@@ -226,6 +262,9 @@ def main() -> None:
          "init 1\ndrop 1\nmanual joined\n", None),
         ("immovable", IMMOVABLE, "single-threaded", 0,
          "immovable retired\n", None),
+        ("unique_owner", UNIQUE_OWNER, "single-threaded", 0, "", None),
+        ("owning_array", OWNING_ARRAY, "single-threaded", 0,
+         "init 3\ninit 4\ndrop 4\ndrop 3\n", None),
         ("scalars", SCALARS, "single-threaded", 0, "", None),
         ("body_failure", BODY_FAILURE, "concurrent", 70,
          "init 1\ndrop 1\n", "GTI-R0002"),
@@ -239,13 +278,19 @@ def main() -> None:
         ("shutdown", SHUTDOWN_INITIALIZATION, "single-threaded", 70, "", "GTI-R0013"),
         ("unattached", UNATTACHED, "single-threaded", 70, "", "GTI-R0013"),
     ]
+    if options.cases is not None and set(options.cases) - {item[0] for item in cases}:
+        parser.error("--case must name an existing TLS runtime case")
     modes = [(standard, opt, []) for standard in ("c++20", "c++23")
              for opt in ("-O0", "-O1", "-O3")]
     modes.append(("c++23", "-O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-thread-local-") as directory:
         root = pathlib.Path(directory)
         for index, (standard, opt, native) in enumerate(modes):
+            if options.modes is not None and index not in options.modes:
+                continue
             for name, source, profile, status, output, failure in cases:
+                if options.cases is not None and name not in options.cases:
+                    continue
                 path = root / f"{name}-{index}.gti"
                 binary = root / f"{name}-{index}"
                 path.write_text(source)
@@ -267,6 +312,7 @@ def main() -> None:
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 if "thread-local-initializer-v1" not in generated:
                     raise AssertionError("TLS initialization lost its verified MIR body marker")
+                print(f"thread-local runtime: {name} {standard} {opt} passed", flush=True)
             print(f"thread-local runtime: {standard} {opt} {native or 'native'} passed", flush=True)
 
 

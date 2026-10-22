@@ -358,6 +358,9 @@ void forEachHirBody(const HirProgram &hir, Callback callback) {
   for (const HirLambda &lambda : hir.lambdaInstances()) {
     callback(lambda.body);
   }
+  for (const HirThreadLocalStorage &storage : hir.threadLocalStorage()) {
+    callback(storage.initializer);
+  }
 }
 
 [[nodiscard]] bool exactHostedFailure(const DefinedFailureOperation &operation,
@@ -624,6 +627,12 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
       }
     }
   });
+  // A block declaration's first-use guard is not an expression in its
+  // initializer body. Its exact semantic source anchor still needs a site,
+  // including when no naming expression ever evaluates that declaration.
+  for (const HirThreadLocalStorage &storage : hir.threadLocalStorage())
+    for (const DefinedFailureOrigin &origin : storage.ensureFailure.localOrigins)
+      collectOrigin(origin);
   if (const std::optional<HirHostedProgramEntryPlan> &hosted =
           hir.hostedProgramEntryPlan()) {
     if (hosted->kind == ProgramEntryKind::NoArguments) {

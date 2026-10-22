@@ -90,6 +90,7 @@ public:
     BorrowOriginPlace place;
     AccessMode access = AccessMode::ReadOnly;
     SourceSpan span;
+    bool cleanup = false;
   };
 
   struct ProgramStorageBorrowProtection {
@@ -99,16 +100,58 @@ public:
     // Zero denotes an invocation/result-scoped dependency. Named loans reuse
     // the ordinary structured last-use proof before effect checks are closed.
     SemanticLoanId loan = 0;
+    bool scopeExit = false;
+  };
+
+  enum class ProgramStorageBorrowSite {
+    Invocation,
+    OrderedInput,
+    ScopeCleanup,
+    FullExpressionCleanup,
+    FailureCleanup,
+    ReplacementCleanup,
+  };
+
+  struct ProgramFailureCondition {
+    bool direct = false;
+    bool unknown = false;
+    std::vector<ProgramEffectOwner> targets;
   };
 
   struct ProgramStorageBorrowCheck {
     SourceSpan site;
+    ProgramStorageBorrowSite siteKind = ProgramStorageBorrowSite::Invocation;
     std::vector<ProgramStorageBorrowProtection> protections;
+    std::vector<ProgramBorrowStorageUse> uses;
     std::vector<ProgramEffectOwner> targets;
     std::vector<ProgramUnknownEffect> unknown;
+    std::shared_ptr<const ProgramFailureCondition> failureCondition;
+  };
+
+  struct ProgramExpressionEffects {
+    ProgramEffectOwner owner;
+    std::size_t edgeStart = 0;
+    std::size_t edgeEnd = 0;
+    std::size_t unknownStart = 0;
+    std::size_t unknownEnd = 0;
+    std::size_t useStart = 0;
+    std::size_t useEnd = 0;
+  };
+
+  struct ProgramTemporaryCleanup {
+    const Expr *producer = nullptr;
+    SemanticType type = SemanticType::Unknown;
+    bool consumed = false;
+  };
+
+  struct ProgramFullExpressionState {
+    SemanticFullExpression source;
+    ProgramEffectOwner owner;
+    std::vector<ProgramTemporaryCleanup> temporaries;
   };
 
   struct ProgramEffectSummary {
+    bool directFailure = false;
     std::vector<ProgramStorageEffectUse> uses;
     std::vector<ProgramBorrowStorageUse> borrowUses;
     std::vector<ProgramEffectEdge> edges;
@@ -1116,6 +1159,7 @@ private:
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
+    std::vector<std::size_t> programScopeExitChecks;
     // Audit uses may inspect checked liveness, but cannot request an endpoint
     // or otherwise change the mandatory loan schedule.
     std::vector<PendingBorrowConflict> rawAuditConflicts;
@@ -4431,14 +4475,29 @@ private:
                                         ProgramEffectOwner owner,
                                         std::size_t edgeStart,
                                         std::size_t unknownStart);
-  void recordReturnedStorageBorrowCleanup(const ReturnStmt &statement,
-                                          std::size_t temporaryEdgeStart,
-                                          std::size_t temporaryUnknownStart);
+  void recordReturnedStorageBorrowCleanup(const ReturnStmt &statement);
   void recordStorageBorrowCleanup(const Symbol &symbol);
   void recordProgramScopeBorrowCleanup();
-  void recordFullExpressionStorageBorrowCleanup(const SourceSpan &site,
-                                                std::size_t edgeStart,
-                                                std::size_t unknownStart);
+  [[nodiscard]] std::optional<std::size_t>
+  beginProgramFullExpression(const Expr &root);
+  [[nodiscard]] std::size_t
+  beginProgramFullExpression(const ConstructorInitializer &initializer);
+  void finishProgramFullExpression(std::size_t frame);
+  void recordProgramTemporary(const Expr &producer, const ExpressionInfo &info);
+  void consumeProgramTemporary(const ExprPtr &value);
+  void recordProgramTemporaryFailureCleanup(
+      const Expr &operation,
+      const std::vector<ProgramTemporaryCleanup> &temporaries);
+  void recordProgramExecutedCleanupEffects(const SemanticType &type,
+                                            const SourceSpan &span,
+                                            bool includeDirect = true);
+  [[nodiscard]] bool
+  programFailureMayHappen(const ProgramFailureCondition &condition) const;
+  void closeProgramFailureEffects();
+  void recordProgramReplacementCleanup(const Expr &operation,
+                                       const SemanticType &type);
+  void recordProgramOrderedInputEffects(
+      const ProgramStorageBorrowCheck &earlier, const ExprPtr &input);
   void recordProgramCallEffectTargets(const Expr &expression);
   void validateProgramStorageBorrowEffects();
   [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;
@@ -6147,6 +6206,16 @@ private:
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
     std::vector<ProgramStorageBorrowCheck> programStorageBorrowChecks;
+    std::size_t indexedFullExpressions = 0;
+    std::unordered_map<const Expr *, SemanticFullExpression> fullExpressionRoots;
+    std::vector<ProgramFullExpressionState> fullExpressionStates;
+    std::unordered_map<const Expr *, ProgramExpressionEffects>
+        programExpressionEffects;
+    std::unordered_map<const Expr *,
+                       std::shared_ptr<const ProgramFailureCondition>>
+        programOperationFailures;
+    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
+        programFailingEffects;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
     std::vector<const Expr *> foreignAddressPlaces;

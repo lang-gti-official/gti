@@ -7,6 +7,12 @@
 namespace {
 std::uint64_t allocations = 0;
 std::uint64_t releases = 0;
+struct ExitValidator {
+  ~ExitValidator() {
+    if (allocations != releases)
+      std::abort();
+  }
+} validateExit;
 } // namespace
 
 extern "C" std::uint64_t gti_tls_bench_clock() {

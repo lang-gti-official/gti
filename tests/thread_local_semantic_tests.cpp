@@ -41,8 +41,13 @@ void positive(std::string source, std::string_view message,
               bool concurrent = true) {
   const auto result = analyze(std::move(source), concurrent);
   if (!result.semanticValid)
-    for (const auto &diagnostic : result.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &diagnostic : result.diagnostics) {
+      std::cerr << diagnostic.code << " at " << diagnostic.primary.start
+                << ": " << diagnostic.message << '\n';
+      for (const auto &related : diagnostic.related)
+        std::cerr << "  at " << related.span.start << ": " << related.message
+                  << '\n';
+    }
   expect(result.semanticValid, message);
 }
 
@@ -256,13 +261,140 @@ void modify() { value = 2; }
       "a checked loan proves that the same TLS slot is already initialized");
 }
 
+void orderedInputProtection() {
+  const std::string prefix =
+      "thread_local mut int value = 1; int modify() { value = 2; return 3; } ";
+  const std::string source =
+      prefix + "int read(int& input, int copied) { return input + copied; } "
+               "int main() { return read(value, modify()); }";
+  const auto result = analyze(source);
+  const auto site = source.rfind("modify()") + std::string_view("modify(").size();
+  expect(!result.semanticValid &&
+             std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [&](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2045" &&
+                                  diagnostic.primary.start == site &&
+                                  diagnostic.primary.end == site + 1;
+                         }),
+         "a stabilized reference input is protected at the exact later "
+         "mutating argument span");
+  for (const std::string body :
+       {"struct Read { Read(int& input, int copied) {} }; int main() { Read "
+        "read{value, modify()}; return 0; }",
+        "struct View { int& item; View(int& source) : item(source) {} }; int "
+        "read(View view, int copied) { return view.item + copied; } int "
+        "main() { return read(View(value), modify()); }",
+        "int read(mut int& input, int copied) { return input + copied; } int "
+        "main() { return read(value, value); }"}) {
+    const auto candidate = analyze(prefix + body);
+    expect(!candidate.semanticValid && code(candidate, "GTI-S2045"),
+           "stabilized constructor, borrowed-value and exclusive inputs obey "
+           "the same ordered protection rule");
+  }
+  positive(prefix + "int read(int copied, int& input) { return input + copied; } "
+                    "int main() { return read(modify(), value); }",
+           "a mutation completed before reference binding remains legal");
+  positive(prefix + "int read(int& input, int copied) { return input + copied; } "
+                    "int main() { return read(value, value); }",
+           "stabilized shared inputs permit later shared reads");
+}
+
+void fullExpressionCleanup() {
+  const std::string prefix = R"(
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); } };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+)";
+  for (const std::string body :
+       {"int main() { int& borrowed = value; if (inspect(Cleanup())) {} "
+        "return borrowed; }",
+        "int main() { int& borrowed = value; while (inspect(Cleanup())) { "
+        "break; } return borrowed; }",
+        "int main() { int& borrowed = value; do {} while "
+        "(inspect(Cleanup())); return borrowed; }",
+        "int main() { int& borrowed = value; for (; inspect(Cleanup());) { "
+        "break; } return borrowed; }",
+        "int main() { int& borrowed = value; for (mut int i = 0; i < 1; "
+        "inspect(Cleanup())) { i += 1; } return borrowed; }",
+        "int main() { int& borrowed = value; bool copied = "
+        "inspect(Cleanup()); return borrowed; }",
+        "struct Holder { int& item; Holder() : item(current(Cleanup())) {} }; "
+        "int main() { Holder held{}; return held.item; }"}) {
+    const auto result = analyze(prefix + body);
+    if (result.semanticValid || !code(result, "GTI-S2045")) {
+      std::cerr << "Full-expression source: " << body << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(!result.semanticValid && code(result, "GTI-S2045"),
+           "one full-expression cleanup rule protects conditions, loop "
+           "steps, initializers, returned borrows and constructor fields");
+  }
+  for (const std::string body :
+       {"int main() { int& borrowed = current(Cleanup()); return borrowed; }",
+        "int& get() { return current(Cleanup()); } int main() { return "
+        "get(); }"}) {
+    const auto result = analyze(prefix + body);
+    expect(!result.semanticValid && code(result, "GTI-S2017"),
+           "an escaping borrow cannot borrow a temporary input even when its "
+           "declared result names persistent storage");
+  }
+  positive(prefix + "struct Wrapper { Cleanup item; Wrapper(Cleanup source) : "
+                    "item(std::move(source)) {} }; int main() { int& "
+                    "borrowed = value; Wrapper held{Cleanup()}; int copied = "
+                    "borrowed; return copied; }",
+           "transferring a temporary into an owner does not execute its "
+           "eventual destructor at the initializer boundary");
+  positive(prefix + "struct Wrapper<T> { Cleanup item; T marker; "
+                    "Wrapper(Cleanup source, T value) : "
+                    "item(std::move(source)), marker(value) {} }; int main() "
+                    "{ int& borrowed = value; Wrapper<int> held{Cleanup(), 1}; "
+                    "int copied = borrowed; return copied; }",
+           "concrete generic effect closure preserves conditional cleanup "
+           "rather than flattening moved-owner cleanup into an immediate write");
+  for (const std::string constructor :
+       {"struct Wrapper { Cleanup item; Wrapper(Cleanup source, int divisor) "
+        ": item(std::move(source)) { int result = 1 / divisor; } }; ",
+        "struct Wrapper<T> { Cleanup item; Wrapper(Cleanup source, T divisor) "
+        ": item(std::move(source)) { int result = 1 / divisor; } }; "}) {
+    const bool generic = constructor.find("<T>") != std::string::npos;
+    const auto result = analyze(
+        prefix + constructor + "int main() { int& borrowed = value; " +
+        (generic ? "Wrapper<int>" : "Wrapper") +
+        " held{Cleanup(), 1}; return borrowed; }");
+    expect(!result.semanticValid && code(result, "GTI-S2045"),
+           "potential constructor failure retains cleanup of an initialized "
+           "field even after its input parameter moved");
+  }
+  for (const std::string source :
+       {"thread_local mut int value = 1; int main() { int taken = "
+        "std::move(value); return taken; }",
+        "int main() { thread_local mut int value = 1; int taken = "
+        "std::move(value); return taken; }",
+        "struct State { mut int value = 1; }; int main() { thread_local mut "
+        "State state{}; int taken = std::move(state.value); return taken; }",
+        "class Resource { public: Resource() {} Resource(Resource&) = "
+        "delete; Resource(Resource&&) = default; ~Resource() {} }; Resource "
+        "take() { thread_local mut Resource saved{}; return saved; } int "
+        "main() { return 0; }"}) {
+    const auto result = analyze(source);
+    expect(!result.semanticValid && code(result, "GTI-S2018"),
+           "destructive transfer cannot invalidate persistent TLS availability "
+           "across calls");
+  }
+}
+
 void invalidDeclarations() {
   for (const std::string source :
        {"class Bad { thread_local mut int field = 0; }; int main() { return 0; "
         "}",
         "thread_local constexpr int value = 0; int main() { return value; }",
         "int generic<T>(T input) { thread_local mut int value = 0; return "
-        "value; } int main() { return generic(1); }",
+        "value; } int main() { return generic(1) + generic(true); }",
+        "class Bad<T> { public: static thread_local mut int value = 0; }; int "
+        "main() { return Bad<int>::value + Bad<bool>::value; }",
         "int use(int input) { thread_local int value = input; return value; } "
         "int main() { return use(1); }",
         "class Bad { int value = 1; public: int use() { thread_local int copy "
@@ -310,12 +442,20 @@ void invalidDeclarations() {
                  true, true)
              .semanticValid,
          "passive TLS requires no managed drain in a library artifact");
+  const auto constexprStorage = analyze(
+      "constexpr int read() { thread_local int state = 1; return state; } "
+      "static_assert(read() == 1); int main() { return 0; }");
+  expect(!constexprStorage.semanticValid && code(constexprStorage, "GTI-S2057"),
+         "the legacy constexpr fallback cannot reinterpret thread-local "
+         "storage as an automatic constant variable");
 }
 } // namespace
 
 int main() {
   storageAndMetadata();
   lifetimeAndEffects();
+  orderedInputProtection();
+  fullExpressionCleanup();
   invalidDeclarations();
   return failures ? 1 : 0;
 }
