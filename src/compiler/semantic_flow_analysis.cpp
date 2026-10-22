@@ -1522,6 +1522,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
   };
+  // A fresh value whose text field or payload received dynamic text carries
+  // that owner dependency itself; its type stays dependency-free (L-OWN-02).
+  const auto textDependentType = [&](const SemanticType &candidate) {
+    return (candidate.kind == SemanticType::Class ||
+            candidate.kind == SemanticType::Enum) &&
+           !typeTraits(candidate).containsBorrowedState;
+  };
+  if (const auto *construction = semanticModel.findConstruction(expr);
+      construction != nullptr && construction->dependentTextPublication &&
+      textDependentType(type))
+    return textDependentValueInfo(std::move(type));
+  if (const auto *call = exprAs<Call>(&expr))
+    if (const auto *payload = semanticModel.findPayloadConstruction(*call);
+        payload != nullptr && payload->dependentTextPublication &&
+        textDependentType(type))
+      return textDependentValueInfo(std::move(type));
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
     if (borrowedTextType(type) && sourceInfo != nullptr &&
@@ -1529,6 +1545,10 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return ownerDependentTextInfo(type, sourceInfo->category,
                                     sourceInfo->access);
     }
+    if (textDependentType(type) && sourceInfo != nullptr &&
+        sourceInfo->traits.containsBorrowedState)
+      return textDependentValueInfo(type, sourceInfo->category,
+                                    sourceInfo->access);
     return sourceInfo == nullptr
                ? expressionInfo(std::move(type))
                : expressionInfo(std::move(type), sourceInfo->category,
@@ -1579,6 +1599,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
     }
+    // An implicit receiver text field reads like `this.field` (L-OWN-02).
+    if (borrowedTextType(type) && implicitReceiverTextField(variable))
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
+    // A local binding that retains a dependent text value (L-OWN-02). A
+    // reference binding's loan is its referent's, not a text dependency.
+    if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
+        symbol->retainedLoan != 0 && symbol->variableDeclaration != nullptr) {
+      const auto *binding =
+          semanticModel.findBinding(*symbol->variableDeclaration);
+      if (binding != nullptr && binding->traits.containsBorrowedState)
+        return textDependentValueInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
@@ -1620,6 +1656,26 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             semanticModel.findOperator(expr)) {
       if (resolved->returnType.kind == SemanticType::Reference &&
           resolved->returnType.arguments.size() == 1) {
+        // A dereference's reference relay designates the operand's text field
+        // or payload, as a call's does (L-OWN-02).
+        if (const auto *unary = exprAs<Unary>(&expr))
+          if (const auto field = operatorTextReferenceRelay(*unary);
+              field && borrowedTextType(type)) {
+            const ExpressionInfo *sourceInfo =
+                semanticModel.findExpression(**field->origin);
+            std::vector<std::vector<SymbolId>> held;
+            if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+              held = textDependentPaths(**field->origin);
+            const auto designated =
+                field->payload == 0
+                    ? std::vector<SymbolId>{field->field}
+                    : std::vector<SymbolId>{field->field, field->payload};
+            if (fieldSourcedTextFormal(*field) ||
+                std::find(held.begin(), held.end(), designated) != held.end())
+              return ownerDependentTextInfo(
+                  std::move(type), ValueCategory::Place,
+                  resolved->returnType.referenceAccess);
+          }
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
@@ -1723,6 +1779,44 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
     }
+    // A text field read through a formal or the receiver may hold a relayed
+    // owner's dynamic text, under the function's field contract (L-OWN-02).
+    if (borrowedTextType(type) && member != nullptr &&
+        get.access().kind != TokenKind::ARROW && get.object() &&
+        textFieldContractFormal(*get.object()) &&
+        directTextField(memberObjectType,
+                        symbolForDeclaration(member->symbol.declaration)))
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
+    // A text field that a dependent value's owner dependency designates
+    // holds that owner's dynamic text (L-OWN-02). Its other fields stay
+    // ownerless.
+    if (borrowedTextType(type) && member != nullptr && objectInfo != nullptr &&
+        get.access().kind != TokenKind::ARROW &&
+        isTextDependentValue(*objectInfo)) {
+      const auto fields = textDependentFields(*get.object());
+      if (std::find(fields.begin(), fields.end(),
+                    symbolForDeclaration(member->symbol.declaration)) !=
+          fields.end())
+        return ownerDependentTextInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
+    }
+    // A payload-enum field through which the dependency designates a text
+    // payload is itself a dependent value, observed by a switch.
+    if (type.kind == SemanticType::Enum && member != nullptr &&
+        objectInfo != nullptr && get.access().kind != TokenKind::ARROW &&
+        isTextDependentValue(*objectInfo)) {
+      const auto field = symbolForDeclaration(member->symbol.declaration);
+      const auto paths = textDependentPaths(*get.object());
+      if (std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+            return path.size() > 1 && path.front() == field;
+          }))
+        return textDependentValueInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
@@ -1733,6 +1827,26 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
         resolved->returnType.arguments.size() == 1) {
+      // A reference relay designates its receiver's text field, which holds a
+      // relayed owner's text, or a contract formal's field here (L-OWN-02).
+      if (const auto field = textReferenceRelay(call, *resolved);
+          field && borrowedTextType(type)) {
+        const ExpressionInfo *sourceInfo =
+            field->origin == nullptr
+                ? nullptr
+                : semanticModel.findExpression(**field->origin);
+        std::vector<std::vector<SymbolId>> held;
+        if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+          held = textDependentPaths(**field->origin);
+        const auto designated =
+            field->payload == 0
+                ? std::vector<SymbolId>{field->field}
+                : std::vector<SymbolId>{field->field, field->payload};
+        if (fieldSourcedTextFormal(*field) ||
+            std::find(held.begin(), held.end(), designated) != held.end())
+          return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
+                                        resolved->returnType.referenceAccess);
+      }
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
@@ -1754,8 +1868,38 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                               callableResult->referenceAccess);
       }
     }
+    // Moving a dependent text value transfers its owner dependency.
+    if (textDependentType(type) && call.arguments().size() == 1 &&
+        resolvedIntrinsicKind(call) == IntrinsicKind::Move) {
+      const ExpressionInfo *sourceInfo =
+          semanticModel.findExpression(*call.arguments().front());
+      if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+        return textDependentValueInfo(std::move(type));
+    }
+    // A callee that returns a dynamic argument in a text field of its fresh
+    // result gives a value carrying that argument's owner there (L-OWN-02).
+    if (textDependentType(type) && resolved != nullptr &&
+        resolved->dependentTextPublication)
+      return textDependentValueInfo(std::move(type));
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
+      // A result that returns one text field of its argument or receiver
+      // (L-OWN-02) holds what that value holds there: a relayed owner's text,
+      // or the field of a contract formal here. Any other value holds
+      // ownerless text in that field.
+      if (const auto field = fieldSourcedTextResult(call, *resolved)) {
+        const ExpressionInfo *sourceInfo =
+            field->origin == nullptr
+                ? nullptr
+                : semanticModel.findExpression(**field->origin);
+        std::vector<SymbolId> held;
+        if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+          held = textDependentFields(**field->origin);
+        if (fieldSourcedTextFormal(*field) ||
+            std::find(held.begin(), held.end(), field->field) != held.end())
+          return ownerDependentTextInfo(std::move(type));
+        return expressionInfo(std::move(type));
+      }
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
           resolved->borrowArgument <
               resolvedCallArgumentCount(call, resolved)) {
@@ -2447,6 +2591,30 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (!directInitialization && (exprAs<Call>(&expr) || construction))
     applyRawCallWrites(expr);
   ExpressionInfo info = classifyExpression(expr, result);
+  // A field read, a grouping and a move keep a dependent text value inside
+  // the body that created it (L-OWN-02).
+  if (isTextDependentValue(info))
+    noteTextDependentValue(expr);
+  // Inside a field-contract scope a formal or the receiver of a publishable
+  // class is noted the same way: field reads and forwarding calls consume it.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<This>(&expr) != nullptr)
+    if (const auto formal = textFieldContractFormal(expr))
+      noteTextFieldFormalUse(expr, *formal);
+  // A generic class method's type-parameter field may hold a relayed owner's
+  // text in a text instance: any read but the method's relayed return
+  // requires it ownerless there.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr)
+    noteConditionalTextFieldRead(expr);
+  if (const auto *get = exprAs<Get>(&expr);
+      get != nullptr && result != SemanticType::Function) {
+    consumeTextDependentValue(get->object());
+    consumeTextFieldFormalUse(get->object());
+  } else if (const auto *group = exprAs<Grouping>(&expr))
+    consumeTextDependentValue(group->expression());
+  else if (const auto *call = exprAs<Call>(&expr);
+           call != nullptr && call->arguments().size() == 1 &&
+           resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+    consumeTextDependentValue(call->arguments().front());
   if (semanticModel.findOperator(expr) == nullptr && isNumeric(result)) {
     const auto compound = [&](TokenKind token, const ExprPtr &right) {
       if (token != TokenKind::EQUAL) {
@@ -3601,8 +3769,10 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
   SemanticType resolvedType = typeOf(type);
   if (const std::optional<SemanticType> parameter =
           resolveTypeParameter(type.name)) {
+    // A substitution can itself still be symbolic, such as a callable-result
+    // query over an open parameter; the condition then stays dependent.
     if (analyzingDependentConstantCondition &&
-        parameter->kind == SemanticType::TypeParameter) {
+        containsOpenTypeParameter(*parameter)) {
       constantConditionGenericDependency = true;
     }
     const GenericParameterInfo *info =
@@ -5755,14 +5925,56 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   }
   const std::size_t common =
       std::min(call.arguments().size(), enumerator.payloadTypes.size());
+  // A dynamic view argument publishes its sole named owner's dependency at
+  // its payload (L-OWN-02), as a constructor does at a text field. The enum
+  // must hold no borrowed state of its own type.
+  const auto enumeration = enumTypeFor(enumerator.symbol.type);
+  const auto variant = enumeration
+                           ? std::find_if(enumeration->enumerators.begin(),
+                                          enumeration->enumerators.end(),
+                                          [&](const auto &candidate) {
+                                            return candidate.variantIndex ==
+                                                   enumerator.variantIndex;
+                                          })
+                           : decltype(enumeration->enumerators.begin()){};
+  // A generic enum's concrete instance publishes like any other.
+  const bool publishable =
+      enumeration && variant != enumeration->enumerators.end() &&
+      !containsOpenTypeParameter(enumerator.symbol.type) &&
+      !typeTraits(enumerator.symbol.type).containsBorrowedState;
+  std::vector<BorrowedFieldOrigin> textOrigins;
   for (std::size_t index = 0; index < common; ++index) {
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
     const auto &field = enumerator.payloadTypes[index];
+    // A constructor's text input formal is published by each call instead.
+    const auto &inputs = requestSession.constructorTextPayloadArguments;
     if ((field == SemanticType::StringView || field == SemanticType::CString) &&
-        isOwnerDependentTextExpression(call.arguments()[index]))
-      reportOwnerDependentTextStorage(call.arguments()[index],
-                                      "stored in a payload-enum field");
+        isOwnerDependentTextExpression(call.arguments()[index]) &&
+        std::find(inputs.begin(), inputs.end(),
+                  call.arguments()[index].get()) == inputs.end()) {
+      const SymbolId payload =
+          publishable && index < variant->payloadSymbols.size()
+              ? variant->payloadSymbols[index]
+              : 0;
+      const auto dependencies =
+          payload == 0
+              ? std::vector<SemanticLoanDependency>{}
+              : textFieldOwnerDependency(call.arguments()[index], payload);
+      if (!dependencies.empty() && !textOrigins.empty())
+        report(expressionToken(call.arguments()[index]),
+               "A value can hold dynamic text from one owner; this argument "
+               "would add a second owner dependency.",
+               "GTI-S2045");
+      else if (!dependencies.empty())
+        textOrigins.push_back({.resultFields = {payload},
+                               .origin = BorrowOriginKind::Argument,
+                               .parameter = index,
+                               .access = AccessMode::ReadOnly});
+      else
+        reportOwnerDependentTextStorage(call.arguments()[index],
+                                        "stored in a payload-enum field");
+    }
     if (actual != SemanticType::Unknown &&
         !callArgumentMatches(enumerator.payloadTypes[index], actual,
                              call.arguments()[index])) {
@@ -5796,7 +6008,9 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                "' conditionally retains references; a class carrying a "
                "guarded dependency set cannot be an enum payload yet.",
            "GTI-S2067");
-    currentType = enumerator.symbol.type;
+    // The rejected value has no checked dependency set, so storing or
+    // assigning it would only fail again on this same payload.
+    currentType = SemanticType::Unknown;
     return;
   }
   // A payload constructor evaluates its fields in the same ordered input
@@ -5810,7 +6024,15 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
              .type = enumerator.symbol.type,
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
-             .parameterTypes = enumerator.payloadTypes});
+             .parameterTypes = enumerator.payloadTypes,
+             .borrowFields = textOrigins,
+             .dependentTextPublication = !textOrigins.empty()});
+  if (!textOrigins.empty()) {
+    // The binding's retained loan carries the published owner, as for a
+    // constructor's text field; no complete dependency set describes it.
+    currentType = enumerator.symbol.type;
+    return;
+  }
   // This producer attaches exact selected-alternative evidence, including
   // every dependency path. Admission remains independently gated until the
   // loan/tag verifier supports conditional borrowing; metadata alone does
@@ -6630,18 +6852,39 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
   // as a non-virtual one does.
   // A nonescaping read observation keeps the fresh owner alive through the
   // full expression. The ordinary borrow-origin checks still reject storing
-  // or returning a view/reference whose temporary owner would expire.
+  // or returning a view/reference whose temporary owner would expire. A
+  // reference to the temporary's text has no result loan to carry it yet.
+  const bool textReference =
+      function.returnType.kind == SemanticType::Reference &&
+      function.returnType.arguments.size() == 1 &&
+      (function.returnType.arguments.front().kind == SemanticType::StringView ||
+       function.returnType.arguments.front().kind == SemanticType::CString);
   const bool readObservation =
       function.receiverMutability == ReceiverMutability::ReadOnly &&
       function.returnBorrowOrigin == BorrowOriginKind::Receiver &&
       function.returnBorrowAccess == AccessMode::ReadOnly &&
       (function.returnType.kind == SemanticType::StringView ||
        (function.returnType.kind == SemanticType::Reference &&
-        function.returnType.referenceAccess == AccessMode::ReadOnly));
+        function.returnType.referenceAccess == AccessMode::ReadOnly &&
+        !textReference));
   return readObservation ||
          (function.returnType.kind != SemanticType::Reference &&
           function.returnBorrowOrigin == BorrowOriginKind::None &&
           !typeTraits(function.returnType).containsBorrowedState);
+}
+
+auto SemanticVisitor::Impl::receiverTextFieldRelay(
+    const CallableCandidate &function) const -> bool {
+  if (function.receiverMutability != ReceiverMutability::ReadOnly ||
+      function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+      (function.returnType.kind != SemanticType::StringView &&
+       function.returnType.kind != SemanticType::CString) ||
+      function.returnBorrowFields.size() != 1)
+    return false;
+  const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
+  return mapping.origin == BorrowOriginKind::Receiver &&
+         mapping.sourceFields.size() == 1 && mapping.resultFields.empty() &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty();
 }
 
 auto SemanticVisitor::Impl::consumingReceiverValue(
@@ -6679,9 +6922,12 @@ auto SemanticVisitor::Impl::receiverModeForObject(
       isMutableObject(receiver)) {
     return CallReceiverMode::MutablePlace;
   }
+  // A text field relay returns what a dependent temporary holds in that
+  // field, its owner's text, never a view of the temporary itself.
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
-       ephemeralBorrowResultSupported(function)) &&
+       ephemeralBorrowResultSupported(function) ||
+       (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
        consumingReceiverValue(receiver))) {
     return function.receiverMutability == ReceiverMutability::Mutable

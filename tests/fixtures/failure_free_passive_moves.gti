@@ -1,0 +1,140 @@
+// Moving a plain value cannot fail. A function or constructor whose other
+// work cannot fail either is failure-free, so callers use its ordinary form:
+// a scalar moved into a local, an argument or a result, an integer error
+// returned through unexpected(), and constructors that move a formal first,
+// after a computed or called sibling, or after a copy of the same formal.
+// The same shapes beside a division by a stage-selected divisor keep the
+// failure form. A failure exits with the division diagnostic, and every
+// Tracked built before it is dropped exactly once.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+bool is_odd(int32_t value) { return (value & 1) == 1; }
+
+int32_t take(int32_t value) { return value; }
+
+int32_t kept(int32_t value) {
+  int32_t local = std::move(value);
+  return local;
+}
+
+class Shape {
+public:
+  Shape() {}
+  virtual int32_t passed(int32_t value) { return take(std::move(value)); }
+  virtual bool flagged(bool value) { return std::move(value); }
+  virtual int32_t divided(int32_t value) {
+    int32_t local = std::move(value);
+    return local * 10 / divisor_for(1);
+  }
+};
+
+expected<int32_t, int32_t> checked_code(int32_t code) {
+  if (code > 0) { return code; }
+  return unexpected(std::move(code));
+}
+
+class Tracked {
+public:
+  bool odd;
+  int32_t id;
+  Tracked(int32_t id) : odd(is_odd(id)), id(std::move(id)) {}
+  ~Tracked() { std::println("drop tracked"); }
+};
+
+// Ordinary forms: a leading move, a computed and a called sibling ahead of
+// the move, a copy of the same formal ahead of its move, and a generic owner.
+class Leading {
+public:
+  int32_t tag;
+  bool odd;
+  Leading(int32_t tag, int32_t other) : tag(std::move(tag)), odd(is_odd(other)) {}
+};
+
+class Gauge {
+public:
+  bool odd;
+  bool flagged;
+  int32_t tag;
+  Gauge(int32_t tag)
+      : odd((tag & 1) == 1), flagged(is_odd(tag)), tag(std::move(tag)) {}
+};
+
+class Copied {
+public:
+  int32_t first;
+  int32_t second;
+  Copied(int32_t tag) : first(tag), second(std::move(tag)) {}
+};
+
+class Shelf<T> {
+public:
+  int32_t count;
+  T value;
+  Shelf(T value) : count(take(2)), value(std::move(value)) {}
+};
+
+// Failure forms: the same moves beside a division that can fail first,
+// later, or between a copy of the formal and its move.
+class Measured {
+public:
+  int32_t quotient;
+  bool odd;
+  int32_t tag;
+  Measured(int32_t tag)
+      : quotient(60 / divisor_for(2)), odd(is_odd(tag)), tag(std::move(tag)) {}
+};
+
+class CopiedChecked {
+public:
+  int32_t first;
+  int32_t quotient;
+  int32_t second;
+  CopiedChecked(int32_t tag)
+      : first(tag), quotient(60 / divisor_for(3)), second(std::move(tag)) {}
+};
+
+class TrackedChecked {
+public:
+  Tracked tracked;
+  int32_t tag;
+  int32_t quotient;
+  TrackedChecked(int32_t tag)
+      : tracked(Tracked(9)), tag(std::move(tag)),
+        quotient(60 / divisor_for(4)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Shape shape = Shape();
+  std::println(kept(3) + shape.passed(4));
+  std::println(shape.flagged(true) ? 1 : 0);
+  std::println(checked_code(-6) ? 0 : checked_code(-6).error());
+  std::println(checked_code(8) ? checked_code(8).value() : 0);
+
+  Tracked tracked = Tracked(5);
+  std::println(tracked.odd ? tracked.id : -1);
+  Leading leading = Leading(11, 3);
+  Gauge gauge = Gauge(7);
+  Copied copied = Copied(9);
+  Shelf<int32_t> shelf = Shelf<int32_t>(13);
+  std::println(leading.odd && gauge.odd && gauge.flagged
+                   ? leading.tag + gauge.tag
+                   : -1);
+  std::println(copied.first * 100 + copied.second);
+  std::println(shelf.count * 100 + shelf.value);
+
+  std::println(shape.divided(2));
+  Measured measured = Measured(15);
+  std::println(measured.odd ? measured.tag + measured.quotient : -1);
+  CopiedChecked checked = CopiedChecked(17);
+  std::println(checked.first + checked.second + checked.quotient);
+  TrackedChecked owner = TrackedChecked(19);
+  std::println(owner.tag + owner.quotient + owner.tracked.id);
+  return 0;
+}

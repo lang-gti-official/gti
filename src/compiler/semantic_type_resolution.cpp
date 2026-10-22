@@ -2149,6 +2149,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (viable.empty() && rejectedArguments.size() == 1) {
         const RejectedConstructorArgument &rejected = rejectedArguments.front();
         const std::size_t index = rejected.argumentIndex;
+        // A return that initializes its declared type from a named move-only
+        // value copies that value as any other return would; no constructor
+        // call is written, so no constructor argument is reported.
+        if (contextualReturnValue != nullptr && arguments.size() == 1 &&
+            arguments[index].expression != nullptr &&
+            arguments[index].expression->get() == contextualReturnValue &&
+            rejected.parameterTypes[index] == arguments[index].type &&
+            isMoveOnlyOwnerType(arguments[index].type)) {
+          reportMoveOnlyReturnCopy(*arguments[index].expression,
+                                   arguments[index].type);
+          currentType = constructedType;
+          return;
+        }
         const std::size_t diagnosticCount = diagnostics.size();
         reportCallArgumentMismatch(index, rejected.parameterTypes[index],
                                    arguments[index].type,
@@ -2368,10 +2381,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                 selected.constructor->declaration->parameters(),
                 arguments.size());
   recordDefaultArgumentDependencies(defaultArguments);
+  std::vector<BorrowedFieldOrigin> textOrigins;
   if (selected.constructor != nullptr) {
-    for (const auto &[index, initializer] : ownerlessTextConstructorInputs(
-             constructedType, selected.constructor->declaration,
-             selected.parameterTypes)) {
+    const auto textInputs = ownerlessTextConstructorInputs(
+        constructedType, selected.constructor->declaration,
+        selected.parameterTypes);
+    for (const auto &input : textInputs) {
+      const std::size_t index = input.parameter;
+      const ConstructorInitializer *initializer = input.initializer;
+      // A relay names the one text field its formal stores.
+      const bool soleField = std::count_if(textInputs.begin(), textInputs.end(),
+                                           [index](const auto &other) {
+                                             return other.parameter == index;
+                                           }) == 1;
       const ExprPtr *argument = nullptr;
       bool potentialPackView = false;
       if (index < arguments.size()) {
@@ -2395,12 +2417,61 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (!conditionalText && !potentialPackView &&
           !isOwnerDependentTextExpression(*argument))
         continue;
+      // A fresh value this function returns relays a formal stored in its
+      // text field: each call publishes its own argument's owner there.
+      if (!potentialPackView && soleField && input.payload == 0 &&
+          index < arguments.size() &&
+          initializer->target.name.segments.size() == 1)
+        if (const ClassInfo *owner = classInfo(constructedType)) {
+          const auto member =
+              owner->members.find(initializer->target.name.last().lexeme);
+          if (member != owner->members.end() && construction != nullptr &&
+              relayReturnedTextFormal(*construction, constructedType,
+                                      selected.constructor->declaration,
+                                      *argument,
+                                      toolingSymbolFor(member->second.symbol)))
+            continue;
+        }
       if (!potentialPackView && requireOwnerlessTextParameter(*argument))
         continue;
       // An open non-forwarding expression is checked when its exact text
       // instantiation is analyzed; no reusable caller obligation was proved.
       if (conditionalText)
         continue;
+      // The fresh value's text field carries this argument's read-only owner
+      // dependency, as a reference field carries its referent's (L-OWN-02).
+      // A class whose fields other code reads keeps the ownerless rule.
+      bool restrictedOwner = false;
+      bool readingConstructor = false;
+      if (!potentialPackView && !contextualConstruction &&
+          index < arguments.size()) {
+        auto dependencies = textFieldInitializerDependencies(
+            constructedType, *initializer, *argument, input.payload);
+        restrictedOwner =
+            !dependencies.empty() && !textPublicationOwner(constructedType);
+        readingConstructor =
+            !dependencies.empty() && !restrictedOwner &&
+            !constructionKeepsPublishedText(constructedType,
+                                            selected.constructor->declaration);
+        if (restrictedOwner || readingConstructor)
+          dependencies.clear();
+        if (!dependencies.empty() && !textOrigins.empty()) {
+          // Phase 1 of L-OWN-02 publishes one owner per value.
+          report(expressionToken(*argument),
+                 "A value can hold dynamic text from one owner; this "
+                 "argument would add a second owner dependency.",
+                 "GTI-S2045");
+          continue;
+        }
+        if (!dependencies.empty()) {
+          textOrigins.push_back(
+              {.resultFields = dependencies.front().designatedFields,
+               .origin = BorrowOriginKind::Argument,
+               .parameter = index,
+               .access = AccessMode::ReadOnly});
+          continue;
+        }
+      }
       reportOwnerDependentTextStorage(
           *argument, "passed to a constructor that stores it in a field");
       diagnostics.back().related.push_back(
@@ -2408,6 +2479,16 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
            "This initializer stores the view by value and requires an "
            "ownerless argument."});
       diagnostics.back().hints.clear();
+      if (restrictedOwner)
+        diagnostics.back().hints.emplace_back(
+            "A class with a destructor, a base class or virtual methods keeps "
+            "its text fields ownerless, because that code reads them outside "
+            "the body that created the value.");
+      if (readingConstructor)
+        diagnostics.back().hints.emplace_back(
+            "This constructor's body or another of its initializers reads the "
+            "object, so it keeps its text fields ownerless; a constructor with "
+            "an empty body can store the view of a local owner.");
       diagnostics.back().hints.emplace_back(
           "Pass a literal-backed value, store owned text instead, or use a "
           "checked reference field to retain the view and its owner.");
@@ -2522,6 +2603,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "default arguments.",
                "GTI-S2045");
     }
+  }
+  if (!textOrigins.empty()) {
+    // The construction publishes its argument's owner as a stored value
+    // dependency at the text field, as a one-reference carrier does. The
+    // retained loan, not a complete dependency set, carries it, exactly as
+    // for a dynamic view binding.
+    resolved.borrowOrigin = BorrowOriginKind::Argument;
+    resolved.borrowArgument = textOrigins.front().parameter;
+    resolved.borrowAccess = AccessMode::ReadOnly;
+    resolved.borrowFields = std::move(textOrigins);
+    resolved.dependentTextPublication = true;
   }
   if (emptyReturn != nullptr) {
     if (currentProgramEffectOwner.valid())
@@ -4004,11 +4096,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   const ClassInfo &declaration = classInfo(*classId);
   if (declaration.compilerType == CompilerTypeKind::MetaCallableReturnType &&
       type.arguments.size() == 1) {
-    const SemanticType subject = typeOf(type.arguments.front());
-    if (subject != SemanticType::Unknown &&
-        !containsOpenTypeParameter(subject) && !subject.hasLambdaShape() &&
-        !subject.hasFunctionItemShape() && !subject.hasNativeFunctionShape() &&
-        subject.kind != SemanticType::FunctionSignature) {
+    if (callableReturnSubjectUnsupported(typeOf(type.arguments.front()))) {
       report(type.name.last(),
              "Callable return-type reflection requires a function signature, "
              "a selected function item, a native function pointer, or a lambda "
@@ -4411,13 +4499,33 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
 
 auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const SemanticType &type, const ExprPtr &initializer) -> void {
+  const auto *initializerInfo =
+      initializer ? semanticModel.findExpression(*initializer) : nullptr;
+  const bool textDependentValue =
+      (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
+      initializerInfo != nullptr && isTextDependentValue(*initializerInfo);
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
-      type.kind != SemanticType::CString) {
+      type.kind != SemanticType::CString && !textDependentValue) {
     report(expressionToken(initializer),
            "Borrowed state cannot be nested inside another stored value in "
            "the current lifetime model.",
            "GTI-S2045");
+    return;
+  }
+  if (textDependentValue) {
+    // A dependent text value is a by-value descriptor: its own storage needs
+    // no stability, but each owner it designates must be a checked place.
+    const auto dependencies = storedBorrowDependencies(initializer);
+    if (dependencies.empty() ||
+        std::any_of(dependencies.begin(), dependencies.end(),
+                    [](const SemanticLoanDependency &dependency) {
+                      return dependency.place.root == 0 &&
+                             !dependency.place.receiver;
+                    }))
+      report(expressionToken(initializer),
+             "A value holding dynamic text must name its text's owner.",
+             "GTI-S2045");
     return;
   }
   // A complete producer fact can prove that this value has no external
@@ -4722,6 +4830,34 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
       cString ? "owner-dependent c_string" : "dynamic std::string_view";
   const std::string subject =
       cString ? "An " + description : "A " + description;
+  // A formal's or the receiver's stored text field (L-OWN-02) returns under
+  // the function's field-sourced result contract, which carries the field's
+  // dependency to each caller. Without one, the function requires ownerless
+  // text in that field; beside a relay the read then stays a
+  // lifetime-independent alternative, as a literal is (PR #170).
+  if (function != nullptr)
+    if (const auto field = ownerlessTextForwardingField(value)) {
+      const BorrowedFieldOrigin sourced{
+          .origin = field->receiver ? BorrowOriginKind::Receiver
+                                    : BorrowOriginKind::Argument,
+          .parameter = field->receiver ? 0 : field->parameter,
+          .sourceFields = {field->field}};
+      if (function->returnBorrowFields.size() != 1 ||
+          function->returnBorrowFields.front() != sourced)
+        (void)requireOwnerlessTextField(function->declaration, *field);
+      // Within the body the returned read is ownerless either way: callers
+      // supply ownerless text there, or the contract relays theirs.
+      for (const Expr *read = value.get(); read != nullptr;) {
+        if (const ExpressionInfo *readInfo =
+                semanticModel.findExpression(*read))
+          semanticModel.record(*read, expressionInfo(readInfo->type,
+                                                     readInfo->category,
+                                                     readInfo->access));
+        const auto *group = exprAs<Grouping>(read);
+        read = group == nullptr ? nullptr : group->expression().get();
+      }
+      return;
+    }
   if (function == nullptr ||
       function->returnBorrowOrigin == BorrowOriginKind::None) {
     Diagnostic diagnostic = makeDiagnostic(
@@ -7006,6 +7142,98 @@ auto SemanticVisitor::Impl::analyzeConcreteClassStaticAssertions(
   }
 }
 
+auto SemanticVisitor::Impl::declaresConcreteClassStaticAssertions(
+    const StmtList &members) const -> bool {
+  return std::any_of(
+      members.begin(), members.end(), [&](const StmtPtr &member) {
+        if (const auto *conditional = stmtAs<ConditionalStmt>(member.get())) {
+          const StmtList *branch = conditional->activeBranch(target);
+          return branch != nullptr &&
+                 declaresConcreteClassStaticAssertions(*branch);
+        }
+        return stmtAs<StaticAssertDecl>(member.get()) != nullptr;
+      });
+}
+
+auto SemanticVisitor::Impl::concreteClassAssertionsFail(
+    ClassId classId, const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &values) -> bool {
+  const ClassInfo &owner = classInfo(classId);
+  if (owner.genericParameters.empty() || owner.declaration == nullptr ||
+      !declaresConcreteClassStaticAssertions(owner.declaration->members())) {
+    return false;
+  }
+  if (const std::optional<bool> known =
+          knownConcreteClassAssertionOutcome(classId, typeArguments, values))
+    return *known;
+  // The instance's field analysis reports these assertions; this analysis
+  // only learns whether one fails.
+  const auto start = static_cast<std::ptrdiff_t>(diagnostics.size());
+  analyzeConcreteClassStaticAssertions(owner.declaration->members());
+  const bool failed =
+      std::any_of(diagnostics.begin() + start, diagnostics.end(),
+                  [](const SemanticDiagnostic &diagnostic) {
+                    return diagnostic.severity == DiagnosticSeverity::Error;
+                  });
+  diagnostics.erase(diagnostics.begin() + start, diagnostics.end());
+  recordConcreteClassAssertionOutcome(classId, typeArguments, values, failed);
+  return failed;
+}
+
+auto SemanticVisitor::Impl::knownConcreteClassAssertionOutcome(
+    ClassId classId, const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &values) const -> std::optional<bool> {
+  if (requestSession.classAssertionOutcomes.empty())
+    return std::nullopt;
+  const auto found = requestSession.classAssertionOutcomes.find(
+      InstanceAnalysisKey{.kind = InstanceAnalysisKind::ClassFieldInitializers,
+                          .declaration = classId,
+                          .classTypes = typeArguments,
+                          .classValues = values});
+  if (found == requestSession.classAssertionOutcomes.end())
+    return std::nullopt;
+  return found->second;
+}
+
+auto SemanticVisitor::Impl::recordConcreteClassAssertionOutcome(
+    ClassId classId, const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &values, bool failed) -> void {
+  // An analysis nested in an open reanalysis of the same instance skips the
+  // assertions its enclosing reanalysis owns, so it learns nothing.
+  if (requestSession.assertionsOwnedUpChain)
+    return;
+  requestSession.classAssertionOutcomes.insert_or_assign(
+      InstanceAnalysisKey{.kind = InstanceAnalysisKind::ClassFieldInitializers,
+                          .declaration = classId,
+                          .classTypes = typeArguments,
+                          .classValues = values},
+      failed);
+}
+
+auto SemanticVisitor::Impl::beginAssertionTracking() -> void {
+  requestSession.assertionDiagnostics.clear();
+  requestSession.trackedAssertionFailed = false;
+  requestSession.assertionTrackingStart = diagnostics.size();
+  requestSession.trackAssertionDiagnostics = true;
+}
+
+auto SemanticVisitor::Impl::endAssertionTracking(bool ownerRejected) -> void {
+  requestSession.trackAssertionDiagnostics = false;
+  if (ownerRejected || requestSession.trackedAssertionFailed) {
+    diagnostics.erase(
+        diagnostics.begin() +
+            static_cast<std::ptrdiff_t>(std::min(
+                requestSession.assertionTrackingStart, diagnostics.size())),
+        diagnostics.end());
+    diagnostics.insert(
+        diagnostics.end(),
+        std::make_move_iterator(requestSession.assertionDiagnostics.begin()),
+        std::make_move_iterator(requestSession.assertionDiagnostics.end()));
+  }
+  requestSession.assertionDiagnostics.clear();
+  requestSession.trackedAssertionFailed = false;
+}
+
 auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   diagnostics.clear();
   scopes.clear();
@@ -7039,6 +7267,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   nextPlaceSelectionId = 1;
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;
+  contextualReturnValue = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
   contextualResultUse.reset();

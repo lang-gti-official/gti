@@ -547,14 +547,21 @@ int main() {
         "return std::optional<std::string_view>(" +
             argument + "); }\nint main() { auto result = escape(); return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(
-        !text.canGenerateCode() &&
-            hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
-            hasDiagnostic(text.diagnostics, "stored in a payload-enum field") &&
-            !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
-        "optional publication cannot store a potentially owner-dependent "
-        "text parameter; literal arguments do not bypass that generic "
-        "parameter boundary");
+    // The constructor publishes its argument's owner at the payload
+    // (L-OWN-02): a value over literal text may leave, one over a local
+    // owner may not.
+    if (argument == "\"static\"") {
+      expect(text.canGenerateCode() && lang::verifyMirProgram(text.mir).valid(),
+             "an optional over literal text holds ownerless text and may be "
+             "returned");
+      continue;
+    }
+    expect(!text.canGenerateCode() &&
+               hasDiagnosticCode(text.diagnostics, "GTI-S2045") &&
+               hasDiagnostic(text.diagnostics,
+                             "holds dynamic text from a local owner") &&
+               !hasDiagnosticCode(text.diagnostics, "GTI-B0001"),
+           "an optional over a local owner's text cannot be returned");
   }
 
   const auto literalPayload = lang::Frontend().analyze(
@@ -583,8 +590,7 @@ int main() { auto text = Text::value("static"); return 0; }
   }
 
   for (const std::string storage :
-       {"Holder value{.text = std::move(view)};",
-        "std::string_view values[1] = {std::move(view)};",
+       {"std::string_view values[1] = {std::move(view)};",
         "mut std::vector<std::string_view> values{}; "
         "values.push_back(std::move(view));"}) {
     const auto moved = lang::Frontend().analyze(
@@ -598,9 +604,25 @@ int main() { auto text = Text::value("static"); return 0; }
     expect(!moved.canGenerateCode() &&
                hasDiagnosticCode(moved.diagnostics, "GTI-S2045") &&
                !hasDiagnosticCode(moved.diagnostics, "GTI-B0001"),
-           "moving owner-dependent text does not erase its loan at a field, "
-           "fixed-array, or dynamic-storage boundary");
+           "moving owner-dependent text does not erase its loan at a "
+           "fixed-array or dynamic-storage boundary");
   }
+  // A local struct value carries the moved view's owner at its field
+  // (L-OWN-02), so the owner stays borrowed while the value is live.
+  const auto movedField = lang::Frontend().analyze(
+      "moved-text-field-loan.gti",
+      "#include <std/string>\n"
+      "struct Holder { std::string_view text; };\n"
+      "int main() { mut std::string owner{\"owned\"}; "
+      "std::string_view view = owner.view(); "
+      "Holder value{.text = std::move(view)}; owner.clear(); "
+      "return int(value.text.size()); }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!movedField.canGenerateCode() &&
+             hasDiagnosticCode(movedField.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(movedField.diagnostics, "GTI-B0001"),
+         "moving owner-dependent text into a local value's field keeps its "
+         "owner loan");
 
   const auto localText = lang::Frontend().analyze(
       "moved-text-local-loan.gti", R"(
@@ -647,7 +669,7 @@ int main() { auto result = escape(); return 0; }
   expect(!cText.canGenerateCode() &&
              hasDiagnosticCode(cText.diagnostics, "GTI-S2045") &&
              hasDiagnostic(cText.diagnostics,
-                           "owner-dependent c_string cannot be stored") &&
+                           "holds dynamic text from a local owner") &&
              !hasDiagnosticCode(cText.diagnostics, "GTI-B0001"),
          "optional storage applies the same dependency rule to C-string "
          "views without relying on a public library spelling");

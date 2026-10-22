@@ -599,6 +599,24 @@ public:
         separator(index);
         output << instance.ownerlessTextParameters[index];
       }
+      output << "] ownerless-text-fields=[";
+      for (std::size_t index = 0; index < instance.ownerlessTextFields.size();
+           ++index) {
+        separator(index);
+        const auto &field = instance.ownerlessTextFields[index];
+        if (field.receiver)
+          output << "receiver";
+        else
+          output << field.parameter;
+        output << ':' << field.field;
+      }
+      output << "] published-text-fields=[";
+      for (std::size_t index = 0; index < instance.publishedTextFields.size();
+           ++index) {
+        separator(index);
+        output << instance.publishedTextFields[index].parameter << ':'
+               << instance.publishedTextFields[index].field;
+      }
       output << "] explicit-return-borrow="
              << instance.explicitReturnBorrowOrigin
              << " return-borrow=" << number(instance.returnBorrowOrigin) << ':'
@@ -1605,7 +1623,9 @@ private:
     borrowOriginPlace(value.borrowPlace);
     output << " borrow-fields=";
     borrowFields(value.borrowFields);
-    output << " restores-reference=" << value.restoresReferenceResult
+    output << " dependent-text=" << value.dependentTextPublication
+           << " provisional-text-relays=" << value.provisionalTextRelays
+           << " restores-reference=" << value.restoresReferenceResult
            << " restored-fields=";
     restoredFields(value.restoredBorrowFields);
     output << " operation=" << name(value.operation) << " literal=";

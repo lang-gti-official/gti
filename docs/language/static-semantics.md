@@ -918,6 +918,9 @@ selected method must return `void`, an ordinary scalar, or an owned value with
 no tracked borrowed state, except that a read-only member may provide a
 nonescaping receiver-tied read observation through a read-only reference or
 string view. Such a borrow cannot outlive the temporary's full expression.
+A read-only member that returns one text field of a temporary that holds a
+local owner's text is not such a borrow: its result is a view of that owner
+(see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
 Consuming members cannot return any reference or tracked borrowed state.
 
 For an ordinary GTI function or non-operator method call, a direct fresh
@@ -2346,6 +2349,13 @@ or a destructor reflects on the class's fields, and is still evaluated once
 rather than recursively.
 The same holds wherever the instance is formed, including inside a constant
 evaluation or a global initializer.
+A failed dependent assertion states why its concrete instance is invalid, so
+that instance reports only static assertions, not the errors that follow from
+the broken precondition. For a class assertion this covers the instance's
+fields, constructors, destructor and methods, such as a `void` field; for an
+assertion in a function, constructor or destructor body, the rest of that
+body. A library can therefore reject a type argument with one message, as
+`expected` does for a `void` error type.
 An independent assertion inside a generic declaration is still evaluated
 immediately, and an unused genuinely dependent assertion does not fail solely
 because it remains symbolic.
