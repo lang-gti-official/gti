@@ -790,6 +790,14 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testAssignmentResultFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedClassResultFieldView",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testDiscardedCleanupFreeClassResult",
       "suite": "lifecycle"
     },
