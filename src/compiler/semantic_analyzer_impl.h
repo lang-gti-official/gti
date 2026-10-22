@@ -2022,19 +2022,25 @@ private:
   // Whether `info` describes a value whose class type has no borrowed state
   // but whose direct text field holds dynamic text.
   [[nodiscard]] bool isTextDependentValue(const ExpressionInfo &info) const;
-  // The direct text fields that hold dynamic text in a dependent value that
-  // `expression` names: a carrier binding, a publishing construction, or a
-  // grouping or move of one.
+  // The field paths that hold dynamic text in a dependent value that
+  // `expression` names: a carrier binding, a publishing construction, a
+  // grouping or move of one, or a field of one that the paths go through.
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  textDependentPaths(const Expr &expression) const;
+  // Of those, the direct text fields. A payload reached through a field is
+  // observed only by a switch on that field.
   [[nodiscard]] std::vector<SymbolId>
   textDependentFields(const Expr &expression) const;
   void noteTextDependentValue(const Expr &expression);
   void consumeTextDependentValue(const ExprPtr &expression);
   // The owner dependency of a switch subject when it designates exactly this
-  // binding's text payload (L-OWN-02).
+  // binding's text payload (L-OWN-02), through the subject's `prefix` of
+  // fields of the dependency's carrier.
   [[nodiscard]] const SemanticLoanInfo *
   dependentTextPayloadLoan(SemanticLoanId subject,
                            const ResolvedPayloadPatternInfo &pattern,
-                           const PayloadBindingInfo &payload) const;
+                           const PayloadBindingInfo &payload,
+                           std::span<const SymbolId> prefix = {}) const;
   void finalizeTextDependentValues();
 
   // Whether a construction of `type` may publish dynamic text into a direct
@@ -2138,6 +2144,10 @@ private:
   // `conditional` an open type-parameter field an instance may make text.
   [[nodiscard]] bool directTextField(const SemanticType &type, SymbolId field,
                                      bool conditional = false) const;
+  // Whether `payload` names a text payload of the concrete payload enum
+  // `type`.
+  [[nodiscard]] bool directTextPayload(const SemanticType &type,
+                                       SymbolId payload) const;
 
   // The sole named owner of a dynamic text argument, designating `field`.
   // Empty when the argument is ownerless or its owner is not a named place.
@@ -2145,12 +2155,14 @@ private:
   textFieldOwnerDependency(const ExprPtr &argument, SymbolId field);
 
   // The owner dependencies that `argument` contributes when a constructor
-  // stores it directly in the text field `initializer` names, re-rooted at
-  // that field. Empty when the argument is ownerless or has no nameable owner.
+  // stores it directly in the text field `initializer` names, or in that
+  // field's text `payload`, re-rooted at that path. Empty when the argument
+  // is ownerless or has no nameable owner.
   [[nodiscard]] std::vector<SemanticLoanDependency>
   textFieldInitializerDependencies(const SemanticType &owner,
                                    const ConstructorInitializer &initializer,
-                                   const ExprPtr &argument);
+                                   const ExprPtr &argument,
+                                   SymbolId payload = 0);
 
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
@@ -2175,8 +2187,18 @@ private:
                                const CallableCandidate &target);
   void finalizeOwnerlessTextContracts();
 
-  [[nodiscard]] std::vector<
-      std::pair<std::size_t, const ConstructorInitializer *>>
+  // A by-value text formal that a constructor initializer stores in its
+  // field, directly or as one text payload of the field's payload-enum
+  // construction.
+  struct ConstructorTextInput {
+    std::size_t parameter = 0;
+    const ConstructorInitializer *initializer = nullptr;
+    // The payload the formal fills, or 0 when the field itself is text.
+    SymbolId payload = 0;
+    // The payload construction's argument naming the formal.
+    const Expr *payloadArgument = nullptr;
+  };
+  [[nodiscard]] std::vector<ConstructorTextInput>
   ownerlessTextConstructorInputs(
       const SemanticType &type, const ConstructorDecl *constructor,
       std::span<const SemanticType> parameterTypes) const;
@@ -6014,6 +6036,9 @@ private:
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
     std::vector<const Expr *> textDependentValueOrder;
     std::unordered_map<const Expr *, TextDependentValueUse> textDependentValues;
+    // Payload arguments of the constructor initializer being analysed that
+    // name a text input formal; each call publishes that input's owner.
+    std::vector<const Expr *> constructorTextPayloadArguments;
     std::vector<const Expr *> textFieldFormalOrder;
     std::unordered_map<const Expr *, TextFieldFormalUse> textFieldFormalUses;
     std::vector<TextFieldForwardUse> textFieldForwardUses;

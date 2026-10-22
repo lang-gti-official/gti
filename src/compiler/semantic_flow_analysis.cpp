@@ -1783,6 +1783,20 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                       mutableAccess ? AccessMode::Mutable
                                                     : AccessMode::ReadOnly);
     }
+    // A payload-enum field through which the dependency designates a text
+    // payload is itself a dependent value, observed by a switch.
+    if (type.kind == SemanticType::Enum && member != nullptr &&
+        objectInfo != nullptr && get.access().kind != TokenKind::ARROW &&
+        isTextDependentValue(*objectInfo)) {
+      const auto field = symbolForDeclaration(member->symbol.declaration);
+      const auto paths = textDependentPaths(*get.object());
+      if (std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+            return path.size() > 1 && path.front() == field;
+          }))
+        return textDependentValueInfo(type, ValueCategory::Place,
+                                      mutableAccess ? AccessMode::Mutable
+                                                    : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
@@ -5899,9 +5913,9 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                                                    enumerator.variantIndex;
                                           })
                            : decltype(enumeration->enumerators.begin()){};
+  // A generic enum's concrete instance publishes like any other.
   const bool publishable =
       enumeration && variant != enumeration->enumerators.end() &&
-      enumerator.symbol.type.arguments.empty() &&
       !containsOpenTypeParameter(enumerator.symbol.type) &&
       !typeTraits(enumerator.symbol.type).containsBorrowedState;
   std::vector<BorrowedFieldOrigin> textOrigins;
@@ -5909,8 +5923,12 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
     const auto &field = enumerator.payloadTypes[index];
+    // A constructor's text input formal is published by each call instead.
+    const auto &inputs = requestSession.constructorTextPayloadArguments;
     if ((field == SemanticType::StringView || field == SemanticType::CString) &&
-        isOwnerDependentTextExpression(call.arguments()[index])) {
+        isOwnerDependentTextExpression(call.arguments()[index]) &&
+        std::find(inputs.begin(), inputs.end(),
+                  call.arguments()[index].get()) == inputs.end()) {
       const SymbolId payload =
           publishable && index < variant->payloadSymbols.size()
               ? variant->payloadSymbols[index]
