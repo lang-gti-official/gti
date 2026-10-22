@@ -4121,14 +4121,18 @@ private:
         // A class-valued temporary is an SSA value, not a pre-existing place.
         // Project from that value after emitPlaceDependencies() materializes
         // it. Rooting this place at the member result would make the following
-        // Load read its own result before definition.
+        // Load read its own result before definition. An assignment's value
+        // is the copy of its destination placed after the Assign.
         if (place == 0) {
           const HirValue *receiver = findValue(value->operands.front());
           if (receiver != nullptr &&
               receiver->info.category == ValueCategory::Value &&
               receiver->info.type.kind == SemanticType::Class) {
+            const auto copy = assignmentSnapshots.find(receiver->id);
             place = appendPlace({.root = MirPlaceRootKind::Value,
-                                 .value = mirValueFor(*receiver),
+                                 .value = copy == assignmentSnapshots.end()
+                                              ? mirValueFor(*receiver)
+                                              : copy->second,
                                  .type = value->info.type,
                                  .access = value->info.access,
                                  .traits = value->info.traits,
@@ -4615,6 +4619,88 @@ private:
     return value.kind == HirValueKind::Call || value.functionTarget;
   }
 
+  // Built-in stores, including a plain store through a selected accessor.
+  // Each lowers to one MIR Assign, whose own result is expression
+  // bookkeeping rather than an object.
+  [[nodiscard]] static bool isAssignmentExpression(HirValueKind kind) {
+    switch (kind) {
+    case HirValueKind::Assignment:
+    case HirValueKind::MemberSet:
+    case HirValueKind::IndexSet:
+    case HirValueKind::DereferenceSet:
+    case HirValueKind::PlaceSet:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  // Semantic analysis gives a built-in class assignment a fresh value with
+  // temporary-storage lifetime: a copy of the committed destination, not the
+  // destination place. Reading the destination later would observe a write
+  // made by a later operand of the same full-expression. MIR therefore states
+  // that copy as one Load placed directly after the Assign, before any later
+  // operand runs and before a selected accessor's store loan ends. Only a
+  // copyable class without borrowed state or active cleanup has such a copy.
+  [[nodiscard]] MirValueId assignmentResultSnapshot(const HirValue &value) {
+    if (const auto found = assignmentSnapshots.find(value.id);
+        found != assignmentSnapshots.end())
+      return found->second;
+    const auto owner = std::find_if(program.classInstances().begin(),
+                                    program.classInstances().end(),
+                                    [&](const HirClassInstance &candidate) {
+                                      return candidate.type == value.info.type;
+                                    });
+    if (value.info.type.kind != SemanticType::Class ||
+        !value.info.traits.copyable ||
+        value.info.traits.containsBorrowedState ||
+        owner == program.classInstances().end() ||
+        owner->requiresActiveCleanup) {
+      reject(value.id, "assignment result has no copy of its destination");
+      return 0;
+    }
+    if (emittedValues.contains(value.id)) {
+      // The destination may have changed since the commit.
+      reject(value.id, "assignment result was requested after its commit");
+      return 0;
+    }
+    assignmentSnapshotRequests.insert(value.id);
+    emitValue(value.id);
+    assignmentSnapshotRequests.erase(value.id);
+    const auto found = assignmentSnapshots.find(value.id);
+    if (found == assignmentSnapshots.end()) {
+      if (!terminated())
+        reject(value.id, "assignment result copy was not materialized");
+      return 0;
+    }
+    return found->second;
+  }
+
+  // The Load that assignmentResultSnapshot() requests. Projections of the
+  // assignment result are rooted at its value, as for any class temporary.
+  void emitAssignmentResultCopy(const HirValue &value, MirPlaceId destination) {
+    if (destination == 0 || terminated()) {
+      return;
+    }
+    ExpressionInfo info = value.info;
+    info.category = ValueCategory::Value;
+    info.access = AccessMode::ReadOnly;
+    const MirValueId snapshot = appendValue(value.id, info);
+    // The copy reads the committed destination; the assignment's own
+    // reinitialization event stays on the Assign. A store through a raw
+    // pointer is read back through that same raw place.
+    (void)appendInstruction({.kind = MirInstructionKind::Load,
+                             .hirValue = value.id,
+                             .unsafeOperation = value.unsafeOperation,
+                             .result = snapshot,
+                             .operands = {{.kind = MirOperandKind::Copy,
+                                           .place = destination,
+                                           .type = value.info.type}},
+                             .info = info},
+                            false);
+    assignmentSnapshots.emplace(value.id, snapshot);
+  }
+
   // A projected array used as another index's base must finish its checked
   // place formation before that outer index starts. Checking only at the
   // eventual load/store/address would run later side effects after failure.
@@ -4665,6 +4751,13 @@ private:
       if (terminated()) {
         return;
       }
+    }
+    // An assignment, including a store through a selected accessor, is
+    // evaluated here as the projected object; the projection then reads its
+    // result copy rather than the destination.
+    if (isAssignmentExpression(value->kind)) {
+      (void)assignmentResultSnapshot(*value);
+      return;
     }
     // A direct-initialized class temporary is a fresh SSA value like a call
     // result: materialize it before a projection roots a place at it. So is
@@ -10068,9 +10161,17 @@ private:
             if (instruction.id == preparation)
               instruction.replacementPair = assignment;
       }
+      if (assignmentSnapshotRequests.contains(id)) {
+        emitAssignmentResultCopy(*value, destination);
+      }
       emittedValues.insert(id);
       if (overloadedBorrowStore) {
         endConsumedCallResultLoans({value->id}, *value);
+      }
+      // Projections of the result read its copy, never the store's accessor
+      // place, whose loan has now ended.
+      if (assignmentSnapshots.contains(id)) {
+        valuePlaces.erase(id);
       }
       return;
     }
@@ -14334,6 +14435,10 @@ private:
   std::unordered_map<HirValueId, MirValueId> loweredValues;
   std::unordered_map<HirValueId, MirValueId> materializedValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
+  // Class assignments whose result is consumed, and the explicit copy of the
+  // committed destination that represents that result.
+  std::unordered_set<HirValueId> assignmentSnapshotRequests;
+  std::unordered_map<HirValueId, MirValueId> assignmentSnapshots;
   // Every extraction observes the same subject representation that selected
   // its arm, including mixed copied/borrowed bindings of passive enums.
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;

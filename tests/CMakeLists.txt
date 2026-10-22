@@ -1123,6 +1123,11 @@ add_test(NAME constructor_copy_after_formal_write_runtime
                  "${PROJECT_SOURCE_DIR}/tests/constructor_copy_after_formal_write_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(constructor_copy_after_formal_write_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME assignment_result_projection_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/assignment_result_projection_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(assignment_result_projection_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME declaration_owned_defaults_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"
