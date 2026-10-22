@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.458.3 — Reading fields of assignment results
+## 0.458.4 — Reading fields of assignment results
 
 - A field of a class assignment's result can now be read. For a struct
   `Point`, `return (p = q).x;` and a constructor initializer such as
@@ -19,13 +19,22 @@ for what minor and patch releases mean.
   or a reference parameter, as in `(h.point = q).x`, work too.
 - The result is the assigned value, not the destination: in
   `combine((p = q).x, (p = r).x)` the first argument is still `q.x`.
-- Reading a nested field of a temporary, such as `build(1).inner.id`,
-  `make(1).inner.id` for a lambda `make`, `std::move(o).inner.id`,
-  `(flag ? a : b).inner.id` or `Holder(build(5)).p.id`, also used to report
-  `error[GTI-B0001]`; it now works.
 - Using the whole result of a class assignment, as in `Point r = (p = q);`,
   and reading a field of a move-only class's assignment result still report
   `error[GTI-B0001]`.
+
+## 0.458.3 — Nested field reads of temporaries
+
+- A field can now be read through a nested chain of a temporary whose class
+  has no destructor. With an `Outer` class that holds a `Token token`,
+  `int k = Outer(Token("literal", 1)).token.kind;` and
+  `std::string_view v = Outer(Token("literal", 2)).token.text;` used to
+  report `error[GTI-B0001]` (an internal compiler error); they now work.
+- The same holds for a nested read of a call or lambda result
+  (`make_outer(1).token.kind`) and of a moved value
+  (`std::move(outer).token.kind`), for `.size()` or a read-only method on the
+  nested field, and for a conditional such as
+  `(left ? Segment(1) : Segment(2)).start.x`.
 
 ## 0.458.2 — Recursive functions that return text
 
