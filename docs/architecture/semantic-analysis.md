@@ -346,6 +346,15 @@ Namespace raw storage also receives loop-input symbols. Source write effects
 through loop-carried aliases defer their destination substitution and weakly
 close projected writes over backedge symbol facts before checking deferred uses.
 
+Loop entry also drops the complete borrow dependency set of every writable
+binding in scope. The single body visit cannot prove an incoming alternative
+for every backedge iteration; a dominating construction inside the body can
+establish a fresh set. A binding nothing can write keeps its set: only a move
+ends it, after which value flow rejects any read reached through the backedge,
+and loan flow keeps a read-only reference's referent unwritable while a later
+iteration reads it. Each loop records the bindings it dropped, so a selection
+that needs a missing set names the loop boundary in its `GTI-S2067` hint.
+
 Source calls query normalized raw-result origins before caller memory uses and
 alias writes. A request-local cache keys the selected function or constructor
 and concrete owner/function type and value arguments. An isolated ordinary
@@ -2523,6 +2532,223 @@ for semantically read-only loans. An exclusive stored carrier instead keeps
 one origin suspended across its whole moved lifetime; a returned carrier
 re-establishes that exact dependency in the caller rather than inventing a new
 root.
+
+A value whose class type has no borrowed state can still carry one owner
+dependency at a direct text field (`L-OWN-02`, phase 1). Constructor and
+designated-construction selection mark the call `dependentTextPublication`
+and record a `BorrowedFieldOrigin` from the dynamic argument to the field.
+They do not record a complete dependency set: like a dynamic view, the value
+uses the retained-loan model. Its expression traits carry the borrowed state,
+and its binding's `StoredValue` loan designates the field and names the
+argument's owner. A copy adds a carrier to that loan, a move transfers it, and
+a read of the designated field yields an owner-dependent view. Code outside the
+creating body reads text fields as ownerless, so `noteTextDependentValue`
+records each dependent value. A local initializer, a field read, a grouping, a
+move or a discarded statement consumes it. `finalizeTextDependentValues`
+reports every other use as `GTI-S2045`, so an unsupported context fails closed.
+Publication also requires `constructionKeepsPublishedText`. The constructor
+body must be empty, because it could read the field back through `this` as
+ownerless text. `readsConstructedObject` must also find no read of the object
+in another initializer or field default; the language rejects such reads
+today, and any expression form the check does not inspect counts as a read.
+
+A function in a field-contract scope (`textFieldContractScope`) carries a
+field-level contract, `FunctionInfo::ownerlessTextFields`, beside
+`ownerlessTextParameters`. Such a scope is a non-generic, non-virtual GTI
+function or method body, including a method of a generic class, outside
+lambdas, constructors and destructors. Inside it:
+- A text-field read through a formal, `this` or an implicit member of a
+  publishable class is an owner-dependent view.
+- A sink that already requires ownerless text records (formal or receiver,
+  field) through `requireOwnerlessTextParameter`. So does a return that the
+  function's field-sourced result does not name; the read is then re-recorded
+  as ownerless.
+- Each other use of such a formal is noted like a dependent value. A field
+  read consumes it. `recordTextFieldCall` forwards a formal that is passed to
+  an in-scope callee's formal or receiver of the same class.
+- In a generic class method's open analysis, a read of a type-parameter
+  field of the read-only receiver or of a contract formal
+  (`conditionalTextField`) records the requirement on that field directly
+  (`noteConditionalTextFieldRead`). Only a return among
+  `conditionalRelayReturns`, which hold when every return yields the same
+  such field of the receiver, is exempt. The requirement binds only instances whose field is
+  text: `analyzeFunctionInstance` keeps the open requirements whose field is
+  a direct text field of the instance, and HIR and the contract proof carry
+  those.
+- Relays of a generic class method are decided for the receiver's concrete
+  class. A call computes `dynamicTextReturnBorrowSummary` and
+  `textReferenceReturnSummary` on its concrete callee, and so does the
+  instance analysis, so an instance whose field is not text keeps no borrow
+  summary. Only the reference relay is also recorded on the open declaration
+  (conditionally, for a type-parameter referent): a call reads it where its
+  result is a reference to text, and it lets `recordTextFieldCall` relay a
+  dependent receiver before the concrete callee exists.
+- `finalizeTextFieldContracts` turns each unconsumed use into requirements on
+  every text field, then closes forwarding to a fixpoint.
+
+A return of one such field publishes a field-sourced result in the shared
+summary instead of a requirement: `returnBorrowOrigin` is Argument or
+Receiver and `returnBorrowFields` holds one `BorrowedFieldOrigin` whose
+`sourceFields` is that field, the shape of a returned `T&` field.
+- `predeclaredTextFieldSource` proposes it before bodies, beside
+  `storedTextViewRead`. It follows a helper or method that returns a field of
+  a formal it is applied to, so `return first(t);` composes.
+- `dynamicTextReturnBorrowSummary` publishes it only when every dependent
+  return names the same field. Beside a whole-origin source or another field,
+  the read stays an ownerless alternative under a requirement, as before.
+- At a call (`fieldSourcedTextResult`), the result is dependent when the origin
+  argument or receiver is a dependent value designating the field, or a
+  contract formal of the caller; `storedBorrowDependencies` maps the
+  designated retained loan onto the result. Otherwise it is ownerless.
+- `ownerlessTextForwardingField` treats such a call on a caller's contract
+  formal as a read of that formal's field, so sinks, relays and returns
+  compose through it.
+
+`dynamicTextReturnBorrowSummary` summarizes recursion as a least fixpoint over
+each set of mutually recursive functions. `TextRelaySources` records what the
+returns read: their direct origins, their contract-formal fields, and whether
+any provenance is unknown. These facts only accumulate.
+- A recursive call (`recursiveRelay`) reads the summary computed so far
+  through its arguments and receiver. It is ownerless while that summary has no
+  dependent return, and otherwise maps as a completed summary does.
+- The first function of a set to be evaluated repeats its returns, with one
+  evaluation of each other member per pass, until no summary of the set grows.
+  A summary that read an unfinished one stays provisional until then. One query
+  caches its complete summaries until it returns, keyed by declaration, so a
+  generic instance's call through its open signature reads the instance.
+- A recursion that relays one origin or one field at every depth relays it. A
+  recursion that permutes formals reaches two origins or fields and relays
+  neither.
+- A call to a function outside the set keeps the existing rules. A completed
+  ownerless summary still reads as unknown provenance there, so a relay beside
+  an ownerless call is not proposed.
+- Body analysis validates every return against the published summary, so a
+  recursive call is checked under the contract it assumes.
+
+A payload construction publishes a dynamic text argument the same way:
+`ResolvedPayloadConstructionInfo` carries `borrowFields` (result field = the
+payload's symbol) and `dependentTextPublication`, and no complete dependency
+set is recorded for it.
+- `textFieldOwnerDependency` gives the argument's sole named owner. A second
+  dependent payload, a temporary owner, or an enum with borrowed state or open
+  type arguments keeps the storage error.
+- The text-dependent value helpers (`textDependentType`,
+  `isTextDependentValue`, `textDependentFields`, `storedBorrowDependencies`,
+  local retention) accept a payload enum as they accept a class. The
+  retained StoredValue loan designates the payload symbol without a variant
+  condition: a dependent value cannot be reassigned, so its alternative is
+  fixed.
+- A non-consuming `switch` subject consumes the value for confinement.
+  `dependentTextPayloadLoan` finds the subject's loan when it designates an
+  arm binding's text payload; a by-value binding then carries that loan, and
+  an `auto&` binding is `GTI-S2045`.
+
+Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
+- `ownerlessTextConstructorInputs` also recognizes, from declarations, an
+  initializer `field(E::v(formal))` or `field(E<T>::v(std::move(formal)))`
+  whose enum, resolved in the class's namespace, is the field's type. Each
+  text payload a formal fills is a `ConstructorTextInput` with its payload
+  symbol. While the constructor analyzes that initializer,
+  `constructorTextPayloadArguments` names the formal's argument: the payload
+  construction neither publishes nor rejects it and records an empty complete
+  dependency set. At a call, `textFieldInitializerDependencies` designates the
+  argument's owner at the path.
+- `textDependentPaths` gives a dependent value's designated paths;
+  `textDependentFields` keeps the direct ones. A read of an enum field
+  through which a path goes is itself a dependent value, which a `switch`
+  observes: `dependentTextPayloadLoan` matches the subject's field prefix
+  before the payload. Copying the field out of its value is `GTI-S2045`, and
+  so is any relay of a path into a callee.
+- `OwnerlessTextField::payload` names a payload requirement. In a
+  field-contract scope, a `switch` binding a text payload of a contract
+  formal's or the read-only receiver's enum field requires it
+  (`contractPayloadBinding`); in a generic class, a type-parameter payload
+  requires it conditionally. A whole use requires every text payload too
+  (`textPayloadFields`), and `contractTextPath` filters open requirements for
+  an instance. A relay is decided against each designated path.
+- `payloadReferenceRelayArm` recognizes a reference relay of a payload: an
+  arm of `switch (this.field)` that is exactly `return binding;` for a
+  read-only `auto&` binding. That binding requires nothing.
+  `composedTextReference` lets a method that returns a unique zero-argument
+  read-only accessor of `this` relay what the accessor relays, and
+  `noteReturnedFormalReference` then notes no whole use.
+- An overloaded operator records its receiver's and operands' relays like a
+  call (`recordTextFieldOperator`). Its `ResolvedOperatorInfo` carries the
+  concrete `returnedTextReference`, and a dereference classifies its result as
+  a relayed call does (`operatorTextReferenceRelay`).
+- A generic class method's type-parameter formal is opaque to its open
+  analysis. An instance requires every text field and payload of a
+  publishable argument type there, and a call relays and forwards nothing
+  into it, so a container cannot store a dependent value.
+
+A temporary needs no further model. Its construction publishes as above, and
+its expression is a dependent value that a field read, a relay or a receiver
+consumes, so `fieldSourcedTextResult` classifies a relay of it as it does a
+named value's. Only the fresh-temporary receiver mode is extended:
+`receiverModeForObject` admits a dependent temporary for a
+`receiverTextFieldRelay`, a read-only method whose summary returns one direct
+text field of its receiver. That result holds the owner's text and borrows
+nothing of the temporary, so `ephemeralBorrowResultSupported` does not apply
+to it.
+
+A function may return a fresh value that holds one of its by-value text
+formals in a direct text field (phase 2a). Its `publishedTextFields` lists
+each such (formal, field) relay; it is a callee fact, not a return-borrow
+summary, so an ownerless call keeps no result borrow.
+- The relay is decided where the ownerless requirement used to be recorded.
+  `relayReturnedTextFormal` runs at a construction of the function's own
+  return type, and at a call of another relaying function. It applies when
+  the expression is the function's `contextualReturnValue`, the argument is
+  exactly the formal, the class is a publication owner, and the constructor
+  stores that formal in one field. Any other use of the formal there keeps
+  `requireOwnerlessTextParameter`.
+- A generic function decides the relay in its open analysis, which records
+  its conditional formal requirements today; an instance re-derives it after
+  clearing its contract sets. A call reads the callee's relays from the
+  body-analyzed declaration and checks the field against the concrete result
+  type with `directTextField`. An open call composes the same way: a
+  type-parameter argument at a type-parameter field (`directTextField` with
+  `conditional`) relays or requires there and publishes nothing. Otherwise a
+  generic wrapper whose callee is analyzed later would declare fewer relays
+  than MIR derives for its instance.
+- `publishTextCallResult` gives a call whose relayed argument is dynamic the
+  constructor's call-site facts: `dependentTextPublication`, `borrowFields`
+  and an Argument origin. The result is a `textDependentValueInfo` value, and
+  `textDependentFields`, `storedBorrowDependencies` and confinement treat it
+  as a publishing construction. A temporary owner or a second owner is
+  `GTI-S2045`, as for constructors.
+- A callee whose body is in `bodiesInProgress` (recursion) may relay formals
+  it has not recorded yet into a text field of its result. When the result has
+  one, possibly open, the call is marked `provisionalTextRelays`; a formal
+  argument there is required ownerless and a dynamic one is `GTI-S2045`. A
+  result with no such field is an ordinary call. An instance analysis puts no
+  body in progress, so a generic instance relays through its own recursive
+  call, while callers are checked against the open declaration's requirement.
+
+A dependent argument or receiver records a `TextDependentRelay` with its
+designated fields, while its scope is live. The request's own finalization
+decides it, once every body that feeds the contracts is analyzed: it consumes
+the relay when the analyzed callee requires none of those fields, and
+otherwise reports `GTI-S2045` related to the callee. A callee that returns a
+reference to text records a relay only as a receiver relay: its
+`returnedTextReference` names the receiver's direct text field that each of
+its returns designates. `textReferenceReturnSummary` computes it before
+bodies, from `predeclaredTextFieldSource` over the returns, in a
+field-contract method. At a call, `textReferenceRelay` treats the result as
+a read of that field: it is a dependent text place when the receiver
+designates the field or is a contract formal, `storedBorrowDependencies`
+gives a copy the receiver's owner dependency, and a contract receiver's
+relay forwards the requirement on the field. Any other reference may
+designate the dependent field without a loan for the view copied from it,
+so it takes no relay, and a contract formal passed to such a callee is not a
+forward but a whole use, which requires each of its text fields. So is a
+returned reference that a call borrowed from a contract formal or the
+receiver (`noteReturnedFormalReference`): MIR sees that call's loan rooted
+at the whole formal. An instance analysis
+records no field use, forward or relay. Its finalization leaves relays pending
+and skips the contract pass, because looking up the functions a contract names
+would record them as functions the instance consulted, and demand their
+bodies.
 
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver

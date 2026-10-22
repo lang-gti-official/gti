@@ -481,6 +481,17 @@ cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
 cppMirFailureConstructorEmptyFieldsEligible(const MirProgram &program,
                                             HirClassInstanceId instance);
 
+// True when the field is declared in deferred storage: an anonymous union
+// whose backend-private inert member is active until a constructor publishes
+// the field at its verified MIR point. Only a passive bound shell (a class
+// carrying references, with generated, observation-free copy, move and
+// destruction) that has no native empty state and can follow other
+// initialization work qualifies. The planner's field declaration and every
+// constructor proof consult this one query.
+[[nodiscard]] bool cppMirDeferredFieldStorage(const MirProgram &program,
+                                              HirClassInstanceId owner,
+                                              SymbolId field);
+
 // An exact selected base initializer. Native fusion preserves observation-free
 // scalar parameter copy-loads/literals. A prepared binding instead selects
 // the admitted executable pre-base partition below; it never reconstructs
@@ -634,6 +645,15 @@ struct CppMirOwnedParameterFieldBinding {
 std::optional<std::vector<CppMirOwnedParameterFieldBinding>>
 cppMirOwnedParameterFieldBindings(const MirProgram &program,
                                   const MirConstructorInstance &constructor);
+
+// A failure-free constructor whose owned formals cannot all publish natively
+// (a move after other initializer work, or after a copy of the same formal)
+// may still publish its drop-free moves in MIR order: their fields start from
+// the passive empty state and the exact Move and its publication execute in
+// the ordinary-form body, as the failure form stages them. Body admission and
+// the initializer-list spelling share this one proof.
+[[nodiscard]] bool cppMirOrdinaryBodyStagedParameterMoves(
+    const MirProgram &program, const MirConstructorInstance &constructor);
 
 // Optional per-caller instrumentation. It observes validation without changing
 // admission and has no process-wide cache or lifetime beyond the caller.

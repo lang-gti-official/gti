@@ -65,10 +65,16 @@ exact typed enum-field/dereference chain and absence of runtime storage/address
 uses. Stored loans carry no native pointer; selected-reference extraction,
 reference-returning calls and exact return-pointer transfers supply their own
 runtime addresses. Generic Borrow or entry-address uses cannot hide behind this
-classification. Fresh owning enum returns may cross their verified erased
-Stored-to-Return borrow publication and EndBorrow markers without inventing a
-second result slot; all actual cleanup and success-only initialization remains
-in the original MIR order.
+classification. The same rule admits a place rooted at a field-less Stored
+loan, whose borrow-carrying local or class value holds its references
+internally. Such a place names the carried external owner, for example as the
+source of a reference selected from that carrier's payload. It is never spelled,
+so any runtime use of it rejects the body. A Stored dependency inherited from a
+reference binding names that binding's referent, as a parameter entry does.
+Fresh owning enum returns may cross their verified erased Stored-to-Return
+borrow publication and EndBorrow markers without inventing a second result
+slot; all actual cleanup and success-only initialization remains in the
+original MIR order.
 
 Payload alternatives construct in place from their already selected MIR
 operands. The native enum's in-place alternative constructor avoids temporary
@@ -944,9 +950,12 @@ The passive proof uses the class's generated destructor and active-cleanup
 facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
 without requiring an active cleanup operation. A constructor `Invoke` may
 separate an arm from publication only when its unique success block contains
-only that publication. The selected status constructor writes the slot at the
-original Invoke and engages it only on success; its original failure edge and
-cleanup remain intact. Ordinary constructor-boundary admission still verifies
+that publication followed only by verified `EndBorrow` instructions. These
+loan endpoints let a fallible source call retire its borrowed inputs after
+publishing the arm's class result, without computing another value or altering
+the result. The selected status constructor writes the slot at the original
+Invoke and engages it only on success; its original failure edge and cleanup
+remain intact. Ordinary constructor-boundary admission still verifies
 the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
@@ -963,8 +972,11 @@ inputs, as in `Pod t = c ? std::move(a).pod() : make(std::move(b));`. The
 passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
-(`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. An arm may also move a whole named local out,
+(`onlyPreparedInputTransfers`). A construction arm may likewise hand by-value
+arguments to its constructor, as in `(c ? seg(pt(1)) : seg(pt(2))).flat`; its
+lifecycle is then exactly those transfers. Virtual calls, and constructions
+with any other lifecycle event, stay outside this form. An arm may also move
+a whole named local out,
 as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
 obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
 ownership event that takes the local's key to `Moved`, and the local keeps its
@@ -1548,17 +1560,33 @@ meaning, manufacture ordinary entry points for unrelated members, or make
 native exception behavior a lifetime authority; it exists only so an exact
 nested call can participate in an ordinary constructor full expression.
 
-A cleanup-free class result with one exact value-rooted field projection and
-one scalar `Load` uses the same uninitialized lifetime-slot representation.
+A cleanup-free class result with one exact value-rooted field chain and one
+scalar `Load` uses the same uninitialized lifetime-slot representation.
 An admitted GTI call or ordinary `Construct` publishes once into the slot, as
 does a failure-free `Move` of a whole object out of a place, as in
 `std::move(a).x`, which constructs the slot from its source, and the load
-spells through its verified field chain. The constructor form also
-requires exact target, owner, result, parameter, and operand metadata; one
-single-field projection; a trivial scalar copy load; and no active cleanup,
-lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
-non-field projections, cleanup-owning temporaries, and incoherent type rows
-reject this route rather than falling back to native temporary behavior.
+spells through its verified field chain. The chain may be nested, as in
+`outer(inner(1)).inner.value`. MIR builds such a read from its shorter chains
+and records each of them as its own place rooted at the same value; that
+prefix record is admitted only when no instruction, terminator, loan, or drop
+touches it, and it declares and spells nothing. The copy `Load` that MIR uses
+for a class assignment's result, as in `(p = q).x`, copy-constructs the slot
+from the committed destination the same way; it requires a copyable class with
+a generated destructor and no active drop state or borrowed state, takes no
+other consumer, and keeps every other copy-load route unchanged. The
+constructor form also requires exact target, owner, result, parameter, and
+operand metadata; a trivial scalar copy load; and no active cleanup,
+lifecycle, borrowed-state, or drop obligation. A text view field
+(`std::string_view` or `c_string`) is read the same way: the view is a passive
+descriptor whose text is never the temporary's own storage. A construction that
+publishes a local owner's text (`L-OWN-02`) holds borrowed state only as that
+verified `Stored` loan, so it too may take this one field read, though no
+transfer consumer. A text size or emptiness observer whose borrowed receiver is
+the projected view is the read itself, as a copying `Load` is; the slot retires
+right after it. The owned-result field view below admits the same observer.
+Additional consumers, places outside the read chain, non-field projections,
+cleanup-owning temporaries, and incoherent type rows reject this route rather
+than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
 slot. The result may come from a call, as in `make_tracked(7).number`, from
@@ -1577,8 +1605,9 @@ and a field lent to one member call as in `make_named().text.size()`, in
 function bodies as well as field defaults, member initializers and base
 argument preparations, whose carrier holds the slot. A view is a pure field
 projection of the result's value root with exact field rows. It carries no
-loan or drop and is touched only by copying `Load`s or by read-only borrow
-stages consumed by one call. It declares no local and spells
+loan or drop and is touched only by copying `Load`s, by text size or emptiness
+observers, or by read-only borrow stages consumed by one call. It declares no
+local and spells
 `slot.get().field`, so a field class without a default constructor is never
 default-constructed. MIR's verified initialization bounds every read, and the
 result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.
@@ -2590,12 +2619,13 @@ observable cleanup; its initialization and handoff are still mandatory MIR
 events. This proof does not generalize to active-cleanup payloads or arbitrary
 constructor argument expressions.
 Ordinary source constructors may use the same prepared-input schedule for a
-class with generated copy, move, and destruction, scalar/enum fields, no
-state-bearing base, and no active cleanup. Every prepared input has a distinct
-obligation and exactly one matching constructor handoff; scalar sibling inputs
-retain their argument positions. A conservatively failure-capable target is
-eligible only when its complete verified body is accounted for by the exact
-passive parameter-to-field moves, lexical parameter drops, and inert boundaries.
+passive generated class (see below) with generated copy, move, and
+destruction, no state-bearing base, and no active cleanup. Every prepared
+input has a distinct obligation and exactly one matching constructor handoff;
+scalar sibling inputs retain their argument positions. A conservatively
+failure-capable target is eligible only when its complete verified body is
+accounted for by the exact passive parameter-to-field moves, lexical parameter
+drops, and inert boundaries.
 The failure summary remains unchanged; unrelated constructor work cannot be
 hidden behind the native initializer spelling.
 
@@ -2623,8 +2653,8 @@ invoke a source destructor; the backend does not infer this from C++ moves.
 
 When earlier initializer work can fail, a later owned parameter move stays in
 the verified constructor body instead of being pulled into native initializer
-order. The same body-staged publication proof accepts cleanup-free generated
-class moves with passive scalar/enum fields: the exact parameter Move, field
+order. The same body-staged publication proof accepts cleanup-free moves of a
+passive generated class (defined below): the exact parameter Move, field
 Initialize, and full-expression boundary remain mandatory, while value and
 construction-rollback obligations must be absent. Its inert parameter shell
 drop remains recorded. Custom lifecycle, borrowed state, and active cleanup
@@ -2636,10 +2666,30 @@ obligation names its formal, its moved value or its field, and its `Move` and
 absence. The field then starts from its passive empty state in the
 member-initializer list, and the exact `Move` and `Initialize` publish it in
 MIR order, as in `Gauge(int32_t tag) : ledger(Ledger(tag, divisor)),
-odd(tag % 2 == 1), tag(std::move(tag))`. The MIR failure summary does not yet
-prove a non-class `Move` failure-free, so such a constructor is always
-failure-capable and takes this failure form; the ordinary form keeps the
-native-publication rule.
+odd(tag % 2 == 1), tag(std::move(tag))`.
+
+A passive generated class (`passiveGeneratedClass`) has generated
+destruction, plus generated copy construction where a route copies it, no
+active cleanup or drop state, no state-bearing base, and only passive fields.
+A passive field copies bitwise and its destruction runs no source cleanup: a
+scalar, an enum, a raw or null pointer (a `c_string` is a raw pointer), a text
+view, a fixed array of passive fields, or a passive generated class. The rule
+names representations, not library types. A text view's dependency on its
+owner, when it has one, exists only as a MIR loan, which has no
+representation, so it changes neither the copy nor the destruction. A class
+that only holds text views is therefore passive and not a borrowed carrier.
+Semantics keeps ownerless text in such a by-value field of another class, and
+MIR records no loan, value or rollback obligation for moving it. So
+`shelf(Name name) : v(std::vector<int32_t>()), name(std::move(name))`, where
+`Name` holds one `std::string_view`, publishes in body order exactly like a
+class of scalar fields, and `name(name)` uses the native parameter copy below.
+Every route that consults the predicate sees this same representation fact:
+field assignment, conditional class joins, prepared call inputs, closure
+captures, parameter shells and constructor publication. Each route still
+checks borrowed state, traits and its own MIR schedule. A semantically
+dependent value, such as a local `Name` viewing a named owner, reaches only the
+local copy, move and by-value call routes that semantics admits, and those
+copy its bits.
 
 A moved `std::string_view`, `c_string` or function item uses the same
 drop-free route without an `Initialize`. MIR stages none for these types: the
@@ -2660,14 +2710,100 @@ the field or is produced by the moved value. A user-defined borrowed carrier,
 such as a class with a `T&` field, is a different family. Its field retains
 the dependency through a `Stored` publication, and its native class has no
 empty representation, because its references must be bound when the object is
-constructed. Moving, copying or constructing such a carrier after work that
-can fail therefore stays outside the failure form; only the first-field prefix
-routes below publish one.
+constructed. Such a field uses deferred field storage, described next, unless
+it is its class's only carrier and its first field, which the first-field
+prefix routes below publish.
+
+A field whose type is a passive bound shell (a class or struct carrying
+references, with generated, observation-free copy, move and destruction, no
+active cleanup, user destructor, base or capability) and no native empty
+state can follow other initialization work whenever it is not the first
+field or a state-bearing base precedes it. The C++ class then declares that
+field, and every other bound shell of the same class, in deferred storage: an
+anonymous union whose other member is an inert byte with a default member
+initializer, `union { unsigned char __gti_deferred_cursor{}; Cursor cursor; };`.
+The field keeps its name, type, size and alignment, and every access spells
+it as before. The inert byte is active until a constructor publishes the
+field. A native member initializer still publishes the field where an exact
+native route proves it, such as the first-field prefix, a constructed
+sequence, or a parameter copy; otherwise the field is left out of the
+member-initializer list and the verified body publishes it at its MIR point.
+A moved or copied formal is constructed into the storage with
+`std::construct_at`, and a carrier constructor builds in place there through
+its ordinary or status-tag overload, with no prior `std::destroy_at`, since no
+field value exists yet. The `Stored` loan that follows the publication remains
+a proof-only record. A moved formal keeps its lexical shell drop, and the
+body-staged move proof requires the exact cleanup-free schedule: Move and
+`Initialize` without lifecycle events, no value or construction-rollback
+obligation, and the field's one `Stored` loan published from the moved value
+right after the `Initialize`, sourced at the formal, whose input loan ends at
+once. A failure before the publication leaves the inert byte, and the caller
+ends the unpublished object; a failure after it leaves a bound shell whose
+ending runs no source code. Neither needs a rollback, so the failure form's
+per-field rollback proof accepts deferred storage as it stands, and owning
+siblings follow their own verified rollback. The union never records which
+member is active, so the class asserts at native compile time that the shell
+is trivially destructible. Its generated copy and move are trivial copies of
+the bound references and scalars, so the enclosing class's special members
+copy and move the published field unchanged. Deferred storage is therefore
+restricted to shells whose every leaf is a reference, scalar, text view,
+pointer, function item, plain enum, fixed array of these, or another such
+shell; a payload enum leaf stays outside. A generic owner may share one native
+class template across instances, so deferred storage applies only to
+non-generic classes for now.
+
+This keeps GTI's construction order for every producer semantics admits for a
+carrier field: the move or copy of an exact carrier formal, or a construction
+from exact formals, including a carrier constructor that checks its input or
+prints, as in `Built(int32_t& value, int32_t divisor) : ledger(Ledger(3,
+divisor)), cursor(Checked(value, divisor))`. If the ledger fails, the checking
+constructor never runs. A copy of a formal that nothing changes is still
+published by the native parameter-copy route, ahead of the earlier work, as
+for passive classes: the copy reads the formal's entry value, runs no source
+code and cannot fail, and the published shell needs no rollback. Remaining
+stages are a class containing a class with deferred fields (an empty state for
+the containing class), carriers with active cleanup, and generic owners.
+
+A borrowed payload enum, such as `enum Slot { ready(int32_t& value), empty }`,
+also retains its caller's dependency in the field, but its native value has a
+passive empty state. Moving the formal into the field initializes it and then
+hands the formal's guarded entry group to the field's escaping `Stored` loan
+through one `Borrow` from that group, followed directly by the group's
+`EndBorrow`. The enum value already holds the reference, so that publication
+is proof-only (`storedFieldValueLoanProducer`), as for an in-place payload
+construction, and the move takes the drop-free route above in MIR order: after
+work that can fail, as in `Gauge(Slot slot, int32_t divisor) :
+ledger(Ledger(1, divisor)), slot(std::move(slot))`, or after an earlier read of
+the formal. The proof (`formalEntryGroupPayloadMove`) admits borrowed state in
+only that shape: the transfer of the exact moved value is the field's only
+publication, no other loan derives from or protects the formal's group, and
+every other record naming the group is a comment-only `EndBorrow`, such as the
+one on a failure route. A copy, `slot(slot)`, uses the native copy route
+below.
+
+Such a move is itself failure-free (see the MIR failure summary), so a
+constructor whose other work cannot fail, as in
+`Gauge(int32_t tag) : odd((tag & 1) == 1), flagged(is_odd(tag)),
+tag(std::move(tag))`, uses the ordinary form. When the native owned-field
+proof cannot hoist every owned move, `cppMirOrdinaryBodyStagedParameterMoves`
+admits the same body-ordered publication there for drop-free moves only:
+the constructor's summary must be failure-free, its fields must have the
+empty state, no reference may bind natively, and natively copied fields must
+form the complete first-field prefix. Body admission and the planner's
+initializer list consult that one proof. For a constructor that either form
+can body-stage, passive scalar parameter copies stay in the MIR body schedule
+(`cppMirCopyParameterFieldBindings`), whichever form is selected.
+The native owned-field proof also refuses a passive scalar sibling that copies
+the very formal a later initializer moves, as in `Copied(int32_t tag) :
+first(tag), second(std::move(tag))`: the native list would move the formal
+before the body copy ran, and the formal's shell is never declared. That
+constructor publishes in body order in both forms.
 
 An exact by-value parameter copy may also publish one field through the native
-member-initializer list when the copied class has generated copy/destruction,
-only recursively passive scalar, enum, array or generated-record state, no
-state-bearing base, and no active cleanup.
+member-initializer list when the copied class is a passive generated class
+with generated copy/destruction: only recursively passive scalar, enum,
+pointer, text-view, array or generated-record state, no state-bearing base,
+and no active cleanup.
 This MIR shape carries one reachable parameter `Load`, one matching initializer
 metadata row, an exact field `Initialize`, and one full-expression boundary;
 the copied parameter's native scope destruction represents its trivial MIR
@@ -2681,6 +2817,28 @@ carriers retain their additional publication/loan-end witness. The prefix may
 not cross base construction, computations, later owned publication or failure
 edges. Native initialization realizes only that proved prefix; subsequent owned
 fields remain empty until their original MIR publication and rollback execute.
+
+The native member-initializer list reads a formal's entry value: the C++
+argument, or the prepared value published before the base. MIR reads the
+formal at its copy `Load`, after every instruction on a path into it. A copy
+therefore publishes natively only when none of that earlier code can change
+the formal's own storage. Copies and read-only borrows leave it intact. An
+assignment, initialization or drop of one of its places, a move, an address,
+a mutable borrow (a `mut` reference argument or receiver, or a `[mut &x]`
+capture) or a mutable loan can change it, there or later through the borrow.
+A place reached through a dereference belongs to another object.
+`Pair(mut int32_t seed) : first(bump(seed)), second(seed)` used to copy the
+unwritten argument this way. The owned-parameter move proof applies the same
+rule, and so does a record-published closure copy, which then has no route at
+all because a closure has no empty state. A copy kept out of the native list
+stays in MIR order. A scalar, enum, raw pointer or fixed array field starts
+from its passive empty state, and the exact `Load` and `Initialize` publish
+it. A cleanup-free class copy, whose `Load` and `Initialize` carry no
+lifecycle event and whose value owns no drop obligation or place, declares a
+transient at its `Load`; the `Initialize` moves the transient into the field,
+which starts from its native empty state. A class without that empty state
+stays outside the route. The same body-ordered class copy serves any copied
+place, such as the referent in `Holder(Point& point) : point(point)`.
 
 A closure copied from its by-value constructor parameter into a field, as in
 `Holder(F f) : callback(f)` instantiated with a lambda type, uses the same copy
@@ -2997,7 +3155,8 @@ field identity. The writer neither default-constructs an SSA class nor invents
 cleanup authority.
 The same resolved mutable-field predicate supports an adjacent parameter
 `Load`/discarded `Assign` copy when the record has generated copy construction,
-assignment and destruction with only passive scalar/enum/pointer fields. Its
+assignment and destruction with only passive scalar, enum, pointer or
+text-view fields. Its
 source must carry an exact available, reachable Read event; borrowed state,
 replacement cleanup and custom special members are not admitted by this route.
 An exact non-failing `Construct` followed by its discarded field assignment
@@ -3432,9 +3591,17 @@ cleanup. Unsafe raw-pointer validity obligations remain distinct from these
 checked fixed-array selections. Forming an address creates no checked loan.
 
 Generated passive record copies may contain positive concrete
-fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
+fixed arrays of passive fields, including C-ABI records. Exact
 generated copy/destruction traits, field drop facts, and the absence of active
 cleanup or state-bearing bases remain required.
+
+A moved value staged through plain call inputs into one construction in the
+move's own block, with no record between them touching the source place, is a
+moved-place chain (`movedPlaceChainSource`). Neither the `Move` nor its call
+inputs materialize a local, so every spelling of that construction passes
+`std::move` over the source place, including a construction published at a
+plain or failure-form return, as in `return Holder(std::move(value));` and
+`unexpected(code)` for a scalar error.
 
 ### Declarations And ABI
 

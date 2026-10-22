@@ -131,8 +131,10 @@ int main() {
             assert diagnostics(11)
             change(12, safe_order)
             assert not diagnostics(12)
+            # A destructor would read the field as ownerless text, so this
+            # struct keeps the ownerless field rule (L-OWN-02).
             moved_view = """#include <std/string>
-struct Holder { std::string_view text; };
+struct Holder { std::string_view text; ~Holder() {} };
 int main() {
   std::string owner{"owned"};
   std::string_view view = owner.view();

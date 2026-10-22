@@ -1783,12 +1783,28 @@ class, such as a `Holder` storing an `expected<int&, E>`, is not yet supported
 (`GTI-S2067`); classes with unconditional reference fields remain valid
 payloads. A reference selected from a conditional carrier is
 relayed only from a named local, parameter or temporary carrier, not through a
-field, element or dereference of another value (`GTI-S2045`). A free function
+field, element or dereference of another value (`GTI-S2045`). Inside a loop, a
+selection from a carrier declared before the loop requires a carrier the loop
+cannot write: a local or parameter declared without `mut`, including a
+read-only reference parameter. A writable carrier's dependency set is not yet
+carried across iterations (`GTI-S2067`), so a `mut auto&` selection, which
+needs mutable enum storage like any mutable payload borrow, is made before
+the loop. A free function
 whose carrier result could borrow from more than one eligible parameter is
 ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
 reference return. Empty-body constructors
 establish the result from their exact field initializers, including a proved
-reference-free alternative. A missing proof is not an empty alternative.
+reference-free alternative. The initializer may construct the enum in place or
+move or copy a by-value enum parameter into the field, as in
+`Shelf(Slot slot) : slot(std::move(slot))`; the object then keeps that
+argument's external owners. As for a nested unconditional carrier, copying the
+carrier out of a reference parameter, as in `Shelf(Slot& slot) : slot(slot)`,
+is rejected (`GTI-S2045`) at that argument: the field and the caller's object
+would share one guarded group, which constructor publication does not yet
+represent. Take the carrier by value instead. A function may likewise return a
+by-value carrier parameter whole, moved or copied, as in `Slot relay(Slot slot)
+{ return std::move(slot); }`, and the result keeps the argument's owners. A
+missing proof is not an empty alternative.
 Implicit copying remains conditional on all fields being copyable; copying a
 shared-reference wrapper retains the same external owners, while moving a
 wrapper does not move those owners. A consuming method may return a selected
@@ -2310,9 +2326,29 @@ same return dependency after substituting the exact parameter and return
 types. A literal-backed argument remains an ownerless static view and needs no
 runtime loan; a dynamic argument transfers its existing owner dependency to
 the result. That retained loan prevents mutation, movement, or destruction of
-the owner until the last local carrier ends. A dynamic view cannot escape a
+the owner until the last local carrier ends. A recursive call relays what its
+function relays, so a function whose returns reach a call to itself, directly
+or through other functions, relays the parameter its other returns relay, and
+its result is ownerless when they are:
+
+```gti
+std::string_view first(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return first(s, n - 1);  // relays s, as the first return does
+}
+
+std::string line{"count = 42"};
+std::string_view head = first(line.view(), 3);  // views line
+```
+
+A recursion that permutes its parameters, returning `s` beside
+`pick(t, s, n - 1)`, may return either one and relays neither: `return s`
+reports `GTI-S2045`. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
-storage, or be nested in a field, global, static, array, or dynamic container.
+storage, or be nested in a global, static, array, or dynamic container. It
+reaches a field only through the owner-tracked view fields described below.
 Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
@@ -2326,6 +2362,278 @@ dynamic initializer such as `text(owner.view())` is rejected at its initializer;
 an ordinary view parameter forwarded to a storing constructor is potentially
 dynamic, even if some callers happen to pass literals. Conditional expressions
 cannot erase a dynamic operand's dependency.
+
+### Owner-tracked view fields
+
+A value may hold a view of a named local owner in a direct text field when
+the value stays in the body that creates it. A constructor whose initializer
+stores a text parameter, or a designated list, then publishes the argument's
+owner dependency at that field instead of rejecting the argument:
+
+```gti
+std::string input{"token text"};
+Token token = Token(input.view(), 3);       // token.text views input
+Diag diag{.text = input.view(), .line = 2}; // so does diag.text
+std::string_view head = token.text;         // a view of input as well
+```
+
+The dependency belongs to the value, not to its type. A `Token` over a literal
+is ownerless and keeps every capability: it may be stored, passed, returned or
+used as a method receiver. A value with a dependency:
+
+- may initialize a local binding, be copied into another local (both carry the
+  one dependency) or be moved;
+- yields, when its published field is read, a dynamic view of the same owner;
+  its other text fields stay ownerless;
+- keeps its owner borrowed read-only until its last carrier ends, so the owner
+  cannot be mutated, moved or destroyed while the value is live.
+
+It may also be passed to a function, by value or by reference, or call a
+method, when that function keeps the field's text within the call:
+
+```gti
+uint64_t width(Token token) { return token.text.size(); }
+void keep(Token token) { kept = token.text; }   // kept is a global view
+
+width(token);       // valid: the text stays within the call
+token.text.size();  // valid
+keep(token);        // GTI-S2045: keep lets the text outlive the call
+```
+
+Each function's field contract is inferred from its body. A text field of a
+formal or of the receiver requires ownerless text at every call when the
+function:
+- stores it;
+- passes it to a function that requires it;
+- lets the whole formal escape: copies, stores or returns it, captures it, or
+  passes it where no such contract applies.
+
+A function that returns one text field instead relays it: the caller's
+result holds whatever the argument or receiver holds in that field.
+
+```gti
+std::string_view first(Token token) { return token.text; }
+std::string_view name() { return this.text; }    // a Token method
+
+std::string_view view = first(token);  // valid: views input, as token does
+token.name().size();                   // valid
+kept = first(token);                   // GTI-S2045: the result views input
+kept = first(Token("literal", 1));     // valid: the result is ownerless
+```
+
+The result depends on the owner exactly when the argument's dependency is at
+that field; another field of the same value stays ownerless. The relay applies
+only when every return of the function that may hold dynamic text reads the
+same field of the same formal or receiver, possibly through such a function.
+A function that returns that field beside another source, or two different
+fields, keeps the requirement above instead. A recursive call relays what its
+function relays, so a recursion that returns one field of the same formal or
+the receiver at every depth relays it, as `textOf(Token t, int n)` returning
+`t.text` or `textOf(t, n - 1)` does. A recursion that permutes its formals
+may return any of them, so it relays none and requires ownerless text in
+each:
+
+```gti
+std::string_view pick(Token a, Token b, int n) {
+  if (n == 0) {
+    return a.text;
+  }
+  return pick(b, a, n - 1);  // a deeper call returns b.text
+}
+
+pick(Token("ab", 1), Token("xyz", 2), 1);  // valid: returns "xyz"
+pick(Token("ab", 1), token, 1);            // GTI-S2045: token views input
+```
+
+Literal-backed values satisfy every contract, so existing calls are
+unaffected. Inside such a function, reading the field gives a dependent view
+of whatever the caller passed.
+
+A payload enum's text payload holds a local owner's text the same way. The
+construction publishes the dependency at that payload, and a `switch` that
+observes the value binds a dependent view of it:
+
+```gti
+enum Lexeme { word(std::string_view text), count(int value) };
+
+Lexeme lexeme = Lexeme::word(input.view());   // the payload views input
+switch (lexeme) {
+case Lexeme::word(text): std::println(text); break;   // a view of input
+case Lexeme::count(value): break;
+}
+```
+
+Such a value follows the class rules above: it may initialize, copy or move a
+local, and it keeps its owner borrowed while it is live. Only the published
+payload depends on the owner; another text payload of the same construction
+stays ownerless. A generic enum's instance publishes the same way. In this
+release a dependent payload value is only observed by a `switch`: it is not
+yet passed to functions, consumed by `switch (std::move(value))`, or bound by
+an `auto&` pattern at the dependent payload.
+
+A temporary holds the dependency within its expression. Reading its published
+field, passing it to a function that relays the field, or calling a method
+that returns the field gives a view of the owner rather than of the
+temporary. The view may therefore outlive the temporary, and the owner stays
+borrowed while the view is live:
+
+```gti
+std::string_view head = Token(input.view(), 1).text;      // views input
+std::string_view relayed = first(Token(input.view(), 2)); // views input
+Token(input.view(), 3).name().size();                     // valid
+kept = Token(input.view(), 4).text;                       // GTI-S2045
+kept = Token("literal", 5).text;                          // valid: ownerless
+```
+
+A temporary over literal text has ownerless fields, which may be stored or
+returned.
+
+A function that returns a fresh value of its return type whose text field
+holds one of its text parameters relays that parameter, as a constructor
+does. It may build the value directly or return a call of another such
+function. Each call's result holds the argument's text in that field:
+
+```gti
+Token makeToken(std::string_view text) { return Token(text, 1); }
+
+Token made = makeToken(input.view());          // made.text views input
+std::pair<std::string_view, int> p = std::make_pair(input.view(), 1);
+kept = makeToken("literal").text;              // valid: ownerless
+kept = made.text;                              // GTI-S2045
+```
+
+A generic function relays the same way after substitution, as
+`std::make_pair` and `unexpected` do. Using the parameter's value any other
+way inside the function, for example keeping it in a local and returning
+that, still requires ownerless text. So does a recursive call whose result
+has a text field, even when it is returned.
+
+A dependent value still cannot be passed to a constructor, a lambda, a
+virtual method or a generic function (a method of a generic class is not one,
+see below), nor returned itself, captured, bound by
+a reference, assigned into existing storage, or stored in a global, a field,
+an array or a container. Each of these is `GTI-S2045`. For the same reason a
+class with a destructor, a base or virtual methods keeps the ownerless field
+rule. So does a constructor with a non-empty body, which could read the
+published field back through `this` as ownerless text. A value holds dynamic
+text from at most one owner, and that owner must be a named place: a view of a
+temporary owner is rejected as before.
+
+A method or function that returns a reference to text, such as
+`std::string_view& ref() { return this.text; }`, `T& get()` over a text field,
+or `expected::error()`, gives the text that the reference designates. A value
+that holds ownerless text may store what it reads through the reference. A
+temporary cannot yet be the receiver of such an accessor (`GTI-S2081`).
+
+A method of a non-generic class whose returns all designate one text field of
+its read-only receiver relays that field. On a dependent value, reading
+through its result gives a view of the owner, as reading the field does. A
+view copied from it keeps the owner borrowed and, unlike a field read, the
+value as well, because the reference that produced it borrows the value. A
+function that only reads through such an accessor may take a dependent
+value; one that stores what it reads may not:
+
+```gti
+Token literal = Token("literal", 1);
+kept = literal.ref();                     // valid: ownerless
+Token token = Token(input.view(), 2);
+std::println(token.ref());                // valid: views input
+std::string_view copy = token.ref();      // keeps input and token borrowed
+kept = token.ref();                       // GTI-S2045
+```
+
+A method that returns another such accessor's reference of its read-only
+receiver, as `std::string_view& alias() { return this.ref(); }` does, relays
+what that accessor relays. A dependent value still cannot call any other
+reference accessor or be passed to a function that calls one on it,
+`GTI-S2045`.
+
+The methods of a generic class follow the same rules in each instance whose
+fields are text. A method whose returns all yield one type-parameter field of
+its read-only receiver, by value or by reference, relays that field. Any
+other read of such a field requires it to hold ownerless text, so a value
+over a local owner cannot call that method, while an instance whose field is
+not text is unaffected:
+
+```gti
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T name() { return this.value; }
+  T& get() { return this.value; }
+  void save(mut T& out) { out = this.value; }
+};
+
+Box<std::string_view> box = Box<std::string_view>(input.view());
+std::println(box.name());                 // valid: views input
+std::string_view got = box.get();         // keeps input borrowed
+box.save(out);                            // GTI-S2045
+Box<int> number = Box<int>(5);
+number.save(count);                       // valid
+```
+
+#### Payload-enum fields
+
+A class may hold the text in a payload of one of its payload-enum fields. A
+constructor initializer that stores a by-value text formal as one payload of
+the field's construction, as in `word(Word::text(text))` or
+`state(Slot<T>::full(std::move(value)))`, publishes each call's argument at
+that payload of that field, as it would at a text field:
+
+```gti
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  int column;
+  Line(std::string_view text, int column)
+      : word(Word::text(text)), column(column) {}
+};
+
+Line line = Line(input.view(), 3);        // line.word's payload views input
+switch (line.word) {
+case Word::text(value): std::println(value); break;   // a view of input
+case Word::none: break;
+}
+Word word = line.word;                     // GTI-S2045
+```
+
+A `switch` on the field observes the payload, which binds a dependent view.
+The field cannot yet be copied or moved out of its value. The value may be
+passed to a function or call a method that keeps the payload within the call.
+A function that binds a payload of its formal's or receiver's field in a
+`switch` requires that payload ownerless, unless the binding is a read-only
+reference that the whole arm returns: that relays the payload by reference,
+as an accessor of a text field does. A method returning such an accessor's
+reference composes the relay, and so do overloaded `*` and `->` operators that
+return it. A method that only tests the alternative, without binding the
+payload, requires nothing.
+
+`std::optional<std::string_view>` and `expected<std::string_view, E>` are
+ordinary classes of this shape, so a value over a local owner can test and
+read its success view:
+
+```gti
+std::optional<std::string_view> maybe =
+    std::optional<std::string_view>(input.view());
+if (maybe) {
+  std::println(*maybe);                    // a view of input
+  std::string_view view = maybe.value();   // keeps input borrowed
+}
+kept = maybe.value();                      // GTI-S2045
+maybe.value_or("none");                    // GTI-S2045: value_or binds by value
+expected<std::string_view, int> parsed =
+    expected<std::string_view, int>(input.view());
+if (parsed.has_value()) {
+  std::println(parsed.value());            // a view of input
+}
+```
+
+An optional or expected over literal text is ownerless and may be returned or
+stored. One over a local owner must be built by an explicit construction: an
+implicit conversion such as `std::optional<std::string_view> maybe =
+input.view();` still requires ownerless text, as does `std::move(maybe).value()`.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
@@ -2363,8 +2671,10 @@ require the declared owner. Callers conservatively retain the summarized owner
 dependency for the whole result, even when a literal/null branch executes.
 
 A `std::string_view` or `c_string` field, or a fixed-array element of either
-type, holds only an ownerless view, because a dynamic view cannot be stored
-there, including through a constructor initializer. Returning such storage,
+type, holds only an ownerless view wherever a method, parameter or return can
+reach it: a dynamic view is stored there, including through a constructor
+initializer, only by an owner-tracked value that stays in its creating body.
+Returning such storage,
 as in `return this.name;`, `return name;`, `return this.label.text;`,
 `return this.aliases[index];` or
 `return label.text;` through a parameter, copies that independent value. It

@@ -1,0 +1,127 @@
+// A value whose text field holds a view of a local owner carries that owner's
+// read-only dependency (L-OWN-02). A constructor that stores a text parameter
+// and a designated list publish it; copies alias it, a move transfers it, and
+// a field read yields a view of the same owner, and functions and methods
+// that keep the text within the call accept it. A function that returns one
+// text field relays what the value holds there. A payload enum's text
+// payload holds its owner the same way, and so does a temporary within its
+// expression. A function that returns a fresh value over its text parameter,
+// generic or not, relays it to the result. An ownerless value of the same
+// type keeps every capability, including storage.
+#include <std/string>
+#include <std/utility>
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  uint64_t width() { return this.text.size(); }
+  std::string_view name() { return this.text; }
+};
+
+struct Diag {
+  std::string_view text;
+  int line;
+};
+
+class Pair {
+public:
+  std::string_view first;
+  std::string_view second;
+  Pair(std::string_view first, std::string_view second)
+      : first(first), second(second) {}
+};
+
+// A payload enum may hold the same dependency in a text payload.
+enum Lexeme { word(std::string_view text), count(int value) };
+
+mut std::string_view kept = "";
+void keep(Token token) { kept = token.text; }
+// A function that keeps the text within the call accepts a relayed value.
+uint64_t measure(Token token) { return token.text.size(); }
+uint64_t measureRef(Token& token) { return token.text.size(); }
+uint64_t total(Token token) { return measure(token) + measureRef(token); }
+// Returning one text field relays what the argument holds there.
+std::string_view firstOf(Pair pair) { return pair.first; }
+std::string_view secondOf(Pair pair) { return pair.second; }
+// Returning a fresh token over the text parameter relays it to the result.
+Token makeToken(std::string_view text) { return Token(text, 8); }
+// A generic wrapper relays through the generic factory it returns, even when
+// it is declared first.
+class Label<T> {
+public:
+  T text;
+  Label(T text) : text(text) {}
+};
+Label<T> wrapLabel<T>(T text) { return makeLabel(text); }
+Label<T> makeLabel<T>(T text) { return Label<T>(text); }
+
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  std::println(token.text);
+  std::println(token.kind);
+
+  Diag diag{.text = input.view(), .line = 2};
+  std::println(diag.text);
+  std::println(diag.line);
+
+  Token copy = token;
+  Token moved = std::move(copy);
+  std::println(moved.text);
+
+  std::string_view head = token.text;
+  std::println(head.size());
+
+  // Relays: by value, by reference, through a helper and as a receiver.
+  std::println(measure(token) + measureRef(token) + total(token) +
+               token.width());
+
+  // Only the published field depends on the owner; the other stays ownerless.
+  Pair pair = Pair(input.view(), "fixed");
+  std::println(pair.first);
+  std::println(pair.second);
+
+  // A returned field view holds what the value holds in that field: the
+  // owner's text for the published field, ownerless text for the other.
+  std::string_view returned = firstOf(pair);
+  std::println(returned);
+  std::println(token.name().size());
+  kept = secondOf(pair);
+  std::println(kept);
+
+  // A payload holds the owner's text too; observing it binds a view of it.
+  Lexeme lexeme = Lexeme::word(input.view());
+  Lexeme lexemeCopy = lexeme;
+  switch (lexemeCopy) {
+  case Lexeme::word(text): std::println(text.size()); break;
+  case Lexeme::count(value): std::println(value); break;
+  }
+
+  // A temporary's text field holds what its construction put there: the
+  // owner's text for a dynamic argument, ownerless text over a literal.
+  std::string_view fresh = Token(input.view(), 4).text;
+  std::println(fresh);
+  std::println(firstOf(Pair(input.view(), "fixed")).size());
+  std::println(Token(input.view(), 5).name().size() +
+               Token(input.view(), 6).text.size());
+  kept = Token("temporary", 7).text;
+  std::println(kept);
+
+  // A factory's result views its argument's owner, as the construction it
+  // returns does; std::make_pair relays its first argument the same way.
+  Token made = makeToken(input.view());
+  std::println(made.text);
+  std::pair<std::string_view, int> paired = std::make_pair(input.view(), 9);
+  std::println(paired.first.size());
+  Label<std::string_view> wrapped = wrapLabel(input.view());
+  std::println(wrapped.text);
+
+  // A token over a literal is ownerless and can leave this body.
+  Token literal = Token("literal", 1);
+  keep(literal);
+  std::println(kept);
+  std::println(literal.width());
+  return 0;
+}

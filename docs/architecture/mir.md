@@ -379,6 +379,19 @@ Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.
 
+A by-value conditional carrier formal, such as a payload enum with a reference
+alternative, names no single stored reference. When such a function's complete
+result contract is independently proved, the per-function return summary
+admits that formal as its argument origin, as it does for a complete reference
+result. When the function returns the formal whole, its `Return` loan must be
+the one `Borrow` of the formal's guarded entry group, taken from the formal's
+typed entry contract, with the same source, access, guards and paths. The
+group's designated fields are then the source paths that the returned-field
+contract of a class result is compared against. Relaying another function's
+result for such a formal, as in `return relay(std::move(slot));`, is not yet
+admitted: call lowering publishes the referent place while the call-result
+check expects the argument's own place.
+
 The shared context-free result-domain utility combines alternative suppliers
 for one exact result field/guard/access as an OR. It preserves every available
 supplier and treats an unresolved supplier as unknown even when another is
@@ -415,7 +428,13 @@ borrowed field, verification requires the exact `Initialize` destination and
 operand, its independently reconstructed complete value fact, and a distinct
 escaping Stored field group published after initialization. Publication must
 preserve every origin, access, path and guard before retiring the producer's
-group. The published field group remains active at every normal constructor
+group. That group is either the fresh loan of the producer that constructs the
+value, or, when the value is a whole-value `Move` or copy `Load` of a by-value
+formal, the formal's guarded entry group. The verifier takes that entry group
+and its complete contents from the formal's typed entry contract, never from
+the value annotation, and requires the transferred value to still hold exactly
+that set, so a formal written before its transfer is not accepted. The
+published field group remains active at every normal constructor
 exit. Known-empty alternatives require positive typed evidence and publish no
 manufactured loan. The current source constructor slice uses an empty body
 and one common nominal field prefix; unrelated sibling obligations cannot be
@@ -1773,7 +1792,13 @@ loans. For a conditional statement, only HIR's exact declared enclosing endpoint
 can be acknowledged by nested transfers. Each arm has independent endpoint
 state; the join retains an acknowledgment only when every normally reaching
 arm supplies the same identity. A terminating arm supplies no fallthrough
-evidence. Loop and switch bodies cannot export an unproved path-only transfer
+evidence. When a consuming call retires a carrier's group in one arm of an
+`if`, `?:`, `&&` or `||`, the carrier is moved on that path, so semantics
+rejects any later use of it. Lowering then retires the same group at the end of
+every other normally reaching arm, records the same endpoint there, and only
+then joins, so every edge agrees. This applies only to a cleanup-free group: a
+lifecycle-bound group is still needed by its carrier's drop, and a carrier with
+a destructor consumed on only some paths is not yet lowered. Loop and switch bodies cannot export an unproved path-only transfer
 acknowledgment. The result still retains every source dependency; live child
 reborrows and unrelated overlapping loans remain conflicts.
 
@@ -1809,6 +1834,15 @@ function whose returns are all stored views or literals summarizes no owner
 dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
+A dynamic alternative may also return another text relay's result, such as
+`return id(s, n);` or a recursive `return first(s, n - 1);`. Its Return loan
+then transfers that call's own `Stored` result loan instead of the formal's
+entry loan. The transferred loan must have the entry's exact source, access and
+additional dependencies, with no parent or designated field. Its unique
+producer must be a `Call` with an Argument origin and no field mapping, and the
+returned value must be that call's result. `verifyMirBorrowProducers` already
+proves that such a call's result loan names its selected input, so the formal
+is the only owner either way.
 The success loan always uses read-only access, including when the enclosing
 method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
@@ -1821,7 +1855,8 @@ through a field, to a payload-enum text field, or any other checked text
 assignment outside local storage needs an operand whose source is known: a
 string or null literal (including `nullptr` for a `c_string` field), an
 ownerless field projection, unprojected static text storage, a temporary or
-block parameter whose every incoming value is known, or a formal parameter.
+block parameter whose every incoming value is known, a formal parameter, or
+the result of a call to a source function whose returns are known.
 A formal becomes a requirement of its function. Requirements propagate to a
 fixed point through calls and constructions and must equal the semantic
 `ownerlessTextParameters` exactly. Virtual, override or native dispatch,
@@ -1830,6 +1865,167 @@ requirement. Local text bindings and local text arrays are not field storage
 and may hold dynamic text. Static text storage counts as ownerless because
 semantics admits only ownerless initializers and stores into it; MIR checks
 assignments to it but does not yet re-verify global initializers.
+
+An external C declaration returning an untracked `c_string` is also an exact
+text producer. Its pointer validity and retention obligations belong to the
+native boundary; the verifier does not require a source body for that call.
+This admission requires C linkage, no source definition, and no result loan or
+borrow contract on the target or call. It does not apply to GTI-owned strings'
+dependent C-string observers or erase an annotated native result's dependency.
+
+A call's result holds what its callee's returns hold, mapped through the
+call's arguments and receiver. `TextContracts` summarizes each source
+function's returns once, from bodies alone and never from a declared
+contract, so declarations cannot justify one another cyclically. A summary
+is the least fixpoint over the returns of each set of mutually recursive
+functions: it starts as that of no completed return and only grows. A
+recursive call reads the summary computed so far, so a recursion that
+permutes its formals, such as `return f(t, s, n - 1);` beside `return s;`,
+reaches every formal that some depth of it returns. The first function of a
+recursive set to be evaluated repeats its returns, with one evaluation of
+each other member per pass, until no summary of the set grows, and then
+completes them all; a summary that read an unfinished one stays provisional
+until then. A recursive text result is therefore ownerless exactly when its
+other returns are.
+
+Text read through a reference that a source call returned is summarized the
+same way: the callee's Return loans name the referent, and its sources are
+mapped through the call. A place rooted at a value, which is how a reference
+pattern binds a payload, holds that value's text, so a payload accessor such
+as `expected::error()` reads the extracted payload. A method that returns a
+reference to its receiver's direct text field lowers it as a plain borrow of
+that field. The text is the caller's, ownerless or under the method's field
+contract, so the borrow needs no stored dependency in the body. Over a
+receiver that carries a `Stored` loan designating that field, a view copied
+through the reference carries the call's result loan, whose stored
+dependency is that owner loan. Which bindings carry it is a semantic
+decision here, as for a view copied from a field read: MIR checks the loan's
+shape, not its carriers. A method that returns another call's text reference
+publishes a `Return` loan that reborrows the call's result loan.
+`TextContracts` follows that reborrow to the call, and the verifier's carrier
+shell rule takes the expected stored dependency exactly from the forwarded
+result loan, which is none when the callee's receiver holds ownerless text.
+
+A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
+`dependentTextPublication` flag marks borrow facts that belong to the call: the
+target constructor's own summary stays empty, because its other call sites
+store ownerless text. The call has one `BorrowedFieldOrigin` from an argument
+to a direct text field of a class without borrowed state. Its result carries a
+read-only `Stored` loan that designates exactly that field. The
+constructor-summary match accepts the call, and the text contracts waive that
+argument's ownerless requirement, only when the constructor's sole text
+initializer of the field reads exactly that formal and no other text
+initializer does. The constructor body must not also store the formal as
+ownerless text. Inside such a constructor, `TextContracts` reads a
+publishable field back through `this` as that formal's text. A read in
+another initializer makes the formal non-exclusive, and a read reaching
+ownerless storage from the body fails the publication.
+
+In a function that can carry a field-level contract (`fieldContractFunction`:
+a non-generic source function or method, or a method of a generic class's
+instance), `TextContracts` independently derives `ownerlessTextFields`:
+- a formal's or the receiver's text-field projection is a field source, not
+  ownerless text;
+- field sources that reach ownerless storage or a `None`-summary text return
+  become requirements;
+- each other use of the whole formal or receiver requires all of its text
+  fields, except a `CallInput` that a call consumes as a same-class formal or
+  receiver of an in-scope callee, which inherits that callee's requirements.
+  The consuming call may be in a later block than its input, after a checked
+  argument such as `n - 1`;
+- a fixpoint shared with the text-formal requirements closes forwarding.
+
+The derived set must be contained in the declared contract. A declared
+requirement MIR does not derive only rejects more relays. A `CallInput` whose
+operand is a dependent carrier must feed an in-scope callee that requires
+none of its designated fields.
+
+A payload construction that publishes dynamic text (`dependentTextPublication`
+on its `PayloadConstruct`) is staged like a borrowed-field construction. Its
+own read-only `Stored` loan names the text argument's owner and designates
+the payload symbol, with no variant condition.
+- `dependentTextPayloadPublication` admits it in the variant-table check.
+  The result value has the enum's traits as a dependent value has them, and
+  it carries no complete dependency set.
+- `TextContracts` exempts the published operand from the ownerless payload
+  requirement. A `PayloadExtract` of a text payload is ownerless unless
+  `dependentDesignation` finds the subject's loan designating that payload
+  (`directTextPayload`).
+
+Phase 2b extends designations to paths (`TextFieldPath`): a constructor may
+publish at `[field, payload]`, a text payload of one of its payload-enum
+fields.
+- `initializerTextInputs` reads a payload-enum field initializer whose
+  argument is a `PayloadConstruct`: each text operand's sources are
+  requirements, and a formal that alone fills one payload is a published input
+  at that path. The input is not exclusive when the body reads `this` or that
+  field back (`readsPlace`). The initializer's own payload construction is
+  then accounted by the initializer (`fieldInitializerValue`), not by the
+  ownerless payload rule. `publishesText` and `dependentTextFieldFormal` match
+  the call's loan path against it, and `directTextPath` checks the path's
+  types.
+- `dependentDesignationPath` finds a carrier's designation within an operand:
+  from the carrier binding, from a field projection of it that prefixes the
+  path (`switch (line.word)`), or from the producing construction.
+- In a field-contract function, a `PayloadExtract` of a text payload from a
+  contract formal's or the receiver's payload-enum field is that formal's
+  payload source (`contractPayloadExtraction`), so stores require it and
+  reference returns relay it. A whole use requires each text field and each
+  text payload of its payload-enum fields (`formalTextFields`), and
+  `heldFieldSources` maps a payload source onto the caller's argument.
+- A loan that a call returning a reference to text produced is not a whole
+  use of the formal it is rooted at, and neither is the receiver it borrows
+  for that call: readers resolve the text through `returnSources`, so a
+  method composing another accessor's reference relays what it relays.
+
+A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
+Argument or Receiver origin to one source field, no result fields) carries the
+dependency the caller's value holds in that field:
+- In the callee no loan derives the result from the origin. Lowering seeds no
+  return-origin loan on a by-value formal; a reference formal keeps its
+  ordinary entry loan, ended at the return. A return is the exact stored-field
+  load or another field result's call, and `TextContracts` requires every
+  return to read exactly the declared field or ownerless text.
+- At a call, `TextContracts` analyzes the callee under its field contracts and
+  maps each returned field source onto the argument or receiver:
+  `heldFieldSources` gives that formal's field here, unknown text for a
+  dependent carrier designating the field, or ownerless text.
+- Lowering creates a result loan only when the origin's retained `Stored` loan
+  designates the field. A call without one is valid when its origin holds no
+  dependency at that field, or is a formal or the receiver of the enclosing
+  function.
+- A temporary origin is an SSA argument, not a place, so lowering takes its
+  loan from `loanForValue`: the `Stored` loan its publishing construction
+  produced, the loan `borrowOriginPlace` already selected for the mapping.
+  That loan has no carrier and ends with the full expression; the result's
+  own loan names the owner.
+- A dependent temporary may be the receiver of a text field result. The
+  temporary-receiver check admits that target over a publishing construction
+  or call in place of an ephemeral-borrow result.
+
+A function's `publishedTextFields` (phase 2a) are formals its returned fresh
+value holds in a direct text field. `TextContracts` derives them
+independently, in the same fixpoint as requirements, and the derived set must
+equal the declared one:
+- A Construct of the function's return type whose result a Return yields
+  relays the formal that `exactTextFormal` finds at a published constructor
+  input: a call stage over an exact load or move of the formal's binding. It
+  derives no requirement for that input.
+- A Call whose callee relays an input publishes a dynamic argument under its
+  own read-only `Stored` loan designating the field (`publishesCallText`). A
+  returned call relays this function's exact formal, and any other text there
+  needs an ownerless proof.
+- A call semantics marks `provisionalTextRelays` (recursion) requires every
+  text argument ownerless and relays nothing.
+The verifier admits a publishing call's borrow facts against its target's
+`publishedTextFields` (`dependentTextCallPublication`), as it admits a
+publishing construction against its constructor.
+
+`isOwnerlessTextFieldProjection` excludes a direct text-field
+place whose object carries a `Stored` loan designating the field: a carrier
+binding of that loan, or the construction's own result value. A write into
+such a field still requires ownerless text. A temporary's field view, whose
+value has no unprojected place, takes its record type from that value.
 
 Plain and fallible reference returns share the exact runtime-alias selection
 for a reference parameter's entry loan. If a local alias stores an accessor's
@@ -1976,7 +2172,19 @@ destructor component can prove `false` for bounded source bodies
 over the admitted scalar/class operations. A second closed proof admits exact
 source constructors whose base-free passive-scalar class has one verified
 initializer stage per declared field, their matching source destructors, and
-free-function graphs over those scalar/class values. This is only the defined-
+free-function graphs over those scalar/class values. Both proofs admit a
+`Move` of a trivially dropped, borrow-free passive value, such as
+`int32_t y = std::move(x);` or a constructor initializer `tag(std::move(tag))`:
+it carries no lifecycle event and no failure origin, its operand moves a place
+the proof already admits, and it copies the value while leaving that place
+unavailable, exactly as failure-free as a `Load`. Lowering records the move's
+HIR ownership event again on the records that consume that HIR value, such as
+its call input and full-expression boundary; the function proof admits such a
+record only when its event equals the event of the exact `Move` it repeats.
+The constructor proof admits a moved formal's owned-parameter initializer
+when that formal's type is passive. A class move still needs its lifecycle
+events, and a real failure source beside a move keeps the body conservative.
+This is only the defined-
 failure dimension by itself. Every function, constructor, or destructor whose
 definition provenance is a declaration (and every runtime-bound function) is
 verified as an exact bodyless skeleton: one empty reachable entry block ending
@@ -2125,7 +2333,15 @@ A `MirBody` owns:
   or a `Move` out of a place. `std::move(a).x` therefore moves `a` into a
   temporary (leaving `a` moved-from) and reads the field of that temporary;
   an owning class arms the temporary's full-expression obligation with the
-  Move's lifecycle event;
+  Move's lifecycle event. A built-in class assignment is the producer of its
+  own value: an explicit copy `Load` of the committed destination placed
+  directly after the `Assign`, before any later operand runs and before a
+  selected accessor's store loan ends, while the `Assign`'s own result stays
+  expression bookkeeping. `(p = q).x` therefore reads that copy, which a later
+  write of `p` in the same full-expression cannot change. Only a copyable
+  class without borrowed state or active cleanup has such a copy; lowering
+  refuses a projection of any other assignment result rather than aliasing the
+  destination;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,

@@ -327,6 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
+| `L-OWN-02` owner-tracked view fields | phase 1, 2a and 2b implemented; 2c (constructor relays and returned dependent values) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b adds reference accessors, generic class methods and nested publication through payload-enum fields, covering `optional<std::string_view>` and success `expected`. Later steps cover `expected`'s constructor relays, returned dependent values, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -8953,6 +8954,240 @@ prerequisite checkpoints as full acceptance.
   cycles documented as a limitation, allocation failure, and HIR/MIR lifecycle
   tests.
 
+### L-OWN-02: Owner-Tracked View Fields
+
+- **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
+  question in the 0.449.0 follow-ups). Phase 1 is implemented: 1a (local class
+  and struct values), 1b-i (relays and receivers) and 1b-ii (returns, payload
+  enums and temporaries). Phases 2a (published text results) and 2b
+  (reference accessors, generic class methods and nested publication) are
+  implemented; 2c and phases 3–4 are planned.
+- **Problem and client:** no field can hold a view of caller-owned text. A
+  `std::string_view` or `c_string` field, a payload-enum alternative of either
+  type, and the storage of any constructor that keeps a text parameter accept
+  only ownerless text. A token, diagnostic or error value over its input is
+  therefore rejected (`GTI-S2045`). Examples: `Diag{.text = input.view()}`,
+  `outcome::err(input.view())`, `unexpected(input.view())`. Programs copy the
+  text into a `std::string` or use the checked `std::string_view&` adapter
+  form.
+- **Rule:** a value whose text field holds owner-dependent text carries that
+  text's read-only owner dependency at the field's path, as a reference field
+  carries its referent's. The field may be direct, reached through nested
+  nominal fields, or in a payload-enum alternative. The dependency belongs to
+  the value, not to its type. A value whose text fields are all ownerless has
+  no dependency and keeps every current capability. The rule is the same for
+  any class, struct or payload enum.
+- **Design (architecture review 2026-10-21):**
+  - *Value-level, not type-level.* `std::string_view` has no borrowed state as
+    a type. A dynamic view is a carrier per value:
+    - its expression traits mark the borrowed state;
+    - a `StoredValue` semantic loan names the owner;
+    - MIR has a `Stored` entry loan with an empty designated path.
+
+    A type-level text-field trait would give every struct with a text field
+    the carrier restrictions: no reassignment, no global or container storage.
+    That would break current tables, configurations and scanners. Phase 1
+    keeps type traits and `storedReferencePaths` unchanged. Instead it lets a
+    constructed value's dependency set hold dependencies whose designated path
+    ends at a text field.
+  - *Reuse the dependency model.* `SemanticLoanDependency::designatedFields`,
+    `SemanticBorrowDependencySet`, the parameter-to-field re-rooting of
+    `storedCarrierConstructorBindings`, and
+    `FunctionBorrowDependencySummary`/`BorrowedFieldOrigin` already express
+    "field path F of the result carries the dependency of parameter p at path
+    S". A text binding differs from a reference binding in one way: an
+    ownerless argument contributes no dependency, where a missing reference
+    source fails the binding.
+  - *MIR.* A `Stored` loan whose designated path ends at a text field denotes
+    that text's opaque owner, as the empty path already does for a lone view.
+    Verification accepts that terminal and never treats it as a referent
+    place. `verifyOwnerlessTextContracts` admits a dependent text-field write
+    only when the written value's `Stored` loan designates that field.
+  - *Where a dependent value may live.* A local binding it initializes, a
+    by-value argument or result under a summary, and a temporary within one
+    expression. Still rejected:
+    - assigning a dependent value into existing storage;
+    - global or static storage, fixed arrays and collections;
+    - a field of another object;
+    - captures (phase 1);
+    - mutable, reassignable or (in phase 1) multi-owner graphs.
+  - *Backend.* No change: a view is a by-value descriptor, and every lifetime is
+    verified before emission.
+- **Phase 1a (implemented, local class and struct values):**
+  - A constructor that stores a text parameter, or a designated list,
+    publishes one named owner at one direct text field. The call's
+    `dependentTextPublication` facts never become the constructor's summary.
+  - The value lives in its creating body: a local binding, a copy that aliases
+    the loan, a move, a field read that yields a dependent view, or a
+    discarded statement. Every other use fails closed with `GTI-S2045`.
+  - Classes with a destructor, bases or virtual methods keep the ownerless
+    rule. Their destructor or dispatched methods would read the field as
+    ownerless text outside the creating body.
+  - Evidence: `view_fields` (semantic rejections and verifier mutations),
+    `view_fields_runtime` (C++20/C++23 at O0/O1/O3, no-elide, sanitized),
+    example 170 and an ownerless corpus differential.
+- **Phase 1b (remaining phase 1):**
+  - *Boundary found in 1a.* Inside a callee, a text-field read of a by-value or
+    reference parameter, of `this`, or of a capture is ownerless (the
+    stored-view rule, PR #170). A dependent value cannot be relayed until the
+    callee states which of its formals' text fields may outlive the call.
+  - *Measured direction (2026-10-22).* A prototype made those reads dependent
+    views of the caller's owner. This is the phase 4 end state, not a
+    parallel analysis. Against the same `main` it changed 2 of 1,342 corpus
+    programs, and no emitted C++. The two were the PR #170 stored-view return
+    fixture, and a by-value parameter's text field stored in a global.
+  - *Phase 1b-i (implemented in 0.455.0): relays and receivers.*
+    - **Reads.** A text-field read through a formal, the receiver or an
+      implicit member of a publishable class is a dependent view.
+    - **Field contracts.** A store or an independent return of that read
+      records a field-level ownerless requirement on the function:
+      (formal or receiver, field). Text formals keep `ownerlessTextParameters`
+      unchanged. Requirements forward through calls to a fixpoint, and MIR
+      `TextContracts` derives them independently and must agree.
+    - **Whole-value uses.** Inside its callee, a formal or receiver of a
+      publishable class is treated like a potentially dependent value:
+      - field reads consume it;
+      - passing it to a call forwards that callee's requirements;
+      - every other use requires all of its text fields to be ownerless.
+    - **Relays.** A dependent value may be an argument or method receiver
+      when the callee requires none of its designated fields. Otherwise it is
+      `GTI-S2045` at the argument, related to the callee's requirement.
+    - **Compatibility.** Every existing argument is ownerless, so every
+      existing call satisfies the new requirements.
+  - *Phase 1b-ii.*
+    - *Implemented in 0.456.0: field-sourced returns.* A return of one direct
+      text field of a read-only formal or the receiver publishes a field
+      origin in the shared summary (`returnBorrowFields`, as a returned `T&`
+      field does) instead of a requirement. The caller's result holds what the
+      argument holds in that field. Helpers and methods compose. MIR's
+      `TextContracts` proves each return reads the declared field and maps
+      returned field sources at every call.
+    - *Implemented in 0.457.0: dependent text payloads.* A payload
+      construction publishes a dynamic argument's owner at that payload, on
+      the retained-loan model, with no variant condition since a dependent
+      value cannot be reassigned. A non-consuming `switch` binds a dependent
+      view of that payload by value. MIR stages the construction, admits its
+      loan in the variant table, and `TextContracts` derives `PayloadExtract`
+      dependency from the subject's designation. Deferred: relays and returns
+      of enum values, consuming switches, `auto&` bindings of the dependent
+      payload, and generic enums (phase 2).
+    - *Implemented in 0.458.0: temporaries.* A class temporary may be read
+      within its expression. An ownerless temporary's text field is ownerless
+      text, so it may be stored or returned. A dependent one's field, a relay
+      that receives it, or a method relay of its field gives a view of the
+      owner, which may outlive the temporary. Semantics needed only the
+      fresh-receiver admission of a text field relay. MIR lowering takes a
+      temporary argument's loan from its construction, the verifier admits the
+      relay receiver, and `TextContracts` types a temporary's field view by its
+      value. The C++ emitter's cleanup-free field-read slot admits text view
+      fields, published constructions and text observers; before this, even an
+      ownerless temporary's text field was refused.
+    - *Implemented in 0.461.0: recursive relays.* A recursive or mutually
+      recursive function relays the text formal, formal field or receiver
+      field that its other returns relay. Semantics proposes the relay as a
+      least fixpoint over each recursive set, so a recursion that permutes
+      formals relays none of them. MIR accepts a return of another relay's
+      `Stored` call-result loan, and `TextContracts` finds a `CallInput`'s
+      consumer across blocks. Both rules also fix non-recursive compositions
+      such as `return id(s, n);` and `return first(t, n - 1);`.
+  - Acceptance: relayed, receiver, payload-enum and returned shapes compile
+    and run at O0/O3 with exact semantic, HIR and MIR loan identities, and
+    ownerless programs emit identical C++.
+- **Phase 2 (generic types):** `pair<std::string_view, int>`,
+  `expected<T, std::string_view>`, `optional<std::string_view>` and success
+  views such as `expected<std::string_view, E>`, including
+  `unexpected(input.view())`.
+  - *Measured (2026-10-22).* A generic class with a plain storing constructor
+    already publishes after substitution: `std::pair<std::string_view, int>`
+    built over `input.view()` works as a local. Four gaps remain. Factories
+    and generic makers that return a construction over a text formal
+    (`std::make_pair`, `unexpected`) required ownerless input. A generic
+    enum's payload, nested in a field (`optional`, `expected`), was a storage
+    error. A view read through `expected::error()` from an ownerless value
+    was a MIR ICE. A dependent value could not return to a caller.
+  - *Implemented in 0.460.0 (2a): published text results.* A function returns
+    a construction of its own return type whose constructor stores one of its
+    by-value text formals in a direct text field, or returns a call of such a
+    function with the formal. The function then relays that formal
+    (`FunctionInfo::publishedTextFields`) instead of requiring it ownerless.
+    At a call, a dynamic argument with one named owner makes the result a
+    dependent value designating the field, through the same call-site facts a
+    constructor publishes (`dependentTextPublication`, `borrowFields`). An
+    ownerless argument gives an ownerless result. Generic functions decide the
+    relay in their open analysis, where their formal requirements are
+    recorded, also through other generic calls; a call reads it after the
+    body demand. MIR's `TextContracts`
+    derives each relay independently and the derived set must equal the
+    declared one. A call made while its callee's body is still being analyzed
+    (recursion) cannot rely on unfinished relays. When its result has a text
+    field, semantics marks it `provisionalTextRelays`, and every text argument
+    of such a call must be ownerless, which MIR checks from the same mark.
+  - *Implemented in 0.462.0 (2b, part 1): reference accessors and generic
+    class methods.*
+    - *Reference accessors.* Text read through a returned reference resolves
+      in MIR through the callee's returns (`returnSources` over Return
+      loans, payload references and forwarded call results). This fixed the
+      `error()` ICE and every use of `std::string_view& ref()`.
+    - *Receiver relays.* A receiver relay of one text field
+      (`returnedTextReference`) gives a dependent value's view, like a field
+      read.
+    - *Generic class methods.* These carry contracts: a type-parameter
+      field read requires the field ownerless in text instances, except the
+      method's relayed return. Relays are decided for each concrete
+      receiver class.
+    - *Still `GTI-S2045` on dependent values:* a reference relay that
+      returns another call's reference (`alias() { return this.ref(); }`)
+      and a reference formal's accessor (`textOf(Token&)`, also still
+      `GTI-B0001` over ownerless text).
+  - *Implemented in 0.463.0 (2b, part 2): nested publication.*
+    - *Constructor payload inputs.* A constructor initializer storing a
+      by-value text formal as one payload of a field's payload-enum
+      construction (`word(Word::text(t))`, `state(...::engaged(std::move(v)))`)
+      publishes each call's argument at `[field, payload]`. Generic payload
+      enums publish like non-generic ones.
+    - *Observation and contracts.* A `switch` on the field observes the
+      payload. A function binding a contract formal's payload requires it
+      ownerless, except a reference relay whose whole arm returns the
+      binding. Whole uses cover payloads. MIR derives payload sources and
+      verifies the path.
+    - *Composition and operators.* A method returning a unique read-only
+      accessor's reference composes its relay (this also lifts the
+      `alias()` limitation of part 1), and overloaded operators relay like
+      calls, so `*o` and `if (o)` work.
+    - *Type-parameter formals.* A generic class method's `T` formal is a
+      whole use in each instance, which fixes the 0.462.0 `GTI-B0001` for
+      `std::vector<Token>::push_back`.
+    - *Still `GTI-S2045` on dependent values:* copying the field out of its
+      value, relaying a path into a callee that binds the payload by value
+      (`value_or`), an implicit conversion into the optional, consuming
+      accessors (`std::move(o).value()`) and returning the value. `o->`
+      over a `std::string_view` payload is a backend `GTI-B0001` for every
+      receiver (an existing gap that this release makes reachable).
+  - *2c: constructor relays and returned dependent values.* `expected`'s
+    constructor from `unexpected_value<E>` re-roots `[payload]` at
+    `[state, error]` through a consuming accessor. A function may return a
+    value over a reference formal's referent, as in
+    `parse(std::string& input)` returning `unexpected(input.view())`, the
+    motivating client. That return converts implicitly, so 2c also publishes
+    through a contextual construction, as in
+    `std::optional<std::string_view> o = input.view();`.
+- **Phase 3 (nested borrowing values):** a field whose type is itself
+  dependent, as in `struct conflict { Diag diag; }`. It also covers borrowed
+  error structs such as `expected<int, conflict>` where `conflict` holds an
+  `Entry& entry` (`GTI-S2045` today, even as a local). This reuses the
+  composed receiver-prefix proof from the nested conditional carriers
+  follow-up.
+- **Phase 4 (retire special cases):**
+  - the ownerless text contracts for fields (`ownerlessTextParameters`,
+    `recordOwnerlessTextCall`, and the field writes in
+    `verifyOwnerlessTextContracts`); static storage keeps them;
+  - the rule that a stored view reads as ownerless;
+  - the separate dynamic-text return summary, folded into
+    `FunctionBorrowDependencySummary`.
+- **Non-goals:** mutable views, reseating a dependency, lifetime inference from
+  emitted C++, and any library-name rule. `StringView` and `CString` are
+  already compiler-owned text types.
+
 ### L-VALUE-01: Optional And Foundational Value Utilities
 
 - **State/role:** bounded optional, pair, limits, restoring swap/exchange and
@@ -9201,7 +9436,8 @@ follow-ups:
   Restoring it needs retained dynamic-view fields with explicit owner
   dependencies, not an `expected` exception. Owner decision (2026-10-21):
   owner-tracked view fields, where a value storing a dynamic view carries its
-  owner's borrow like a `T&` field, planned as its own campaign.
+  owner's borrow like a `T&` field
+  ([`L-OWN-02`](#l-own-02-owner-tracked-view-fields)).
 - Raw-pointer error alternatives are delivered in 0.452.0 through checked
   references to pointer slots
   ([rule](../language/raw-pointers.md#type-and-binding-model)), which also
@@ -9216,15 +9452,24 @@ follow-ups:
   access.
 - Diagnostics: 0.453.0 merges repeated reports, adds the concept
   `[[unsatisfied("...")]]` explanation, and names `std::unexpected_value`.
-  Still open:
-  - a reference-returning `transform` mapper, a `void` or reference
-    `transform_error` mapper and an `expected<T, void>` error type cascade
-    through the prelude's instantiation. Rejecting them up front needs a
-    class-level `static_assert` over `std::meta::type<E>()`, which currently
-    crashes the compiler, or negated constraints;
-  - contextual-return copies report the constructor argument's `GTI-S2018`
-    rather than a return-copy `GTI-S2003`;
-  - a nested-carrier payload error points into the prelude.
+  Done in 0.454.1, each reported at the program's own code: a reference
+  mapper result is one `GTI-S2022` naming the consuming member's result, a
+  callable-class mapper is one `GTI-S2023`, each profile's class assertion
+  rejects a `void` error type as the instance's only error (`GTI-S2079`), a
+  contextual-return copy reports the return's own `GTI-S2003`, and an
+  overloaded operator's library instance is re-anchored at the operator, so
+  the nested-carrier payload error points at the user's assignment. A `void`
+  `transform_error` mapper reports two assertions, the member's and the
+  `void` error type's, instead of eight errors. `requires` clauses on the
+  mapper results were rejected: GTI proves a requirement in generic callers,
+  so a caller whose mapper returns its own type parameter would need
+  `std::movable` it never stated. Still open: `expected<void, void>`,
+  `expected<T&, void>` and `?` over an `expected<T, void>` fail earlier, in
+  the caller's own ownership checks (`GTI-S2022`, `GTI-S2045`, `GTI-S2086`),
+  because the instance's traits already make it immovable before its
+  assertion is evaluated. Reporting the assertion there needs type traits to
+  treat an already-diagnosed `void` member as neutral, which belongs to the
+  ownership-trait rules, not to `expected`.
 - Nested conditional carriers: a class field or enum payload whose type is
   another conditionally borrowed class, and a conditional reference relayed
   through a field, element or dereference of another value, are rejected in

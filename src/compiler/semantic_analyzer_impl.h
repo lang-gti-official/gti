@@ -14,7 +14,11 @@
 
 #include <cassert>
 #include <chrono>
+#include <deque>
+#include <limits>
+#include <set>
 #include <span>
+#include <tuple>
 
 namespace lang {
 
@@ -765,6 +769,7 @@ private:
     std::vector<std::size_t> returnBorrowParameters;
     std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::optional<OwnerlessTextField> returnedTextReference;
     std::vector<FunctionId> virtualRoots;
     bool compilerPrivate = false;
   };
@@ -794,6 +799,7 @@ private:
     std::vector<std::size_t> returnBorrowParameters;
     std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::optional<OwnerlessTextField> returnedTextReference;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
@@ -996,6 +1002,9 @@ private:
     // IDs below this boundary existed before loop entry and may be projected
     // to its unified exit. Newer loans belong to initializer/body cleanup.
     SemanticLoanId firstNestedLoan = 0;
+    // Writable bindings whose complete borrow dependency set this loop's entry
+    // dropped. Diagnostic provenance only; never an ownership fact.
+    std::vector<SymbolId> droppedBorrowSets;
   };
 
   struct LoanFlowConditionalArm {
@@ -2001,18 +2010,231 @@ private:
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
 
+  // A value of a class or payload enum whose type has no borrowed state but
+  // whose direct text field holds owner-dependent text (L-OWN-02). The
+  // dependency belongs to the value: its traits are the type's, made borrowed
+  // and non-assignable, as ownerDependentTextInfo does for a dynamic view.
+  [[nodiscard]] ExpressionInfo
+  textDependentValueInfo(SemanticType type,
+                         ValueCategory category = ValueCategory::Value,
+                         AccessMode access = AccessMode::ReadOnly) const;
+
+  // Whether `info` describes a value whose class type has no borrowed state
+  // but whose direct text field holds dynamic text.
+  [[nodiscard]] bool isTextDependentValue(const ExpressionInfo &info) const;
+  // The field paths that hold dynamic text in a dependent value that
+  // `expression` names: a carrier binding, a publishing construction, a
+  // grouping or move of one, or a field of one that the paths go through.
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  textDependentPaths(const Expr &expression) const;
+  // Of those, the direct text fields. A payload reached through a field is
+  // observed only by a switch on that field.
+  [[nodiscard]] std::vector<SymbolId>
+  textDependentFields(const Expr &expression) const;
+  void noteTextDependentValue(const Expr &expression);
+  void consumeTextDependentValue(const ExprPtr &expression);
+  // The owner dependency of a switch subject when it designates exactly this
+  // binding's text payload (L-OWN-02), through the subject's `prefix` of
+  // fields of the dependency's carrier.
+  [[nodiscard]] const SemanticLoanInfo *
+  dependentTextPayloadLoan(SemanticLoanId subject,
+                           const ResolvedPayloadPatternInfo &pattern,
+                           const PayloadBindingInfo &payload,
+                           std::span<const SymbolId> prefix = {}) const;
+  void finalizeTextDependentValues();
+
+  // Whether a construction of `type` may publish dynamic text into a direct
+  // text field: a class without borrowed state, bases or a destructor, so no
+  // code outside the creating body reads the field as ownerless text.
+  [[nodiscard]] bool textPublicationOwner(const SemanticType &type) const;
+
+  // L-OWN-02 phase 1b: field-level ownerless text contracts. A function
+  // states which text fields of its formals and receiver it lets outlive the
+  // call (OwnerlessTextField); a dependent value may be relayed into any
+  // other field.
+  //
+  // The function being analyzed, when it can carry such a contract: a
+  // non-generic, non-virtual GTI function or method body, outside lambdas,
+  // constructors and destructors.
+  [[nodiscard]] const FunctionInfo *textFieldContractScope() const;
+  // Whether a function can carry a field-level contract, by the same rule.
+  // It reads declaration facts only, because looking the function up during
+  // analysis would demand its body.
+  [[nodiscard]] bool textFieldContractFunction(const FunctionDecl *declaration,
+                                               const FunctionDecl *body,
+                                               bool dynamicDispatch,
+                                               ClassId ownerClass) const;
+  // Whether formal `index` is read-only: an immutable by-value parameter or
+  // a read-only reference. Only such a formal takes a relayed value.
+  [[nodiscard]] bool
+  readOnlyTextFieldFormal(const FunctionDecl &declaration,
+                          std::span<const SemanticType> types,
+                          std::size_t index) const;
+  // The formal or receiver that `object` names inside a contract scope,
+  // when its class can hold a dependent text value.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  textFieldContractFormal(const Expr &object) const;
+  // The formal or receiver text field that `expression` reads directly.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  ownerlessTextForwardingField(const ExprPtr &expression) const;
+  // The receiver text field that an implicit member read names.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  implicitReceiverTextField(const Variable &variable) const;
+  // A text call result that carries the dependency its argument or receiver
+  // holds in one direct text field: the callee returns that field.
+  struct FieldSourcedTextResult {
+    // The argument or receiver; null for an implicit receiver call.
+    const ExprPtr *origin = nullptr;
+    bool receiver = false;
+    SymbolId field = 0;
+    // The field's text payload, for a payload-enum field.
+    SymbolId payload = 0;
+  };
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  fieldSourcedTextResult(const Call &call,
+                         const ResolvedCallInfo &resolved) const;
+  // A call whose callee returns a reference to one direct text field of its
+  // receiver: reading the result reads that field of the receiver.
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  textReferenceRelay(const Call &call, const ResolvedCallInfo &resolved) const;
+  // The contract formal or receiver of the current scope that such a
+  // result's origin names, with its field: the result reads that field.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  fieldSourcedTextFormal(const FieldSourcedTextResult &result) const;
+  // The direct text fields of a class, as tooling symbols; `conditional`
+  // adds open type-parameter fields, as directTextField does.
+  [[nodiscard]] std::vector<SymbolId>
+  directTextFieldSymbols(const SemanticType &type,
+                         bool conditional = false) const;
+  void noteTextFieldFormalUse(const Expr &expression,
+                              OwnerlessTextField formal);
+  // A returned reference that a call borrowed from a contract formal or the
+  // receiver lets that whole formal escape: a whole use (L-OWN-02).
+  void noteReturnedFormalReference(const Expr &returned);
+  // A read, in a generic class method, of a type-parameter field of the
+  // read-only receiver or of a contract formal: the field may hold a relayed
+  // owner's text in a text instance.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  conditionalTextField(const Expr &expression) const;
+  // The returns of `function` that each yield the same type-parameter field
+  // of the receiver, which the method relays; empty when it relays none.
+  [[nodiscard]] const std::unordered_set<const Expr *> &
+  conditionalRelayReturns(const FunctionInfo &function);
+  // Records the requirement a conditional field read implies (L-OWN-02).
+  void noteConditionalTextFieldRead(const Expr &expression);
+  void consumeTextFieldFormalUse(const ExprPtr &expression);
+  void recordTextFieldCall(const Call &call, const CallableCandidate &target);
+  // The relays and forwards of a call's explicit receiver (or an implicit
+  // receiver call) and arguments.
+  void recordTextFieldUses(const ExprPtr *receiver, bool implicitReceiver,
+                           std::span<const ExprPtr> arguments,
+                           const CallableCandidate &target);
+  bool requireOwnerlessTextField(const FunctionDecl *function,
+                                 OwnerlessTextField field);
+  void finalizeTextFieldContracts();
+  // Whether a construction through `constructor` (null for a designated
+  // list) keeps a published text field from every other reader. Its body
+  // must be empty, and no other initializer or field default may read the
+  // object under construction; such code would read the field as ownerless
+  // text.
+  [[nodiscard]] bool
+  constructionKeepsPublishedText(const SemanticType &type,
+                                 const ConstructorDecl *constructor) const;
+  // Whether `expression` may read the object under construction: `this`, or
+  // a name that is not one of `formals` and names a non-static member.
+  // Expression forms this does not inspect count as reads.
+  [[nodiscard]] bool
+  readsConstructedObject(const Expr &expression, const ClassInfo &owner,
+                         const std::vector<Parameter> *formals) const;
+
+  // Whether `field` names a direct text field of the class `type`, or with
+  // `conditional` an open type-parameter field an instance may make text.
+  [[nodiscard]] bool directTextField(const SemanticType &type, SymbolId field,
+                                     bool conditional = false) const;
+  // Whether `payload` names a text payload of the concrete payload enum
+  // `type`.
+  [[nodiscard]] bool directTextPayload(const SemanticType &type,
+                                       SymbolId payload) const;
+  // Whether `function`'s formal `index` has a type parameter, or a reference
+  // to one, as its declared type.
+  [[nodiscard]] static bool typeParameterFormal(const FunctionInfo &function,
+                                                std::size_t index);
+  // Whether `entry`'s field, or its payload through that field, is text in
+  // the class `type`. Its formal is not consulted.
+  [[nodiscard]] bool contractTextPath(const SemanticType &type,
+                                      const OwnerlessTextField &entry) const;
+  // The text payloads of the class `type`'s payload-enum fields, as
+  // requirement entries for `formal`.
+  [[nodiscard]] std::vector<OwnerlessTextField>
+  textPayloadFields(const SemanticType &type, OwnerlessTextField formal) const;
+  // In a field-contract scope, the requirement that a switch binding a text
+  // payload of a contract formal's or the read-only receiver's payload-enum
+  // field `subject` places on that payload; a type-parameter payload of a
+  // generic class binds only its text instances.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  contractPayloadBinding(const ExprPtr &subject,
+                         const ResolvedPayloadPatternInfo &pattern,
+                         const PayloadBindingInfo &payload) const;
+
+  // The sole named owner of a dynamic text argument, designating `field`.
+  // Empty when the argument is ownerless or its owner is not a named place.
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  textFieldOwnerDependency(const ExprPtr &argument, SymbolId field);
+
+  // The owner dependencies that `argument` contributes when a constructor
+  // stores it directly in the text field `initializer` names, or in that
+  // field's text `payload`, re-rooted at that path. Empty when the argument
+  // is ownerless or has no nameable owner.
+  [[nodiscard]] std::vector<SemanticLoanDependency>
+  textFieldInitializerDependencies(const SemanticType &owner,
+                                   const ConstructorInitializer &initializer,
+                                   const ExprPtr &argument,
+                                   SymbolId payload = 0);
+
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
                                        std::string_view destination);
 
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
   [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
+  // Whether `result`, this function's returned value of type `type`, relays
+  // the formal `argument` names at its text field `field` (L-OWN-02),
+  // recording it in publishedTextFields instead of an ownerless requirement.
+  // `constructor` is the selected constructor of a returned construction.
+  [[nodiscard]] bool relayReturnedTextFormal(const Expr &result,
+                                             const SemanticType &type,
+                                             const ConstructorDecl *constructor,
+                                             const ExprPtr &argument,
+                                             SymbolId field);
+  // A callee that returns an argument in a text field of its fresh result
+  // makes `call` publish that argument's owner there, as a constructor does.
+  void publishTextCallResult(const Call &call, ResolvedCallInfo &resolved,
+                             const FunctionInfo &callee);
   void recordOwnerlessTextCall(const Call &call,
                                const CallableCandidate &target);
+  // An overloaded operator's receiver and operands relay or forward like a
+  // call's (L-OWN-02).
+  void recordTextFieldOperator(const ExprPtr &receiver,
+                               std::span<const ExprPtr> arguments,
+                               const CallableCandidate &target);
+  // The receiver field or payload that a dereference operator's returned
+  // reference designates, as a call's reference relay does.
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  operatorTextReferenceRelay(const Unary &unary) const;
   void finalizeOwnerlessTextContracts();
 
-  [[nodiscard]] std::vector<
-      std::pair<std::size_t, const ConstructorInitializer *>>
+  // A by-value text formal that a constructor initializer stores in its
+  // field, directly or as one text payload of the field's payload-enum
+  // construction.
+  struct ConstructorTextInput {
+    std::size_t parameter = 0;
+    const ConstructorInitializer *initializer = nullptr;
+    // The payload the formal fills, or 0 when the field itself is text.
+    SymbolId payload = 0;
+    // The payload construction's argument naming the formal.
+    const Expr *payloadArgument = nullptr;
+  };
+  [[nodiscard]] std::vector<ConstructorTextInput>
   ownerlessTextConstructorInputs(
       const SemanticType &type, const ConstructorDecl *constructor,
       std::span<const SemanticType> parameterTypes) const;
@@ -2210,6 +2432,11 @@ private:
   [[nodiscard]] IntrinsicKind resolvedIntrinsicKind(const Call &call) const;
 
   [[nodiscard]] static const Variable *movedVariable(const ExprPtr &expression);
+
+  // GTI-S2003 for a return whose value would be copied although its type is
+  // move-only: a named local or parameter is told to move explicitly.
+  void reportMoveOnlyReturnCopy(const ExprPtr &value,
+                                const SemanticType &valueType);
 
   enum class ImplicitReturnMoveStatus {
     NotEligible,
@@ -2835,6 +3062,29 @@ private:
   [[nodiscard]] bool containsExactType(const SemanticType &type,
                                        const SemanticType &candidate) const;
 
+  // Whether `std::meta::callable_return_type` cannot reflect `subject`: a
+  // concrete type with no callable signature, such as a class whose
+  // operator() it does not select. Its written use reports GTI-S2023.
+  [[nodiscard]] static bool
+  callableReturnSubjectUnsupported(const SemanticType &subject);
+
+  // Whether `type` contains a callable-result projection over such a subject.
+  [[nodiscard]] bool
+  containsUnsupportedCallableReturn(const SemanticType &type) const;
+
+  // Whether a candidate's signature contains such a projection.
+  [[nodiscard]] bool
+  signatureReflectsUnsupportedCallable(const CallableCandidate &function) const;
+
+  // Reports GTI-S2023 at `site` when instantiating `declared` as
+  // `instantiated` made its signature reflect such a callable's result, so
+  // the call names no result type. A written projection is reported where
+  // it is written instead.
+  [[nodiscard]] bool
+  reportUnsupportedCallableReturn(const CallableCandidate &declared,
+                                  const CallableCandidate &instantiated,
+                                  const Token &site);
+
   [[nodiscard]] bool containsDisallowedCallableCaptureState(
       const SemanticType &type, std::unordered_set<ClassId> &visiting,
       bool reviewedRawState = false, bool checkedBorrows = false) const;
@@ -2957,6 +3207,14 @@ private:
                            const ExprPtr &callee, const Token &paren,
                            std::span<const ExprPtr> arguments,
                            CallReceiverMode receiverMode);
+
+  // Whether a consuming method's (instantiated) result is a reference or
+  // carries tracked borrowed state, which its consumed receiver cannot keep
+  // alive. GTI-S2022 names that result type.
+  [[nodiscard]] bool
+  consumingResultCarriesBorrow(const CallableCandidate &function) const;
+  void reportConsumingBorrowedResult(const CallableCandidate &function,
+                                     const Token &paren);
 
   [[nodiscard]] std::vector<CallableCandidate>
   structuralOperatorCandidates(const SemanticType &receiver,
@@ -3563,6 +3821,37 @@ private:
 
   void analyzeConcreteClassStaticAssertions(const StmtList &members);
 
+  [[nodiscard]] bool
+  declaresConcreteClassStaticAssertions(const StmtList &members) const;
+
+  // Whether the concrete class instance whose context is prepared fails one
+  // of its own static assertions. They state what every analysis of the
+  // instance assumes: its field analysis reports the failure, and analyses
+  // of its methods, constructors and destructor report only their own
+  // static assertions. Evaluated at most once per instance and request
+  // outside that field analysis.
+  [[nodiscard]] bool
+  concreteClassAssertionsFail(ClassId classId,
+                              const std::vector<SemanticType> &typeArguments,
+                              const std::vector<CompileTimeValue> &values);
+
+  void recordConcreteClassAssertionOutcome(
+      ClassId classId, const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &values, bool failed);
+
+  // Whether an earlier analysis in this request learned that the instance's
+  // assertions fail (true) or hold (false).
+  [[nodiscard]] std::optional<bool> knownConcreteClassAssertionOutcome(
+      ClassId classId, const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &values) const;
+
+  // Brackets a concrete instance analysis. A failed static assertion states
+  // why the instance is invalid: when one of its own fails, or its owner
+  // class instance's does (`ownerRejected`), the analysis reports only its
+  // static assertions, not the consequences of the broken precondition.
+  void beginAssertionTracking();
+  void endAssertionTracking(bool ownerRejected);
+
   void prepareInstanceAnalysis();
 
   void seedExternalLambdaTypes(const std::vector<SemanticType> &types,
@@ -4135,22 +4424,104 @@ private:
     bool ownerDependent = false;
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
+    // A direct text field of the origin (L-OWN-02): the result carries the
+    // dependency the caller's value holds in that field, not the origin's.
+    SymbolId field = 0;
   };
 
   [[nodiscard]] PredeclaredTextBorrowSource predeclaredTextBorrowSource(
       const ExprPtr &expression, const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
 
+  // The direct text field of a read-only formal or the receiver that
+  // `expression` reads, when `function` can carry field-level text contracts.
+  // With `field`, `expression` names the formal or receiver and the field is
+  // given: a helper returns that field of it.
+  // A generic class method's receiver is `ownerType` when that names an
+  // instance of its class, and otherwise the open class, whose type-parameter
+  // fields count with `conditional`.
+  [[nodiscard]] std::optional<PredeclaredTextBorrowSource>
+  predeclaredTextFieldSource(
+      const ExprPtr &expression, const FunctionInfo &function,
+      SymbolId field = 0, const SemanticType &ownerType = SemanticType::Unknown,
+      bool conditional = false);
+
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,
                                         SemanticType ownerType);
 
-  std::unordered_set<const FunctionDecl *> activeTextBorrowSummaries;
+  // What a function's returns read, accumulated over the passes of a
+  // recursive summary: whether some return's provenance is unknown, the
+  // direct origins of its dependent returns, and the contract-formal text
+  // fields they read (L-OWN-02). The facts only grow.
+  struct TextRelaySources {
+    bool unknown = false;
+    std::set<std::pair<BorrowOriginKind, std::size_t>> direct;
+    std::set<std::tuple<BorrowOriginKind, std::size_t, SymbolId>> fields;
+
+    void add(const PredeclaredTextBorrowSource &source);
+    // A summary no further return can change: unknown or two origins.
+    [[nodiscard]] bool settled() const { return unknown || direct.size() > 1; }
+    friend bool operator==(const TextRelaySources &,
+                           const TextRelaySources &) = default;
+  };
+  [[nodiscard]] static std::optional<FunctionReturnBorrowSummary>
+  textRelaySummary(const TextRelaySources &sources);
+
+  // The text summaries of the outermost dynamicTextReturnBorrowSummary query,
+  // per declaration. A summary whose evaluation read one lower on the stack
+  // is provisional until the evaluation that read nothing lower completes.
+  struct TextBorrowSummaryEntry {
+    const FunctionDecl *declaration = nullptr;
+    TextRelaySources sources;
+    // The 1-based position on the evaluation stack while its returns are
+    // being evaluated, and zero otherwise.
+    std::size_t depth = 0;
+    // The lowest stack position a provisional summary depends on.
+    std::size_t lowestRead = 0;
+    bool provisional = false;
+    bool complete = false;
+  };
+  std::deque<TextBorrowSummaryEntry> textBorrowSummaries;
+  // Provisional summaries, in the order they were computed.
+  std::vector<std::size_t> provisionalTextBorrowSummaries;
+  std::size_t textBorrowSummaryDepth = 0;
+  // Reference relay summaries being composed, outermost first.
+  std::vector<const FunctionDecl *> textReferenceSummaryStack;
+  // The lowest stack position the current evaluation has read.
+  std::size_t textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
+  // Whether a provisional summary grew in the current evaluation.
+  bool provisionalTextBorrowGrew = false;
+
+  // Whether `function`'s summary is still being computed: a call to it is
+  // recursive and reads its current approximation.
+  [[nodiscard]] bool textBorrowSummaryInProgress(const FunctionInfo &function);
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
   dynamicTextReturnBorrowSummary(
       const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
+
+  // The receiver's direct text field, or text payload of a payload-enum
+  // field, that every returned reference to text designates, in a
+  // field-contract method.
+  [[nodiscard]] std::optional<OwnerlessTextField> textReferenceReturnSummary(
+      const FunctionInfo &function,
+      const SemanticType &ownerType = SemanticType::Unknown);
+  // The receiver payload that `arm` of `selection` relays by reference: the
+  // whole arm returns a read-only reference binding of one text payload of
+  // the receiver field `this.field` that the switch observes.
+  // The relay of the receiver accessor that `returned` calls on `this`: a
+  // zero-argument call selecting one read-only method, whose relay a
+  // method returning that call composes.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  composedTextReference(const ExprPtr &returned, const FunctionInfo &function,
+                        const SemanticType &ownerType);
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  payloadReferenceRelayArm(const SwitchStmt &selection, const SwitchArm &arm,
+                           const FunctionInfo &function,
+                           const SemanticType &ownerType,
+                           bool conditional) const;
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);
@@ -4946,6 +5317,10 @@ private:
 
   [[nodiscard]] bool
   freshTemporaryMethodSupported(const CallableCandidate &function) const;
+  // A read-only method that returns one direct text field of its receiver
+  // (L-OWN-02).
+  [[nodiscard]] bool
+  receiverTextFieldRelay(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,
@@ -5660,6 +6035,41 @@ private:
       Token location;
       bool diagnosed = false;
     };
+    // A value holding dynamic text (L-OWN-02). Phase 1 keeps it in the body
+    // that creates it: a context that does so consumes it, and every other
+    // use is reported once at finalization.
+    struct TextDependentValueUse {
+      Token location;
+      bool consumed = false;
+      bool diagnosed = false;
+      // A relay waits for the request's own finalization to decide it.
+      bool relayed = false;
+    };
+    // A use of a formal or the receiver of a publishable class inside a
+    // contract scope. A field read or a forwarding call consumes it; any
+    // other use lets every text field of the formal outlive the call.
+    struct TextFieldFormalUse {
+      const FunctionDecl *function = nullptr;
+      OwnerlessTextField formal;
+      bool consumed = false;
+    };
+    // A formal or receiver passed on as another function's class formal or
+    // receiver: that callee's requirements on it become the caller's.
+    struct TextFieldForwardUse {
+      const FunctionDecl *caller = nullptr;
+      OwnerlessTextField callerFormal;
+      FunctionId callee = 0;
+      OwnerlessTextField calleeFormal;
+    };
+    // A dependent value passed as a class formal or receiver, with the
+    // fields that hold dynamic text, recorded while its scope is live.
+    struct TextDependentRelay {
+      const Expr *argument = nullptr;
+      FunctionId callee = 0;
+      OwnerlessTextField calleeFormal;
+      std::vector<std::vector<SymbolId>> paths;
+      bool decided = false;
+    };
     struct MutableLocalCandidate {
       SymbolId symbol = 0;
       Token keyword;
@@ -5677,6 +6087,19 @@ private:
     SemanticCatalog catalog;
     std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
+    std::vector<const Expr *> textDependentValueOrder;
+    std::unordered_map<const Expr *, TextDependentValueUse> textDependentValues;
+    // Payload arguments of the constructor initializer being analysed that
+    // name a text input formal; each call publishes that input's owner.
+    std::vector<const Expr *> constructorTextPayloadArguments;
+    std::vector<const Expr *> textFieldFormalOrder;
+    std::unordered_map<const Expr *, TextFieldFormalUse> textFieldFormalUses;
+    std::vector<TextFieldForwardUse> textFieldForwardUses;
+    std::vector<TextDependentRelay> textDependentRelays;
+    // Per generic class method: the returns that relay its receiver's
+    // type-parameter field (conditionalRelayReturns).
+    std::unordered_map<const FunctionDecl *, std::unordered_set<const Expr *>>
+        conditionalRelayReturns;
     ValueFlowState valueFlow;
     std::unordered_set<std::string> reportedCompilerPrivateAccess;
     std::unordered_map<const Expr *, const ParameterDefault *>
@@ -5794,6 +6217,8 @@ private:
     const FunctionDecl *currentFunctionDeclaration = nullptr;
     std::optional<SemanticType> contextualInitializerType;
     const Expr *contextualInitializerExpression = nullptr;
+    // The value of the return statement whose declared type it initializes.
+    const Expr *contextualReturnValue = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
     std::optional<ResultUse> contextualResultUse;
@@ -5817,6 +6242,19 @@ private:
     // Set while this analyzer reanalyses an instance whose reanalysis is
     // already open further up the staging chain, which owns its assertions.
     bool assertionsOwnedUpChain = false;
+    // Whether each concrete class instance with static assertions fails one,
+    // keyed by its field-initializer reanalysis; see
+    // concreteClassAssertionsFail().
+    std::unordered_map<InstanceAnalysisKey, bool, InstanceAnalysisKeyHash>
+        classAssertionOutcomes;
+    // While a concrete instance is analysed, each static assertion's own
+    // diagnostics are also copied here. If one fails, or the instance's class
+    // assertion did, they are all the analysis reports; see
+    // beginAssertionTracking().
+    bool trackAssertionDiagnostics = false;
+    bool trackedAssertionFailed = false;
+    std::size_t assertionTrackingStart = 0;
+    std::vector<SemanticDiagnostic> assertionDiagnostics;
     std::shared_ptr<CompleteReturnQueryState> completeReturnQueries;
     std::shared_ptr<RawResultQuery> collectingRawResult;
     std::size_t rawAccessObservation = 0;
@@ -6108,6 +6546,11 @@ private:
         contextualInitializerType;
     decltype(RequestSessionState::contextualInitializerExpression)
         contextualInitializerExpression{};
+    decltype(RequestSessionState::contextualReturnValue)
+        contextualReturnValue{};
+    // A nested body analysis is not part of the enclosing instance's own
+    // assertions.
+    bool trackAssertionDiagnostics = false;
     decltype(RequestSessionState::contextualOperatorIntegerType)
         contextualOperatorIntegerType;
     decltype(RequestSessionState::contextualCallableResult)
@@ -6188,6 +6631,7 @@ private:
       requestSession.contextualInitializerType;
   const Expr *&contextualInitializerExpression =
       requestSession.contextualInitializerExpression;
+  const Expr *&contextualReturnValue = requestSession.contextualReturnValue;
   std::optional<SemanticType> &contextualOperatorIntegerType =
       requestSession.contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> &contextualCallableResult =

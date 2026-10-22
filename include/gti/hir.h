@@ -257,6 +257,12 @@ struct HirValue {
   // Exact argument origins retained for composed owner-dependent values.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // The borrow facts above are this construction's dynamic text arguments
+  // published into direct text fields, not its constructor's summary.
+  bool dependentTextPublication = false;
+  // A call analyzed while its callee's text relays were still being derived
+  // (recursion): each of its text arguments must be ownerless (L-OWN-02).
+  bool provisionalTextRelays = false;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
@@ -619,6 +625,8 @@ struct HirFunctionInstance {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<std::size_t> ownerlessTextParameters;
+  std::vector<OwnerlessTextField> ownerlessTextFields;
+  std::vector<PublishedTextField> publishedTextFields;
   std::optional<SemanticOwnerlessTextContractProof> ownerlessTextContractProof;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;

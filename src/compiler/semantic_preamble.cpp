@@ -89,6 +89,10 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
           *source.requestSession.programConcreteEffects);
   requestSession.rawResultQueries.reset();
   requestSession.openReanalyses.reset();
+  requestSession.classAssertionOutcomes.clear();
+  requestSession.trackAssertionDiagnostics = false;
+  requestSession.trackedAssertionFailed = false;
+  requestSession.assertionDiagnostics.clear();
   requestSession.collectingRawResult.reset();
   compilerTypeClasses = source.compilerTypeClasses;
   designatedMoves = source.designatedMoves;
@@ -205,6 +209,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
   finalizeOwnerlessTextContracts();
+  finalizeTextDependentValues();
   discoverOwnedCallableValueParameters();
   validateOnceCallableForwardings();
   validateOwnedCallableArguments();

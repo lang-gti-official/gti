@@ -1,0 +1,67 @@
+// Recursive and mutually recursive functions relay a dynamic text formal, a
+// formal's text field and the receiver's, as non-recursive relays do.
+#include <std/string>
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view skip(int n) {
+    if (n == 0) {
+      return this.text;
+    }
+    return this.skip(n - 1);
+  }
+};
+
+std::string_view first(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return first(s, n - 1);
+}
+
+std::string_view even(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return odd(s, n - 1);
+}
+
+std::string_view odd(std::string_view s, int n) { return even(s, n); }
+
+T relay<T>(T s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return relay(s, n - 1);
+}
+
+std::string_view textOf(Token token, int n) {
+  if (n == 0) {
+    return token.text;
+  }
+  return textOf(token, n - 1);
+}
+
+std::string_view outer(std::string_view s, int n) { return first(s, n - 1); }
+
+std::string_view outerText(Token token, int n) {
+  return textOf(token, n - 1);
+}
+
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  std::println(first(input.view(), 3));
+  std::println(even(input.view(), 3));
+  std::println(relay(input.view(), 2));
+  std::println(textOf(token, 2));
+  std::println(token.skip(2));
+  std::println(outer(input.view(), 2));
+  std::println(outerText(token, 2));
+  std::string_view literal = first("literal", 2);
+  std::println(literal);
+  return token.kind == 3 ? 0 : 1;
+}

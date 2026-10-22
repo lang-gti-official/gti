@@ -745,6 +745,13 @@ struct MirInstruction {
   // Preserve the frontend-selected origins; emission must not infer them.
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
+  // A construction or call publishes dynamic text arguments into direct text
+  // fields under its result loan. Its borrow facts describe this call, not
+  // the target's summary.
+  bool dependentTextPublication = false;
+  // Semantics analyzed this call before its callee's text relays were final
+  // (recursion), so each of its text arguments must be ownerless.
+  bool provisionalTextRelays = false;
   std::optional<BorrowOriginPlace> borrowPlace;
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredBorrowFields;
@@ -1394,6 +1401,9 @@ struct MirFunctionInstance {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<std::size_t> ownerlessTextParameters;
+  std::vector<OwnerlessTextField> ownerlessTextFields;
+  // Formals a returned fresh value holds in a direct text field (L-OWN-02).
+  std::vector<PublishedTextField> publishedTextFields;
   std::vector<HirBindingId> parameterBindings;
   ProgramEntryKind entryKind = ProgramEntryKind::None;
   std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;

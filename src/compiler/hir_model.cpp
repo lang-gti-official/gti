@@ -300,7 +300,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                       return type.kind == SemanticType::StringView ||
                              type.kind == SemanticType::CString;
                     });
-    if (!textSignature && function.ownerlessTextParameters.empty())
+    if (!textSignature && function.ownerlessTextParameters.empty() &&
+        function.ownerlessTextFields.empty() &&
+        function.publishedTextFields.empty())
       continue;
     const auto &proof = function.ownerlessTextContractProof;
     // HIR publishes a concrete instance's parameters with packs expanded, so
@@ -317,6 +319,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         proof->function() != function.declaration ||
         proofParameters != function.parameterTypes ||
         proof->required() != function.ownerlessTextParameters ||
+        proof->requiredFields() != function.ownerlessTextFields ||
+        proof->published() != function.publishedTextFields ||
         proof->snapshot() != program.analysisSeal().programSnapshot)
       result.errors.emplace_back("HIR ownerless text contract differs from its "
                                  "exact semantic signature and proof");

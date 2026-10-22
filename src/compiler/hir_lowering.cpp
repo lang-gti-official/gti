@@ -635,6 +635,8 @@ private:
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
+         .ownerlessTextFields = declaration.ownerlessTextFields,
+         .publishedTextFields = declaration.publishedTextFields,
          .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .explicitReturnBorrowOrigin = declaration.explicitReturnBorrowOrigin,
@@ -768,13 +770,16 @@ private:
       return 0;
     }
     const ConstructorId identity = generatedBody ? 0 : construction.constructor;
+    // A dependent text publication is a call-site fact; it never forms the
+    // constructor's own borrow summary.
+    const bool summary = !construction.dependentTextPublication;
     if (const std::optional<std::size_t> existing =
             instanceIndex.findConstructor(identity, *owner,
                                           construction.typeArguments,
                                           construction.valueArguments)) {
       HirConstructorInstance &instance =
           output.program.constructors[*existing - 1];
-      if (construction.borrowOrigin != BorrowOriginKind::None) {
+      if (construction.borrowOrigin != BorrowOriginKind::None && summary) {
         instance.borrowOrigin = construction.borrowOrigin;
         instance.borrowParameter = construction.borrowArgument;
         instance.borrowParameters = construction.borrowArguments;
@@ -820,10 +825,12 @@ private:
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
          .parameterTypes = construction.parameterTypes,
-         .borrowOrigin = construction.borrowOrigin,
-         .borrowParameter = construction.borrowArgument,
+         .borrowOrigin =
+             summary ? construction.borrowOrigin : BorrowOriginKind::None,
+         .borrowParameter = summary ? construction.borrowArgument : 0,
          .borrowAccess = construction.borrowAccess,
-         .borrowParameters = construction.borrowArguments,
+         .borrowParameters = summary ? construction.borrowArguments
+                                     : std::vector<std::size_t>{},
          .instantiationSite = std::move(site)});
     instanceIndex.recordConstructor(identity, *owner,
                                     construction.typeArguments,
@@ -1832,10 +1839,14 @@ private:
             {diagnostic.primary,
              "This selected call requires the missing definition."});
         diagnostic.primary = *request;
-      } else if (origin && trustedSources.contains(diagnostic.primary.source) &&
+      } else if (origin && diagnostic.severity == DiagnosticSeverity::Error &&
+                 trustedSources.contains(diagnostic.primary.source) &&
                  !trustedSources.contains(origin->source)) {
         // Library internals are not the user's to fix: report where other
         // code first required this instance and keep the library location.
+        // A warning there, such as a raw-pointer audit finding, describes the
+        // library's own code and keeps its location; the audit policy then
+        // reports or drops it by that location.
         diagnostic.related.insert(diagnostic.related.begin(),
                                   {diagnostic.primary, libraryInstanceNote});
         diagnostic.primary = *origin;
@@ -2123,6 +2134,10 @@ private:
     if (concrete != nullptr) {
       output.program.functions[index].ownerlessTextParameters =
           concrete->ownerlessTextParameters;
+      output.program.functions[index].ownerlessTextFields =
+          concrete->ownerlessTextFields;
+      output.program.functions[index].publishedTextFields =
+          concrete->publishedTextFields;
       output.program.functions[index].ownerlessTextContractProof =
           model->ownerlessTextContractProof(*concrete->declaration);
       output.program.functions[index].returnBorrowOrigin =
@@ -4304,7 +4319,8 @@ private:
           ownerType.kind == SemanticType::Class
               ? ownerType.valueArguments
               : std::vector<CompileTimeValue>{},
-          {}, {}, resolved.returnType, resolved.parameterTypes);
+          {}, {}, resolved.returnType, resolved.parameterTypes,
+          operatorInstantiationSite(value.source));
     }
 
     if (!value.functionTarget ||
@@ -4441,6 +4457,54 @@ private:
     return tokenSpan(call.leftParen() ? *call.leftParen() : call.paren());
   }
 
+  // An overloaded operator or contextual conversion requests its instance
+  // where it is written: the operator token, or the converted operand, as a
+  // named call requests one at its callee name.
+  [[nodiscard]] static std::optional<SourceSpan>
+  operatorInstantiationSite(const Expr *expression) {
+    if (expression == nullptr)
+      return std::nullopt;
+    switch (expression->exprKind()) {
+    case ExprKind::Call:
+      return callInstantiationSite(static_cast<const Call &>(*expression));
+    case ExprKind::Assign:
+      return tokenSpan(static_cast<const Assign &>(*expression).oper());
+    case ExprKind::Binary:
+      return tokenSpan(static_cast<const Binary &>(*expression).oper());
+    case ExprKind::Logical:
+      return tokenSpan(static_cast<const Logical &>(*expression).oper());
+    case ExprKind::Unary:
+      return tokenSpan(static_cast<const Unary &>(*expression).oper());
+    case ExprKind::Postfix:
+      return tokenSpan(static_cast<const Postfix &>(*expression).oper());
+    case ExprKind::PlaceSet:
+      return tokenSpan(static_cast<const PlaceSet &>(*expression).oper());
+    case ExprKind::Index:
+      return tokenSpan(static_cast<const Index &>(*expression).bracket());
+    case ExprKind::IndexSet:
+      return tokenSpan(static_cast<const IndexSet &>(*expression).bracket());
+    case ExprKind::DereferenceSet:
+      return tokenSpan(
+          static_cast<const DereferenceSet &>(*expression).dereference());
+    case ExprKind::Get:
+      return tokenSpan(static_cast<const Get &>(*expression).name());
+    case ExprKind::Set:
+      return tokenSpan(static_cast<const Set &>(*expression).name());
+    case ExprKind::Variable:
+      return tokenSpan(static_cast<const Variable &>(*expression).name());
+    case ExprKind::QualifiedName:
+      return tokenSpan(
+          static_cast<const QualifiedName &>(*expression).name().last());
+    case ExprKind::This:
+      return tokenSpan(static_cast<const This &>(*expression).keyword());
+    case ExprKind::Grouping:
+      return operatorInstantiationSite(
+          static_cast<const Grouping &>(*expression).expression().get());
+    default:
+      return std::nullopt;
+    }
+  }
+
   [[nodiscard]] std::optional<SourceLocationLiteral>
   sourceLocationAt(const Expr &expression) const {
     if (const auto *call = exprAs<Call>(&expression)) {
@@ -4503,6 +4567,7 @@ private:
         .borrowAccess = construction.borrowAccess,
         .borrowArguments = construction.borrowArguments,
         .borrowFields = construction.borrowFields,
+        .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
     const HirConstructorInstanceId target =
@@ -5021,6 +5086,7 @@ private:
         .borrowAccess = construction.borrowAccess,
         .borrowArguments = construction.borrowArguments,
         .borrowFields = construction.borrowFields,
+        .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
     if (construction.contextualBorrowDependencies) {
@@ -5989,6 +6055,10 @@ private:
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
         value.borrowFields = resolved->borrowFields;
+        // The callee's published text field holds this call's dynamic
+        // argument (L-OWN-02); like a constructor's, the fact is the call's.
+        value.dependentTextPublication = resolved->dependentTextPublication;
+        value.provisionalTextRelays = resolved->provisionalTextRelays;
         value.restoresReferenceResult = resolved->restoresReferenceResult;
         value.restoredBorrowFields = resolved->restoredBorrowFields;
         value.borrowAccess = resolved->borrowAccess;
@@ -6300,6 +6370,7 @@ private:
       value.borrowArgument = construction->borrowArgument;
       value.borrowArguments = construction->borrowArguments;
       value.borrowFields = construction->borrowFields;
+      value.dependentTextPublication = construction->dependentTextPublication;
       value.borrowAccess = construction->borrowAccess;
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;
@@ -6429,7 +6500,8 @@ private:
                 : classValueArguments;
         value.functionTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes);
+                            {}, resolved->returnType, resolved->parameterTypes,
+                            operatorInstantiationSite(raw));
       }
     }
     // The conversion applied to this value is a further call; its dispatch
@@ -6453,7 +6525,8 @@ private:
                 : classValueArguments;
         contextualConversionTarget =
             enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
-                            {}, resolved->returnType, resolved->parameterTypes);
+                            {}, resolved->returnType, resolved->parameterTypes,
+                            operatorInstantiationSite(raw));
       }
     }
     // A function target is this instance's exact selection. A generic
@@ -6611,13 +6684,17 @@ private:
       const auto *call = exprAs<Call>(raw);
       const auto *payload =
           call ? model.findPayloadConstruction(*call) : nullptr;
-      if (payload &&
-          std::any_of(
-              payload->parameterTypes.begin(), payload->parameterTypes.end(),
-              [&](const SemanticType &field) {
-                return field.kind == SemanticType::Reference ||
-                       instanceProvider->traitsFor(field).containsBorrowedState;
-              })) {
+      // A published dynamic text payload (L-OWN-02) is borrowed state of this
+      // call, so it takes the same ordered input protection.
+      if (payload && (payload->dependentTextPublication ||
+                      std::any_of(payload->parameterTypes.begin(),
+                                  payload->parameterTypes.end(),
+                                  [&](const SemanticType &field) {
+                                    return field.kind ==
+                                               SemanticType::Reference ||
+                                           instanceProvider->traitsFor(field)
+                                               .containsBorrowedState;
+                                  }))) {
         // Borrowed aggregate fields require ordinary ordered argument
         // protection across later field evaluation. The sealed variant owns
         // this signature; neither a backend nor an aggregate spelling may
@@ -6629,6 +6706,16 @@ private:
                                        .arguments = std::move(*planned)};
         else
           lifecycleValid = false;
+      }
+      // A published text payload's owner is this call's fact (L-OWN-02),
+      // as a constructor call's published text field is.
+      if (payload && payload->dependentTextPublication &&
+          !payload->borrowFields.empty()) {
+        value.borrowOrigin = BorrowOriginKind::Argument;
+        value.borrowArgument = payload->borrowFields.front().parameter;
+        value.borrowAccess = AccessMode::ReadOnly;
+        value.borrowFields = payload->borrowFields;
+        value.dependentTextPublication = true;
       }
     }
     if ((value.intrinsic == IntrinsicKind::TextViewFromAddress ||
