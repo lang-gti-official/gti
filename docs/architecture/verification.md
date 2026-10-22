@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Assignment result field reads (0.459.2)
+## Assignment result field reads (0.459.3)
 
 `assignment_result_projection_runtime` runs `assignment_result_projection.gti`.
 User-defined structs read a field of a class assignment's result in a function
