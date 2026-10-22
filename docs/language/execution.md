@@ -93,6 +93,9 @@ is no memoization: two uses mean two evaluations, and ordinary ownership
 analysis rejects a repeated consumption of the same named owner. The helper
 controls sequencing; within every evaluated expression the ordinary strict
 left-to-right rule applies. Final packs expand in their original order.
+Each forced occurrence has the ordinary full-expression lifetime at its
+expanded use; there is no implicit extension to the end of the written helper
+invocation.
 
 Expansion is hygienic: free body names and omitted defaults resolve at the
 definition; argument expressions resolve at the invocation, with their
