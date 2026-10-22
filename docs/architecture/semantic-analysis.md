@@ -2546,8 +2546,8 @@ today, and any expression form the check does not inspect counts as a read.
 A function in a field-contract scope (`textFieldContractScope`) carries a
 field-level contract, `FunctionInfo::ownerlessTextFields`, beside
 `ownerlessTextParameters`. Such a scope is a non-generic, non-virtual GTI
-function or method body, outside lambdas, constructors and destructors.
-Inside it:
+function or method body, including a method of a generic class, outside
+lambdas, constructors and destructors. Inside it:
 - A text-field read through a formal, `this` or an implicit member of a
   publishable class is an owner-dependent view.
 - A sink that already requires ownerless text records (formal or receiver,
@@ -2557,6 +2557,23 @@ Inside it:
 - Each other use of such a formal is noted like a dependent value. A field
   read consumes it. `recordTextFieldCall` forwards a formal that is passed to
   an in-scope callee's formal or receiver of the same class.
+- In a generic class method's open analysis, a read of a type-parameter
+  field of the read-only receiver or of a contract formal
+  (`conditionalTextField`) records the requirement on that field directly
+  (`noteConditionalTextFieldRead`). Only a return among
+  `conditionalRelayReturns`, which hold when every return yields the same
+  such field of the receiver, is exempt. The requirement binds only instances whose field is
+  text: `analyzeFunctionInstance` keeps the open requirements whose field is
+  a direct text field of the instance, and HIR and the contract proof carry
+  those.
+- Relays of a generic class method are decided for the receiver's concrete
+  class. A call computes `dynamicTextReturnBorrowSummary` and
+  `textReferenceReturnSummary` on its concrete callee, and so does the
+  instance analysis, so an instance whose field is not text keeps no borrow
+  summary. Only the reference relay is also recorded on the open declaration
+  (conditionally, for a type-parameter referent): a call reads it where its
+  result is a reference to text, and it lets `recordTextFieldCall` relay a
+  dependent receiver before the concrete callee exists.
 - `finalizeTextFieldContracts` turns each unconsumed use into requirements on
   every text field, then closes forwarding to a fixpoint.
 

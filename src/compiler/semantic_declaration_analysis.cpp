@@ -7293,7 +7293,8 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
 }
 
 auto SemanticVisitor::Impl::predeclaredTextFieldSource(
-    const ExprPtr &expression, const FunctionInfo &function, SymbolId given)
+    const ExprPtr &expression, const FunctionInfo &function, SymbolId given,
+    const SemanticType &ownerType, bool conditional)
     -> std::optional<PredeclaredTextBorrowSource> {
   if (!expression || !textFieldContractFunction(
                          function.declaration, function.bodyDeclaration(),
@@ -7329,7 +7330,10 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
     return Origin{.source = {.known = true,
                              .ownerDependent = true,
                              .origin = BorrowOriginKind::Receiver},
-                  .type = openClassType(function.ownerClass)};
+                  .type = ownerType.kind == SemanticType::Class &&
+                                  ownerType.classId == function.ownerClass
+                              ? ownerType
+                              : openClassType(function.ownerClass)};
   };
   const auto origin = [&](const Expr *object) -> std::optional<Origin> {
     object = unwrap(object);
@@ -7364,7 +7368,7 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
         return std::nullopt;
       field = symbolForDeclaration(member->symbol.declaration);
     }
-    if (field == 0 || !directTextField(found->type, field))
+    if (field == 0 || !directTextField(found->type, field, conditional))
       return std::nullopt;
     found->source.field = field;
     return found->source;
@@ -7393,7 +7397,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   // A contract formal's text field may hold the caller's dynamic text
   // (L-OWN-02), so reading it relays that field's dependency. Any other
   // stored view holds ownerless text.
-  if (auto field = predeclaredTextFieldSource(expression, function))
+  if (auto field =
+          predeclaredTextFieldSource(expression, function, 0, ownerType))
     return *field;
   if (storedTextViewRead(expression, function, ownerType)) {
     return {.known = true};
@@ -7705,11 +7710,17 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
 }
 
 auto SemanticVisitor::Impl::textReferenceReturnSummary(
-    const FunctionInfo &function) -> std::optional<OwnerlessTextField> {
+    const FunctionInfo &function, const SemanticType &ownerType)
+    -> std::optional<OwnerlessTextField> {
+  // An open referent type relays conditionally: a call reads the relay only
+  // where its result is a reference to text.
   const SemanticType &type = function.returnType;
+  const bool conditional =
+      type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+      type.arguments.front().kind == SemanticType::TypeParameter;
   if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
       (type.arguments.front().kind != SemanticType::StringView &&
-       type.arguments.front().kind != SemanticType::CString) ||
+       type.arguments.front().kind != SemanticType::CString && !conditional) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr)
@@ -7730,9 +7741,11 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
   std::optional<OwnerlessTextField> result;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
-    const auto source = returned == nullptr
-                            ? std::nullopt
-                            : predeclaredTextFieldSource(*returned, function);
+    const auto source =
+        returned == nullptr
+            ? std::nullopt
+            : predeclaredTextFieldSource(*returned, function, 0, ownerType,
+                                         conditional);
     if (!source || source->origin != BorrowOriginKind::Receiver ||
         (result && result->field != source->field)) {
       valid = false;

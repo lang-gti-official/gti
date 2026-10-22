@@ -2562,6 +2562,11 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (exprAs<Variable>(&expr) != nullptr || exprAs<This>(&expr) != nullptr)
     if (const auto formal = textFieldContractFormal(expr))
       noteTextFieldFormalUse(expr, *formal);
+  // A generic class method's type-parameter field may hold a relayed owner's
+  // text in a text instance: any read but the method's relayed return
+  // requires it ownerless there.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<Get>(&expr) != nullptr)
+    noteConditionalTextFieldRead(expr);
   if (const auto *get = exprAs<Get>(&expr);
       get != nullptr && result != SemanticType::Function) {
     consumeTextDependentValue(get->object());

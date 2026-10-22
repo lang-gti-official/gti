@@ -85,8 +85,9 @@ bool readOnlyContractFormal(const MirFunctionInstance &function,
                      });
 }
 
-// A non-generic, non-virtual GTI source function or method of a non-generic
-// class: the functions that carry field-level contracts.
+// A non-generic, non-virtual GTI source function or method, including an
+// instance's method of a generic class: the functions that carry field-level
+// contracts.
 bool fieldContractFunction(const MirProgram &program,
                            const MirFunctionInstance &function) {
   if (function.definitionKind != MirDefinitionKind::Source ||
@@ -94,11 +95,7 @@ bool fieldContractFunction(const MirProgram &program,
       function.linkage != LanguageLinkage::Gti ||
       !function.typeArguments.empty() || !function.valueArguments.empty())
     return false;
-  if (!function.owner)
-    return true;
-  const auto *owner = program.findClassInstance(*function.owner);
-  return owner != nullptr && owner->type.arguments.empty() &&
-         owner->type.valueArguments.empty();
+  return !function.owner || program.findClassInstance(*function.owner);
 }
 
 class TextContracts {
