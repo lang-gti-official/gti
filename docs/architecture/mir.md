@@ -1861,6 +1861,23 @@ The derived set must be contained in the declared contract. A declared
 requirement MIR does not derive only rejects more relays. A `CallInput` whose
 operand is a dependent carrier must feed an in-scope callee that requires
 none of its designated fields.
+
+A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
+Argument or Receiver origin to one source field, no result fields) carries the
+dependency the caller's value holds in that field:
+- In the callee no loan derives the result from the origin. Lowering seeds no
+  return-origin loan on a by-value formal; a reference formal keeps its
+  ordinary entry loan, ended at the return. A return is the exact stored-field
+  load or another field result's call, and `TextContracts` requires every
+  return to read exactly the declared field or ownerless text.
+- At a call, `TextContracts` analyzes the callee under its field contracts and
+  maps each returned field source onto the argument or receiver:
+  `heldFieldSources` gives that formal's field here, unknown text for a
+  dependent carrier designating the field, or ownerless text.
+- Lowering creates a result loan only when the origin's retained `Stored` loan
+  designates the field. A call without one is valid when its origin holds no
+  dependency at that field, or is a formal or the receiver of the enclosing
+  function.
 `isOwnerlessTextFieldProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into

@@ -475,8 +475,7 @@ int main() {
           for (auto &target : changed.functionInstances())
             if (target.id == function.id)
               for (auto &candidate :
-                   const_cast<lang::MirFunctionInstance &>(target)
-                       .body.blocks)
+                   const_cast<lang::MirFunctionInstance &>(target).body.blocks)
                 for (auto &call : candidate.instructions)
                   if (call.id == instruction.id)
                     call.loan.reset();

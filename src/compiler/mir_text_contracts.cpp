@@ -428,9 +428,9 @@ private:
           }
           for (const auto &field : returned.fields) {
             const MirOperand *origin =
-                field.receiver ? (instruction->receiver
-                                      ? &*instruction->receiver
-                                      : nullptr)
+                field.receiver
+                    ? (instruction->receiver ? &*instruction->receiver
+                                             : nullptr)
                 : field.parameter < instruction->operands.size()
                     ? &instruction->operands[field.parameter]
                     : nullptr;
@@ -994,10 +994,9 @@ MirVerificationResult TextContracts::verify() {
               block.terminator.value) {
             const auto returned = sources(context, *block.terminator.value);
             if (!returned.known || !returned.parameters.empty() ||
-                std::any_of(returned.fields.begin(), returned.fields.end(),
-                            [&](const auto &field) {
-                              return field != declared;
-                            }))
+                std::any_of(
+                    returned.fields.begin(), returned.fields.end(),
+                    [&](const auto &field) { return field != declared; }))
               fail(context, function.id, nullptr,
                    "text field result returns other text than its declared "
                    "field");

@@ -9,6 +9,29 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.456.0 — Returning a text field that views a local owner
+
+- A function or method that returns one text field of a parameter or of
+  `this` now gives its caller a view of whatever the argument holds in that
+  field. With `Token token = Token(input.view(), 3);` and
+  `std::string_view first(Token token) { return token.text; }`,
+  `std::string_view view = first(token);` used to report
+  `error[GTI-S2045]` ("… and 'first' stores or returns that text as ownerless
+  text"); it now works, and `view` keeps `input` borrowed as `token.text`
+  does. An accessor such as `std::string_view name() { return this.text; }`
+  works the same way on such a value.
+- The result depends on the owner only when the argument's dependency is at
+  that field. Another field of the same value, or the field of a value over
+  literals, gives ownerless text that can be stored. Storing a dependent
+  result, as in `kept = first(token);`, reports `error[GTI-S2045]`.
+- Functions compose: one that returns `first(token)` or `token.name()` for
+  its own parameter relays the same field.
+- A function that returns the field beside another source, such as a view of
+  an owned string, or returns two different fields, still requires ownerless
+  text there, as in 0.455.0.
+- In a `mut` method, an implicit text field read is now ownerless, as
+  `this.text` already was.
+
 ## 0.455.0 — Passing values that view a local owner
 
 - A value whose text field views a local string can now be passed to a

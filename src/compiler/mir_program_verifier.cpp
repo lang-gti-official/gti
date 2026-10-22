@@ -3894,13 +3894,34 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         // An input value carries no dependency, or a place operand (a
         // reference argument or a borrowed receiver) names storage without
         // borrowed state.
+        // The mapped field of a text field result. A dependent carrier holds
+        // an owner's text only in the field its retained loan designates.
+        const std::vector<SymbolId> *mappedField =
+            instruction.borrowFields.size() == 1
+                ? &instruction.borrowFields.front().sourceFields
+                : nullptr;
+        const auto carriesField = [&](const MirPlace &place) {
+          return mappedField != nullptr &&
+                 place.root == MirPlaceRootKind::Binding &&
+                 place.projections.empty() &&
+                 std::any_of(body.loans.begin(), body.loans.end(),
+                             [&](const MirLoan &loan) {
+                               return loan.kind == MirLoanKind::Stored &&
+                                      loan.designatedFields == *mappedField &&
+                                      std::find(loan.carriers.begin(),
+                                                loan.carriers.end(),
+                                                place.binding) !=
+                                          loan.carriers.end();
+                             });
+        };
         const auto ownerlessPlace = [&](const MirOperand &operand) -> bool {
           const MirLoan *loan = operand.kind == MirOperandKind::Loan
                                     ? body.findLoan(operand.loan)
                                     : nullptr;
           const MirPlace *place =
               body.findPlace(loan ? loan->source : operand.place);
-          return place != nullptr && !place->traits.containsBorrowedState;
+          return place != nullptr && (!place->traits.containsBorrowedState ||
+                                      !carriesField(*place));
         };
         const auto ownerlessInput = [&](const MirOperand &operand,
                                         MirCallInputRole role) -> bool {
@@ -3917,7 +3938,10 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             return input->operands.size() == 1 &&
                    input->operands.front().kind != MirOperandKind::Value &&
                    ownerlessPlace(input->operands.front());
-          return !input->info.traits.containsBorrowedState;
+          return !input->info.traits.containsBorrowedState ||
+                 (input->operands.size() == 1 &&
+                  input->operands.front().kind != MirOperandKind::Value &&
+                  ownerlessPlace(input->operands.front()));
         };
         // A formal or the receiver of this function: its field holds the
         // caller's text, so no loan names it here.
@@ -3939,11 +3963,10 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               held->kind == MirOperandKind::Value
                   ? nullptr
                   : body.findPlace(loan ? loan->source : held->place);
-          if (place == nullptr ||
-              !(place->projections.empty() ||
-                (place->projections.size() == 1 &&
-                 place->projections.front().kind ==
-                     MirProjectionKind::Dereference)))
+          if (place == nullptr || !(place->projections.empty() ||
+                                    (place->projections.size() == 1 &&
+                                     place->projections.front().kind ==
+                                         MirProjectionKind::Dereference)))
             return false;
           if (place->root == MirPlaceRootKind::This)
             return place->projections.empty();
@@ -3956,8 +3979,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                  function != nullptr &&
                  std::find(function->parameterBindings.begin(),
                            function->parameterBindings.end(),
-                           place->binding) !=
-                     function->parameterBindings.end();
+                           place->binding) != function->parameterBindings.end();
         };
         const auto originInput = [&](const auto &accepts) -> bool {
           if (instruction.borrowOrigin == BorrowOriginKind::Argument)
