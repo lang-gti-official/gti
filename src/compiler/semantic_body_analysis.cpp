@@ -2203,6 +2203,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     const bool enclosingConstructorInitializer =
         analyzingConstructorInitializer;
     analyzingConstructorInitializer = true;
+    auto enclosingPayloadInputs =
+        std::move(requestSession.constructorTextPayloadArguments);
+    requestSession.constructorTextPayloadArguments.clear();
+    for (const auto &input : ownerlessInputs)
+      if (input.initializer == &initializer && input.payloadArgument != nullptr)
+        requestSession.constructorTextPayloadArguments.push_back(
+            input.payloadArgument);
     const SemanticType fieldType =
         field == nullptr ? SemanticType::Unknown
                          : typeOf(field->type(),
@@ -2231,13 +2238,16 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                             true, fieldType.kind != SemanticType::Reference);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
+    requestSession.constructorTextPayloadArguments =
+        std::move(enclosingPayloadInputs);
     if (field != nullptr && initializer.arguments.size() == 1 &&
         (fieldType.kind == SemanticType::StringView ||
          fieldType.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(initializer.arguments.front()) &&
-        std::none_of(
-            ownerlessInputs.begin(), ownerlessInputs.end(),
-            [&](const auto &input) { return input.second == &initializer; })) {
+        std::none_of(ownerlessInputs.begin(), ownerlessInputs.end(),
+                     [&](const auto &input) {
+                       return input.initializer == &initializer;
+                     })) {
       reportOwnerDependentTextStorage(initializer.arguments.front(),
                                       "stored in a constructor field");
     }
@@ -4856,6 +4866,13 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   }
   const auto subjectSource = retainedLoanSource(stmt.expression());
   SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
+  // A field of the dependency's carrier that the subject names, as in
+  // `switch (line.word)`, prefixes the payload designation.
+  std::vector<SymbolId> subjectFieldPrefix;
+  if (const auto *place = semanticModel.findPlace(*stmt.expression()))
+    for (const auto &projection : place->projections)
+      subjectFieldPrefix.push_back(
+          projection.kind == PlaceProjectionKind::Field ? projection.field : 0);
   if (const auto *loan = semanticModel.findLoan(subjectDependency);
       loan && loan->kind == SemanticLoanKind::Reference)
     subjectDependency = loan->storedDependency;
@@ -5108,8 +5125,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         // a read of a published class field is.
         if (const auto *textLoan =
                 consumedSubject ? nullptr
-                                : dependentTextPayloadLoan(subjectDependency,
-                                                           pattern, payload)) {
+                                : dependentTextPayloadLoan(
+                                      subjectDependency, pattern, payload,
+                                      subjectFieldPrefix)) {
           if (payload.extractionKind == PayloadExtractionKind::BorrowValue)
             report(*payload.name,
                    "A reference cannot yet bind a payload that holds dynamic "
@@ -5940,7 +5958,27 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                                    initializerInfo != nullptr &&
                                    isTextDependentValue(*initializerInfo) &&
                                    initializerInfo->type == declaredType;
-  if (ownerDependentValue) {
+  // A dependent field of a dependent value has no loan of its own yet: a
+  // switch observes it in place.
+  const Expr *source = initializer.get();
+  while (source != nullptr) {
+    if (const auto *group = exprAs<Grouping>(source))
+      source = group->expression().get();
+    else if (const auto *call = exprAs<Call>(source);
+             call != nullptr && call->arguments().size() == 1 &&
+             resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+      source = call->arguments().front().get();
+    else
+      break;
+  }
+  if (ownerDependentValue && exprAs<Get>(source) != nullptr) {
+    consumeTextDependentValue(initializer);
+    report(expressionToken(initializer),
+           "This field holds dynamic text from a local owner; a switch on "
+           "the field can observe it, but it cannot yet be copied or moved "
+           "out of its value.",
+           "GTI-S2045");
+  } else if (ownerDependentValue) {
     consumeTextDependentValue(initializer);
     if (globalStorage || instanceField) {
       report(stmt.name(),
