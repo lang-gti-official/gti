@@ -7988,18 +7988,27 @@ auto SemanticVisitor::Impl::recordLoanFlowBreak(
 
 auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
   // The semantic loop body is visited once. An incoming exact alternative is
-  // not a proof for every backedge iteration. Until conditional sets join the
-  // existing loop fixed-point contract, keep that fact unknown; a dominating
-  // construction inside the body can establish a fresh complete set. This
-  // never changes the actual loans or their availability/endpoint analysis.
+  // not a proof for every backedge iteration of a binding the body can write.
+  // Until conditional sets join the existing loop fixed-point contract, keep
+  // that fact unknown; a dominating construction inside the body can
+  // establish a fresh complete set. A binding nothing can write keeps its
+  // fact: only a move ends it, and value flow then rejects any read reached
+  // through the backedge, while loan flow keeps a read-only reference's
+  // referent unwritable for as long as a later iteration reads it. This never
+  // changes the actual loans or their availability/endpoint analysis.
+  LoanFlowLoop loop{.region = loanFlow.currentRegion,
+                    .order = loanFlow.currentOrder,
+                    .statement = &statement,
+                    .firstNestedLoan = nextSemanticLoanId};
   for (auto &scope : scopes)
     for (auto &[_, symbol] : scope)
-      symbol.completeBorrowSet.reset();
+      if (symbol.assignable && symbol.completeBorrowSet) {
+        if (const SymbolId id = symbolForDeclaration(symbol.declaration))
+          loop.droppedBorrowSets.push_back(id);
+        symbol.completeBorrowSet.reset();
+      }
   const std::size_t index = loanFlow.loops.size();
-  loanFlow.loops.push_back({.region = loanFlow.currentRegion,
-                            .order = loanFlow.currentOrder,
-                            .statement = &statement,
-                            .firstNestedLoan = nextSemanticLoanId});
+  loanFlow.loops.push_back(std::move(loop));
   loanFlow.activeLoops.push_back(index);
 }
 
