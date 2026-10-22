@@ -811,6 +811,97 @@ void checkNestedReadonlyReferences() {
             << publications * 7
             << " mutations checked by MIR and C++ admission\n";
 }
+
+// A reference selected from a payload enum held in a local carrier sources a
+// place rooted at the carrier's field-less Stored dependency. That place is
+// provenance: the address comes from the exact PayloadExtract. Admission must
+// reject it once the selection loses its extract or the place is evaluated.
+void checkLocalCarrierSelections() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_enum_local_selection.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "references select from local payload carriers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "local carrier selection MIR verifies");
+  try {
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "local carrier selections reach the production backend");
+  } catch (const std::logic_error &error) {
+    expect(false,
+           std::string("local carrier selection emission: ") + error.what());
+  }
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  std::size_t owners = 0;
+  std::size_t evaluated = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &place : function.body.places) {
+      const auto *stored = place.root == lang::MirPlaceRootKind::Loan
+                               ? function.body.findLoan(place.loan)
+                               : nullptr;
+      const auto selection =
+          std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                       [&](const lang::MirLoan &loan) {
+                         return loan.source == place.id &&
+                                loan.referenceSelection &&
+                                loan.carriers.size() == 1;
+                       });
+      if (stored == nullptr || stored->kind != lang::MirLoanKind::Stored ||
+          stored->storedField != 0 || selection == function.body.loans.end())
+        continue;
+      ++owners;
+      expect(supportsSelectedBodyText(frontend.mir, rows, function.id),
+             "a provenance-only carrier owner is representable");
+      // The selected binding's referent read, redirected to the owner place.
+      const auto read = [&](const lang::MirInstruction &instruction) {
+        const auto *operand =
+            instruction.operands.size() == 1
+                ? function.body.findPlace(instruction.operands.front().place)
+                : nullptr;
+        return instruction.kind == lang::MirInstructionKind::Load &&
+               operand != nullptr &&
+               operand->root == lang::MirPlaceRootKind::Binding &&
+               operand->binding == selection->carriers.front() &&
+               operand->projections.size() == 1 &&
+               operand->projections.front().kind ==
+                   lang::MirProjectionKind::Dereference &&
+               operand->type == place.type;
+      };
+      for (unsigned mutation = 0; mutation < 2; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = &const_cast<lang::MirFunctionInstance *>(
+                          malformed.findFunctionInstance(function.id))
+                          ->body;
+        bool changed = mutation == 0;
+        if (mutation == 0)
+          body->loans[selection->id - 1].referenceSelection.reset();
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions)
+            if (mutation == 1 && !changed && read(instruction)) {
+              instruction.operands.front().place = place.id;
+              changed = true;
+            }
+        if (!changed)
+          continue;
+        evaluated += mutation;
+        expect(!supportsSelectedBodyText(malformed, rows, function.id),
+               "a carrier owner place cannot become a runtime address " +
+                   std::to_string(mutation));
+      }
+    }
+  expect(owners >= 10 && evaluated >= 10,
+         "fixture exercises call-result, constructed, parameter, generic, "
+         "class-field and mutable local carriers");
+  std::cout << "local carrier selections: " << owners << " owners, "
+            << owners + evaluated << " mutations checked by C++ admission\n";
+}
 } // namespace
 
 int main() {
@@ -823,5 +914,6 @@ int main() {
   checkOwnedFieldPlaces();
   checkLoweringFailureContext();
   checkNestedReadonlyReferences();
+  checkLocalCarrierSelections();
   return failures == 0 ? 0 : 1;
 }
