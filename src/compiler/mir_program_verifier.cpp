@@ -213,6 +213,39 @@ dependentTextPublication(const MirProgram &program,
              mapping.parameter;
 }
 
+// A call whose target returns one by-value text formal in a direct text field
+// of its fresh result publishes the dynamic argument there (L-OWN-02), as a
+// constructor does. Its borrow facts describe this call; the target's own
+// return summary borrows nothing.
+[[nodiscard]] bool
+dependentTextCallPublication(const MirInstruction &instruction,
+                             const MirFunctionInstance &target) {
+  if (!instruction.dependentTextPublication ||
+      instruction.kind != MirInstructionKind::Call ||
+      target.returnBorrowOrigin != BorrowOriginKind::None ||
+      !target.returnBorrowFields.empty() || target.completeReturnBorrow ||
+      target.restoresReferenceResult ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      instruction.restoresReferenceResult ||
+      !instruction.restoredBorrowFields.empty() ||
+      instruction.borrowFields.size() != 1)
+    return false;
+  const auto &mapping = instruction.borrowFields.front();
+  return mapping.origin == BorrowOriginKind::Argument &&
+         mapping.parameter == instruction.borrowArgument &&
+         mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
+         mapping.resultFields.size() == 1 &&
+         mapping.access == AccessMode::ReadOnly &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
+         std::binary_search(
+             target.publishedTextFields.begin(),
+             target.publishedTextFields.end(),
+             PublishedTextField{.parameter = mapping.parameter,
+                                .field = mapping.resultFields.front()});
+}
+
 // A payload construction that publishes one dynamic text argument at a text
 // payload (L-OWN-02). Its own read-only Stored loan designates that payload,
 // unconditionally: a dependent value cannot be reassigned to another
@@ -1938,7 +1971,8 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               target != nullptr && target->linkage == LanguageLinkage::Gti &&
               target->returnType == receiverPlace->type &&
               (borrowedCarrier
-                   ? target->returnBorrowOrigin != BorrowOriginKind::None &&
+                   ? (target->returnBorrowOrigin != BorrowOriginKind::None ||
+                      dependentTextCallPublication(*producer, *target)) &&
                          !target->virtualMethod &&
                          producer->dispatch == CallDispatch::Static
                    : target->returnBorrowOrigin == BorrowOriginKind::None);
@@ -1993,12 +2027,13 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             functionTarget->returnBorrowOrigin == BorrowOriginKind::None &&
             !instruction.info.traits.containsBorrowedState;
         // A text field relay (L-OWN-02) returns what a publishing
-        // construction holds in that field: its owner's text, never a view
-        // of the temporary itself.
+        // construction or call holds in that field: its owner's text, never a
+        // view of the temporary itself.
         const bool textFieldRelay =
             functionTarget != nullptr && !mutableInput && borrowedCarrier &&
             producer != nullptr &&
-            producer->kind == MirInstructionKind::Construct &&
+            (producer->kind == MirInstructionKind::Construct ||
+             producer->kind == MirInstructionKind::Call) &&
             producer->dependentTextPublication &&
             mir_detail::textFieldResult(functionTarget->returnType,
                                         functionTarget->returnBorrowOrigin,
@@ -3535,15 +3570,18 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 block.id, instruction.id);
           }
         }
-        if (instruction.borrowOrigin != target->returnBorrowOrigin ||
-            instruction.borrowArgument != target->returnBorrowParameter ||
-            instruction.borrowArguments != target->returnBorrowParameters ||
-            instruction.borrowFields != target->returnBorrowFields ||
-            instruction.borrowAccess != target->returnBorrowAccess ||
-            instruction.borrowPlace != target->returnBorrowPlace ||
-            instruction.restoresReferenceResult !=
-                target->restoresReferenceResult ||
-            instruction.restoredBorrowFields != target->restoredBorrowFields) {
+        if (!dependentTextCallPublication(instruction, *target) &&
+            (instruction.borrowOrigin != target->returnBorrowOrigin ||
+             instruction.borrowArgument != target->returnBorrowParameter ||
+             instruction.borrowArguments != target->returnBorrowParameters ||
+             instruction.borrowFields != target->returnBorrowFields ||
+             instruction.borrowAccess != target->returnBorrowAccess ||
+             instruction.borrowPlace != target->returnBorrowPlace ||
+             instruction.restoresReferenceResult !=
+                 target->restoresReferenceResult ||
+             instruction.restoredBorrowFields != target->restoredBorrowFields ||
+             (instruction.kind == MirInstructionKind::Call &&
+              instruction.dependentTextPublication))) {
           return verificationFailure(
               body, owner,
               "call-result borrow origin does not match the target "
