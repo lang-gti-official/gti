@@ -2858,19 +2858,18 @@ private:
     if (instruction.kind != MirInstructionKind::EnsureThreadLocal) {
       bool movedThreadLocalDetector = false;
       for (auto &origin : instruction.definedFailure.localOrigins) {
-        const auto removed =
-            std::erase_if(origin.outcomes, [&](const auto outcome) {
-              return outcome.code ==
-                         DefinedFailureCode::HostedRuntimeContractFailure &&
-                     (outcome.detail ==
-                          DefinedFailureDetail::
-                              RecursiveThreadLocalInitialization ||
-                      outcome.detail ==
-                          DefinedFailureDetail::
-                              ThreadLocalInitializationDuringShutdown ||
-                      outcome.detail ==
-                          DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
-            });
+        const auto removed = std::erase_if(origin.outcomes, [&](const auto
+                                                                    outcome) {
+          return outcome.code ==
+                     DefinedFailureCode::HostedRuntimeContractFailure &&
+                 (outcome.detail == DefinedFailureDetail::
+                                        RecursiveThreadLocalInitialization ||
+                  outcome.detail ==
+                      DefinedFailureDetail::
+                          ThreadLocalInitializationDuringShutdown ||
+                  outcome.detail ==
+                      DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
+        });
         movedThreadLocalDetector |= removed != 0;
       }
       std::erase_if(instruction.definedFailure.localOrigins,
@@ -4097,8 +4096,8 @@ private:
                     outcome.detail !=
                         DefinedFailureDetail::
                             ThreadLocalInitializationDuringShutdown &&
-                    outcome.detail !=
-                        DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
+                    outcome.detail != DefinedFailureDetail::
+                                          ThreadLocalOutsideAttachedLifetime);
           });
         std::erase_if(failure.localOrigins, [](const auto &origin) {
           return origin.outcomes.empty();
