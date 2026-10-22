@@ -2614,7 +2614,10 @@ otherwise reports `GTI-S2045` related to the callee. A callee that returns a
 reference to text records no relay: the reference may designate the
 dependent field, and the view copied from it would carry no loan. For the
 same reason a contract formal passed to such a callee is not a forward but a
-whole use, which requires each of its text fields. An instance analysis
+whole use, which requires each of its text fields. So is a returned
+reference that a call borrowed from a contract formal or the receiver
+(`noteReturnedFormalReference`): MIR sees that call's loan rooted at the
+whole formal. An instance analysis
 records no field use, forward or relay. Its finalization leaves relays pending
 and skips the contract pass, because looking up the functions a contract names
 would record them as functions the instance consulted, and demand their

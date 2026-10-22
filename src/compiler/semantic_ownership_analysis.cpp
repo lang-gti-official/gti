@@ -1632,6 +1632,43 @@ auto SemanticVisitor::Impl::noteTextFieldFormalUse(const Expr &expression,
     requestSession.textFieldFormalOrder.push_back(&expression);
 }
 
+auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
+    -> void {
+  const Expr *current = &returned;
+  while (const auto *group = exprAs<Grouping>(current))
+    current = group->expression() ? group->expression().get() : nullptr;
+  const auto *call = exprAs<Call>(current);
+  const ResolvedCallInfo *resolved =
+      call == nullptr ? nullptr : semanticModel.findCall(*call);
+  if (resolved == nullptr ||
+      resolved->returnType.kind != SemanticType::Reference)
+    return;
+  std::optional<OwnerlessTextField> formal;
+  if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+    const auto *member = exprAs<Get>(call->callee().get());
+    if (member == nullptr) {
+      // An implicit receiver call borrows this method's receiver.
+      const FunctionInfo *scope = textFieldContractScope();
+      if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
+          scope->bodyDeclaration()->receiverMutability() ==
+              ReceiverMutability::ReadOnly &&
+          textPublicationOwner(openClassType(scope->ownerClass)))
+        formal = OwnerlessTextField{.receiver = true};
+    } else if (member->access().kind != TokenKind::ARROW && member->object()) {
+      formal = textFieldContractFormal(*member->object());
+    }
+  } else if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+             resolved->borrowArgument <
+                 resolvedCallArgumentCount(*call, resolved)) {
+    const ExprPtr *argument =
+        resolvedCallArgument(*call, resolved, resolved->borrowArgument);
+    if (argument != nullptr && *argument)
+      formal = textFieldContractFormal(**argument);
+  }
+  if (formal)
+    noteTextFieldFormalUse(*current, *formal);
+}
+
 auto SemanticVisitor::Impl::consumeTextFieldFormalUse(const ExprPtr &expression)
     -> void {
   const Expr *current = expression.get();
