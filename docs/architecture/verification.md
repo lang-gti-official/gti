@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Borrowed fields copied through references (0.459.5)
+
+`complete_borrow_summaries` checks the new `GTI-S2045` for a borrowed enum
+copied out of a reference parameter into a field, moved through one, and a
+generic carrier copied through one: code, message and the exact span of the
+argument, with no backend error. In-place, copied and moved by-value
+initializers stay accepted. `borrow_origin`, `borrow_origin_runtime`,
+`contextual_borrowed_construction_runtime`, `mir_census_regression` and
+`lowered_program_corpus_census` pass, so no fixture or example is newly
+rejected.
+
 ## Returning borrowed enum parameters (0.459.4)
 
 `complete_borrow_summaries` covers the new fixture,
