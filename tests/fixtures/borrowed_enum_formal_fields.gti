@@ -1,0 +1,171 @@
+#include <std/panic>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// A constructor stores a by-value borrowed payload enum from its own formal:
+// moved, copied, after a fallible sibling, and after an earlier read of the
+// formal. Each stored field keeps the caller's external owner.
+enum Slot { ready(int& value), empty };
+
+int weigh(Slot slot) {
+  switch (slot) {
+  case Slot::ready(auto& value): return value;
+  case Slot::empty: return 0;
+  }
+}
+
+class Ledger {
+public:
+  int id;
+  Ledger(int id, int divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+class Shelf {
+  Slot slot;
+public:
+  Shelf(Slot slot) : slot(std::move(slot)) {}
+  bool empty() {
+    switch (this.slot) {
+    case Slot::ready: return false;
+    case Slot::empty: return true;
+    }
+  }
+  int& get() {
+    switch (this.slot) {
+    case Slot::ready(auto& value): return value;
+    case Slot::empty: std::panic("empty shelf");
+    }
+  }
+};
+
+// The copy leaves the formal usable for a later initializer.
+class Copier {
+  Slot slot;
+  int weight;
+public:
+  Copier(Slot slot) : slot(slot), weight(weigh(slot)) {}
+  int sum() {
+    switch (this.slot) {
+    case Slot::ready(auto& value): return value + this.weight;
+    case Slot::empty: return -1;
+    }
+  }
+};
+
+// The move follows fallible work: the field receives the moved enum in MIR
+// order once the ledger exists, and a failed ledger leaves nothing published.
+class Gauge {
+  Ledger ledger;
+  Slot slot;
+public:
+  Gauge(Slot slot, int divisor)
+      : ledger(Ledger(1, divisor)), slot(std::move(slot)) {}
+  int read() {
+    switch (this.slot) {
+    case Slot::ready(auto& value): return value + this.ledger.id;
+    case Slot::empty: return -1;
+    }
+  }
+};
+
+class Mirror {
+  Ledger ledger;
+  Slot slot;
+public:
+  Mirror(Slot slot, int divisor) : ledger(Ledger(2, divisor)), slot(slot) {}
+  int read() {
+    switch (this.slot) {
+    case Slot::ready(auto& value): return value + this.ledger.id;
+    case Slot::empty: return -1;
+    }
+  }
+};
+
+// The formal is read before it moves; the move stays after that read.
+class Weighed {
+  int weight;
+  Slot slot;
+public:
+  Weighed(Slot slot) : weight(weigh(slot)), slot(std::move(slot)) {}
+  int read() {
+    switch (this.slot) {
+    case Slot::ready(auto& value): return value + this.weight;
+    case Slot::empty: return -1;
+    }
+  }
+};
+
+// An unrelated generic carrier: a borrowed success or an owned error.
+enum Outcome<T, E> { ready(T value), failed(E error) };
+
+class Report<T, E> {
+  mut Outcome<T&, E> outcome;
+public:
+  Report(Outcome<T&, E> outcome) : outcome(std::move(outcome)) {}
+  bool failed() {
+    switch (this.outcome) {
+    case Outcome<T&, E>::ready: return false;
+    case Outcome<T&, E>::failed: return true;
+    }
+  }
+  T& value() {
+    switch (this.outcome) {
+    case Outcome<T&, E>::ready(auto& value): return value;
+    case Outcome<T&, E>::failed: std::panic("failed report");
+    }
+  }
+};
+
+// An exclusive carrier moves its unique capability into the field.
+enum Cursor { at(mut int& value), done };
+
+class Writer {
+  mut Cursor cursor;
+public:
+  Writer(Cursor cursor) : cursor(std::move(cursor)) {}
+  void write(int value) mut {
+    switch (this.cursor) {
+    case Cursor::at(mut auto& target): target = value; break;
+    case Cursor::done: break;
+    }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int owner = 3;
+  // With an extra argument the ledger fails before the slot moves.
+  if (argc > 1) {
+    Gauge failing = Gauge(Slot::ready(owner), argc - 2);
+    return failing.read();
+  }
+  Slot named = Slot::ready(owner);
+  Shelf moved = Shelf(Slot::ready(owner));
+  Shelf from_named = Shelf(named);
+  Shelf none = Shelf(Slot::empty);
+  Copier copied = Copier(named);
+  Gauge gauge = Gauge(named, 1);
+  Mirror mirror = Mirror(named, 2);
+  Weighed weighed = Weighed(named);
+  int other = 9;
+  Report<int, int> plain = Report<int, int>(Outcome<int&, int>::ready(other));
+  Report<int, std::string> owning =
+      Report<int, std::string>(Outcome<int&, std::string>::ready(other));
+  Report<int, std::string> refused = Report<int, std::string>(
+      Outcome<int&, std::string>::failed(std::string("refused")));
+  mut int target = 1;
+  {
+    mut Writer writer = Writer(Cursor::at(target));
+    writer.write(7);
+  }
+  if (moved.empty() || moved.get() != owner || from_named.get() != owner ||
+      !none.empty())
+    return 1;
+  if (copied.sum() != 6 || gauge.read() != 64 || mirror.read() != 35 ||
+      weighed.read() != 6)
+    return 2;
+  if (plain.value() != 9 || owning.value() != 9 || !refused.failed())
+    return 3;
+  return target == 7 ? 0 : 4;
+}
