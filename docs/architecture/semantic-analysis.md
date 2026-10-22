@@ -1275,6 +1275,14 @@ constructor retains field/input rollback. Concrete effect import preserves
 deferred versus executed paths rather than flattening a conditional destructor
 into an unconditional ambient write.
 
+Full-expression root indices and typed expression/failure slices are owned by
+the semantic-model snapshot. Concrete-instance delta brackets reset those caches
+and restore the caller's exact cache and active temporary frames on exit; an
+instance cannot reuse another specialization's expression count or selected
+`if constexpr` roots. Ordinary late body demand keeps the same growing model
+cache but saves and restores the caller's active full-expression frames, so
+analyzing a callee cannot consume or clean up a caller's temporary inventory.
+
 Value-generic arithmetic needed before complete program HIR/MIR is retained as
 an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
 Substitution reuses the checked constant-operation kernel and exact-specialization

@@ -115,6 +115,10 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentFunctionDeclaration = nullptr;
   currentProgramEffectOwner = {};
   programEffects.clear();
+  requestSession.programExpressionCache = {};
+  requestSession.fullExpressionStates.clear();
+  requestSession.programStorageBorrowChecks.clear();
+  requestSession.programFailingEffects.clear();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>();
   requestSession.cThreadCallUses.clear();
@@ -3676,6 +3680,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .currentStaticMemberFunction = currentStaticMemberFunction,
       .allowPackTypeReference = allowPackTypeReference,
       .loanFlow = std::move(loanFlow),
+      .fullExpressionStates = std::move(requestSession.fullExpressionStates),
       .valueControlFlow = std::move(valueControlFlow),
       .contextualInitializerType = contextualInitializerType,
       .contextualInitializerExpression = contextualInitializerExpression,
@@ -3704,7 +3709,9 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .constexprForFrames = std::move(constexprForFrames),
       .constexprForExpandedBodies = constexprForExpandedBodies};
   // The clean state a declaration-level body starts from; keep in step with
-  // prepareInstanceAnalysis.
+  // prepareInstanceAnalysis. The model keeps accumulating facts, so its root
+  // index stays valid. Only active caller temporary frames are body-local;
+  // preserve them while a demanded callee analyzes its own expressions.
   scopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
@@ -3725,6 +3732,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   currentStaticMemberFunction = false;
   allowPackTypeReference = false;
   loanFlow = {};
+  requestSession.fullExpressionStates.clear();
   valueControlFlow.clear();
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;
@@ -3776,6 +3784,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   currentStaticMemberFunction = state.currentStaticMemberFunction;
   allowPackTypeReference = state.allowPackTypeReference;
   loanFlow = std::move(state.loanFlow);
+  requestSession.fullExpressionStates = std::move(state.fullExpressionStates);
   valueControlFlow = std::move(state.valueControlFlow);
   contextualInitializerType = state.contextualInitializerType;
   contextualInitializerExpression = state.contextualInitializerExpression;

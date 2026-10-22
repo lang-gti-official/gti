@@ -498,6 +498,49 @@ void invalidDeclarations() {
            "int main() { return 0; }",
            "an unexecuted constexpr branch does not execute runtime TLS");
 }
+
+void instanceCleanupCache() {
+  // The first selected arm has more root expressions than the second. Reusing
+  // its full-expression index in the next instance used to omit the latter's
+  // temporary destructor from the source effect graph and reach invalid MIR.
+  const std::string prefix = R"(
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); } };
+bool inspect(Cleanup& input) { return true; }
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    int fourth = 3;
+    int fifth = 4;
+    return first + second + third + fourth + fifth;
+  } else {
+    bool seen = inspect(Cleanup());
+    return seen ? 1 : 0;
+  }
+}
+)";
+  for (const bool reverse : {false, true}) {
+    const std::string calls =
+        reverse ? "int first = selected<1>(); int second = selected<0>(); "
+                : "int first = selected<0>(); int second = selected<1>(); ";
+    const auto rejected =
+        analyze(prefix + "int main() { int& borrowed = value; " + calls +
+                    "return borrowed + first + second; }",
+                true, true);
+    expect(!rejected.semanticValid && code(rejected, "GTI-S2045") &&
+               !code(rejected, "GTI-B0001"),
+           "each concrete constexpr-selected body retains exact temporary "
+           "cleanup effects independently of query order");
+    positive(prefix + "int main() { int& borrowed = other; " + calls +
+                 "return borrowed + first + second; }",
+             "isolated concrete cleanup facts do not conflict with disjoint "
+             "TLS loans in either query order");
+  }
+}
 } // namespace
 
 int main() {
@@ -506,5 +549,6 @@ int main() {
   orderedInputProtection();
   fullExpressionCleanup();
   invalidDeclarations();
+  instanceCleanupCache();
   return failures ? 1 : 0;
 }
