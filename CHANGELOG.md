@@ -47,8 +47,10 @@ for what minor and patch releases mean.
   `expected<int, std::string_view> r = unexpected("literal");`, used to report
   `error[GTI-B0001]`; it now compiles.
 - A method that returns another method's reference, such as
-  `int& kindOf() { return this.kindRef(); }` in a class with a text field,
-  used to report `error[GTI-B0001]`; it now compiles.
+  `int& kindOf() { return this.kindRef(); }` in a class with a text field, or
+  `std::string_view& alias() { return this.ref(); }`, used to report
+  `error[GTI-B0001]`; it now compiles. On a value that views a local owner,
+  `alias()` still reports `error[GTI-S2045]`.
 - A value that views a local owner, such as `Token(input.view(), 1)`, cannot
   yet call such a method or be passed to a function that calls one on it.
   `t.ref()` reports `error[GTI-S2045]`, because a view copied from the

@@ -486,6 +486,7 @@ public:
   std::string_view& ref() { return this.text; }
   int& kindRef() { return this.kind; }
   int& kindOf() { return this.kindRef(); }
+  std::string_view& alias() { return this.ref(); }
 };
 class Box<T> {
 public:
@@ -505,6 +506,7 @@ void testTextReferenceAccessors() {
 int main() {
   Token token = Token("token", 1);
   kept = token.ref();
+  kept = token.alias();
   keep(token);
   Box<std::string_view> box = Box<std::string_view>("boxed");
   kept = box.get();
@@ -568,7 +570,8 @@ int main() {
   // relay (testTextReferenceRelays), never one that lets its receiver
   // escape whole or stores what it reads.
   for (const char *body :
-       {"kept = t.ref();", "keep(t);", "std::println(t.kindOf());"}) {
+       {"kept = t.ref();", "keep(t);", "std::println(t.kindOf());",
+        "std::println(t.alias());"}) {
     const auto rejected =
         analyzeText(kReferenceAccessors +
                     "int run() { std::string input{\"input\"}; Token t = "
