@@ -7,7 +7,7 @@
   "main": "bindings/node",
   "scripts": {
     "generate": "tree-sitter generate --abi 14",
-    "test": "tree-sitter test",
+    "test": "tree-sitter test --rebuild",
     "test:highlights": "node test/highlights_test.js",
     "test:shipped": "node test/parse_shipped_sources.js",
     "test:source-text": "node test/source_text_test.js"
