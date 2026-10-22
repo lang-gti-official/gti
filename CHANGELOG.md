@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.7 — Consuming a borrowed wrapper on only some paths
+
+- A consuming method of a borrowed wrapper can now run on only some paths:
+  in the right operand of `||` or `&&`, in one arm of `?:`, or in one branch
+  of an `if`. For a class holding `enum Slot { ready(int& value), empty }`
+  with `int& take() &&`, `if (!h.has_value() || std::move(h).take() != owner)`
+  used to report `error[GTI-B0001]` (an internal compiler error); it now
+  works. Using the wrapper afterwards still reports `error[GTI-S2018]`. A
+  wrapper with a destructor consumed this way still reports
+  `error[GTI-B0001]`.
+
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
 - A constructor can store a borrowed payload enum that it takes by value.
