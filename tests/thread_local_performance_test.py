@@ -90,11 +90,15 @@ def main() -> None:
     if len(sys.argv) != 5:
         raise SystemExit("usage: thread_local_performance_test.py <gti> <cxx> <runtime-library> <report.json>")
     compiler, cxx, runtime, destination = map(pathlib.Path, sys.argv[1:])
-    compiler, cxx, runtime = compiler.resolve(), cxx.resolve(), runtime.resolve()
+    compiler, runtime = compiler.resolve(), runtime.resolve()
+    # The invocation spelling can select the C++ link driver even when c++ is
+    # a symlink to clang; canonicalization belongs in provenance, not argv[0].
+    cxx = cxx.absolute()
     repository = pathlib.Path(__file__).resolve().parents[1]
     fixtures = repository / "tests" / "fixtures"
     report = {"compiler_sha256": hashlib.sha256(compiler.read_bytes()).hexdigest(),
-              "cxx": str(cxx), "iterations": 20000000, "samples": 9,
+              "cxx": str(cxx), "cxx_realpath": str(cxx.resolve()),
+              "iterations": 20000000, "samples": 9,
               "registry_contract": "explicit first-use, recursion/shutdown rejection and same-thread drain",
               "allocation_scope": "explicit 64-byte resource allocator only; registry nodes are intrusive",
               "variants": {}}
