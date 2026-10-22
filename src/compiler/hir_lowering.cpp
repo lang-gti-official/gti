@@ -5089,6 +5089,17 @@ private:
         .dependentTextPublication = construction.dependentTextPublication,
         .constructorKind = construction.kind,
     };
+    // A conversion that publishes its argument's owner gives a dependent
+    // value, as semantics classifies an explicit publishing construction
+    // (L-OWN-02): it carries borrowed state and cannot be reassigned.
+    if (construction.dependentTextPublication) {
+      auto &traits = value.info.traits;
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
+      traits.containsBorrowedState = true;
+      traits.transferCapable = false;
+      traits.shareCapable = false;
+    }
     if (construction.contextualBorrowDependencies) {
       value.borrowDependencies = construction.contextualBorrowDependencies;
       for (auto &dependency : value.borrowDependencies->dependencies)

@@ -5182,6 +5182,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           else if (Symbol *carrier = resolveMutable(*payload.name)) {
             attachLoanCarrier(textLoan->id, *carrier, symbol, false);
             payload.binding.traits.containsBorrowedState = true;
+            payload.binding.retainedLoan = textLoan->id;
           }
         }
         if (!rawPointerFieldPaths(payload.binding.type).empty())
@@ -5998,12 +5999,18 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   }
   // A value whose text field or payload holds dynamic text carries that
   // dependency itself (L-OWN-02). Only a local binding can retain it.
-  const bool ownerDependentValue = !ownerDependentText &&
-                                   (declaredType.kind == SemanticType::Class ||
-                                    declaredType.kind == SemanticType::Enum) &&
-                                   initializerInfo != nullptr &&
-                                   isTextDependentValue(*initializerInfo) &&
-                                   initializerInfo->type == declaredType;
+  // A contextual construction that publishes its argument's owner converts
+  // the initializer into such a value of the declared type.
+  const bool contextualText =
+      initializer && contextualTextValue(*initializer, declaredType);
+  const bool ownerDependentValue =
+      !ownerDependentText &&
+      (declaredType.kind == SemanticType::Class ||
+       declaredType.kind == SemanticType::Enum) &&
+      initializerInfo != nullptr &&
+      ((isTextDependentValue(*initializerInfo) &&
+        initializerInfo->type == declaredType) ||
+       contextualText);
   // A dependent field of a dependent value has no loan of its own yet: a
   // switch observes it in place.
   const Expr *source = initializer.get();
@@ -6017,7 +6024,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     else
       break;
   }
-  if (ownerDependentValue && exprAs<Get>(source) != nullptr) {
+  if (ownerDependentValue && !contextualText &&
+      exprAs<Get>(source) != nullptr) {
     consumeTextDependentValue(initializer);
     report(expressionToken(initializer),
            "This field holds dynamic text from a local owner; a switch on "
@@ -6035,7 +6043,9 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "GTI-S2045");
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
-    updated.traits = initializerInfo->traits;
+    updated.traits = contextualText
+                         ? textDependentValueInfo(declaredType).traits
+                         : initializerInfo->traits;
     semanticModel.record(stmt, std::move(updated));
   }
 

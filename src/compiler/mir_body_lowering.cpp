@@ -13697,6 +13697,18 @@ private:
         }
         (void)appendInstruction(std::move(initialize));
         registerDrop(payload.binding, destination);
+        // A by-value binding of a dependent text payload carries the
+        // subject's owner loan (L-OWN-02), so a view copied from it does too.
+        if (binding->info.type.kind != SemanticType::Reference &&
+            binding->info.retainedLoan != 0)
+          if (const auto found = semanticLoans.find(binding->info.retainedLoan);
+              found != semanticLoans.end()) {
+            bindingLoans.insert_or_assign(payload.binding, found->second);
+            auto &carriers = output.loans[found->second - 1].carriers;
+            if (std::find(carriers.begin(), carriers.end(), payload.binding) ==
+                carriers.end())
+              carriers.push_back(payload.binding);
+          }
       }
       lowerStatements(statement.switchArms[armIndex].statements);
       if (!terminated()) {
