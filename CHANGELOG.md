@@ -34,6 +34,20 @@ for what minor and patch releases mean.
   }`, and relaying a field through a call with a computed argument, as in
   `return first(t, n - 1);`.
 - New example: [171: recursive text relays](examples/171-recursive-text-relays.gti).
+## 0.459.4 — Returning borrowed enum parameters
+
+- A function can return a borrowed payload enum that it takes by value. For
+  `enum Slot { ready(int32_t& value), empty }`,
+  `Slot relay(Slot slot) { return std::move(slot); }`, the copy
+  `return slot;` and the `[[borrowed_from(slot)]]` form used to report
+  `error[GTI-B0001]` (an internal compiler error); they now work. So does
+  returning a class whose borrowed state is such an enum, and a concrete
+  generic enum such as `Outcome<int&, std::string>`. The result keeps the
+  caller's owner: relaying a slot of a local reports `error[GTI-S2045]`, and
+  assigning to the owner while the result is live reports `error[GTI-S2017]`.
+- Returning another relay's result, `return relay(std::move(slot));`, still
+  reports `error[GTI-B0001]`.
+
 ## 0.459.3 — Reading fields of assignment results
 
 - A field of a class assignment's result can now be read. For a struct
