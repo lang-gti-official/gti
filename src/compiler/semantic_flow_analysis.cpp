@@ -1818,6 +1818,23 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     }
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
+      // A result that returns one text field of its argument or receiver
+      // (L-OWN-02) holds what that value holds there: a relayed owner's text,
+      // or the field of a contract formal here. Any other value holds
+      // ownerless text in that field.
+      if (const auto field = fieldSourcedTextResult(call, *resolved)) {
+        const ExpressionInfo *sourceInfo =
+            field->origin == nullptr
+                ? nullptr
+                : semanticModel.findExpression(**field->origin);
+        std::vector<SymbolId> held;
+        if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+          held = textDependentFields(**field->origin);
+        if (fieldSourcedTextFormal(*field) ||
+            std::find(held.begin(), held.end(), field->field) != held.end())
+          return ownerDependentTextInfo(std::move(type));
+        return expressionInfo(std::move(type));
+      }
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
           resolved->borrowArgument <
               resolvedCallArgumentCount(call, resolved)) {

@@ -4807,14 +4807,23 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
       cString ? "owner-dependent c_string" : "dynamic std::string_view";
   const std::string subject =
       cString ? "An " + description : "A " + description;
-  // A formal's or the receiver's stored text field returns as ownerless text
-  // under a field requirement on the function (L-OWN-02). Beside a relay it
-  // stays a lifetime-independent alternative, as a literal is (PR #170).
+  // A formal's or the receiver's stored text field (L-OWN-02) returns under
+  // the function's field-sourced result contract, which carries the field's
+  // dependency to each caller. Without one, the function requires ownerless
+  // text in that field; beside a relay the read then stays a
+  // lifetime-independent alternative, as a literal is (PR #170).
   if (function != nullptr)
     if (const auto field = ownerlessTextForwardingField(value)) {
-      (void)requireOwnerlessTextField(function->declaration, *field);
-      // Every caller now supplies ownerless text there, so the returned
-      // read is ownerless, as a stored view read was before.
+      const BorrowedFieldOrigin sourced{
+          .origin = field->receiver ? BorrowOriginKind::Receiver
+                                    : BorrowOriginKind::Argument,
+          .parameter = field->receiver ? 0 : field->parameter,
+          .sourceFields = {field->field}};
+      if (function->returnBorrowFields.size() != 1 ||
+          function->returnBorrowFields.front() != sourced)
+        (void)requireOwnerlessTextField(function->declaration, *field);
+      // Within the body the returned read is ownerless either way: callers
+      // supply ownerless text there, or the contract relays theirs.
       for (const Expr *read = value.get(); read != nullptr;) {
         if (const ExpressionInfo *readInfo =
                 semanticModel.findExpression(*read))

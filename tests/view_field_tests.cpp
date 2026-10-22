@@ -24,6 +24,7 @@ public:
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   uint64_t width() { return this.text.size(); }
   void save() { kept = this.text; }
+  std::string_view name() { return this.text; }
 };
 struct Diag {
   std::string_view text;
@@ -48,6 +49,8 @@ void keep(Token token) { kept = token.text; }
 void keepRef(Token& token) { kept = token.text; }
 void relayKeep(Token token) { keep(token); }
 std::string_view first(Token token) { return token.text; }
+std::string_view second(Token token) { return first(token); }
+void keepFirst(Token token) { kept = first(token); }
 )gti";
 
 struct Location {
@@ -195,9 +198,10 @@ void testConfinement() {
        "a requirement forwards through a relaying function"},
       {"Token token = Token(input.view(), 3); token.save();", "GTI-S2045",
        "a receiver relay cannot reach a method that stores the field"},
-      {"Token token = Token(input.view(), 3); uint64_t n = "
-       "first(token).size();",
-       "GTI-S2045", "a stored-view return is ownerless text"},
+      {"Token token = Token(input.view(), 3); kept = first(token);",
+       "GTI-S2045", "a returned field view keeps its owner dependency"},
+      {"Token token = Token(input.view(), 3); keepFirst(token);", "GTI-S2045",
+       "storing a returned field view requires that field ownerless"},
       {"Token token = Token(input.view(), 3); kept = token.text;", "GTI-S2045",
        "a dependent field read is not ownerless text"},
       {"Token token = Token(input.view(), 3); mut Token other = "
@@ -253,8 +257,9 @@ int main() {
   Token literal = Token("literal", 1);
   keep(literal);
   relayKeep(literal);
-  return measure(token) + inspect(token) + token.width() ==
-                 30 + first(literal).size() - 7
+  return measure(token) + inspect(token) + token.width() +
+                     first(token).size() + second(token).size() ==
+                 50 + first(literal).size() - 7
              ? 0
              : 1;
 }
@@ -389,12 +394,106 @@ int main() {
          "still reaches a reading constructor");
 }
 
+// A function or method that returns one text field of a formal or the
+// receiver relays that field's dependency to its result (L-OWN-02).
+void testFieldResults() {
+  const auto result = analyzeText(kDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  std::string_view a = first(token);
+  std::string_view b = second(token);
+  std::string_view c = token.name();
+  Token literal = Token("literal", 1);
+  kept = first(literal);
+  return a.size() + b.size() + c.size() == 30 && kept.size() == 7 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a returned field view depends on the value it reads; an ownerless "
+         "value's field view is ownerless");
+  if (!result.canGenerateCode())
+    return;
+  // Each relay names one field of argument 0 or the receiver and requires
+  // none: the field's text reaches the caller's result, never storage.
+  std::vector<const lang::MirFunctionInstance *> relays;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.returnType.kind == lang::SemanticType::StringView &&
+        function.returnBorrowFields.size() == 1 &&
+        function.returnBorrowFields.front().sourceFields.size() == 1) {
+      relays.push_back(&function);
+      expect(function.ownerlessTextFields.empty(),
+             "a field relay requires no ownerless field");
+    }
+  expect(relays.size() >= 3,
+         "free, composed and method field relays carry a field result");
+  const auto argumentRelay =
+      std::find_if(relays.begin(), relays.end(), [](const auto *relay) {
+        return relay->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+               !relay->parameterTypes.empty();
+      });
+  lang::SymbolId kind = 0;
+  if (argumentRelay != relays.end())
+    for (const auto &instance : result.mir.classInstances())
+      for (const auto &field : instance.declaredFields)
+        if (field.type.kind == lang::SemanticType::Int32 && kind == 0 &&
+            instance.type == (*argumentRelay)->parameterTypes.front())
+          kind = field.symbol;
+  expect(kind != 0, "the relayed class has a non-text field to misname");
+  for (const auto *relay : relays) {
+    if (relay->returnBorrowOrigin != lang::BorrowOriginKind::Argument)
+      continue;
+    // MIR derives the returned field itself, so a wrong one is rejected.
+    auto wrongField = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        wrongField.findFunctionInstance(relay->id))
+        ->returnBorrowFields.front()
+        .sourceFields = {kind};
+    expect(!lang::verifyMirProgram(wrongField).valid(),
+           "a field relay naming another field is rejected by MIR");
+    // Without the field, the summary would borrow the by-value formal.
+    auto dropped = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        dropped.findFunctionInstance(relay->id))
+        ->returnBorrowFields.clear();
+    expect(!lang::verifyMirProgram(dropped).valid(),
+           "a field relay without its field is rejected by MIR");
+  }
+  // The dependent call result carries a loan on the token's owner.
+  std::size_t removed = 0;
+  for (const auto &function : result.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.loan && instruction.functionTarget &&
+            std::any_of(relays.begin(), relays.end(), [&](const auto *relay) {
+              return relay->id == *instruction.functionTarget;
+            })) {
+          auto changed = result.mir;
+          for (auto &target : changed.functionInstances())
+            if (target.id == function.id)
+              for (auto &candidate :
+                   const_cast<lang::MirFunctionInstance &>(target)
+                       .body.blocks)
+                for (auto &call : candidate.instructions)
+                  if (call.id == instruction.id)
+                    call.loan.reset();
+          ++removed;
+          expect(!lang::verifyMirProgram(changed).valid(),
+                 "a dependent field relay result keeps its loan");
+        }
+  expect(removed >= 3, "dependent field relay results are exercised");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
     {"testConfinement", testConfinement},
     {"testRelays", testRelays},
     {"testConstructorReads", testConstructorReads},
+    {"testFieldResults", testFieldResults},
 };
 } // namespace
 
