@@ -14097,6 +14097,9 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 formalEntryLoanEndInstruction(const MirConstructorInstance &constructor,
                               const MirInstruction &instruction);
 
+[[nodiscard]] const MirInstruction *
+storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
+
 // A drop-free value carrying borrowed state, such as a text view, enters the
 // constructor with its caller's dependency as the formal's entry loan. A
 // by-value field of such a type may hold only an ownerless value (semantics
@@ -14149,6 +14152,88 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       if (((instruction.loan && *instruction.loan == entry->id) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       namesEntry) ||
+           (instruction.receiver && namesEntry(*instruction.receiver))) &&
+          !formalEntryLoanEndInstruction(constructor, instruction)) {
+        return false;
+      }
+    }
+    const MirTerminator &terminator = block.terminator;
+    if ((terminator.returnLoan && *terminator.returnLoan == entry->id) ||
+        (terminator.value && namesEntry(*terminator.value)) ||
+        std::any_of(terminator.targetArguments.begin(),
+                    terminator.targetArguments.end(), namesEntry) ||
+        std::any_of(terminator.elseArguments.begin(),
+                    terminator.elseArguments.end(), namesEntry)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A borrowed payload enum instead keeps its caller's dependency in the field.
+// MIR moves the formal and hands the formal's entry group to the field's
+// Stored loan in one proof-only transfer (storedFieldValueLoanProducer): the
+// native enum value already carries the reference, and the field starts from
+// its empty state exactly as for an in-place payload construction. Prove that
+// this transfer of the moved value is the field's only publication, that no
+// other loan derives from the entry group, and that every other record naming
+// the group is one of its comment-only retirements.
+[[nodiscard]] bool
+formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
+                            const MirPlace &source, const MirValue &moved,
+                            const MirInstruction &move, SymbolId field) {
+  const MirBody &body = constructor.body;
+  if (moved.info.type.kind != SemanticType::Enum) {
+    return false;
+  }
+  const MirLoan *published = nullptr;
+  for (const MirLoan &loan : body.loans) {
+    if (loan.storedField != field && loan.producedBy != move.hirValue) {
+      continue;
+    }
+    if (published != nullptr || loan.storedField != field ||
+        loan.producedBy != move.hirValue) {
+      return false;
+    }
+    published = &loan;
+  }
+  const MirInstruction *transfer =
+      published != nullptr ? storedFieldValueLoanProducer(body, *published)
+                           : nullptr;
+  const MirLoan *entry = transfer != nullptr
+                             ? body.findLoan(transfer->operands.front().loan)
+                             : nullptr;
+  if (entry == nullptr || !entry->entry || entry->source != source.id ||
+      transfer->operands.front().value != moved.id) {
+    return false;
+  }
+  for (const MirLoan &loan : body.loans) {
+    if ((loan.id != entry->id && loan.id != published->id &&
+         loan.protectsSource(source.id)) ||
+        loan.parent == entry->id || loan.storedDependency == entry->id ||
+        std::any_of(loan.additionalDependencies.begin(),
+                    loan.additionalDependencies.end(),
+                    [&](const MirLoanDependency &dependency) {
+                      return dependency.parent == entry->id;
+                    })) {
+      return false;
+    }
+  }
+  const auto namesEntry = [&](const MirOperand &operand) {
+    return operand.kind == MirOperandKind::Loan && operand.loan == entry->id;
+  };
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const MirInstruction &instruction = block.instructions[index];
+      // The transfer and the retirement it validated directly after it carry
+      // the move's ownership event; every other record is comment-only.
+      const bool handoff =
+          &instruction == transfer ||
+          (index != 0 && &block.instructions[index - 1] == transfer);
+      if (!handoff &&
+          ((instruction.loan && *instruction.loan == entry->id) ||
            std::any_of(instruction.operands.begin(), instruction.operands.end(),
                        namesEntry) ||
            (instruction.receiver && namesEntry(*instruction.receiver))) &&
@@ -14337,9 +14422,16 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
       // The formal, the moved value and the field are all trivially dropped,
       // and no obligation names any place of them: MIR has nothing to
       // transfer, reparent or roll back. Borrowed state may only be the
-      // formal's entry loan, which ends without reaching the field.
+      // formal's entry loan, which either ends without reaching the field or
+      // is a payload enum's group handed to the field by its proof-only
+      // publication.
       const bool borrowed = source->traits.containsBorrowedState ||
                             value->info.traits.containsBorrowedState;
+      const bool retainedPayload =
+          borrowed && destination != nullptr &&
+          destination->traits.containsBorrowedState &&
+          formalEntryGroupPayloadMove(constructor, *source, *value, *move,
+                                      initializer.field);
       const auto namesInitializerState = [&](MirPlaceId id) {
         const MirPlace *place = constructor.body.findPlace(id);
         return place != nullptr &&
@@ -14354,10 +14446,11 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
       };
       if (source->traits.drop != DropKind::Trivial ||
           value->info.traits.drop != DropKind::Trivial ||
-          (borrowed && ((destination != nullptr &&
-                         destination->traits.containsBorrowedState) ||
-                        !formalEntryLoanOnlyMove(constructor, *source, *value,
-                                                 *move, initializer.field))) ||
+          (borrowed && !retainedPayload &&
+           ((destination != nullptr &&
+             destination->traits.containsBorrowedState) ||
+            !formalEntryLoanOnlyMove(constructor, *source, *value, *move,
+                                     initializer.field))) ||
           std::any_of(constructor.body.dropObligations.begin(),
                       constructor.body.dropObligations.end(),
                       [&](const MirDropObligation &drop) {
@@ -28353,17 +28446,18 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
           constructed->hirValue == entry->producedBy;
       // A payload enum is also a complete native value: Initialize stores its
       // selected variant, including any reference payload, before this
-      // proof-only handoff. Preserve the exact producer and full conditional
-      // dependency group; never synthesize an unconditional payload address.
+      // proof-only handoff. Preserve the exact producer, or the moved or
+      // copied formal's entry group, and the full conditional dependency
+      // group; never synthesize an unconditional payload address.
       const bool payloadField =
-          entry && !entry->entry && constructed &&
-          constructed->kind == MirInstructionKind::Compute &&
-          constructed->operation == MirOperation::PayloadConstruct &&
-          constructed->info.type.kind == SemanticType::Enum &&
-          constructed->loan == entry->id &&
-          constructed->result == operand.value &&
-          constructed->info.type == operand.type &&
-          constructed->hirValue == entry->producedBy &&
+          entry && operand.type.kind == SemanticType::Enum &&
+          (entry->entry ||
+           (constructed && constructed->kind == MirInstructionKind::Compute &&
+            constructed->operation == MirOperation::PayloadConstruct &&
+            constructed->loan == entry->id &&
+            constructed->result == operand.value &&
+            constructed->info.type == operand.type &&
+            constructed->hirValue == entry->producedBy)) &&
           !entry->designatedFields.empty() &&
           entry->designatedFields == loan.designatedFields &&
           entry->conditions == loan.conditions &&
