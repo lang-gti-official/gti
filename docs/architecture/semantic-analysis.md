@@ -2578,6 +2578,24 @@ Receiver and `returnBorrowFields` holds one `BorrowedFieldOrigin` whose
   formal as a read of that formal's field, so sinks, relays and returns
   compose through it.
 
+A payload construction publishes a dynamic text argument the same way:
+`ResolvedPayloadConstructionInfo` carries `borrowFields` (result field = the
+payload's symbol) and `dependentTextPublication`, and no complete dependency
+set is recorded for it.
+- `textFieldOwnerDependency` gives the argument's sole named owner. A second
+  dependent payload, a temporary owner, or an enum with borrowed state or open
+  type arguments keeps the storage error.
+- The text-dependent value helpers (`textDependentType`,
+  `isTextDependentValue`, `textDependentFields`, `storedBorrowDependencies`,
+  local retention) accept a payload enum as they accept a class. The
+  retained StoredValue loan designates the payload symbol without a variant
+  condition: a dependent value cannot be reassigned, so its alternative is
+  fixed.
+- A non-consuming `switch` subject consumes the value for confinement.
+  `dependentTextPayloadLoan` finds the subject's loan when it designates an
+  arm binding's text payload; a by-value binding then carries that loan, and
+  an `auto&` binding is `GTI-S2045`.
+
 A dependent argument or receiver records a `TextDependentRelay` with its
 designated fields, while its scope is live. The request's own finalization
 decides it, once every body that feeds the contracts is analyzed: it consumes

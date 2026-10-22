@@ -486,6 +486,161 @@ int main() {
   expect(removed >= 3, "dependent field relay results are exercised");
 }
 
+// A payload construction publishes a dynamic text argument's owner at that
+// payload (L-OWN-02); a switch that observes the value binds a dependent
+// view of that payload and ownerless views of the others.
+const std::string kPayloadDeclarations = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), count(int value) };
+enum Two { both(std::string_view first, std::string_view second), none };
+void take(Word word) {}
+)gti";
+
+void testPayloads() {
+  const auto result = analyzeText(kPayloadDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  Word word = Word::text(input.view());
+  Word copy = word;
+  Word moved = std::move(copy);
+  mut uint64_t size = 0;
+  switch (moved) {
+  case Word::text(value): size = value.size(); break;
+  case Word::count(value): break;
+  }
+  Two two = Two::both(input.view(), "fixed");
+  switch (two) {
+  case Two::both(first, second): kept = second; size = size + first.size(); break;
+  case Two::none: break;
+  }
+  Word literal = Word::text("literal");
+  switch (literal) {
+  case Word::text(value): kept = value; break;
+  case Word::count(value): break;
+  }
+  return size == 20 && kept.size() == 7 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a payload holds a local owner's dynamic text, and a switch binds a "
+         "dependent view of it");
+  if (!result.canGenerateCode())
+    return;
+  std::vector<Location> payloads;
+  for (const auto &location : publications(result.mir)) {
+    const auto &instruction =
+        instructionAt(const_cast<lang::MirProgram &>(result.mir), location);
+    if (instruction.kind == lang::MirInstructionKind::Compute &&
+        instruction.operation == lang::MirOperation::PayloadConstruct)
+      payloads.push_back(location);
+  }
+  expect(payloads.size() == 2, "both dependent payload constructions publish");
+  if (payloads.size() != 2)
+    return;
+  const auto loanOf = [](lang::MirProgram &program,
+                         const Location &location) -> lang::MirLoan * {
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        program.findFunctionInstance(location.function));
+    const auto &instruction = instructionAt(program, location);
+    return instruction.loan && *instruction.loan <= function->body.loans.size()
+               ? &function->body.loans[*instruction.loan - 1]
+               : nullptr;
+  };
+  for (const auto &location : payloads) {
+    const auto *loan =
+        loanOf(const_cast<lang::MirProgram &>(result.mir), location);
+    expect(loan != nullptr && loan->kind == lang::MirLoanKind::Stored &&
+               loan->access == lang::AccessMode::ReadOnly &&
+               loan->designatedFields.size() == 1 && loan->conditions.empty() &&
+               !loan->carriers.empty(),
+           "a published payload's loan designates one payload, "
+           "unconditionally, and its bindings carry it");
+  }
+  // Without its publication the dynamic argument must be ownerless.
+  auto unpublished = result.mir;
+  instructionAt(unpublished, payloads.front()).dependentTextPublication = false;
+  expect(!lang::verifyMirProgram(unpublished).valid(),
+         "a payload argument without its publication is rejected by MIR");
+  // A dependent value's alternative is fixed, so the loan is unconditional.
+  auto conditioned = result.mir;
+  {
+    const auto &instruction = instructionAt(conditioned, payloads.front());
+    loanOf(conditioned, payloads.front())->conditions = {
+        {.enumeration = instruction.info.type,
+         .variant = instruction.enumVariant.value_or(0)}};
+  }
+  expect(!lang::verifyMirProgram(conditioned).valid(),
+         "a published payload's loan cannot be conditional");
+  // Designating the other payload makes `kept = second` store dynamic text,
+  // which MIR rejects by itself.
+  auto retargeted = result.mir;
+  {
+    const auto &instruction = instructionAt(retargeted, payloads.back());
+    const auto *enumeration = retargeted.findPayloadEnum(instruction.info.type);
+    if (enumeration != nullptr && instruction.enumVariant &&
+        *instruction.enumVariant < enumeration->variants.size() &&
+        enumeration->variants[*instruction.enumVariant].payloadSymbols.size() ==
+            2)
+      loanOf(retargeted, payloads.back())->designatedFields = {
+          enumeration->variants[*instruction.enumVariant].payloadSymbols[1]};
+  }
+  expect(!lang::verifyMirProgram(retargeted).valid(),
+         "a payload relabeled as dependent is rejected where it is stored");
+
+  struct Case {
+    const char *body;
+    const char *code;
+    const char *description;
+  };
+  const Case cases[] = {
+      {"Word word = Word::text(input.view()); switch (word) { case "
+       "Word::text(value): kept = value; break; case Word::count(value): "
+       "break; }",
+       "GTI-S2045", "a dependent payload binding is not ownerless text"},
+      {"Word word = Word::text(input.view()); switch (word) { case "
+       "Word::text(auto& value): break; case Word::count(value): break; }",
+       "GTI-S2045", "a reference cannot yet bind a dependent payload"},
+      {"Word word = Word::text(input.view()); take(word);", "GTI-S2045",
+       "a dependent payload value cannot be passed"},
+      {"Word word = Word::text(std::string(\"x\").view());", "GTI-S2045",
+       "a temporary owner cannot outlive its payload"},
+      {"Two two = Two::both(input.view(), other.view());", "GTI-S2045",
+       "a payload value holds dynamic text from one owner"},
+      {"Word word = Word::text(input.view()); switch (std::move(word)) { case "
+       "Word::text(value): break; case Word::count(value): break; }",
+       "GTI-S2045", "a dependent payload value cannot yet be consumed"},
+      {"Word word = Word::text(owner.view()); owner.append(\"!\"); switch "
+       "(word) { case Word::text(value): break; case Word::count(value): "
+       "break; }",
+       "GTI-S2017", "the owner stays borrowed while the payload value is live"},
+  };
+  for (const auto &entry : cases) {
+    const auto rejected = analyzeText(
+        kPayloadDeclarations +
+        "int run() { std::string input{\"token text\"}; std::string "
+        "other{\"other\"}; mut std::string owner{\"owner\"}; " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(!rejected.canGenerateCode(), entry.description);
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string(entry.description) + " (" + entry.code + ")");
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string(entry.description) + " is diagnosed at source");
+  }
+  const auto returned = analyzeText(kPayloadDeclarations + R"gti(
+Word make(std::string& input) { return Word::text(input.view()); }
+int main() { return 0; }
+)gti");
+  expect(hasDiagnosticCode(returned.diagnostics, "GTI-S2045"),
+         "a dependent payload value is not returned in this phase");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -493,6 +648,7 @@ constexpr NamedTest kTests[] = {
     {"testRelays", testRelays},
     {"testConstructorReads", testConstructorReads},
     {"testFieldResults", testFieldResults},
+    {"testPayloads", testPayloads},
 };
 } // namespace
 

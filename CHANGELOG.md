@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.457.0 — Payload enums that view a local owner
+
+- A payload enum can now hold a view of a local string in a text payload.
+  `Lexeme lexeme = Lexeme::word(input.view());` used to report
+  `error[GTI-S2045]` ("A dynamic std::string_view cannot be stored in a
+  payload-enum field"); it now works, and `lexeme` keeps `input` borrowed
+  read-only while it is live.
+- A `switch` over such a value binds a view of the same owner:
+  `case Lexeme::word(text):` gives `text` that depends on `input`, so storing
+  it in a global reports `error[GTI-S2045]`. Another text payload of the same
+  construction, such as `"fixed"` in `Two::both(input.view(), "fixed")`,
+  stays ownerless and can be stored.
+- Such a value can be copied and moved like a dependent class value. Passing
+  it to a function, returning it, consuming it with
+  `switch (std::move(lexeme))`, or binding the dependent payload with
+  `auto&` is still `error[GTI-S2045]`, as is a generic enum.
+
 ## 0.456.0 — Returning a text field that views a local owner
 
 - A function or method that returns one text field of a parameter or of

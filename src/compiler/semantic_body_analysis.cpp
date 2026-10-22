@@ -4795,6 +4795,10 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   const bool consumedSubject = subjectInfo != nullptr &&
                                subjectInfo->category == ValueCategory::Value &&
                                subjectInfo->type == subjectType;
+  // Observing a dependent payload value is one of its permitted uses
+  // (L-OWN-02); consuming one is not yet supported.
+  if (payloadEnum != nullptr && !consumedSubject)
+    consumeTextDependentValue(stmt.expression());
   // Snapshot the selected operand's complete external owners before arm-local
   // moves or replacement can change the source binding's current value fact.
   const auto subjectDependencies =
@@ -5047,6 +5051,24 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         payload.binding.symbol = symbol;
         declare(*payload.name, payload.binding.type, mutableReferent,
                 SemanticBindingKind::LocalVariable);
+        // The text payload that an observed subject's owner dependency
+        // designates holds that owner's dynamic text (L-OWN-02). A by-value
+        // binding of it is a dependent view carrying the subject's loan, as
+        // a read of a published class field is.
+        if (const auto *textLoan =
+                consumedSubject ? nullptr
+                                : dependentTextPayloadLoan(subjectDependency,
+                                                           pattern, payload)) {
+          if (payload.extractionKind == PayloadExtractionKind::BorrowValue)
+            report(*payload.name,
+                   "A reference cannot yet bind a payload that holds dynamic "
+                   "text from a local owner; bind it by value.",
+                   "GTI-S2045");
+          else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            attachLoanCarrier(textLoan->id, *carrier, symbol, false);
+            payload.binding.traits.containsBorrowedState = true;
+          }
+        }
         if (!rawPointerFieldPaths(payload.binding.type).empty())
           if (auto *carrier = resolveMutable(*payload.name)) {
             const auto fields = rawPointerFields(stmt.expression().get());
@@ -5830,12 +5852,14 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     updated.traits = initializerInfo->traits;
     semanticModel.record(stmt, std::move(updated));
   }
-  // A value whose text field holds dynamic text carries that dependency
-  // itself (L-OWN-02). Only a local binding can retain it.
-  const bool ownerDependentValue =
-      !ownerDependentText && declaredType.kind == SemanticType::Class &&
-      initializerInfo != nullptr && isTextDependentValue(*initializerInfo) &&
-      initializerInfo->type == declaredType;
+  // A value whose text field or payload holds dynamic text carries that
+  // dependency itself (L-OWN-02). Only a local binding can retain it.
+  const bool ownerDependentValue = !ownerDependentText &&
+                                   (declaredType.kind == SemanticType::Class ||
+                                    declaredType.kind == SemanticType::Enum) &&
+                                   initializerInfo != nullptr &&
+                                   isTextDependentValue(*initializerInfo) &&
+                                   initializerInfo->type == declaredType;
   if (ownerDependentValue) {
     consumeTextDependentValue(initializer);
     if (globalStorage || instanceField) {

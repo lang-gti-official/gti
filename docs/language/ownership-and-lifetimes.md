@@ -2397,6 +2397,28 @@ Literal-backed values satisfy every contract, so existing calls are
 unaffected. Inside such a function, reading the field gives a dependent view
 of whatever the caller passed.
 
+A payload enum's text payload holds a local owner's text the same way. The
+construction publishes the dependency at that payload, and a `switch` that
+observes the value binds a dependent view of it:
+
+```gti
+enum Lexeme { word(std::string_view text), count(int value) };
+
+Lexeme lexeme = Lexeme::word(input.view());   // the payload views input
+switch (lexeme) {
+case Lexeme::word(text): std::println(text); break;   // a view of input
+case Lexeme::count(value): break;
+}
+```
+
+Such a value follows the class rules above: it may initialize, copy or move a
+local, and it keeps its owner borrowed while it is live. Only the published
+payload depends on the owner; another text payload of the same construction
+stays ownerless. In this release a dependent payload value is only observed
+by a `switch`: it is not yet passed to functions, consumed by `switch
+(std::move(value))`, or bound by an `auto&` pattern at the dependent payload,
+and the enum must not be generic.
+
 A dependent value still cannot be passed to a constructor, a lambda, a
 virtual method or a generic function, nor returned itself, captured, bound by
 a reference, assigned into existing storage, or stored in a global, a field,

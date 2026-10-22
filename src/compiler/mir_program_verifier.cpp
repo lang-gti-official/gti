@@ -213,6 +213,47 @@ dependentTextPublication(const MirProgram &program,
              mapping.parameter;
 }
 
+// A payload construction that publishes one dynamic text argument at a text
+// payload (L-OWN-02). Its own read-only Stored loan designates that payload,
+// unconditionally: a dependent value cannot be reassigned to another
+// alternative while the loan lives.
+[[nodiscard]] bool dependentTextPayloadPublication(
+    const MirBody &body, const MirInstruction &instruction,
+    const MirPayloadEnumVariant &variant, const SemanticType &enumType) {
+  const MirLoan *loan = instruction.dependentTextPublication && instruction.loan
+                            ? body.findLoan(*instruction.loan)
+                            : nullptr;
+  if (loan == nullptr || loan->kind != MirLoanKind::Stored ||
+      loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
+      loan->producedBy != instruction.hirValue ||
+      loan->designatedFields.size() != 1 ||
+      !loan->additionalDependencies.empty() || !loan->conditions.empty() ||
+      enumType.kind != SemanticType::Enum)
+    return false;
+  const auto payload =
+      std::find(variant.payloadSymbols.begin(), variant.payloadSymbols.end(),
+                loan->designatedFields.front());
+  if (payload == variant.payloadSymbols.end())
+    return false;
+  const auto &type = variant.payloadTypes[static_cast<std::size_t>(
+      payload - variant.payloadSymbols.begin())];
+  return type.kind == SemanticType::StringView ||
+         type.kind == SemanticType::CString;
+}
+
+// The traits of a value whose text field or payload holds a relayed owner's
+// text: its type's, but it carries borrowed state and cannot be reassigned,
+// transferred or shared (semantics' textDependentValueInfo).
+[[nodiscard]] SemanticTypeTraits
+textDependentTraits(SemanticTypeTraits traits) {
+  traits.copyAssignable = false;
+  traits.moveAssignable = false;
+  traits.containsBorrowedState = true;
+  traits.transferCapable = false;
+  traits.shareCapable = false;
+  return traits;
+}
+
 bool exactCThreadRuntimeFunction(const MirFunctionInstance &function) {
   const auto operation = function.cThreadOperation;
   if (operation == CThreadRuntimeOperation::None) {
@@ -7489,7 +7530,12 @@ verifyMirPayloadEnums(const MirProgram &program) {
           continue;
         }
         if (instruction.operation == MirOperation::PayloadConstruct) {
+          // A published text payload is staged like a borrowed field.
+          const bool published = dependentTextPayloadPublication(
+              *body, instruction, *variant, enumeration->type);
+          exact = exact && (published || !instruction.dependentTextPublication);
           const bool borrowedFields =
+              published ||
               std::any_of(variant->payloadTypes.begin(),
                           variant->payloadTypes.end(), [&](const auto &type) {
                             const auto traits =
@@ -7507,7 +7553,9 @@ verifyMirPayloadEnums(const MirProgram &program) {
                                       : nullptr;
           exact = exact && value != nullptr &&
                   value->info.type == enumeration->type &&
-                  value->info.traits == enumeration->traits &&
+                  value->info.traits ==
+                      (published ? textDependentTraits(enumeration->traits)
+                                 : enumeration->traits) &&
                   instruction.operands.size() == variant->payloadTypes.size();
           for (std::size_t index = 0;
                exact && index < instruction.operands.size(); ++index) {
@@ -14788,6 +14836,12 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                          producer->kind == MirInstructionKind::Compute &&
                          producer->operation == MirOperation::PayloadConstruct;
     if (!payload && !value.borrowDependencies)
+      continue;
+    // A published dynamic text payload (L-OWN-02) carries its owner in its
+    // own retained loan, which the variant table check verifies, not in a
+    // complete dependency set.
+    if (payload && producer->dependentTextPublication &&
+        !value.borrowDependencies)
       continue;
     if (!payload && value.borrowDependencies) {
       auto resultType = value.info.type;

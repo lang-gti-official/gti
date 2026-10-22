@@ -3,7 +3,7 @@
 // carries its referent's, so no text is copied or allocated. Such a value can
 // be copied, moved and read, and passed to functions and methods that keep
 // its text within the call or return it. It cannot be returned, captured or
-// stored itself.
+// stored itself. A payload enum's text payload can hold such a view too.
 #include <std/string>
 
 // A token views its input; it owns no text.
@@ -17,6 +17,9 @@ public:
   // views.
   std::string_view spelling() { return this.text; }
 };
+
+// A lexeme views its input through a payload.
+enum Lexeme { word(std::string_view text), number(int value) };
 
 struct Note {
   std::string_view text;
@@ -43,6 +46,13 @@ int main() {
   // The returned view depends on `line`, as the token does.
   std::string_view spelled = name.spelling();
   std::println(spelled);
+
+  // Matching the payload binds a view of `line` as well.
+  Lexeme lexeme = Lexeme::word(line.view());
+  switch (lexeme) {
+  case Lexeme::word(word): std::println(word.size()); break;
+  case Lexeme::number(value): std::println(value); break;
+  }
 
   // While any of these values is live, `line` cannot be mutated, moved or
   // destroyed; for example `line.append("!")` here is rejected.
