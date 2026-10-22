@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Borrowed carriers stored after other fields (0.459.6)
+## Borrowed carriers stored after other fields (0.459.7)
 
 Deferred field storage (backend: a passive bound shell after other fields
 lives in an anonymous union and is published at its MIR point) is covered at
@@ -54,6 +54,25 @@ An `--emit-cpp` differential at -O0 and -O3 over the 1,816 programs in
 - Built with both compilers, the six of these that run standalone produce
   identical exit status and output at -O0 and -O3; the three
   `user_dual_range_*` fixtures pass their `user_dual_range_lifetime` harness.
+
+## Consuming a borrowed wrapper on only some paths (0.459.6)
+
+`consuming_receiver_types` adds `checkConditionalCarrierConsumption` over
+`conditional_carrier_consume.gti`. It consumes a borrowed wrapper in the right
+operand of `||` and `&&`, in one arm of `?:`, in one branch of an `if`, in both
+branches, in a by-value parameter, and through an unrelated generic carrier,
+`Cell<T>` over `MaybeRef<T&>`. The fixture verifies and emits. Every
+`EndBorrow` of a stored group that ends in more than one block is tombstoned
+in turn, and each forged program fails verification; the fixture has at least
+eight such retirements. `borrow_origin_runtime` runs the fixture in all eight
+native modes, and `tryable_propagation_runtime` runs example 165, which now
+consumes a wrapper under `||`.
+
+An emitted-C++ differential compared the compiler at main 6b587a959 with the
+candidate built on it over 1,950 corpus programs at `-O0` and `-O3`. Only
+example 165 and the new fixture changed, both from `GTI-B0001` to accepted;
+every other program, accepted or rejected, produced the same output. The MIR
+and lowered-program censuses are unchanged.
 
 ## Borrowed fields copied through references (0.459.5)
 
