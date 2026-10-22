@@ -306,6 +306,14 @@
       "suite": "text"
     },
     {
+      "name": "testDeferredBoundShellFields",
+      "suite": "text"
+    },
+    {
+      "name": "testMovedBorrowedPayloadAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedViewAfterFormalRead",
       "suite": "text"
     },
