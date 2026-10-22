@@ -150,6 +150,20 @@ public:
     std::vector<ProgramTemporaryCleanup> temporaries;
   };
 
+  // These indices and typed-operation slices belong to one SemanticModel
+  // snapshot. A new instance delta restarts its local full-expression order;
+  // restoring only that model without this cache would mix specializations.
+  struct ProgramExpressionCache {
+    std::size_t indexedFullExpressions = 0;
+    std::unordered_map<const Expr *, SemanticFullExpression>
+        fullExpressionRoots;
+    std::unordered_map<const Expr *, ProgramExpressionEffects>
+        programExpressionEffects;
+    std::unordered_map<const Expr *,
+                       std::shared_ptr<const ProgramFailureCondition>>
+        programOperationFailures;
+  };
+
   struct ProgramEffectSummary {
     bool directFailure = false;
     std::vector<ProgramStorageEffectUse> uses;
@@ -257,10 +271,16 @@ public:
           savedLambdaId(visitor.nextLambdaId),
           savedSemanticLoanId(visitor.nextSemanticLoanId),
           savedPlaceSelectionId(visitor.nextPlaceSelectionId),
+          savedProgramExpressionCache(
+              std::move(visitor.requestSession.programExpressionCache)),
+          savedFullExpressionStates(
+              std::move(visitor.requestSession.fullExpressionStates)),
           openReanalyses(visitor.openReanalyses()) {
       visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel,
                                                visitor.instanceSymbolCeiling);
+      visitor.requestSession.programExpressionCache = {};
+      visitor.requestSession.fullExpressionStates.clear();
       if (visitor.journalNextInstance)
         visitor.semanticModel.beginInstanceReuseJournal();
       visitor.diagnostics.clear();
@@ -297,6 +317,10 @@ public:
                                       .diagnostics =
                                           std::move(visitor.diagnostics)};
       visitor.semanticModel = std::move(baseModel);
+      visitor.requestSession.programExpressionCache =
+          std::move(savedProgramExpressionCache);
+      visitor.requestSession.fullExpressionStates =
+          std::move(savedFullExpressionStates);
       visitor.diagnostics = std::move(baseDiagnostics);
       visitor.nextGenericParameterId = savedGenericParameterId;
       visitor.nextConstructorId = savedConstructorId;
@@ -323,6 +347,8 @@ public:
     LambdaId savedLambdaId;
     SemanticLoanId savedSemanticLoanId;
     std::size_t savedPlaceSelectionId;
+    ProgramExpressionCache savedProgramExpressionCache;
+    std::vector<ProgramFullExpressionState> savedFullExpressionStates;
     std::shared_ptr<std::vector<InstanceAnalysisKey>> openReanalyses;
     bool nested = false;
   };
@@ -6207,15 +6233,8 @@ private:
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
     std::vector<ProgramStorageBorrowCheck> programStorageBorrowChecks;
-    std::size_t indexedFullExpressions = 0;
-    std::unordered_map<const Expr *, SemanticFullExpression>
-        fullExpressionRoots;
+    ProgramExpressionCache programExpressionCache;
     std::vector<ProgramFullExpressionState> fullExpressionStates;
-    std::unordered_map<const Expr *, ProgramExpressionEffects>
-        programExpressionEffects;
-    std::unordered_map<const Expr *,
-                       std::shared_ptr<const ProgramFailureCondition>>
-        programOperationFailures;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
         programFailingEffects;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
@@ -6497,6 +6516,7 @@ private:
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
     LoanFlowState loanFlow;
+    std::vector<ProgramFullExpressionState> fullExpressionStates;
     std::vector<ValueControlFlowContext> valueControlFlow;
     decltype(RequestSessionState::contextualInitializerType)
         contextualInitializerType;

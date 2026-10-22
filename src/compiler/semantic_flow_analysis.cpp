@@ -1054,8 +1054,10 @@ auto SemanticVisitor::Impl::recordProgramOrderedInputEffects(
     const ProgramStorageBorrowCheck &earlier, const ExprPtr &input) -> void {
   if (earlier.protections.empty() || !input)
     return;
-  const auto found = requestSession.programExpressionEffects.find(input.get());
-  if (found == requestSession.programExpressionEffects.end() ||
+  const auto &evaluations =
+      requestSession.programExpressionCache.programExpressionEffects;
+  const auto found = evaluations.find(input.get());
+  if (found == evaluations.end() ||
       found->second.owner != currentProgramEffectOwner)
     return;
   const auto &slice = found->second;
@@ -1179,7 +1181,7 @@ auto SemanticVisitor::Impl::beginProgramFullExpression(const Expr &root)
     -> std::optional<std::size_t> {
   if (!currentProgramEffectOwner.valid())
     return std::nullopt;
-  auto &session = requestSession;
+  auto &session = requestSession.programExpressionCache;
   const auto &expressions = semanticModel.fullExpressions();
   while (session.indexedFullExpressions < expressions.size()) {
     const auto &expression = expressions[session.indexedFullExpressions++];
@@ -1190,15 +1192,16 @@ auto SemanticVisitor::Impl::beginProgramFullExpression(const Expr &root)
   if (found == session.fullExpressionRoots.end() ||
       found->second.constructorInitializer != nullptr)
     return std::nullopt;
-  if (!session.fullExpressionStates.empty()) {
-    const auto &current = session.fullExpressionStates.back();
+  auto &states = requestSession.fullExpressionStates;
+  if (!states.empty()) {
+    const auto &current = states.back();
     if (current.owner == currentProgramEffectOwner &&
         std::find(current.source.roots.begin(), current.source.roots.end(),
                   &root) != current.source.roots.end())
       return std::nullopt;
   }
-  const auto index = session.fullExpressionStates.size();
-  session.fullExpressionStates.push_back(
+  const auto index = states.size();
+  states.push_back(
       {.source = found->second, .owner = currentProgramEffectOwner});
   return index;
 }
@@ -1257,9 +1260,10 @@ auto SemanticVisitor::Impl::recordProgramTemporary(const Expr &producer,
 auto SemanticVisitor::Impl::recordProgramTemporaryFailureCleanup(
     const Expr &operation,
     const std::vector<ProgramTemporaryCleanup> &temporaries) -> void {
-  const auto failure = requestSession.programOperationFailures.find(&operation);
-  if (temporaries.empty() ||
-      failure == requestSession.programOperationFailures.end())
+  const auto &operations =
+      requestSession.programExpressionCache.programOperationFailures;
+  const auto failure = operations.find(&operation);
+  if (temporaries.empty() || failure == operations.end())
     return;
   auto check =
       captureProgramStorageBorrows(tokenSpan(expressionToken(operation)));
@@ -3855,7 +3859,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
         condition->targets.empty())
       condition->unknown = true;
     summary.directFailure |= condition->direct || condition->unknown;
-    requestSession.programOperationFailures.insert_or_assign(&expr, condition);
+    requestSession.programExpressionCache.programOperationFailures
+        .insert_or_assign(&expr, condition);
     // Failure cleanup observes the pre-transfer temporary inventory, but its
     // exact selected call targets are now available. The condition closes only
     // after all source bodies and concrete effect queries have completed.
@@ -3904,7 +3909,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     evaluation.edgeEnd = summary.edges.size();
     evaluation.unknownEnd = summary.unknown.size();
     evaluation.useEnd = summary.borrowUses.size();
-    requestSession.programExpressionEffects.insert_or_assign(&expr, evaluation);
+    requestSession.programExpressionCache.programExpressionEffects
+        .insert_or_assign(&expr, evaluation);
   }
   currentType = result;
   return result;
