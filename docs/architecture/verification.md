@@ -14,11 +14,11 @@ operands are a call result and a construction. `combine((p = q).x, (p =
 r).x)` prints 577: the first argument keeps `q.x` although the second operand
 assigns `p` again. Nested reads of a call result, a lambda call result, a
 conditional and a moved local, and of constructions taking a call or lambda
-call result, cover the producers of issues #195 and #196. A checked
-addition after the read overflows on request and exits with status 70 after
-every earlier line. Each result is checked in C++20/C++23 at O0/O1/O3,
-no-elide and ASan/UBSan. The 0.458.1 compiler stops the fixture with
-`GTI-B0001`.
+call result, cover the producers of issues #195 and #196, which the 0.458.3
+nested field-chain rule reads. A checked addition after the read overflows on
+request and exits with status 70 after every earlier line. Each result is
+checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan. The 0.458.3
+compiler stops the fixture with `GTI-B0001`.
 
 In `cpp_mir_body_emitter_lifecycle`, `testAssignmentResultFieldView` checks
 that each `Assign` is directly followed by a copy `Load` of its destination,
@@ -34,16 +34,19 @@ A destructor-bearing (move-only) destination is refused by MIR lowering with
 result, `std::move(o).inner.id`, `(flag ? a : b).inner.id` and the three-field
 chains `Wrap(build(raw)).outer.inner.id` and `Wrap(make(raw)).outer.inner.id`
 from the value's slot, requires that no intermediate place is spelled, and
-refuses a non-prefix intermediate.
+refuses a non-prefix intermediate, guarding that rule for every producer.
 
-A differential `--emit-cpp` against main `f0e13a1d`, with one
+A differential `--emit-cpp` against main `010073d5`, with one
 `GTI_STDLIB_PATH` for both compilers, covered 1811 programs in
 `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
 fixture changed, from `GTI-B0001` to success. Every other program emits
 byte-identical C++, and the 736 pairs that fail with both compilers report
-identical diagnostics. The summed emission time was 1566.1 s before and
-1573.4 s after. An earlier revision compared against `d2873bde` changed the
-same fixture only.
+identical diagnostics. The summed emission time was 1912.9 s before and
+1916.5 s after. Earlier revisions compared against `d2873bde` and `f0e13a1d`
+changed the same fixture only. On the reconciled head the emitter
+`lifecycle`, `text`, `preflight`, `corpus` and `census` gates,
+`mir_field_determinism` and 19 field-read and class-assignment runtime gates
+pass.
 
 Still `GTI-B0001`, as on main: using a class assignment's whole result
 (`Point r = (p = q);`, `return (p = q);`, a by-value argument or a method
