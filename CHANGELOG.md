@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.2 — Native C-string ownership and conditional call results
+
+- An untracked `c_string` returned by an external C function can again be
+  retained in an ordinary native-resource wrapper. MIR recognizes the exact
+  native producer instead of reporting `GTI-B0001`; GTI owner-dependent strings
+  retain their existing lifetime checks and native pointer validity remains
+  the binding's obligation.
+- A conditional can bind a class result returned by either of two fallible
+  calls with borrowed text inputs. The backend preserves each arm's input-loan
+  ending after result publication, including cleanup-free records without a
+  default constructor. This repairs the editor's conditional stdout/stderr
+  logging path.
+
 ## 0.458.1 — Reference bindings from a local payload enum
 
 - A `switch` can now bind `auto&` to a reference payload of an enum held in a
