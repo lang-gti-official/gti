@@ -14097,6 +14097,9 @@ passiveGeneratedCopyClass(const MirProgram &program, const SemanticType &type);
 formalEntryLoanEndInstruction(const MirConstructorInstance &constructor,
                               const MirInstruction &instruction);
 
+[[nodiscard]] const MirInstruction *
+storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
+
 // A drop-free value carrying borrowed state, such as a text view, enters the
 // constructor with its caller's dependency as the formal's entry loan. A
 // by-value field of such a type may hold only an ownerless value (semantics
@@ -14183,8 +14186,11 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
 // view or a function item without an Initialize: the constructor record
 // publishes its exact Move (mirRecordPublishedConstructorInitializer), which
 // the body emits in MIR order. Borrowed state is admitted only as
-// formalEntryLoanOnlyMove's entry loan. Only these drop-free moves stage in an
-// ordinary-form body (dropFreeOnly).
+// formalEntryLoanOnlyMove's entry loan. A bound shell moved into deferred
+// storage (cppMirDeferredFieldStorage) is cleanup-free as well; its field
+// retains the formal's dependency through an exact Stored publication. Only
+// the drop-free moves stage in an ordinary-form body (dropFreeOnly): MIR
+// proves no borrowed-carrier constructor failure-free yet.
 [[nodiscard]] bool bodyStagedOwnedParameterFieldInitializers(
     const MirProgram &program, const MirConstructorInstance &constructor,
     bool dropFreeOnly = false) {
@@ -14232,10 +14238,17 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
         passiveClass->traits.movable &&
         !passiveClass->traits.containsBorrowedState;
     const bool dropFreeMove = dropFreeParameterMoveField(program, *field);
+    // A bound shell moved into deferred storage is cleanup-free: it has no
+    // value or rollback obligation, only the formal's inert shell drop and
+    // the field's stored dependency, proved below.
+    const bool deferredMove =
+        !dropFreeMove &&
+        cppMirDeferredFieldStorage(program, owner->id, initializer.field);
     if (dropFreeOnly && !dropFreeMove) {
       return false;
     }
-    const std::size_t lifecycleCount = passiveMove || dropFreeMove ? 0 : 1;
+    const std::size_t lifecycleCount =
+        passiveMove || dropFreeMove || deferredMove ? 0 : 1;
 
     const MirInstruction *initialize = nullptr;
     const MirPlace *destination = nullptr;
@@ -14406,10 +14419,46 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
     if (!dropFreeMove && parameterDrop == nullptr) {
       return false;
     }
-    if (passiveMove) {
+    if (passiveMove || deferredMove) {
       if (valueDrop != nullptr || rollbackDrop != nullptr ||
           parameterDrop->dropType.requiresActiveCleanup) {
         return false;
+      }
+      // The field retains the formal's dependency: one Stored loan for this
+      // field, published from the moved value right after the Initialize,
+      // whose input loan ends at once. Nothing else names that field.
+      if (deferredMove) {
+        const MirLoan *stored = nullptr;
+        for (const MirLoan &loan : constructor.body.loans) {
+          if (loan.storedField != initializer.field)
+            continue;
+          if (stored != nullptr)
+            return false;
+          stored = &loan;
+        }
+        const MirInstruction *publication =
+            stored != nullptr
+                ? storedFieldValueLoanProducer(constructor.body, *stored)
+                : nullptr;
+        const MirBlock *block =
+            constructor.body.findBlock(value->definitionBlock);
+        const auto at =
+            block == nullptr || publication == nullptr
+                ? std::vector<MirInstruction>::const_iterator{}
+                : std::find_if(block->instructions.begin(),
+                               block->instructions.end(),
+                               [&](const MirInstruction &instruction) {
+                                 return &instruction == publication;
+                               });
+        if (publication == nullptr || stored->source != source->id ||
+            publication->operands.front().value != movedValue ||
+            block == nullptr || at == block->instructions.end() ||
+            at == block->instructions.begin() ||
+            &*std::prev(at) != initialize ||
+            std::next(at) == block->instructions.end() ||
+            std::next(at)->kind != MirInstructionKind::EndBorrow ||
+            std::next(at)->loan != publication->operands.front().loan)
+          return false;
       }
     } else if (!dropFreeMove) {
       if (valueDrop == nullptr || rollbackDrop == nullptr) {
@@ -14743,6 +14792,41 @@ failureConstructorPassiveBoundField(const MirProgram &program,
          failureConstructorPassiveBoundShell(program, field.type, visiting,
                                              transferred);
 }
+
+// Deferred storage keeps a bound shell in an anonymous union whose native
+// copy, move and destruction must stay trivial: the union never records which
+// member is active. References, scalars, text views, pointers, function items
+// and plain enums are trivial leaves. A payload enum has a backend variant
+// representation, so it stays outside.
+[[nodiscard]] bool
+deferredShellLeavesTrivial(const MirProgram &program, const SemanticType &type,
+                           std::unordered_set<HirClassInstanceId> &visiting) {
+  if (type.kind == SemanticType::Array)
+    return type.arguments.size() == 1 &&
+           deferredShellLeavesTrivial(program, type.arguments.front(),
+                                      visiting);
+  if (type.kind == SemanticType::Enum)
+    return program.findPayloadEnum(type) == nullptr;
+  if (type.kind != SemanticType::Class)
+    return true;
+  const auto *owner = uniqueClassInstanceForType(program, type);
+  if (owner == nullptr || !visiting.insert(owner->id).second)
+    return false;
+  const bool trivial = std::all_of(
+      owner->declaredFields.begin(), owner->declaredFields.end(),
+      [&](const MirClassFieldInfo &field) {
+        return field.type.kind == SemanticType::Reference ||
+               deferredShellLeavesTrivial(program, field.type, visiting);
+      });
+  visiting.erase(owner->id);
+  return trivial;
+}
+
+// The This-rooted field place of a constructor body whose field the owner
+// declares in deferred storage (cppMirDeferredFieldStorage).
+[[nodiscard]] bool deferredFieldPlace(const MirProgram &program,
+                                      const MirBody &body,
+                                      const MirPlace &place);
 
 [[nodiscard]] bool nativeCopyClosure(const MirProgram &program,
                                      const SemanticType &type,
@@ -15304,7 +15388,12 @@ failureConstructorBoundaryEligible(const MirProgram &program,
                               failureConstructorMovedBoundFieldPrefix(
                                   program, constructor, *owner, binding);
                      }));
-    if (!retainedNativeField && !retainedPassiveField &&
+    // Deferred storage keeps a bound shell inert until its publication, and
+    // ending the published shell runs no source code, so a failure on either
+    // side of that publication leaves nothing to roll back.
+    const bool deferredField =
+        cppMirDeferredFieldStorage(program, owner->id, field.symbol);
+    if (!retainedNativeField && !retainedPassiveField && !deferredField &&
         !failureConstructorEmptyDefaultFieldType(program, field.type,
                                                  EmptyFieldUse::Construction)) {
       return false;
@@ -17302,8 +17391,9 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
         field->root == MirPlaceRootKind::This &&
         field->projections.size() == 1 &&
         field->projections.front().kind == MirProjectionKind::Field &&
-        failureConstructorEmptyDefaultFieldType(program, field->type,
-                                                EmptyFieldUse::Construction)) {
+        (failureConstructorEmptyDefaultFieldType(program, field->type,
+                                                 EmptyFieldUse::Construction) ||
+         deferredFieldPlace(program, body, *field))) {
       const auto &selected =
           constructor->initializers[initialize->constructorInitializer - 1];
       const auto declared = std::find_if(
@@ -23684,10 +23774,31 @@ bool cppMirFailureConstructorEmptyFieldsEligible(
                   })) {
     return optionalStorageOwnerEmptyState(program, *instance);
   }
+  // A deferred bound shell starts from its storage's inert member, so it
+  // needs no empty value of its own. Its siblings still need theirs.
+  const auto deferredFields = [&]() {
+    bool deferred = false;
+    const bool fields = std::all_of(
+        instance->declaredFields.begin(), instance->declaredFields.end(),
+        [&](const MirClassFieldInfo &field) {
+          if (cppMirDeferredFieldStorage(program, instance->id, field.symbol))
+            return deferred = true;
+          return field.field != 0 && field.symbol != 0 &&
+                 ((field.dropKind == DropKind::Trivial &&
+                   !field.requiresActiveCleanup &&
+                   passiveConstructorAggregateType(field.type)) ||
+                  (field.dropKind == DropKind::Lexical &&
+                   failureConstructorEmptyDefaultFieldType(
+                       program, field.type, EmptyFieldUse::Construction)));
+        });
+    return fields && deferred && !instance->destructor &&
+           !instance->requiresActiveDropState;
+  };
   return instance != nullptr &&
          (failureConstructorEmptyStateConstructible(program, *instance) ||
           optionalStorageOwnerEmptyState(program, *instance) ||
           failureConstructorDisarmsDeclaredDestructor(program, *instance) ||
+          deferredFields() ||
           // This admits only empty fields, not an empty value of the entire
           // class: the selected base initializer still owns native base
           // construction. It must never create a private constructor that
@@ -23709,6 +23820,64 @@ bool cppMirFailureConstructorEmptyFieldsEligible(
                               EmptyFieldUse::Construction)));
                })));
 }
+
+bool cppMirDeferredFieldStorage(const MirProgram &program,
+                                HirClassInstanceId ownerId, SymbolId symbol) {
+  const MirClassInstance *owner = program.findClassInstance(ownerId);
+  // A generic owner may share one native class template across instances,
+  // so its field declarations stay exact native members.
+  if (owner == nullptr || owner->declaration == 0 || symbol == 0 ||
+      (owner->kind != ClassKind::Class && owner->kind != ClassKind::Struct) ||
+      owner->cAbiRecord || owner->unionLayout ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
+      std::count_if(program.classInstances().begin(),
+                    program.classInstances().end(),
+                    [&](const MirClassInstance &instance) {
+                      return instance.declaration == owner->declaration;
+                    }) != 1)
+    return false;
+  const auto eligible = [&](const MirClassFieldInfo &field) {
+    std::unordered_set<HirClassInstanceId> visiting;
+    return field.type.kind == SemanticType::Class &&
+           failureConstructorPassiveBoundField(program, field, true) &&
+           !failureConstructorEmptyDefaultFieldType(
+               program, field.type, EmptyFieldUse::Construction) &&
+           deferredShellLeavesTrivial(program, field.type, visiting);
+  };
+  const auto field =
+      std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+                   [&](const MirClassFieldInfo &candidate) {
+                     return candidate.symbol == symbol;
+                   });
+  if (field == owner->declaredFields.end() || !eligible(*field))
+    return false;
+  // The first field follows no initialization work unless a state-bearing
+  // base precedes it, so a class whose only bound shell is its first field
+  // keeps native members. Otherwise every bound shell of the class is
+  // deferred, so all its constructors publish them alike.
+  const bool stateBase =
+      std::any_of(owner->bases.begin(), owner->bases.end(),
+                  [](const HirBaseInstance &base) { return !base.interface; });
+  return stateBase || std::any_of(std::next(owner->declaredFields.begin()),
+                                  owner->declaredFields.end(), eligible);
+}
+
+namespace {
+bool deferredFieldPlace(const MirProgram &program, const MirBody &body,
+                        const MirPlace &place) {
+  if (body.kind != MirBodyKind::Constructor ||
+      place.root != MirPlaceRootKind::This || place.projections.size() != 1 ||
+      place.projections.front().kind != MirProjectionKind::Field)
+    return false;
+  for (const MirConstructorInstance &constructor :
+       program.constructorInstances())
+    if (&constructor.body == &body)
+      return cppMirDeferredFieldStorage(program, constructor.owner,
+                                        place.projections.front().field);
+  return false;
+}
+} // namespace
 
 bool cppMirOrdinaryBodyStagedParameterMoves(
     const MirProgram &program, const MirConstructorInstance &constructor) {
@@ -33974,8 +34143,25 @@ private:
       }
       if (loan != nullptr && loan->kind == MirLoanKind::Stored) {
         writeIndent();
+        // A deferred field's dependency travels inside the value just
+        // published into its storage, not a native reference binding.
+        const MirPlace *stored =
+            loan->storedField == 0 ? nullptr : [&]() -> const MirPlace * {
+          for (const MirPlace &candidate : facts.body.places)
+            if (candidate.root == MirPlaceRootKind::This &&
+                candidate.projections.size() == 1 &&
+                candidate.projections.front().kind ==
+                    MirProjectionKind::Field &&
+                candidate.projections.front().field == loan->storedField)
+              return &candidate;
+          return nullptr;
+        }();
         output << "// GTI MIR stored loan " << loan->id
-               << " binds its reference field in the initializer list\n";
+               << (stored != nullptr &&
+                           deferredFieldPlace(program, facts.body, *stored)
+                       ? " publishes the dependency of its deferred field\n"
+                       : " binds its reference field in the initializer "
+                         "list\n");
         return;
       }
       if (loan != nullptr &&
@@ -35800,7 +35986,18 @@ private:
       output << ";\n";
       return;
     }
-    output << destinationSpelling(facts, *instruction.destination) << " = ";
+    // A deferred field has no value to assign over: its publication begins
+    // the bound shell's lifetime in the storage union.
+    const bool deferredPublication =
+        instruction.kind == MirInstructionKind::Initialize &&
+        rawDestination != nullptr &&
+        deferredFieldPlace(program, facts.body, *rawDestination);
+    if (deferredPublication) {
+      output << "std::construct_at(std::addressof("
+             << destinationSpelling(facts, *instruction.destination) << "), ";
+    } else {
+      output << destinationSpelling(facts, *instruction.destination) << " = ";
+    }
     if (movedOperand) {
       output << "std::move(";
     }
@@ -35809,7 +36006,7 @@ private:
     if (movedOperand) {
       output << ')';
     }
-    output << ";\n";
+    output << (deferredPublication ? ");\n" : ";\n");
     if (const MirPlace *handedOff =
             movedTemporaryHandedOff(facts.body, instruction);
         handedOff != nullptr && slotPlace(facts.body, *handedOff)) {
@@ -37081,11 +37278,14 @@ private:
         writeIndent();
         if (fieldResult.directConstruction) {
           // Retire only the proved disarmed native representation. No GTI
-          // value has been published in this field yet.
-          output << "std::destroy_at(";
-          emitDestination();
-          output << ");\n";
-          writeIndent();
+          // value has been published in this field yet. Deferred storage
+          // holds only its inert member, which ends trivially.
+          if (!deferredFieldPlace(program, facts.body, *fieldResult.field)) {
+            output << "std::destroy_at(";
+            emitDestination();
+            output << ");\n";
+            writeIndent();
+          }
         } else if (!publishesReturn && !publishesConstructionSlot &&
                    slot != nullptr) {
           emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
@@ -37390,8 +37590,13 @@ private:
         if (fieldResult.directConstruction) {
           const auto destination =
               destinationSpelling(facts, fieldResult.field->id);
-          output << "std::destroy_at(std::addressof(" << destination << "));\n";
-          writeIndent();
+          // Deferred storage holds no field value to retire before this
+          // publication; its inert member ends trivially.
+          if (!deferredFieldPlace(program, facts.body, *fieldResult.field)) {
+            output << "std::destroy_at(std::addressof(" << destination
+                   << "));\n";
+            writeIndent();
+          }
           output << "::new (static_cast<void *>(std::addressof(" << destination
                  << "))) " << typeSpelling(instruction.info.type) << '(';
           emitClassConstructionExpression(facts, instruction);
@@ -50518,6 +50723,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             });
         return row != representations_.types().end() && row->copyConstructible;
       };
+      const auto deferredCopyDestination = [&](MirValueId id) {
+        const MirInstruction *initialize =
+            constructorFieldCopyInitialize(body, id);
+        const MirPlace *field = initialize != nullptr && initialize->destination
+                                    ? body.findPlace(*initialize->destination)
+                                    : nullptr;
+        return field != nullptr && deferredFieldPlace(program_, body, *field);
+      };
       const auto movedIntoValueStage = [&]() {
         const std::vector<MirValueUse> stageUses =
             nonRootRecordUses(body, value.id);
@@ -50604,11 +50817,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           constructorFieldMoveInitialize(body, value.id) != nullptr ||
           // A body-ordered field copy declares at its Load. The field starts
           // in its native empty state, as the planner gives every field the
-          // native list does not publish, and receives the copy there.
+          // native list does not publish, or in deferred storage, and
+          // receives the copy there.
           (constructorFieldCopyInitialize(body, value.id) != nullptr &&
            copyLoadResult() &&
-           cppMirFailureConstructorEmptyStateTypeEligible(program_,
-                                                          value.info.type)) ||
+           (cppMirFailureConstructorEmptyStateTypeEligible(program_,
+                                                           value.info.type) ||
+            deferredCopyDestination(value.id))) ||
           (address.kind == MirBodyKind::Constructor &&
            ownedParameterFieldBinding(program_, body, address.owner,
                                       value.id)) ||

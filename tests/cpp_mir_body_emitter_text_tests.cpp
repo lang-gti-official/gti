@@ -1631,9 +1631,10 @@ int main() {
 
   // A user-defined carrier with a reference field retains its dependency in
   // the field: the move publishes a Stored loan, and the native class has no
-  // empty representation for the body to fill later, because its reference
-  // must be bound when the object is constructed. Moving it after fallible
-  // work therefore stays outside the body-staged route, as copying it does.
+  // empty representation, because its reference must be bound when the
+  // object is constructed. Its owner declares the field in deferred storage
+  // instead, and the failure form moves the formal into that storage in MIR
+  // order (testDeferredBoundShellFields covers the family).
   const lang::FrontendResult carrier =
       analyzeWithStandardLibrary("cpp-mir-moved-carrier-field.gti", R"(
 #include <std/utility>
@@ -1679,20 +1680,308 @@ int main() {
       continue;
     }
     ++carrierConstructors;
-    expect(std::any_of(constructor.body.loans.begin(),
-                       constructor.body.loans.end(),
-                       [](const lang::MirLoan &loan) {
-                         return loan.kind == lang::MirLoanKind::Stored &&
-                                loan.storedField != 0;
-                       }) &&
-               !lang::CppMirBodyEmitter(carrier.mir, carrierMap)
-                    .supportsFailureBodyText(
-                        {.kind = lang::MirBodyKind::Constructor,
-                         .owner = constructor.id}),
+    const auto stored = std::find_if(
+        constructor.body.loans.begin(), constructor.body.loans.end(),
+        [](const lang::MirLoan &loan) {
+          return loan.kind == lang::MirLoanKind::Stored &&
+                 loan.storedField != 0;
+        });
+    expect(stored != constructor.body.loans.end() &&
+               lang::cppMirDeferredFieldStorage(carrier.mir, constructor.owner,
+                                                stored->storedField) &&
+               !lang::cppMirOwnedParameterFieldBindings(carrier.mir,
+                                                        constructor) &&
+               lang::CppMirBodyEmitter(carrier.mir, carrierMap)
+                   .supportsFailureBodyText(
+                       {.kind = lang::MirBodyKind::Constructor,
+                        .owner = constructor.id}),
            "a moved carrier that retains its dependency after fallible work "
-           "stays outside the body-staged route");
+           "publishes from deferred storage in its verified body");
   }
   expect(carrierConstructors == 1, "the carrier fixture keeps its constructor");
+}
+
+void testDeferredBoundShellFields() {
+  // A borrowed carrier (a class whose references must be bound when it is
+  // constructed) has no empty native value. A field of that type that can
+  // follow other initialization work is declared in deferred storage: an
+  // anonymous union whose inert byte is active until a constructor publishes
+  // the field at its MIR point. That point may follow a fallible ledger, and
+  // the carrier's own constructor may check its input. A class whose only
+  // carrier is its first field keeps a native member.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-deferred-bound-fields.gti", R"(
+#include <std/utility>
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+class Cursor {
+public:
+  int32_t& current;
+  Cursor(int32_t& value) : current(value) {}
+};
+
+class Checked {
+public:
+  int32_t& current;
+  int32_t step;
+  Checked(int32_t& value, int32_t divisor) : current(value), step(60 / divisor) {}
+};
+
+class Moved {
+public:
+  Ledger ledger;
+  Cursor cursor;
+  Moved(Cursor cursor, int32_t divisor)
+      : ledger(Ledger(1, divisor)), cursor(std::move(cursor)) {}
+};
+
+class Built {
+public:
+  Ledger ledger;
+  Checked checked;
+  Built(int32_t& value, int32_t divisor)
+      : ledger(Ledger(2, divisor)), checked(Checked(value, divisor)) {}
+};
+
+class Leading {
+public:
+  Cursor cursor;
+  Ledger ledger;
+  Leading(Cursor cursor, int32_t divisor)
+      : cursor(std::move(cursor)), ledger(Ledger(3, divisor)) {}
+};
+
+int main() {
+  int32_t value = 3;
+  Moved moved = Moved(Cursor(value), 1);
+  Built built = Built(value, 1);
+  Leading leading = Leading(Cursor(value), 1);
+  return moved.cursor.current + built.checked.step + leading.cursor.current -
+         66;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the deferred-bound-fields fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto className = [](const lang::FrontendResult &result,
+                            lang::HirClassInstanceId id) -> std::string {
+    const lang::MirClassInstance *owner = result.mir.findClassInstance(id);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : result.semantics.findClassType(owner->type.classId);
+    return info == nullptr || info->declaration == nullptr
+               ? std::string()
+               : std::string(info->declaration->name().lexeme);
+  };
+  const auto constructorOf =
+      [&](const lang::FrontendResult &result,
+          std::string_view name) -> const lang::MirConstructorInstance * {
+    for (const lang::MirConstructorInstance &constructor :
+         result.mir.constructorInstances())
+      if (constructor.definitionKind == lang::MirDefinitionKind::Source &&
+          className(result, constructor.owner) == name)
+        return &constructor;
+    return nullptr;
+  };
+  // The field each constructor initializes with a borrowed carrier.
+  const auto carrierField =
+      [](const lang::MirConstructorInstance &constructor) {
+        for (const lang::MirLoan &loan : constructor.body.loans)
+          if (loan.kind == lang::MirLoanKind::Stored && loan.storedField != 0)
+            return loan.storedField;
+        return lang::SymbolId{0};
+      };
+  const auto *moved = constructorOf(frontend, "Moved");
+  const auto *built = constructorOf(frontend, "Built");
+  const auto *leading = constructorOf(frontend, "Leading");
+  expect(moved != nullptr && built != nullptr && leading != nullptr &&
+             carrierField(*moved) != 0 && carrierField(*built) != 0 &&
+             carrierField(*leading) != 0,
+         "each fixture constructor publishes one carrier field");
+  if (moved == nullptr || built == nullptr || leading == nullptr) {
+    return;
+  }
+  expect(lang::cppMirDeferredFieldStorage(frontend.mir, moved->owner,
+                                          carrierField(*moved)) &&
+             lang::cppMirDeferredFieldStorage(frontend.mir, built->owner,
+                                              carrierField(*built)) &&
+             !lang::cppMirDeferredFieldStorage(frontend.mir, leading->owner,
+                                               carrierField(*leading)),
+         "carriers after other fields use deferred storage; a first-field "
+         "carrier keeps its native member");
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const auto failureAddress = [](const lang::MirConstructorInstance &item) {
+    return lang::MirBodyAddress{.kind = lang::MirBodyKind::Constructor,
+                                .owner = item.id};
+  };
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                 .supportsFailureBodyText(failureAddress(*moved)) &&
+             lang::CppMirBodyEmitter(frontend.mir, map)
+                 .supportsFailureBodyText(failureAddress(*built)),
+         "the failure forms publish their carriers from deferred storage");
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false,
+           std::string("deferred bound fields should emit: ") + error.what());
+    return;
+  }
+  expect(text.find("union { unsigned char __gti_deferred_cursor{}; "
+                   "::__gti_program::Cursor cursor; };") != std::string::npos &&
+             text.find("union { unsigned char __gti_deferred_checked{}; "
+                       "::__gti_program::Checked checked; };") !=
+                 std::string::npos &&
+             text.find("  class Leading {\n  public:\n    "
+                       "::__gti_program::Cursor cursor;\n") !=
+                 std::string::npos,
+         "deferred storage keeps each carrier's name and type in an "
+         "anonymous union");
+  const auto failureBody = [&](std::string_view owner) {
+    const std::size_t start =
+        text.find(std::string(owner) + "::" + std::string(owner) +
+                  "(::gti_internal::backend::mir_failure_constructor_tag_v1<");
+    const std::size_t end =
+        start == std::string::npos ? start : text.find("\n  }\n", start);
+    return end == std::string::npos ? std::string()
+                                    : text.substr(start, end - start);
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size()))
+      ++occurrences;
+    return occurrences;
+  };
+  // The moved carrier starts inert and is constructed in its storage after
+  // the ledger, from the formal's exact Move. Nothing rolls it back.
+  const std::string movedBody = failureBody("Moved");
+  const std::size_t movedList = movedBody.find(") : ");
+  const std::size_t movedOpen = movedBody.find(" {\n", movedList);
+  const std::size_t ledger = movedBody.find("::__gti_program::Ledger(");
+  const std::size_t publication =
+      movedBody.find("std::construct_at(std::addressof(");
+  expect(
+      movedList != std::string::npos && movedOpen != std::string::npos &&
+          movedBody.substr(movedList, movedOpen - movedList).find("cursor(") ==
+              std::string::npos &&
+          ledger != std::string::npos && publication != std::string::npos &&
+          ledger < publication &&
+          count(movedBody, "std::construct_at(std::addressof(") == 1 &&
+          count(movedBody, "mir_rollback_field_v1(") == 0 &&
+          movedBody.find("publishes the dependency of its deferred field") !=
+              std::string::npos,
+      "the moved carrier publishes into deferred storage after the ledger");
+  // The fallible carrier constructor builds in place through its status
+  // overload; only the ledger's empty value is retired first.
+  const std::string builtBody = failureBody("Built");
+  const std::size_t ledgerBuilt = builtBody.find("::__gti_program::Ledger(");
+  const std::size_t checkedBuilt =
+      builtBody.find("::__gti_program::Checked(::gti_internal::backend::"
+                     "mir_failure_constructor_tag_v1<");
+  expect(ledgerBuilt != std::string::npos &&
+             checkedBuilt != std::string::npos && ledgerBuilt < checkedBuilt &&
+             count(builtBody, "std::destroy_at(std::addressof(") == 1,
+         "the fallible carrier constructor builds in its deferred storage "
+         "after the ledger");
+
+  // The proof keeps the exact Stored publication: a forged dependency source
+  // or a carrier with a source destructor is not deferred.
+  const auto refuses = [&](const auto &forge) {
+    lang::MirProgram mutated = frontend.mir;
+    const bool forged = forge(mutated);
+    return forged && !lang::CppMirBodyEmitter(mutated, map)
+                          .supportsFailureBodyText(failureAddress(*moved));
+  };
+  expect(refuses([&](lang::MirProgram &program) {
+           for (const auto &constructor : program.constructorInstances()) {
+             if (constructor.id != moved->id)
+               continue;
+             auto &body = const_cast<lang::MirBody &>(constructor.body);
+             for (lang::MirLoan &loan : body.loans)
+               if (loan.kind == lang::MirLoanKind::Stored &&
+                   loan.storedField != 0) {
+                 for (const lang::MirPlace &place : body.places)
+                   if (place.id != loan.source &&
+                       place.root == lang::MirPlaceRootKind::This) {
+                     loan.source = place.id;
+                     return true;
+                   }
+               }
+           }
+           return false;
+         }),
+         "a stored dependency that does not name the moved formal is not "
+         "body-staged");
+  expect(refuses([&](lang::MirProgram &program) {
+           for (const auto &instance : program.classInstances())
+             if (className(frontend, instance.id) == "Cursor") {
+               const_cast<lang::MirClassInstance &>(instance).destructorStatus =
+                   lang::SpecialMemberStatus::Declared;
+               return true;
+             }
+           return false;
+         }),
+         "a carrier whose destruction runs source code is not deferred");
+
+  // A payload enum inside the carrier has a backend variant representation,
+  // so the carrier stays outside deferred storage and outside the route.
+  const lang::FrontendResult tagged =
+      analyzeWithStandardLibrary("cpp-mir-deferred-payload-leaf.gti", R"(
+#include <std/utility>
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+enum class Reading { value(int32_t amount), missing };
+
+class Tagged {
+public:
+  int32_t& current;
+  Reading reading;
+  Tagged(int32_t& value, Reading reading) : current(value), reading(reading) {}
+};
+
+class Labeled {
+public:
+  Ledger ledger;
+  Tagged tagged;
+  Labeled(Tagged tagged, int32_t divisor)
+      : ledger(Ledger(4, divisor)), tagged(std::move(tagged)) {}
+};
+
+int main() {
+  int32_t value = 3;
+  Labeled labeled = Labeled(Tagged(value, Reading::missing), 1);
+  return labeled.tagged.current - 3;
+}
+)");
+  expect(tagged.canGenerateCode(),
+         "the payload-leaf fixture should pass the frontend");
+  if (!tagged.canGenerateCode()) {
+    return;
+  }
+  const auto *labeled = constructorOf(tagged, "Labeled");
+  const lang::CppMirBodyEmissionMap taggedMap(buildRows(tagged, tagged.mir));
+  expect(labeled != nullptr && carrierField(*labeled) != 0 &&
+             !lang::cppMirDeferredFieldStorage(tagged.mir, labeled->owner,
+                                               carrierField(*labeled)) &&
+             !lang::CppMirBodyEmitter(tagged.mir, taggedMap)
+                  .supportsFailureBodyText(failureAddress(*labeled)),
+         "a carrier with a payload enum leaf is not deferred");
 }
 
 void testMovedViewAfterFormalRead() {
@@ -8563,6 +8852,7 @@ constexpr NamedTest kTests[] = {
      testMovedClosureFieldInFallibleConstructor},
     {"testMovedPassiveFieldAfterFallibleSibling",
      testMovedPassiveFieldAfterFallibleSibling},
+    {"testDeferredBoundShellFields", testDeferredBoundShellFields},
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
     {"testMovedPassiveFieldInPlainConstructor",
