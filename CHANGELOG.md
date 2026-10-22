@@ -9,6 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.0 — Reading text fields of temporaries
+
+- A text field of a class temporary can now be read directly. For a
+  `Token` with a `std::string_view text` field, `std::string_view v =
+  Token("literal", 1).text;`, `kept = Token("literal", 1).text;`,
+  `return Token("literal", 1).text;` and `Token("literal", 1).text.size()`
+  used to report `error[GTI-B0001]` (an internal compiler error); they now
+  work. A view over a literal is ownerless, so it can be stored or returned.
+  `.text.size()` also works on a temporary whose class has a destructor.
+- A temporary over a local string holds that string's text as a named value
+  does. `std::string_view head = Token(input.view(), 1).text;`,
+  `first(Token(input.view(), 2))` and `Token(input.view(), 3).name()`, where
+  `first` and `name` return the token's text field, give views of `input`
+  that stay valid after the temporary ends and keep `input` borrowed while
+  they are live. These used to report `error[GTI-B0001]`, or
+  `error[GTI-S2081]` for the method.
+- Storing such a view, as in `kept = Token(input.view(), 1).text;`, reports
+  `error[GTI-S2045]`, as it does for a named value. A class with a
+  destructor, a base or virtual methods still keeps its text fields
+  ownerless.
+
 ## 0.457.0 — Payload enums that view a local owner
 
 - A payload enum can now hold a view of a local string in a text payload.

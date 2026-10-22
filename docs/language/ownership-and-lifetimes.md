@@ -2419,6 +2419,23 @@ by a `switch`: it is not yet passed to functions, consumed by `switch
 (std::move(value))`, or bound by an `auto&` pattern at the dependent payload,
 and the enum must not be generic.
 
+A temporary holds the dependency within its expression. Reading its published
+field, passing it to a function that relays the field, or calling a method
+that returns the field gives a view of the owner rather than of the
+temporary. The view may therefore outlive the temporary, and the owner stays
+borrowed while the view is live:
+
+```gti
+std::string_view head = Token(input.view(), 1).text;      // views input
+std::string_view relayed = first(Token(input.view(), 2)); // views input
+Token(input.view(), 3).name().size();                     // valid
+kept = Token(input.view(), 4).text;                       // GTI-S2045
+kept = Token("literal", 5).text;                          // valid: ownerless
+```
+
+A temporary over literal text has ownerless fields, which may be stored or
+returned.
+
 A dependent value still cannot be passed to a constructor, a lambda, a
 virtual method or a generic function, nor returned itself, captured, bound by
 a reference, assigned into existing storage, or stored in a global, a field,

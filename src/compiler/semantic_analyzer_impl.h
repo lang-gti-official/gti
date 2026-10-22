@@ -5145,6 +5145,10 @@ private:
 
   [[nodiscard]] bool
   freshTemporaryMethodSupported(const CallableCandidate &function) const;
+  // A read-only method that returns one direct text field of its receiver
+  // (L-OWN-02).
+  [[nodiscard]] bool
+  receiverTextFieldRelay(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,

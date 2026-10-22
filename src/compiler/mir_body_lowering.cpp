@@ -7110,6 +7110,12 @@ private:
     const bool textFieldResult =
         mir_detail::textFieldResult(value.info.type, value.borrowOrigin,
                                     value.borrowArgument, value.borrowFields);
+    // A temporary argument holds its dependency as the Stored loan that its
+    // publishing construction produced, the loan borrowOriginPlace selected.
+    if (textFieldResult && originLoan == 0 &&
+        value.borrowOrigin == BorrowOriginKind::Argument &&
+        value.borrowArgument < arguments.size())
+      originLoan = loanForValue(arguments[value.borrowArgument]);
     const bool heldTextField =
         textFieldResult && originLoan != 0 &&
         originLoan <= output.loans.size() &&

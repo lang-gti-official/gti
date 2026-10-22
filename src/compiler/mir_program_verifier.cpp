@@ -1992,6 +1992,18 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             functionTarget->returnType.kind != SemanticType::Reference &&
             functionTarget->returnBorrowOrigin == BorrowOriginKind::None &&
             !instruction.info.traits.containsBorrowedState;
+        // A text field relay (L-OWN-02) returns what a publishing
+        // construction holds in that field: its owner's text, never a view
+        // of the temporary itself.
+        const bool textFieldRelay =
+            functionTarget != nullptr && !mutableInput && borrowedCarrier &&
+            producer != nullptr &&
+            producer->kind == MirInstructionKind::Construct &&
+            producer->dependentTextPublication &&
+            mir_detail::textFieldResult(functionTarget->returnType,
+                                        functionTarget->returnBorrowOrigin,
+                                        functionTarget->returnBorrowParameter,
+                                        functionTarget->returnBorrowFields);
         // Dispatch is exactly the target's own: a virtual member keeps its
         // dynamic dispatch and failure contract over the borrowed temporary,
         // and a non-virtual member is never dispatched through the table.
@@ -2008,6 +2020,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             receiverObligations != 1 ||
             (!readObservation && !ownedResult && !externalConsumingReference) ||
             (borrowedCarrier && !externalConsumingReference &&
+             !textFieldRelay &&
              !supportsEphemeralBorrowResult(functionTarget,
                                             instruction.info))) {
           return verificationFailure(

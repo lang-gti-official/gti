@@ -2596,6 +2596,16 @@ set is recorded for it.
   arm binding's text payload; a by-value binding then carries that loan, and
   an `auto&` binding is `GTI-S2045`.
 
+A temporary needs no further model. Its construction publishes as above, and
+its expression is a dependent value that a field read, a relay or a receiver
+consumes, so `fieldSourcedTextResult` classifies a relay of it as it does a
+named value's. Only the fresh-temporary receiver mode is extended:
+`receiverModeForObject` admits a dependent temporary for a
+`receiverTextFieldRelay`, a read-only method whose summary returns one direct
+text field of its receiver. That result holds the owner's text and borrows
+nothing of the temporary, so `ephemeralBorrowResultSupported` does not apply
+to it.
+
 A dependent argument or receiver records a `TextDependentRelay` with its
 designated fields, while its scope is live. The request's own finalization
 decides it, once every body that feeds the contracts is analyzed: it consumes
