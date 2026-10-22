@@ -35,6 +35,20 @@ std::string fail_message() {
   std::panic("message computation failed"); // message-computation
 }
 
+bool ordered_condition() {
+  [[discard]] std::try_write_stderr("condition\n");
+  return false;
+}
+std::string_view ordered_pattern() {
+  [[discard]] std::try_write_stderr("pattern\n");
+  return "ordered {} then {}";
+}
+int ordered_argument(int number) {
+  if (number == 1) { [[discard]] std::try_write_stderr("first\n"); }
+  else { [[discard]] std::try_write_stderr("second\n"); }
+  return number;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   Guard outer{1};
   if (argc == 1) {
@@ -77,6 +91,9 @@ int main(int argc, std::vector<std::string> argv) {
       auto joined = worker.join();
       if (!joined) { return 98; }
     }
+  }
+  if (argc == 11) {
+    std::assert(ordered_condition(), ordered_pattern(), ordered_argument(1), ordered_argument(2)); // ordered
   }
   return 0;
 }

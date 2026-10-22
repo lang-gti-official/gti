@@ -34,6 +34,8 @@ namespace application {
     if (enabled) { record(value); }
   }
 
+  [[deferred]] void repeat(int value) { record(value); record(value); }
+
   bool has_text(Record& value) { return !value.text.empty(); }
   void consume_record(Record value) { std::assert(!value.text.empty()); }
 
@@ -65,6 +67,9 @@ int main() {
   std::assert(local++ == 0, "unexpected count {}", expensive_message());
   std::assert(check_state(), "unexpected state {}", expensive_message());
   std::debug_assert(check_state(), "debug state {}", expensive_message());
+  mut int repeated = 0;
+  application::repeat(repeated++);
+  if (repeated != 2 || Observations::recorded != 1) { return 9; }
   application::when(false, expensive_message());
   application::when(true, 7);
   auto callback = []() -> void { Observations::recorded = 8; };
