@@ -2611,13 +2611,21 @@ designated fields, while its scope is live. The request's own finalization
 decides it, once every body that feeds the contracts is analyzed: it consumes
 the relay when the analyzed callee requires none of those fields, and
 otherwise reports `GTI-S2045` related to the callee. A callee that returns a
-reference to text records no relay: the reference may designate the
-dependent field, and the view copied from it would carry no loan. For the
-same reason a contract formal passed to such a callee is not a forward but a
-whole use, which requires each of its text fields. So is a returned
-reference that a call borrowed from a contract formal or the receiver
-(`noteReturnedFormalReference`): MIR sees that call's loan rooted at the
-whole formal. An instance analysis
+reference to text records a relay only as a receiver relay: its
+`returnedTextReference` names the receiver's direct text field that each of
+its returns designates. `textReferenceReturnSummary` computes it before
+bodies, from `predeclaredTextFieldSource` over the returns, in a
+field-contract method. At a call, `textReferenceRelay` treats the result as
+a read of that field: it is a dependent text place when the receiver
+designates the field or is a contract formal, `storedBorrowDependencies`
+gives a copy the receiver's owner dependency, and a contract receiver's
+relay forwards the requirement on the field. Any other reference may
+designate the dependent field without a loan for the view copied from it,
+so it takes no relay, and a contract formal passed to such a callee is not a
+forward but a whole use, which requires each of its text fields. So is a
+returned reference that a call borrowed from a contract formal or the
+receiver (`noteReturnedFormalReference`): MIR sees that call's loan rooted
+at the whole formal. An instance analysis
 records no field use, forward or relay. Its finalization leaves relays pending
 and skips the contract pass, because looking up the functions a contract names
 would record them as functions the instance consulted, and demand their

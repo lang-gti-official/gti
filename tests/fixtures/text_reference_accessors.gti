@@ -1,6 +1,6 @@
 // Text read through a returned reference is the text that the reference
-// designates: a direct text field of the receiver, or an enum payload. Each
-// value here holds ownerless text, so the reads can be stored.
+// designates: a direct text field of the receiver, or an enum payload. The
+// first values hold ownerless text, so the reads can be stored.
 #include <std/string>
 
 mut std::string_view kept = "";
@@ -42,5 +42,14 @@ int main() {
   std::println(kept);
   expected<int, std::string_view> fine = 7;
   std::println(fine.value());
+
+  // A receiver relay on a value over a local owner gives a view of that
+  // owner, which a copy keeps borrowed.
+  std::string input{"relayed"};
+  Token relayed = Token(input.view(), 2);
+  std::println(relayed.ref());
+  std::string_view copied = relayed.ref();
+  std::println(copied);
+  std::println(width(relayed));
   return 0;
 }

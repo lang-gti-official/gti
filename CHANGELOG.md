@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.460.0 — Reference accessors on values that view an owner
+
+- A method that returns a reference to one of its text fields, such as
+  `std::string_view& ref() { return this.text; }`, can now be called on a
+  value that views a local owner. For `Token token = Token(input.view(), 1);`,
+  `std::println(token.ref());` and `std::string_view copy = token.ref();`
+  used to report `error[GTI-S2045]`; the result is now a view of `input`, as
+  `token.text` is. The copy keeps `input` borrowed while it lives, and so
+  keeps `token`.
+- A function that only reads through such an accessor, such as
+  `uint64_t width(Token& t) { return t.ref().size(); }`, now accepts such a
+  value. Storing the text, as in `kept = token.ref();`, or passing the value
+  to a function that stores it, still reports `error[GTI-S2045]`.
+
 ## 0.458.5 — Reading text through returned references
 
 - A method that returns a reference to a text field, such as

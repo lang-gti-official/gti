@@ -1860,7 +1860,12 @@ pattern binds a payload, holds that value's text, so a payload accessor such
 as `expected::error()` reads the extracted payload. A method that returns a
 reference to its receiver's direct text field lowers it as a plain borrow of
 that field. The text is the caller's, ownerless or under the method's field
-contract, so the borrow needs no stored dependency in the body.
+contract, so the borrow needs no stored dependency in the body. Over a
+receiver that carries a `Stored` loan designating that field, a view copied
+through the reference carries the call's result loan, whose stored
+dependency is that owner loan. Which bindings carry it is a semantic
+decision here, as for a view copied from a field read: MIR checks the loan's
+shape, not its carriers.
 
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the

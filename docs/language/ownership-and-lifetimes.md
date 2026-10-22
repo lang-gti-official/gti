@@ -2473,17 +2473,29 @@ A method or function that returns a reference to text, such as
 `std::string_view& ref() { return this.text; }`, `T& get()` over a text field,
 or `expected::error()`, gives the text that the reference designates. A value
 that holds ownerless text may store what it reads through the reference. A
-temporary cannot yet be the receiver of such an accessor (`GTI-S2081`). A
-dependent value cannot yet call one or be passed to a function that calls
-one on it: a view copied from the reference would not keep the owner
-borrowed, so each is `GTI-S2045`:
+temporary cannot yet be the receiver of such an accessor (`GTI-S2081`).
+
+A method of a non-generic class whose returns all designate one text field of
+its read-only receiver relays that field. On a dependent value, reading
+through its result gives a view of the owner, as reading the field does. A
+view copied from it keeps the owner borrowed and, unlike a field read, the
+value as well, because the reference that produced it borrows the value. A
+function that only reads through such an accessor may take a dependent
+value; one that stores what it reads may not:
 
 ```gti
 Token literal = Token("literal", 1);
 kept = literal.ref();                     // valid: ownerless
 Token token = Token(input.view(), 2);
-std::println(token.ref());                // GTI-S2045
+std::println(token.ref());                // valid: views input
+std::string_view copy = token.ref();      // keeps input and token borrowed
+kept = token.ref();                       // GTI-S2045
 ```
+
+A dependent value still cannot call any other reference accessor or be
+passed to a function that calls one on it, `GTI-S2045`. This covers an
+accessor on a generic class or through a payload, and one that returns
+another call's reference.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its

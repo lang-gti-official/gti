@@ -483,9 +483,7 @@ uint64_t width(Token& token) { return token.ref().size(); }
 
 // Text read through a returned reference is the text that the reference
 // designates: the receiver's direct text field, or an enum payload. Values
-// holding ownerless text may store it. A value over a local owner cannot
-// reach such an accessor yet, because a view copied from the reference would
-// not keep the owner borrowed.
+// holding ownerless text may store it.
 void testTextReferenceAccessors() {
   const auto result = analyzeText(kReferenceAccessors + R"gti(
 int main() {
@@ -550,15 +548,18 @@ int main() {
            "MIR derives the whole use of a returned call reference");
   }
 
-  for (const char *body : {"std::println(t.ref());", "kept = t.ref();",
-                           "keep(t);", "std::println(width(t));"}) {
+  // A value over a local owner reaches a reference accessor only through a
+  // relay (testTextReferenceRelays), never one that lets its receiver
+  // escape whole or stores what it reads.
+  for (const char *body :
+       {"kept = t.ref();", "keep(t);", "std::println(t.kindOf());"}) {
     const auto rejected =
         analyzeText(kReferenceAccessors +
                     "int run() { std::string input{\"input\"}; Token t = "
                     "Token(input.view(), 1); " +
                     body + " return 0; }\nint main() { return run(); }\n");
     expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"),
-           std::string("a value over a local owner reaches no text "
+           std::string("a value over a local owner reaches no escaping "
                        "accessor: ") +
                body);
     expect(std::none_of(rejected.diagnostics.begin(),
@@ -614,13 +615,13 @@ int main() {
   for (const auto &function : result.mir.functionInstances()) {
     const auto &loans = function.body.loans;
     for (const auto &loan : loans)
-      carried = carried ||
-                (loan.kind == lang::MirLoanKind::CallResult &&
-                 loan.carriers.size() == 1 && loan.storedDependency != 0 &&
-                 loan.storedDependency <= loans.size() &&
-                 loans[loan.storedDependency - 1].kind ==
-                     lang::MirLoanKind::Stored &&
-                 loans[loan.storedDependency - 1].designatedFields.size() == 1);
+      carried =
+          carried ||
+          (loan.kind == lang::MirLoanKind::CallResult &&
+           loan.carriers.size() == 1 && loan.storedDependency != 0 &&
+           loan.storedDependency <= loans.size() &&
+           loans[loan.storedDependency - 1].kind == lang::MirLoanKind::Stored &&
+           loans[loan.storedDependency - 1].designatedFields.size() == 1);
   }
   expect(carried, "the copied view carries the relay's loan, which depends "
                   "on the owner's loan");

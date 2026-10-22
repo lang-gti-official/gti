@@ -1,5 +1,23 @@
 # Compiler Verification
 
+## Reference relays (0.460.0)
+
+`ownerless_text_contracts` covers relays in `testTextReferenceRelays`.
+- On a value over a local owner, `std::println(t.ref())`, a copy
+  `std::string_view v = t.ref();` and `width(t)`, which reads through
+  `t.ref()`, verify. The copy carries the relay's result loan, whose stored
+  dependency is the owner's `Stored` loan designating the field.
+- These are rejected at source, never with `GTI-B`. `kept = t.ref()` and
+  `keep(t)`, which stores `t.ref()`, are `GTI-S2045`. Appending to the owner
+  while the copy lives, or moving the value while a reference from `t.ref()`
+  lives, is `GTI-S2017`.
+- `testTextReferenceAccessors` keeps `t.kindOf()`, which returns another
+  call's reference and so lets its receiver escape, as `GTI-S2045`.
+- `text_reference_accessors_runtime` runs the relayed reads in every mode.
+- MIR does not check which bindings carry the relay's loan, as for a view
+  copied from a field read: removing the copy from the carriers of
+  `std::string_view v = t.text;` also verifies. That gap predates relays.
+
 ## Text read through returned references (0.458.5)
 
 `ownerless_text_contracts` covers the accessors in
