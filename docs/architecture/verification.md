@@ -45,9 +45,10 @@ memoized complete summaries only, which still re-evaluated a provisional
 summary at every call path inside a recursive set; summaries are now
 provisional for one pass of the set's first function.
 
-An `--emit-cpp` differential at O0 and O3, against main's compiler on the
-same sources, covers every `.gti` program in the repository outside `stdlib/`
-and the hanging `namespace-depth-63` stress file: 1,946 programs.
+An `--emit-cpp` differential at O0 and O3, against main's compiler at
+`d2873bde` on the same sources, covers every `.gti` program in the repository
+outside `stdlib/` and the hanging `namespace-depth-63` stress file: 1,946
+programs.
 - No run changes status, emitted C++ or diagnostics. The 796 runs that fail
   on main fail identically with this change.
 - Neither compiler reports `GTI-B0001` for any of them, so the corpus held no
