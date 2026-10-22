@@ -1,5 +1,50 @@
 # Compiler Verification
 
+## Nested field reads of cleanup-free temporaries (0.458.2)
+
+A nested read such as `Outer(Token("literal", 1)).token.kind` used to report
+`GTI-B0001`. MIR builds `.token.kind` from `.token` and roots both places at
+the temporary, and the cleanup-free field-read slot accepted one place-root
+use only. The slot now reads the deepest place as the chain and admits any
+shorter one only as an untouched prefix record of it.
+
+- `testCleanupFreeConstructorTemporaryFieldRead` emits the nested read
+  `outer_t().inner.value`. The chain is spelled once through the value slot,
+  the slot retires after the read, and neither the chain nor its prefix
+  declares a place. Two MIR mutations stay refused: the return reads the chain
+  a second time, and an untouched place outside the chain roots at the
+  temporary.
+- `issue_127_constructor_temporary_field_runtime` adds twelve nested reads in
+  every mode:
+  - a scalar, a text view and its `.size()`;
+  - a read-only method on a nested field, and a three-level chain;
+  - a short-circuit operand and a cleanup-free conditional join;
+  - a failure-capable call, an aggregate call, a moved value and a lambda
+    result;
+  - an immovable record read in a loop.
+  It counts all 28 nested constructions. The emitted C++ reads all twelve
+  chains through value slots and none through MIR's owned result slots.
+- Owner-tracked text still cannot reach a nested holder:
+  `Outer(Token(input.view(), 1))` is `GTI-S2045` at the argument, both before
+  and after.
+
+An `--emit-cpp` differential over every `.gti` file under `tests/` and
+`examples/`, against main's compiler on the same sources:
+- Against main at 0.458.0, over all 1,834 files: 1,458 build with both
+  compilers and emit byte-identical C++, and 375 fail with both, with the same
+  error codes. One stress input, `namespace-depth-63.gti`, exceeds the
+  600-second budget with both.
+- Only `issue_127_constructor_temporary_field.gti` changes status: it now
+  builds.
+- The recorded validation repeats the differential against main at 0.458.1,
+  without that stress input, and requires the same outcome.
+
+Still refused, both before and after, even for a single-level read:
+- a conditional join whose arms pass a class by value, as in
+  `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
+- a conditional join of a class that holds a text field, as in
+  `(left ? word_t("a", 1) : word_t("b", 2)).kind`.
+
 ## Dependent text payloads (0.457.0)
 
 `view_fields` covers payloads in `testPayloads`.
