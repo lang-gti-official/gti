@@ -33,6 +33,8 @@ struct TextBody {
   const std::map<SymbolId, std::size_t> *publishedFields = nullptr;
   // A function whose formals and receiver carry field-level contracts.
   const MirFunctionInstance *fieldContracts = nullptr;
+  // The function whose body this is, when its returns may relay formals.
+  const MirFunctionInstance *function = nullptr;
 };
 
 // A class whose direct text fields may hold a relayed owner's text: no
@@ -124,8 +126,83 @@ private:
   // Formals whose text a construction published under its result's loan; the
   // constructor body must not also store them as ownerless text.
   std::set<std::pair<std::size_t, std::size_t>> publishedFormals;
+  // Derived per function: the formals a returned fresh value holds in a
+  // direct text field, which each call then publishes (L-OWN-02).
+  std::vector<std::set<PublishedTextField>> relays;
   std::unordered_set<HirFunctionInstanceId> activeReturns;
   std::set<std::size_t> activeTemporaries;
+
+  // Whether a Return of this body yields exactly `value`.
+  static bool returnsValue(const MirBody &body, MirValueId value) {
+    return std::any_of(
+        body.blocks.begin(), body.blocks.end(), [&](const MirBlock &block) {
+          return block.terminator.kind == MirTerminatorKind::Return &&
+                 block.terminator.value &&
+                 block.terminator.value->kind == MirOperandKind::Value &&
+                 block.terminator.value->value == value;
+        });
+  }
+
+  // Whether `instruction` produces this function's returned fresh value of
+  // its own return type, whose text fields may then relay formals.
+  bool returnedFreshValue(const TextBody &context,
+                          const MirInstruction &instruction) const {
+    return context.function && instruction.result &&
+           instruction.info.type == context.function->returnType &&
+           textPublishableClass(program, instruction.info.type) &&
+           returnsValue(context.body, *instruction.result);
+  }
+
+  // The by-value text formal an operand reads directly, through its call
+  // stage and an exact load or move of the formal's binding.
+  std::optional<std::size_t> exactTextFormal(const TextBody &context,
+                                             const MirOperand &operand) const {
+    const MirOperand *current = &operand;
+    for (std::size_t depth = 0;
+         depth < 3 && current->kind == MirOperandKind::Value; ++depth) {
+      const auto *producer = definition(context.body, current->value);
+      if (!producer || producer->operands.size() != 1 ||
+          (producer->kind != MirInstructionKind::CallInput &&
+           producer->kind != MirInstructionKind::Load &&
+           producer->kind != MirInstructionKind::Move))
+        return std::nullopt;
+      current = &producer->operands.front();
+    }
+    const auto *place = current->kind == MirOperandKind::Copy ||
+                                current->kind == MirOperandKind::Move
+                            ? context.body.findPlace(current->place)
+                            : nullptr;
+    if (!place || place->root != MirPlaceRootKind::Binding ||
+        !place->projections.empty() || place->capture != 0)
+      return std::nullopt;
+    const auto found = std::find(context.bindings.begin(),
+                                 context.bindings.end(), place->binding);
+    const auto index =
+        static_cast<std::size_t>(found - context.bindings.begin());
+    if (found == context.bindings.end() || index >= context.types.size() ||
+        !textType(context.types[index]))
+      return std::nullopt;
+    return index;
+  }
+
+  // A call that publishes a dynamic argument at a callee's published text
+  // field carries its own read-only Stored loan designating that field.
+  static bool publishesCallText(const TextBody &context,
+                                const MirInstruction &call,
+                                const PublishedTextField &entry) {
+    const auto *loan = call.loan ? context.body.findLoan(*call.loan) : nullptr;
+    const BorrowedFieldOrigin expected{.resultFields = {entry.field},
+                                       .origin = BorrowOriginKind::Argument,
+                                       .parameter = entry.parameter,
+                                       .access = AccessMode::ReadOnly};
+    return call.dependentTextPublication && loan &&
+           loan->kind == MirLoanKind::Stored &&
+           loan->access == AccessMode::ReadOnly &&
+           loan->designatedFields == std::vector<SymbolId>{entry.field} &&
+           loan->additionalDependencies.empty() &&
+           std::find(call.borrowFields.begin(), call.borrowFields.end(),
+                     expected) != call.borrowFields.end();
+  }
 
   const MirInstruction *definition(const MirBody &body, MirValueId id) const {
     const auto *value = body.findValue(id);
@@ -604,12 +681,15 @@ private:
     return true;
   }
 
-  std::set<std::size_t>
-  scan(const TextBody &context, std::size_t owner, bool diagnose,
-       std::set<OwnerlessTextField> *fieldNeeds = nullptr) {
+  std::set<std::size_t> scan(const TextBody &context, std::size_t owner,
+                             bool diagnose,
+                             std::set<OwnerlessTextField> *fieldNeeds = nullptr,
+                             std::set<PublishedTextField> *relayed = nullptr) {
     std::set<std::size_t> needed;
     std::set<OwnerlessTextField> ignoredFields;
+    std::set<PublishedTextField> ignoredRelays;
     auto &neededFields = fieldNeeds ? *fieldNeeds : ignoredFields;
+    auto &relayedFormals = relayed ? *relayed : ignoredRelays;
     const auto require = [&](const MirInstruction &instruction,
                              const MirOperand &operand) {
       const auto source = sources(context, operand);
@@ -764,11 +844,61 @@ private:
             if (instruction.kind == MirInstructionKind::Construct &&
                 publishesText(context, instruction, index))
               continue;
+            // This function's returned fresh value relays the formal its
+            // published text field stores (L-OWN-02): the caller's argument
+            // is published there at each call instead.
+            if (instruction.kind == MirInstructionKind::Construct &&
+                index < instruction.operands.size() &&
+                returnedFreshValue(context, instruction)) {
+              const auto &fields =
+                  constructorTextFields[*instruction.constructorTarget - 1];
+              const auto field = fields.find(index);
+              const auto formal =
+                  exactTextFormal(context, instruction.operands[index]);
+              if (field != fields.end() && formal &&
+                  directTextField(program, instruction.info.type,
+                                  field->second)) {
+                relayedFormals.insert(
+                    {.parameter = *formal, .field = field->second});
+                continue;
+              }
+            }
             if (index < instruction.operands.size())
               require(instruction, instruction.operands[index]);
             else if (diagnose)
               fail(context, owner, &instruction,
                    "ownerless text argument is missing");
+          }
+        // A callee that returns an argument in a text field of its fresh
+        // result (L-OWN-02): a dynamic argument is published under the call's
+        // own loan, a returned call relays this function's formal, and any
+        // other formal or unknown text there must be ownerless.
+        // Semantics saw this callee's relays before they were final
+        // (recursion): every text argument must be ownerless instead.
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.provisionalTextRelays) {
+          for (std::size_t index = 0; index < instruction.operands.size() &&
+                                      index < instruction.parameterTypes.size();
+               ++index)
+            if (textType(instruction.parameterTypes[index]))
+              require(instruction, instruction.operands[index]);
+        } else if (instruction.kind == MirInstructionKind::Call &&
+                   instruction.functionTarget &&
+                   *instruction.functionTarget != 0 &&
+                   *instruction.functionTarget <= relays.size())
+          for (const auto &entry : relays[*instruction.functionTarget - 1]) {
+            if (entry.parameter >= instruction.operands.size() ||
+                !directTextField(program, instruction.info.type, entry.field) ||
+                publishesCallText(context, instruction, entry))
+              continue;
+            const auto &operand = instruction.operands[entry.parameter];
+            if (returnedFreshValue(context, instruction))
+              if (const auto formal = exactTextFormal(context, operand)) {
+                relayedFormals.insert(
+                    {.parameter = *formal, .field = entry.field});
+                continue;
+              }
+            require(instruction, operand);
           }
         if (instruction.kind == MirInstructionKind::Compute &&
             instruction.operation == MirOperation::PayloadConstruct &&
@@ -938,34 +1068,54 @@ MirVerificationResult TextContracts::verify() {
         std::move(inputs.requirements);
     constructorTextFields[constructor.id - 1] = std::move(inputs.fields);
   }
+  relays.resize(program.functionInstances().size());
   const auto functionContext = [&](const MirFunctionInstance &function) {
-    return TextBody{.body = function.body,
-                    .types = function.parameterTypes,
-                    .bindings = function.parameterBindings,
-                    .fieldContracts = fieldContractFunction(program, function)
-                                          ? &function
-                                          : nullptr};
+    return TextBody{
+        .body = function.body,
+        .types = function.parameterTypes,
+        .bindings = function.parameterBindings,
+        .fieldContracts =
+            fieldContractFunction(program, function) ? &function : nullptr,
+        .function = function.definitionKind == MirDefinitionKind::Source &&
+                            function.linkage == LanguageLinkage::Gti
+                        ? &function
+                        : nullptr};
   };
   bool changed = true;
   while (changed) {
     changed = false;
     for (const auto &function : program.functionInstances()) {
       std::set<OwnerlessTextField> fields;
-      const auto required =
-          scan(functionContext(function), function.id, false, &fields);
+      std::set<PublishedTextField> relayed;
+      const auto required = scan(functionContext(function), function.id, false,
+                                 &fields, &relayed);
       auto &known = requirements[function.id - 1];
       auto &knownFields = fieldRequirements[function.id - 1];
+      auto &knownRelays = relays[function.id - 1];
       const auto before = known.size();
       const auto beforeFields = knownFields.size();
+      const auto beforeRelays = knownRelays.size();
       known.insert(required.begin(), required.end());
       knownFields.insert(fields.begin(), fields.end());
+      knownRelays.insert(relayed.begin(), relayed.end());
       changed = changed || before != known.size() ||
-                beforeFields != knownFields.size();
+                beforeFields != knownFields.size() ||
+                beforeRelays != knownRelays.size();
     }
   }
   for (const auto &function : program.functionInstances()) {
     const TextBody context = functionContext(function);
     (void)scan(context, function.id, true);
+    // A function's relays are what its returns derive (L-OWN-02); a caller
+    // publishes nothing a callee does not derive, and a derived relay must be
+    // declared or the caller would treat that text as ownerless.
+    if (!std::equal(relays[function.id - 1].begin(),
+                    relays[function.id - 1].end(),
+                    function.publishedTextFields.begin(),
+                    function.publishedTextFields.end()))
+      fail(context, function.id, nullptr,
+           "published text result contract differs from independently "
+           "derived relays");
     // Every independently derived field requirement must be declared; a
     // declared one MIR does not derive only rejects more relays.
     const auto &declaredFields = function.ownerlessTextFields;

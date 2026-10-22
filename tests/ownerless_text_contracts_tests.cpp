@@ -25,9 +25,12 @@ struct Label<T> {
 Label<T> forward<T>(T input) { return later(std::move(input)); }
 Label<T> later<T>(T input) { return Label<T>(std::move(input)); }
 Label<std::string_view> uncalled(std::string_view input) { return later(input); }
+mut Label<std::string_view> latest = Label<std::string_view>("initial");
+void remember(std::string_view input) { latest = later(input); }
 int main() {
   auto label = forward("literal");
   auto integer = forward(42);
+  remember("remembered");
   return std::move(label).take() == "literal" && std::move(integer).take() == 42 ? 0 : 1;
 }
 )gti");
@@ -37,8 +40,20 @@ int main() {
          "conditional ownerless forwarding is generic and order independent");
   if (!result.canGenerateCode())
     return;
+  // Returning the fresh label relays the formal (L-OWN-02); storing it in
+  // a global still requires ownerless text.
   std::size_t contracts = 0;
+  std::size_t relays = 0;
   for (const auto &function : result.mir.functionInstances()) {
+    if (!function.publishedTextFields.empty()) {
+      ++relays;
+      auto changed = result.mir;
+      const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(function.id))
+          ->publishedTextFields.clear();
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "omitted published text relay is rejected");
+    }
     if (function.ownerlessTextParameters.empty())
       continue;
     ++contracts;
@@ -49,10 +64,11 @@ int main() {
     expect(!lang::verifyMirProgram(changed).valid(),
            "omitted ownerless formal contract is rejected");
   }
-  expect(contracts >= 2,
-         "forwarding and storing functions retain requirements");
+  expect(relays >= 2, "forwarding functions relay their text formal");
+  expect(contracts >= 1, "a storing function retains its requirement");
   for (const auto &function : result.hir.functionInstances()) {
-    if (function.ownerlessTextParameters.empty())
+    if (function.ownerlessTextParameters.empty() &&
+        function.publishedTextFields.empty())
       continue;
     auto changed = result.hir;
     auto *target = const_cast<lang::HirFunctionInstance *>(
