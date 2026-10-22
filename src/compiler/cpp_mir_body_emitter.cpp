@@ -2739,18 +2739,54 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
 }
 
 // Forming a nested projection of a value, such as `make().inner.x`, also
-// records each intermediate (`make().inner`). An unreferenced intermediate
-// of the observed projection is a pure record as well and spells nothing.
+// records each intermediate (`make().inner`). An intermediate of the observed
+// projection that nothing names, not even an obligation, a protecting loan or
+// a block argument, is a pure record as well and spells nothing.
 [[nodiscard]] bool unreferencedValueRootedPrefix(const MirBody &body,
                                                  const MirPlace &prefix,
                                                  const MirPlace &observed) {
-  return prefix.id != observed.id && prefix.root == MirPlaceRootKind::Value &&
-         observed.root == MirPlaceRootKind::Value &&
-         prefix.value == observed.value &&
-         prefix.projections.size() < observed.projections.size() &&
-         std::equal(prefix.projections.begin(), prefix.projections.end(),
-                    observed.projections.begin()) &&
-         unreferencedMirPlace(body, prefix);
+  if (prefix.id == observed.id || prefix.root != MirPlaceRootKind::Value ||
+      observed.root != MirPlaceRootKind::Value ||
+      prefix.value != observed.value || prefix.projections.empty() ||
+      prefix.projections.size() >= observed.projections.size() ||
+      !std::equal(prefix.projections.begin(), prefix.projections.end(),
+                  observed.projections.begin()) ||
+      !unreferencedMirPlace(body, prefix))
+    return false;
+  const auto names = [&](const MirOperand &operand) {
+    return operand.place == prefix.id;
+  };
+  return std::none_of(body.loans.begin(), body.loans.end(),
+                      [&](const MirLoan &loan) {
+                        return loan.protectsSource(prefix.id);
+                      }) &&
+         std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                      [&](const MirDropObligation &drop) {
+                        return drop.place == prefix.id;
+                      }) &&
+         std::none_of(
+             body.blocks.begin(), body.blocks.end(),
+             [&](const MirBlock &block) {
+               const MirTerminator &terminator = block.terminator;
+               return std::any_of(terminator.targetArguments.begin(),
+                                  terminator.targetArguments.end(), names) ||
+                      std::any_of(terminator.elseArguments.begin(),
+                                  terminator.elseArguments.end(), names) ||
+                      std::any_of(terminator.switchTargets.begin(),
+                                  terminator.switchTargets.end(),
+                                  [&](const MirSwitchTarget &edge) {
+                                    return std::any_of(edge.arguments.begin(),
+                                                       edge.arguments.end(),
+                                                       names);
+                                  }) ||
+                      std::any_of(
+                          block.instructions.begin(), block.instructions.end(),
+                          [&](const MirInstruction &instruction) {
+                            return instruction.successResultDestination ==
+                                       prefix.id ||
+                                   instruction.retainedOwnerPlace == prefix.id;
+                          });
+             });
 }
 
 // The one place through which a value is observed when every use of it
