@@ -5544,9 +5544,26 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
     if (!dependencySource)
       dependencySource = source;
     MirLoanId expected = 0;
+    // Text reached through a loan holds exactly that loan's stored
+    // dependency, which is none when its referent's text is ownerless or the
+    // caller's (L-OWN-02).
+    bool exactParent = false;
+    // A returned reference that forwards a call's reference result holds
+    // exactly that result's stored dependency.
+    const MirLoan *forwarded = nullptr;
+    if (loan.kind == MirLoanKind::Return)
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Borrow &&
+              instruction.loan == loan.id && instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Loan)
+            forwarded = body.findLoan(instruction.operands.front().loan);
     const auto *restoration = mir_detail::restoredBorrowAuthority(body, loan);
-    if (restoration != nullptr &&
-        verifiedRestoreCall(program, body, *restoration)) {
+    if (forwarded != nullptr && forwarded->kind == MirLoanKind::CallResult) {
+      expected = forwarded->storedDependency;
+      exactParent = true;
+    } else if (restoration != nullptr &&
+               verifiedRestoreCall(program, body, *restoration)) {
       const auto *result = body.findLoan(*restoration->loan);
       const auto *witness = result ? body.findLoan(result->parent) : nullptr;
       if (witness && result->storedDependency == witness->id)
@@ -5554,6 +5571,9 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
     } else if (dependencySource->root == MirPlaceRootKind::Loan) {
       const auto *parent = body.findLoan(dependencySource->loan);
       expected = parent == nullptr ? 0 : parent->storedDependency;
+      exactParent = parent != nullptr && dependencySource == source &&
+                    (source->type.kind == SemanticType::StringView ||
+                     source->type.kind == SemanticType::CString);
     } else if (dependencySource->root == MirPlaceRootKind::Value ||
                dependencySource->root == MirPlaceRootKind::Temporary) {
       const auto temporary =
@@ -5604,7 +5624,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
          source->type.kind == SemanticType::CString);
     if (expected == 0 && loan.storedDependency == 0 &&
         (independentlyStaticTextBinding(program, body, *source) ||
-         ownerlessTextPayload))
+         ownerlessTextPayload || exactParent))
       continue;
     if (expected == 0 || loan.storedDependency != expected)
       return verificationFailure(

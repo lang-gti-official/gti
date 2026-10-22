@@ -1366,6 +1366,134 @@ int main() { return leak().size() == 5 ? 0 : 1; }
   }
 }
 
+const std::string kGenericBox = R"gti(
+class Box<T> {
+public:
+  T value;
+  int kind;
+  Box(T value, int kind) : value(value), kind(kind) {}
+  int one() { return this.kind; }
+  T name() { return this.value; }
+  T& get() { return this.value; }
+  void save(mut T& out) { out = this.value; }
+};
+class Cell<T> {
+public:
+  mut T value;
+  Cell(T value) : value(value) {}
+  void take(Cell<T>& other) mut { this.value = other.value; }
+};
+)gti";
+
+// A method of a generic class carries its open contract to every instance.
+// A read of a type-parameter field other than the method's relayed return
+// requires the field ownerless, which binds only text instances; a return of
+// it relays the field where the instance makes it text (L-OWN-02).
+void testGenericClassContracts() {
+  const auto result = analyzeText(kDeclarations + kGenericBox + R"gti(
+int main() {
+  std::string input{"generic"};
+  Box<std::string_view> box = Box<std::string_view>(input.view(), 3);
+  std::string_view named = box.name();
+  std::string_view got = box.get();
+  Box<int> number = Box<int>(5, 4);
+  mut int out = 0;
+  number.save(out);
+  return uint64_t(box.one()) + named.size() + got.size() + uint64_t(out) == 22
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a dependent generic value calls its observer and relay methods");
+  if (!result.canGenerateCode())
+    return;
+  // The text instance's `save` requires its receiver's field; the `int`
+  // instance requires nothing.
+  const auto saveOf = [](const lang::MirFunctionInstance &function,
+                         lang::SemanticType::Kind referent) {
+    return function.owner &&
+           function.returnType.kind == lang::SemanticType::Void &&
+           function.parameterTypes.size() == 1 &&
+           function.parameterTypes.front().kind ==
+               lang::SemanticType::Reference &&
+           function.parameterTypes.front().arguments.size() == 1 &&
+           function.parameterTypes.front().arguments.front().kind == referent;
+  };
+  const lang::MirFunctionInstance *textSave = nullptr;
+  std::size_t intSaves = 0;
+  for (const auto &function : result.mir.functionInstances())
+    if (saveOf(function, lang::SemanticType::Int32)) {
+      ++intSaves;
+      expect(function.ownerlessTextFields.empty(),
+             "the int instance of save requires nothing");
+    }
+  expect(intSaves == 1, "the int instance of save is used");
+  const auto stored = analyzeText(kDeclarations + kGenericBox + R"gti(
+int main() {
+  mut std::string_view out = "";
+  Box<std::string_view> box = Box<std::string_view>("literal", 1);
+  box.save(out);
+  mut Cell<std::string_view> cell = Cell<std::string_view>("cell");
+  Cell<std::string_view> other = Cell<std::string_view>("other");
+  cell.take(other);
+  return out.size() == 7 && cell.value.size() == 5 ? 0 : 1;
+}
+)gti");
+  if (!stored.canGenerateCode())
+    printDiagnostics(stored);
+  expect(stored.canGenerateCode(),
+         "an ownerless generic value stores its text");
+  for (const auto &function : stored.mir.functionInstances())
+    if (saveOf(function, lang::SemanticType::StringView) &&
+        !function.ownerlessTextFields.empty()) {
+      textSave = &function;
+      auto changed = stored.mir;
+      const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(function.id))
+          ->ownerlessTextFields.clear();
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "MIR derives the text instance's field requirement");
+    }
+  expect(textSave != nullptr,
+         "the text instance of save requires its receiver's field");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"kept = box.name();", "GTI-S2045"},
+           Case{"kept = box.get();", "GTI-S2045"},
+           Case{"mut std::string_view out = \"\"; box.save(out);", "GTI-S2045"},
+           Case{"std::string_view named = box.name(); owner.append(\"!\"); "
+                "uint64_t n = named.size();",
+                "GTI-S2017"},
+           Case{"mut Cell<std::string_view> cell = "
+                "Cell<std::string_view>(\"cell\"); Cell<std::string_view> "
+                "other = Cell<std::string_view>(owner.view()); "
+                "cell.take(other);",
+                "GTI-S2045"},
+       }) {
+    const auto rejected = analyzeText(
+        kDeclarations + kGenericBox +
+        "int run() { mut std::string owner{\"owner\"}; "
+        "Box<std::string_view> box = Box<std::string_view>(owner.view(), 1); " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a dependent generic value is checked at source: ") +
+               entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -1378,6 +1506,7 @@ constexpr NamedTest kTests[] = {
     {"testPublishedResults", testPublishedResults},
     {"testPublishedResultOrder", testPublishedResultOrder},
     {"testRecursiveRelays", testRecursiveRelays},
+    {"testGenericClassContracts", testGenericClassContracts},
 };
 } // namespace
 

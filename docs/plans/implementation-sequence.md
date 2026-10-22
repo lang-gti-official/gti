@@ -327,7 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phase 1 and phase 2a implemented; 2b (nested publication: `optional`, success `expected`) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`. Later steps cover nested publication through generic enums, `expected`'s constructor relays, returned dependent values, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phase 1, 2a and 2b part 1 implemented; 2b part 2 (nested publication: `optional`, success `expected`) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b part 1 adds reference accessors and generic class methods. Later steps cover nested publication through generic enums, `expected`'s constructor relays, returned dependent values, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -9121,10 +9121,34 @@ prerequisite checkpoints as full acceptance.
     (recursion) cannot rely on unfinished relays. When its result has a text
     field, semantics marks it `provisionalTextRelays`, and every text argument
     of such a call must be ownerless, which MIR checks from the same mark.
-  - *2b (next): nested publication.* Generic enums, `[field, payload]`
-    designated paths through a class's enum field, reads through reference
-    accessors (`value()`, `error()`, `*o`), and the `error()` ICE. Covers
-    `optional<std::string_view>` and `expected<std::string_view, E>`.
+  - *Implemented in 0.462.0 (2b, part 1): reference accessors and generic
+    class methods.*
+    - *Reference accessors.* Text read through a returned reference resolves
+      in MIR through the callee's returns (`returnSources` over Return
+      loans, payload references and forwarded call results). This fixed the
+      `error()` ICE and every use of `std::string_view& ref()`.
+    - *Receiver relays.* A receiver relay of one text field
+      (`returnedTextReference`) gives a dependent value's view, like a field
+      read.
+    - *Generic class methods.* These carry contracts: a type-parameter
+      field read requires the field ownerless in text instances, except the
+      method's relayed return. Relays are decided for each concrete
+      receiver class.
+    - *Still `GTI-S2045` on dependent values:* a reference relay that
+      returns another call's reference (`alias() { return this.ref(); }`)
+      and a reference formal's accessor (`textOf(Token&)`, also still
+      `GTI-B0001` over ownerless text).
+  - *2b, part 2 (next): nested publication.* Generic enums and
+    `[field, payload]` designated paths through a class's enum field,
+    covering `optional<std::string_view>` and
+    `expected<std::string_view, E>`. It needs four things:
+    - a constructor that stores a formal as a field's payload publishes there;
+    - payload accessors (`value()`, through `switch (this.state)`) relay a
+      path;
+    - relay composition (`*o` returns `this.value()`) for dependent values;
+    - generic class contracts on enum fields with type-parameter payloads.
+    Today `optional<std::string_view>` cannot be instantiated: its
+    constructor's payload construction reports its formal as dynamic text.
   - *2c: constructor relays and returned dependent values.* `expected`'s
     constructor from `unexpected_value<E>` re-roots `[payload]` at
     `[state, error]` through a consuming accessor. A function may return a

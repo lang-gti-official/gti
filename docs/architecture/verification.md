@@ -1,5 +1,69 @@
 # Compiler Verification
 
+## Reference relays and generic class contracts (0.462.0)
+
+`ownerless_text_contracts` covers relays in `testTextReferenceRelays`.
+- On a value over a local owner, `std::println(t.ref())`, a copy
+  `std::string_view v = t.ref();` and `width(t)`, which reads through
+  `t.ref()`, verify. The copy carries the relay's result loan, whose stored
+  dependency is the owner's `Stored` loan designating the field.
+- These are rejected at source, never with `GTI-B`. `kept = t.ref()` and
+  `keep(t)`, which stores `t.ref()`, are `GTI-S2045`. Appending to the owner
+  while the copy lives, or moving the value while a reference from `t.ref()`
+  lives, is `GTI-S2017`.
+- `testTextReferenceAccessors` keeps `t.kindOf()`, which returns another
+  call's reference and so lets its receiver escape, as `GTI-S2045`.
+- `text_reference_accessors_runtime` runs the relayed reads in every mode.
+- MIR does not check which bindings carry the relay's loan, as for a view
+  copied from a field read: removing the copy from the carriers of
+  `std::string_view v = t.text;` also verifies. That gap predates relays.
+
+`view_fields` covers generic class methods in `testGenericClassContracts`.
+- On a `Box<std::string_view>` over a local owner, a method that reads no
+  type-parameter field, `T name()`, and `T& get()` verify. `name()` and
+  `get()` relay the field for the instance's concrete class.
+- `save(mut T& out)` stores the field: its `Box<int>` instance requires
+  nothing, its `std::string_view` instance requires the receiver's field, and
+  MIR rejects that instance with the requirement cleared.
+- `Cell<T>::take(Cell<T>& other) mut`, which stores a formal's type-parameter
+  field, verifies over ownerless values. A dependent argument is `GTI-S2045`.
+  Without the formal requirement, MIR's derived requirement for the text
+  instance was an omitted-contract `GTI-B0001`.
+- `kept = box.name()`, `kept = box.get()` and `box.save(out)` on the
+  dependent value are `GTI-S2045`. Appending to the owner while a view from
+  `box.name()` lives is `GTI-S2017`.
+- `borrow_origin` now counts `Box<std::string_view>::get()` in
+  `borrow_stored_view_return.gti` as a field relay rather than an ownerless
+  return, and checks its three stored-view mutations.
+
+## Text read through returned references (0.462.0)
+
+`ownerless_text_contracts` covers the accessors in
+`testTextReferenceAccessors`.
+- These verify: `kept = token.ref()` for a receiver's text field,
+  `kept = box.get()` for `T& get()` on a `Box<std::string_view>`,
+  `kept = failed.error()` for an `expected<int, std::string_view>`, and
+  `keep(token)` where `keep` stores `token.ref()`. Main reported
+  `GTI-B0001` for each: body lowering rejected the accessor, or `ownerless
+  text storage or call lacks exact producer evidence`.
+- MIR rejects `keep` with its field contract cleared, `ownerless text field
+  contract omits an independently derived requirement`. It derives the
+  requirement through the returned reference by itself.
+- `int& kindOf() { return this.kindRef(); }` verifies with a whole-receiver
+  requirement, and MIR rejects it with that requirement cleared. Main
+  reported `GTI-B0001` for it, the same omitted-requirement error.
+- A value over a local owner is `GTI-S2045` at source, never `GTI-B`. That
+  holds as a receiver, with `t.ref()` read or stored, and as an argument, in
+  `keep(t)` and `width(t)`. A temporary receiver, `Token("literal", 1).ref()`,
+  is `GTI-S2081`. Without these rules, `std::string_view v = t.ref();`
+  followed by a mutation of the owner would compile into a dangling view.
+- `text_reference_accessors_runtime` runs the fixture in every mode.
+
+The same-root differential against main at 0.458.4 covered 1,346 programs
+in `tests/fixtures/`, `tests/coverage/` and `examples/`. 1,345 emit
+byte-identical C++. Only the new `text_reference_accessors` fixture changes
+status: it now builds.
+
 ## Borrowed carriers stored after other fields (0.461.1)
 
 Deferred field storage (backend: a passive bound shell after other fields

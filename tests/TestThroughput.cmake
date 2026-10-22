@@ -79,7 +79,7 @@ if(Python3_Interpreter_FOUND)
     moved_passive_constructor_field_runtime
     deferred_bound_field_runtime
     passive_text_view_class_runtime
-    view_fields_runtime
+    view_fields_runtime text_reference_accessors_runtime
     recursive_text_relays_runtime
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime

@@ -9,6 +9,41 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.462.0 — Reference accessors and generic methods on values that view an owner
+
+- A method that returns a reference to a text field, such as
+  `std::string_view& ref() { return this.text; }`, used to report
+  `error[GTI-B0001]` (an internal compiler error) wherever it was called. It
+  now works. On a value that views a local owner, such as `Token token =
+  Token(input.view(), 1);`, `std::println(token.ref());` and
+  `std::string_view copy = token.ref();` give views of `input`, as
+  `token.text` does. The copy keeps `input` borrowed while it lives, and so
+  keeps `token`. On a value over literal text, `kept = literal.ref();` may
+  store the result.
+- A function that only reads through such an accessor, such as
+  `uint64_t width(Token& t) { return t.ref().size(); }`, accepts such a value.
+  Storing the text, as in `kept = token.ref();`, or passing the value to a
+  function that stores it, reports `error[GTI-S2045]`. Calling the accessor on
+  a temporary, as in `Token("literal", 1).ref()`, reports `error[GTI-S2081]`.
+- The methods of a generic class can now be called on such a value too. For
+  `class Box<T>` with a `T value` field, `Box<std::string_view> box =
+  Box<std::string_view>(input.view());` could not call any method: even
+  `int kind()`, as well as `T name() { return this.value; }` and
+  `T& get() { return this.value; }`, reported `error[GTI-S2045]`. A method
+  that does not read the field now works, and `box.name()` and `box.get()`
+  are views of `input`. A method that stores the field, such as
+  `void save(mut T& out) { out = this.value; }`, reports `error[GTI-S2045]`
+  for such a value and is unaffected for `Box<int>`.
+- Storing text read through a generic accessor over ownerless text, such as
+  `kept = box.get();`, or `kept = r.error();` for
+  `expected<int, std::string_view> r = unexpected("literal");`, used to report
+  `error[GTI-B0001]`; it now compiles.
+- A method that returns another method's reference, such as
+  `int& kindOf() { return this.kindRef(); }` in a class with a text field, or
+  `std::string_view& alias() { return this.ref(); }`, used to report
+  `error[GTI-B0001]`; it now compiles. On a value that views a local owner,
+  `alias()` still reports `error[GTI-S2045]`.
+
 ## 0.461.1 — Borrowed carriers stored after other fields
 
 - A constructor can store a class that holds references (such as

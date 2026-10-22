@@ -1419,7 +1419,10 @@ auto SemanticVisitor::Impl::textFieldContractFunction(
       dynamicDispatch || declaration->linkage() != LanguageLinkage::Gti ||
       !declaration->genericParameters().empty())
     return false;
-  return ownerClass == 0 || classInfo(ownerClass).genericParameters.empty();
+  // A method of a generic class carries its open contract to every instance;
+  // a type-parameter field's requirements bind only its text instances.
+  (void)ownerClass;
+  return true;
 }
 
 auto SemanticVisitor::Impl::textFieldContractScope() const
@@ -1524,9 +1527,14 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
     return formal;
   }
   // A call that returns a formal's or the receiver's text field, applied to
-  // a contract formal here, reads that formal's field.
+  // a contract formal here, reads that formal's field. So does a reference
+  // relay applied to a contract receiver.
   if (const auto *call = exprAs<Call>(current)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (const auto relayed = resolved == nullptr
+                                 ? std::nullopt
+                                 : textReferenceRelay(*call, *resolved))
+      return fieldSourcedTextFormal(*relayed);
     const auto result = resolved == nullptr
                             ? std::nullopt
                             : fieldSourcedTextResult(*call, *resolved);
@@ -1559,6 +1567,22 @@ auto SemanticVisitor::Impl::fieldSourcedTextResult(
   if (mapping.origin != BorrowOriginKind::Receiver)
     return std::nullopt;
   result.receiver = true;
+  if (const auto *member = exprAs<Get>(call.callee().get())) {
+    if (member->access().kind == TokenKind::ARROW || !member->object())
+      return std::nullopt;
+    result.origin = &member->object();
+  }
+  return result;
+}
+
+auto SemanticVisitor::Impl::textReferenceRelay(
+    const Call &call, const ResolvedCallInfo &resolved) const
+    -> std::optional<FieldSourcedTextResult> {
+  if (!resolved.returnedTextReference ||
+      resolved.returnType.kind != SemanticType::Reference)
+    return std::nullopt;
+  FieldSourcedTextResult result{.receiver = true,
+                                .field = resolved.returnedTextReference->field};
   if (const auto *member = exprAs<Get>(call.callee().get())) {
     if (member->access().kind == TokenKind::ARROW || !member->object())
       return std::nullopt;
@@ -1641,6 +1665,139 @@ auto SemanticVisitor::Impl::noteTextFieldFormalUse(const Expr &expression,
     requestSession.textFieldFormalOrder.push_back(&expression);
 }
 
+auto SemanticVisitor::Impl::conditionalTextField(const Expr &expression) const
+    -> std::optional<OwnerlessTextField> {
+  const FunctionInfo *scope = textFieldContractScope();
+  if (scope == nullptr || scope->ownerClass == 0 ||
+      classInfo(scope->ownerClass).genericParameters.empty())
+    return std::nullopt;
+  const bool readOnlyReceiver =
+      !scope->staticMember && scope->bodyDeclaration()->receiverMutability() ==
+                                  ReceiverMutability::ReadOnly;
+  std::optional<OwnerlessTextField> formal;
+  SemanticType owner = SemanticType::Unknown;
+  const Token *name = nullptr;
+  if (const auto *get = exprAs<Get>(&expression)) {
+    const Expr *object = get->object() ? get->object().get() : nullptr;
+    while (const auto *group = exprAs<Grouping>(object))
+      object = group->expression() ? group->expression().get() : nullptr;
+    if (get->access().kind == TokenKind::ARROW || object == nullptr)
+      return std::nullopt;
+    if (exprAs<This>(object) != nullptr) {
+      if (!readOnlyReceiver)
+        return std::nullopt;
+      formal = OwnerlessTextField{.receiver = true};
+      owner = openClassType(scope->ownerClass);
+    } else if (exprAs<Variable>(object) != nullptr) {
+      formal = textFieldContractFormal(*object);
+      if (!formal || formal->receiver ||
+          formal->parameter >= scope->parameterTypes.size())
+        return std::nullopt;
+      owner = scope->parameterTypes[formal->parameter];
+      if (owner.kind == SemanticType::Reference && owner.arguments.size() == 1)
+        owner = SemanticType(owner.arguments.front());
+    } else {
+      return std::nullopt;
+    }
+    name = &get->name();
+  } else if (const auto *variable = exprAs<Variable>(&expression)) {
+    const Symbol *symbol = resolve(variable->name());
+    if (!readOnlyReceiver || symbol == nullptr ||
+        symbol->ownerClass != scope->ownerClass || symbol->staticMember ||
+        symbol->parameterDeclaration != nullptr)
+      return std::nullopt;
+    formal = OwnerlessTextField{.receiver = true};
+    owner = openClassType(scope->ownerClass);
+    name = &variable->name();
+  } else {
+    return std::nullopt;
+  }
+  const ClassInfo *info = classInfo(owner);
+  if (info == nullptr)
+    return std::nullopt;
+  const auto member = info->members.find(name->lexeme);
+  if (member == info->members.end() || member->second.symbol.staticMember ||
+      member->second.symbol.bindingKind != SemanticBindingKind::Field ||
+      substituteType(member->second.symbol.type, classSubstitution(owner))
+              .kind != SemanticType::TypeParameter)
+    return std::nullopt;
+  formal->field = symbolForDeclaration(member->second.symbol.declaration);
+  return formal;
+}
+
+auto SemanticVisitor::Impl::conditionalRelayReturns(
+    const FunctionInfo &function) -> const std::unordered_set<const Expr *> & {
+  const auto [entry, inserted] =
+      requestSession.conditionalRelayReturns.try_emplace(
+          function.bodyDeclaration());
+  if (!inserted || function.bodyDeclaration()->body() == nullptr)
+    return entry->second;
+  std::vector<const ExprPtr *> returns;
+  collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
+                                 returns);
+  std::optional<SymbolId> relayed;
+  std::unordered_set<const Expr *> found;
+  for (const ExprPtr *returned : returns) {
+    const Expr *current = returned != nullptr ? returned->get() : nullptr;
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    const auto field =
+        current != nullptr ? conditionalTextField(*current) : std::nullopt;
+    if (!field || !field->receiver || (relayed && *relayed != field->field))
+      return entry->second;
+    relayed = field->field;
+    found.insert(current);
+  }
+  entry->second = std::move(found);
+  return entry->second;
+}
+
+auto SemanticVisitor::Impl::noteConditionalTextFieldRead(const Expr &expression)
+    -> void {
+  const auto field = conditionalTextField(expression);
+  const FunctionInfo *scope = field ? textFieldContractScope() : nullptr;
+  if (scope == nullptr || conditionalRelayReturns(*scope).contains(&expression))
+    return;
+  (void)requireOwnerlessTextField(scope->declaration, *field);
+}
+
+auto SemanticVisitor::Impl::noteReturnedFormalReference(const Expr &returned)
+    -> void {
+  const Expr *current = &returned;
+  while (const auto *group = exprAs<Grouping>(current))
+    current = group->expression() ? group->expression().get() : nullptr;
+  const auto *call = exprAs<Call>(current);
+  const ResolvedCallInfo *resolved =
+      call == nullptr ? nullptr : semanticModel.findCall(*call);
+  if (resolved == nullptr ||
+      resolved->returnType.kind != SemanticType::Reference)
+    return;
+  std::optional<OwnerlessTextField> formal;
+  if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+    const auto *member = exprAs<Get>(call->callee().get());
+    if (member == nullptr) {
+      // An implicit receiver call borrows this method's receiver.
+      const FunctionInfo *scope = textFieldContractScope();
+      if (scope != nullptr && scope->ownerClass != 0 && !scope->staticMember &&
+          scope->bodyDeclaration()->receiverMutability() ==
+              ReceiverMutability::ReadOnly &&
+          textPublicationOwner(openClassType(scope->ownerClass)))
+        formal = OwnerlessTextField{.receiver = true};
+    } else if (member->access().kind != TokenKind::ARROW && member->object()) {
+      formal = textFieldContractFormal(*member->object());
+    }
+  } else if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+             resolved->borrowArgument <
+                 resolvedCallArgumentCount(*call, resolved)) {
+    const ExprPtr *argument =
+        resolvedCallArgument(*call, resolved, resolved->borrowArgument);
+    if (argument != nullptr && *argument)
+      formal = textFieldContractFormal(**argument);
+  }
+  if (formal)
+    noteTextFieldFormalUse(*current, *formal);
+}
+
 auto SemanticVisitor::Impl::consumeTextFieldFormalUse(const ExprPtr &expression)
     -> void {
   const Expr *current = expression.get();
@@ -1686,6 +1843,14 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
                                  target.virtualMethod || target.overrideMethod,
                                  target.ownerClass))
     return;
+  // A reference to text may view the receiver's or a formal's dependent
+  // field. Only a receiver relay that names the field it designates
+  // (returnedTextReference) gives a view the caller tracks.
+  const bool textReference =
+      target.returnType.kind == SemanticType::Reference &&
+      target.returnType.arguments.size() == 1 &&
+      (target.returnType.arguments.front().kind == SemanticType::StringView ||
+       target.returnType.arguments.front().kind == SemanticType::CString);
   // An argument is classified before its formal's class is queried: most
   // calls relay and forward nothing.
   const auto record = [&](const ExprPtr &argument, OwnerlessTextField formal,
@@ -1697,8 +1862,11 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
     if (isTextDependentValue(*info)) {
       const auto found =
           requestSession.textDependentValues.find(argument.get());
+      // A returned reference to text may view the value's designated field,
+      // and a view copied from it would not keep the owner borrowed.
       if (found == requestSession.textDependentValues.end() ||
-          !textPublicationOwner(formalType))
+          !textPublicationOwner(formalType) ||
+          (textReference && !(formal.receiver && target.returnedTextReference)))
         return;
       found->second.relayed = true;
       requestSession.textDependentRelays.push_back(
@@ -1709,9 +1877,12 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
       return;
     }
     // A formal passed on as the callee's formal or receiver of the same class
-    // carries the callee's requirements on it back to the caller.
+    // carries the callee's requirements on it back to the caller. A text
+    // reference the callee returns may view any of its text fields, so the
+    // use stays a whole use.
     const auto caller = textFieldContractFormal(*argument);
-    if (!caller)
+    if (!caller ||
+        (textReference && !(formal.receiver && target.returnedTextReference)))
       return;
     requestSession.textFieldForwardUses.push_back(
         {.caller = currentFunctionDeclaration,
@@ -1726,7 +1897,14 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
     const SemanticType owner = openClassType(target.ownerClass);
     if (const auto *member = exprAs<Get>(call.callee().get());
         member != nullptr && member->access().kind != TokenKind::ARROW) {
-      record(member->object(), {.receiver = true}, owner);
+      // A generic class's receiver is an instance of the open owner.
+      const SemanticType *object =
+          member->object() ? semanticModel.findType(*member->object())
+                           : nullptr;
+      const bool instance = object != nullptr &&
+                            object->kind == SemanticType::Class &&
+                            object->classId == target.ownerClass;
+      record(member->object(), {.receiver = true}, instance ? *object : owner);
     } else if (const FunctionInfo *scope = textFieldContractScope();
                exprAs<Variable>(call.callee().get()) != nullptr &&
                scope != nullptr && scope->ownerClass == target.ownerClass &&
@@ -5581,6 +5759,21 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
   }
+  // A view read through a reference relay holds what its receiver holds in
+  // the designated field, as a read of that field would (L-OWN-02).
+  if (const auto *call = exprAs<Call>(expression.get()))
+    if (const auto *resolved = semanticModel.findCall(*call))
+      if (const auto relay = textReferenceRelay(*call, *resolved);
+          relay && relay->origin != nullptr) {
+        auto sources = storedBorrowDependencies(*relay->origin);
+        for (auto &dependency : sources)
+          if (dependency.designatedFields ==
+              std::vector<SymbolId>{relay->field}) {
+            dependency.designatedFields.clear();
+            dependency.access = AccessMode::ReadOnly;
+            return {std::move(dependency)};
+          }
+      }
   // Complete producer/call evidence owns the whole set, including a known
   // empty alternative. Do not reduce it through legacy single-source field
   // inference or fall back to stale carrier facts when it is empty.

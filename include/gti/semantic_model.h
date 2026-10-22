@@ -896,6 +896,9 @@ struct FunctionInfo {
   // Sorted and unique: formals a returned construction or call relays
   // instead of requiring them ownerless.
   std::vector<PublishedTextField> publishedTextFields;
+  // The receiver's direct text field that every returned reference to text
+  // designates (L-OWN-02): reading the result reads that field.
+  std::optional<OwnerlessTextField> returnedTextReference;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1401,6 +1404,8 @@ struct ResolvedCallInfo {
   // were not final: every text argument of this call must be ownerless.
   bool provisionalTextRelays = false;
   std::optional<BorrowOriginPlace> borrowPlace;
+  // The callee's returnedTextReference.
+  std::optional<OwnerlessTextField> returnedTextReference;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   CallReceiverMode receiverMode = CallReceiverMode::None;
