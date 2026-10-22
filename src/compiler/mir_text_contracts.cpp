@@ -237,7 +237,10 @@ private:
     for (const auto &candidate : body.loans)
       if (type && candidate.kind == MirLoanKind::Stored &&
           candidate.designatedFields.size() == 1 &&
-          directTextField(program, *type, candidate.designatedFields.front()) &&
+          (directTextField(program, *type,
+                           candidate.designatedFields.front()) ||
+           directTextPayload(program, *type,
+                             candidate.designatedFields.front())) &&
           ((place && place->root == MirPlaceRootKind::Binding &&
             place->projections.empty() &&
             std::find(candidate.carriers.begin(), candidate.carriers.end(),
@@ -379,9 +382,29 @@ private:
                instruction->kind == MirInstructionKind::Compute &&
                instruction->operation == MirOperation::PayloadExtract &&
                textType(instruction->info.type)) {
-      // A payload enum's text field holds only text that its construction
-      // proved ownerless, as a class's text field does.
-      answer.known = true;
+      // A payload enum's text payload holds only text that its construction
+      // proved ownerless, as a class's text field does, unless the subject
+      // carries a dependency designating this payload (L-OWN-02).
+      const auto designated =
+          instruction->operands.size() == 1
+              ? dependentDesignation(context.body,
+                                     instruction->operands.front())
+              : std::nullopt;
+      const MirPayloadEnum *enumeration =
+          designated
+              ? program.findPayloadEnum(instruction->operands.front().type)
+              : nullptr;
+      const MirPayloadEnumVariant *variant =
+          enumeration && instruction->enumVariant &&
+                  *instruction->enumVariant < enumeration->variants.size()
+              ? &enumeration->variants[*instruction->enumVariant]
+              : nullptr;
+      const bool dependent =
+          designated &&
+          (variant == nullptr || !instruction->payloadIndex ||
+           *instruction->payloadIndex >= variant->payloadSymbols.size() ||
+           variant->payloadSymbols[*instruction->payloadIndex] == *designated);
+      answer.known = !dependent;
     } else if (instruction && instruction->operands.size() == 1 &&
                (instruction->kind == MirInstructionKind::Load ||
                 instruction->kind == MirInstructionKind::CallInput ||
@@ -754,12 +777,28 @@ private:
               program.findPayloadEnum(instruction.info.type);
           if (enumeration &&
               *instruction.enumVariant < enumeration->variants.size()) {
-            const auto &fields =
-                enumeration->variants[*instruction.enumVariant].payloadTypes;
+            const auto &variant =
+                enumeration->variants[*instruction.enumVariant];
+            const auto &fields = variant.payloadTypes;
+            // A payload this construction publishes under its own read-only
+            // Stored loan holds that dependent text (L-OWN-02); the loan,
+            // not an ownerless proof, keeps it valid.
+            const auto *loan =
+                instruction.dependentTextPublication && instruction.loan
+                    ? context.body.findLoan(*instruction.loan)
+                    : nullptr;
+            const auto published = [&](std::size_t index) {
+              return loan != nullptr && loan->kind == MirLoanKind::Stored &&
+                     loan->access == AccessMode::ReadOnly &&
+                     loan->producedBy == instruction.hirValue &&
+                     index < variant.payloadSymbols.size() &&
+                     loan->designatedFields ==
+                         std::vector<SymbolId>{variant.payloadSymbols[index]};
+            };
             for (std::size_t index = 0;
                  index < fields.size() && index < instruction.operands.size();
                  ++index)
-              if (textType(fields[index]))
+              if (textType(fields[index]) && !published(index))
                 require(instruction, instruction.operands[index]);
           }
         }
@@ -1170,6 +1209,23 @@ bool directTextField(const MirProgram &program, const SemanticType &type,
                      instance->declaredFields.end(), [&](const auto &entry) {
                        return entry.symbol == field && textType(entry.type);
                      });
+}
+
+bool directTextPayload(const MirProgram &program, const SemanticType &type,
+                       SymbolId payload) {
+  const MirPayloadEnum *enumeration =
+      type.kind == SemanticType::Enum && payload != 0
+          ? program.findPayloadEnum(type)
+          : nullptr;
+  if (enumeration == nullptr || enumeration->traits.containsBorrowedState)
+    return false;
+  for (const auto &variant : enumeration->variants)
+    for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                index < variant.payloadTypes.size();
+         ++index)
+      if (variant.payloadSymbols[index] == payload)
+        return textType(variant.payloadTypes[index]);
+  return false;
 }
 
 std::optional<std::size_t>

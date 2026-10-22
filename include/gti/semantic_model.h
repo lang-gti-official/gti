@@ -1142,6 +1142,11 @@ struct ResolvedPayloadConstructionInfo {
   const EnumeratorDecl *declaration = nullptr;
   std::size_t variantIndex = 0;
   std::vector<SemanticType> parameterTypes;
+  // A dynamic text argument's owner published at its payload (L-OWN-02):
+  // each mapping's result field is the payload's symbol. These describe the
+  // call, as for a constructor's dependentTextPublication.
+  std::vector<BorrowedFieldOrigin> borrowFields;
+  bool dependentTextPublication = false;
 };
 
 // The pattern selects ownership/borrowing semantics before HIR. A stored

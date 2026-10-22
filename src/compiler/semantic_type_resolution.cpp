@@ -4478,9 +4478,9 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const SemanticType &type, const ExprPtr &initializer) -> void {
   const auto *initializerInfo =
       initializer ? semanticModel.findExpression(*initializer) : nullptr;
-  const bool textDependentValue = type.kind == SemanticType::Class &&
-                                  initializerInfo != nullptr &&
-                                  isTextDependentValue(*initializerInfo);
+  const bool textDependentValue =
+      (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
+      initializerInfo != nullptr && isTextDependentValue(*initializerInfo);
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !textDependentValue) {

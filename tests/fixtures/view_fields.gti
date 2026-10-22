@@ -3,8 +3,9 @@
 // and a designated list publish it; copies alias it, a move transfers it, and
 // a field read yields a view of the same owner, and functions and methods
 // that keep the text within the call accept it. A function that returns one
-// text field relays what the value holds there. An ownerless value of the
-// same type keeps every capability, including storage.
+// text field relays what the value holds there. A payload enum's text
+// payload holds its owner the same way. An ownerless value of the same type
+// keeps every capability, including storage.
 #include <std/string>
 
 class Token {
@@ -28,6 +29,9 @@ public:
   Pair(std::string_view first, std::string_view second)
       : first(first), second(second) {}
 };
+
+// A payload enum may hold the same dependency in a text payload.
+enum Lexeme { word(std::string_view text), count(int value) };
 
 mut std::string_view kept = "";
 void keep(Token token) { kept = token.text; }
@@ -72,6 +76,14 @@ int main() {
   std::println(token.name().size());
   kept = secondOf(pair);
   std::println(kept);
+
+  // A payload holds the owner's text too; observing it binds a view of it.
+  Lexeme lexeme = Lexeme::word(input.view());
+  Lexeme lexemeCopy = lexeme;
+  switch (lexemeCopy) {
+  case Lexeme::word(text): std::println(text.size()); break;
+  case Lexeme::count(value): std::println(value); break;
+  }
 
   // A token over a literal is ownerless and can leave this body.
   Token literal = Token("literal", 1);

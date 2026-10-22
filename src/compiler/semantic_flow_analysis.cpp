@@ -1522,16 +1522,22 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString;
   };
-  // A fresh value whose text field received dynamic text carries that owner
-  // dependency itself; its type stays dependency-free (L-OWN-02).
+  // A fresh value whose text field or payload received dynamic text carries
+  // that owner dependency itself; its type stays dependency-free (L-OWN-02).
   const auto textDependentType = [&](const SemanticType &candidate) {
-    return candidate.kind == SemanticType::Class &&
+    return (candidate.kind == SemanticType::Class ||
+            candidate.kind == SemanticType::Enum) &&
            !typeTraits(candidate).containsBorrowedState;
   };
   if (const auto *construction = semanticModel.findConstruction(expr);
       construction != nullptr && construction->dependentTextPublication &&
       textDependentType(type))
     return textDependentValueInfo(std::move(type));
+  if (const auto *call = exprAs<Call>(&expr))
+    if (const auto *payload = semanticModel.findPayloadConstruction(*call);
+        payload != nullptr && payload->dependentTextPublication &&
+        textDependentType(type))
+      return textDependentValueInfo(std::move(type));
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
     if (borrowedTextType(type) && sourceInfo != nullptr &&
@@ -5855,14 +5861,52 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   }
   const std::size_t common =
       std::min(call.arguments().size(), enumerator.payloadTypes.size());
+  // A dynamic view argument publishes its sole named owner's dependency at
+  // its payload (L-OWN-02), as a constructor does at a text field. The enum
+  // must hold no borrowed state of its own type.
+  const auto enumeration = enumTypeFor(enumerator.symbol.type);
+  const auto variant = enumeration
+                           ? std::find_if(enumeration->enumerators.begin(),
+                                          enumeration->enumerators.end(),
+                                          [&](const auto &candidate) {
+                                            return candidate.variantIndex ==
+                                                   enumerator.variantIndex;
+                                          })
+                           : decltype(enumeration->enumerators.begin()){};
+  const bool publishable =
+      enumeration && variant != enumeration->enumerators.end() &&
+      enumerator.symbol.type.arguments.empty() &&
+      !containsOpenTypeParameter(enumerator.symbol.type) &&
+      !typeTraits(enumerator.symbol.type).containsBorrowedState;
+  std::vector<BorrowedFieldOrigin> textOrigins;
   for (std::size_t index = 0; index < common; ++index) {
     const SemanticType actual = analyzeInitializer(
         call.arguments()[index], enumerator.payloadTypes[index]);
     const auto &field = enumerator.payloadTypes[index];
     if ((field == SemanticType::StringView || field == SemanticType::CString) &&
-        isOwnerDependentTextExpression(call.arguments()[index]))
-      reportOwnerDependentTextStorage(call.arguments()[index],
-                                      "stored in a payload-enum field");
+        isOwnerDependentTextExpression(call.arguments()[index])) {
+      const SymbolId payload =
+          publishable && index < variant->payloadSymbols.size()
+              ? variant->payloadSymbols[index]
+              : 0;
+      const auto dependencies =
+          payload == 0
+              ? std::vector<SemanticLoanDependency>{}
+              : textFieldOwnerDependency(call.arguments()[index], payload);
+      if (!dependencies.empty() && !textOrigins.empty())
+        report(expressionToken(call.arguments()[index]),
+               "A value can hold dynamic text from one owner; this argument "
+               "would add a second owner dependency.",
+               "GTI-S2045");
+      else if (!dependencies.empty())
+        textOrigins.push_back({.resultFields = {payload},
+                               .origin = BorrowOriginKind::Argument,
+                               .parameter = index,
+                               .access = AccessMode::ReadOnly});
+      else
+        reportOwnerDependentTextStorage(call.arguments()[index],
+                                        "stored in a payload-enum field");
+    }
     if (actual != SemanticType::Unknown &&
         !callArgumentMatches(enumerator.payloadTypes[index], actual,
                              call.arguments()[index])) {
@@ -5912,7 +5956,15 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
              .type = enumerator.symbol.type,
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
-             .parameterTypes = enumerator.payloadTypes});
+             .parameterTypes = enumerator.payloadTypes,
+             .borrowFields = textOrigins,
+             .dependentTextPublication = !textOrigins.empty()});
+  if (!textOrigins.empty()) {
+    // The binding's retained loan carries the published owner, as for a
+    // constructor's text field; no complete dependency set describes it.
+    currentType = enumerator.symbol.type;
+    return;
+  }
   // This producer attaches exact selected-alternative evidence, including
   // every dependency path. Admission remains independently gated until the
   // loan/tag verifier supports conditional borrowing; metadata alone does
