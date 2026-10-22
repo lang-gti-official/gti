@@ -928,7 +928,11 @@ shared between cleanup-owning and passive classes. Owning values must retain
 their exact activation/reparent obligations. Passive values instead require a
 generated passive destructor, no borrowed state and a generated move proved
 defined-failure-free by MIR type facts; no value or temporary cleanup obligation
-is synthesized. Both modes reject additional temporary aliases, readers or
+is synthesized. A generated destructor is passive when every field is a
+scalar, enum, raw or null pointer, text view, or a passive class or fixed array
+of them. A `std::string_view` field is a borrowed descriptor, like a `c_string`
+pointer: destroying or copying it observes nothing, and MIR loans, not class
+passivity, carry any owner it depends on. Both modes reject additional temporary aliases, readers or
 writers. The native moved-from shell is retired after the binding construction,
 including when the same CFG executes again through a loop.
 Transparent identity links between the conditional move and binding publication
@@ -969,8 +973,10 @@ inputs, as in `Pod t = c ? std::move(a).pod() : make(std::move(b));`. The
 passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
-(`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. An arm may also move a whole named local out,
+(`onlyPreparedInputTransfers`). A construction arm may likewise hand by-value
+arguments to its constructor, as in `(c ? seg(pt(1)) : seg(pt(2))).flat`; its
+lifecycle is then exactly those transfers. Virtual calls, and constructions
+with any other lifecycle event, stay outside this form. An arm may also move a whole named local out,
 as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
 obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
 ownership event that takes the local's key to `Moved`, and the local keeps its
