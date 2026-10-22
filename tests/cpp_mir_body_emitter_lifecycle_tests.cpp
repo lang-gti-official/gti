@@ -14463,6 +14463,130 @@ void testNestedCleanupFreeClassResult() {
          "operator()");
 }
 
+// A nested constructor-temporary read through its value slot, and two MIR near
+// misses the slot still refuses.
+void checkNestedConstructorTemporaryFieldRead(
+    const lang::FrontendResult &nested,
+    const lang::MirFunctionInstance &nestedEntry) {
+  const lang::MirBodyAddress nestedAddress{.kind = lang::MirBodyKind::Function,
+                                           .owner = nestedEntry.id};
+  const lang::MirInstruction *nestedConstruct = nullptr;
+  for (const lang::MirBlock &block : nestedEntry.body.blocks)
+    for (const lang::MirInstruction &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Construct &&
+          instruction.result &&
+          instruction.info.type.kind == lang::SemanticType::Class)
+        nestedConstruct = &instruction;
+  const lang::MirValueId nestedResult =
+      nestedConstruct == nullptr ? 0 : *nestedConstruct->result;
+  const std::vector<lang::MirValueUse> nestedUses =
+      nestedEntry.body.usesOf(nestedResult);
+  const lang::MirPlace *chain = nullptr;
+  const lang::MirPlace *prefix = nullptr;
+  for (const lang::MirValueUse &use : nestedUses) {
+    const lang::MirPlace *place = use.kind == lang::MirValueUseKind::PlaceRoot
+                                      ? nestedEntry.body.findPlace(use.place)
+                                      : nullptr;
+    if (place != nullptr && place->projections.size() == 2)
+      chain = place;
+    if (place != nullptr && place->projections.size() == 1)
+      prefix = place;
+  }
+  expect(nestedResult != 0 && nestedUses.size() == 2 && chain != nullptr &&
+             prefix != nullptr &&
+             prefix->projections.front() == chain->projections.front(),
+         "the nested read should root its chain and one prefix record at "
+         "the constructor temporary");
+  if (chain == nullptr || prefix == nullptr)
+    return;
+
+  const lang::CppMirBodyEmissionMap nestedMap(
+      buildRows(nested, nested.mir, lang::CppStandard::Cpp23));
+  const lang::CppMirBodyEmitter nestedEmitter(nested.mir, nestedMap);
+  const bool nestedSupported =
+      nestedEmitter.supportsFailureBodyText(nestedAddress);
+  const std::string nestedText =
+      nestedSupported ? nestedEmitter
+                            .emitFailureBodyText(
+                                nestedAddress, "constructor-nested-field-v0", 1)
+                            .text
+                      : std::string();
+  const std::string nestedSlot = "__gti_mir_v_" + std::to_string(nestedResult);
+  const auto nestedCount = [&](std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = nestedText.find(needle); at != std::string::npos;
+         at = nestedText.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+  expect(nestedSupported && nestedCount(nestedSlot + ".get().") == 1 &&
+             nestedCount(nestedSlot + ".get().inner.value;") == 1 &&
+             nestedCount(nestedSlot + ".destroy()") == 1 &&
+             nestedText.find(nestedSlot + ".destroy()") >
+                 nestedText.find(nestedSlot + ".get().") &&
+             nestedCount("__gti_mir_p_" + std::to_string(prefix->id)) == 0 &&
+             nestedCount("__gti_mir_p_" + std::to_string(chain->id)) == 0,
+         "a nested constructor field read should spell its full chain "
+         "through the value slot once, retire the slot after it, and "
+         "spell nothing for the prefix record");
+
+  // A second consumer of the chain is still outside the slot.
+  lang::MirProgram secondReader = nested.mir;
+  lang::MirBody *secondBody = lang::findMirBody(secondReader, nestedAddress);
+  bool rereadChain = false;
+  for (lang::MirBlock &block : secondBody->blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+        !block.terminator.value)
+      continue;
+    block.terminator.value =
+        lang::MirOperand{.kind = lang::MirOperandKind::Copy,
+                         .place = chain->id,
+                         .type = chain->type};
+    rereadChain = true;
+  }
+  (void)lang::rebuildMirValueUses(*secondBody);
+  expect(rereadChain && lang::verifyMirProgram(secondReader).valid(),
+         "the nested second-reader near miss should remain valid MIR");
+  if (rereadChain && lang::verifyMirProgram(secondReader).valid()) {
+    const lang::CppMirBodyEmissionMap secondMap(completeRows(secondReader));
+    const lang::CppMirBodyEmitter secondEmitter(secondReader, secondMap);
+    expect(!secondEmitter.supportsFailureBodyText(nestedAddress),
+           "a nested chain with a second consumer should remain outside "
+           "the slot representation");
+  }
+
+  // Another place on the temporary that is not a prefix of the read
+  // chain is not a prefix record, even when nothing touches it.
+  const lang::MirClassInstance *outer = nullptr;
+  for (const lang::MirClassInstance &candidate : nested.mir.classInstances())
+    if (candidate.type == nestedConstruct->info.type)
+      outer = &candidate;
+  lang::SymbolId flat = 0;
+  if (outer != nullptr)
+    for (const lang::MirClassFieldInfo &field : outer->declaredFields)
+      if (field.symbol != chain->projections.front().field &&
+          field.type == chain->type)
+        flat = field.symbol;
+  lang::MirProgram siblingView = nested.mir;
+  lang::MirBody *siblingBody = lang::findMirBody(siblingView, nestedAddress);
+  lang::MirPlace sibling = *chain;
+  sibling.id = siblingBody->places.size() + 1;
+  sibling.projections = {
+      {.kind = lang::MirProjectionKind::Field, .field = flat}};
+  siblingBody->places.push_back(sibling);
+  (void)lang::rebuildMirValueUses(*siblingBody);
+  expect(flat != 0 && lang::verifyMirProgram(siblingView).valid(),
+         "the untouched sibling-view near miss should remain valid MIR");
+  if (flat != 0 && lang::verifyMirProgram(siblingView).valid()) {
+    const lang::CppMirBodyEmissionMap siblingMap(completeRows(siblingView));
+    const lang::CppMirBodyEmitter siblingEmitter(siblingView, siblingMap);
+    expect(!siblingEmitter.supportsFailureBodyText(nestedAddress),
+           "an untouched place outside the read chain should keep the "
+           "temporary outside the slot representation");
+  }
+}
+
 void checkCleanupFreeConstructorTemporaryFieldRead(bool immovable) {
   const std::string source = std::string(R"(
 class plain_t {
@@ -14678,6 +14802,10 @@ int32_t main() { return plain_t().value - 7; }
            "remain outside the slot representation");
   }
 
+  // A nested read builds `.inner.value` from the chain `.inner`, which MIR
+  // records as its own place on the same temporary. That prefix record is
+  // untouched, so the slot keeps one consumer: the Load reads the full chain
+  // through the slot and the prefix spells nothing.
   const lang::FrontendResult nested =
       analyze("cpp-mir-constructor-temporary-nested-field.gti", R"(
 struct inner_t { int32_t value = 7; };
@@ -14685,11 +14813,12 @@ class outer_t {
 public:
   outer_t() {}
   inner_t inner = inner_t();
+  int32_t flat = 7;
 };
 int32_t main() { return outer_t().inner.value - 7; }
 )");
   expect(nested.canGenerateCode(),
-         "the nested constructor field near miss should pass the frontend");
+         "the nested constructor field read should pass the frontend");
   if (nested.canGenerateCode()) {
     const auto nestedEntry = std::find_if(
         nested.mir.functionInstances().begin(),
@@ -14697,16 +14826,9 @@ int32_t main() { return outer_t().inner.value - 7; }
           return function.entryKind == lang::ProgramEntryKind::NoArguments;
         });
     expect(nestedEntry != nested.mir.functionInstances().end(),
-           "the nested constructor field near miss should lower its entry");
-    if (nestedEntry != nested.mir.functionInstances().end()) {
-      const lang::CppMirBodyEmissionMap nestedMap(
-          buildRows(nested, nested.mir, lang::CppStandard::Cpp23));
-      const lang::CppMirBodyEmitter nestedEmitter(nested.mir, nestedMap);
-      expect(
-          !nestedEmitter.supportsFailureBodyText(
-              {.kind = lang::MirBodyKind::Function, .owner = nestedEntry->id}),
-          "a two-field constructor projection should remain unsupported");
-    }
+           "the nested constructor field read should lower its entry");
+    if (nestedEntry != nested.mir.functionInstances().end())
+      checkNestedConstructorTemporaryFieldRead(nested, *nestedEntry);
   }
 
   const lang::FrontendResult cleanup =

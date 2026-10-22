@@ -2676,9 +2676,15 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
   return nullptr;
 }
 
-// No instruction, loan, or terminator references this place.
-[[nodiscard]] bool unreferencedMirPlace(const MirBody &body,
-                                        const MirPlace &place) {
+// A bare value-rooted place that no instruction, loan, or terminator
+// references is a pure root record: the rooted value flows through its
+// own uses and the place spells nothing, so it needs no declaration and
+// no representation row.
+[[nodiscard]] bool unreferencedValueRootedPlace(const MirBody &body,
+                                                const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Value || !place.projections.empty()) {
+    return false;
+  }
   if (IndexedMirBody *index = indexedMirBody(body)) {
     if (!index->referencedPlaces) {
       std::unordered_set<MirPlaceId> &referenced =
@@ -2726,98 +2732,6 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
     }
   }
   return true;
-}
-
-// A bare value-rooted place that no instruction, loan, or terminator
-// references is a pure root record: the rooted value flows through its
-// own uses and the place spells nothing, so it needs no declaration and
-// no representation row.
-[[nodiscard]] bool unreferencedValueRootedPlace(const MirBody &body,
-                                                const MirPlace &place) {
-  return place.root == MirPlaceRootKind::Value && place.projections.empty() &&
-         unreferencedMirPlace(body, place);
-}
-
-// Forming a nested projection of a value, such as `make().inner.x`, also
-// records each intermediate (`make().inner`). An intermediate of the observed
-// projection that nothing names, not even an obligation, a protecting loan or
-// a block argument, is a pure record as well and spells nothing.
-[[nodiscard]] bool unreferencedValueRootedPrefix(const MirBody &body,
-                                                 const MirPlace &prefix,
-                                                 const MirPlace &observed) {
-  if (prefix.id == observed.id || prefix.root != MirPlaceRootKind::Value ||
-      observed.root != MirPlaceRootKind::Value ||
-      prefix.value != observed.value || prefix.projections.empty() ||
-      prefix.projections.size() >= observed.projections.size() ||
-      !std::equal(prefix.projections.begin(), prefix.projections.end(),
-                  observed.projections.begin()) ||
-      !unreferencedMirPlace(body, prefix))
-    return false;
-  const auto names = [&](const MirOperand &operand) {
-    return operand.place == prefix.id;
-  };
-  return std::none_of(body.loans.begin(), body.loans.end(),
-                      [&](const MirLoan &loan) {
-                        return loan.protectsSource(prefix.id);
-                      }) &&
-         std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
-                      [&](const MirDropObligation &drop) {
-                        return drop.place == prefix.id;
-                      }) &&
-         std::none_of(
-             body.blocks.begin(), body.blocks.end(),
-             [&](const MirBlock &block) {
-               const MirTerminator &terminator = block.terminator;
-               return std::any_of(terminator.targetArguments.begin(),
-                                  terminator.targetArguments.end(), names) ||
-                      std::any_of(terminator.elseArguments.begin(),
-                                  terminator.elseArguments.end(), names) ||
-                      std::any_of(terminator.switchTargets.begin(),
-                                  terminator.switchTargets.end(),
-                                  [&](const MirSwitchTarget &edge) {
-                                    return std::any_of(edge.arguments.begin(),
-                                                       edge.arguments.end(),
-                                                       names);
-                                  }) ||
-                      std::any_of(
-                          block.instructions.begin(), block.instructions.end(),
-                          [&](const MirInstruction &instruction) {
-                            return instruction.successResultDestination ==
-                                       prefix.id ||
-                                   instruction.retainedOwnerPlace == prefix.id;
-                          });
-             });
-}
-
-// The one place through which a value is observed when every use of it
-// roots a place: the deepest projection, every other use being one of its
-// unreferenced intermediates.
-[[nodiscard]] const MirPlace *
-observedValueRootPlace(const MirBody &body,
-                       const std::vector<MirValueUse> &uses) {
-  const MirPlace *observed = nullptr;
-  for (const MirValueUse &use : uses) {
-    const MirPlace *place =
-        use.kind == MirValueUseKind::PlaceRoot && use.place != 0
-            ? body.findPlace(use.place)
-            : nullptr;
-    if (place == nullptr) {
-      return nullptr;
-    }
-    if (observed == nullptr ||
-        place->projections.size() > observed->projections.size()) {
-      observed = place;
-    }
-  }
-  if (observed == nullptr ||
-      std::any_of(uses.begin(), uses.end(), [&](const MirValueUse &use) {
-        return use.place != observed->id &&
-               !unreferencedValueRootedPrefix(body, *body.findPlace(use.place),
-                                              *observed);
-      })) {
-    return nullptr;
-  }
-  return observed;
 }
 
 [[nodiscard]] bool sameMirPlaceRoot(const MirPlace &left,
@@ -27367,12 +27281,94 @@ struct ClassSsaLifetimeSlot {
   const MirBlock *returnBlock = nullptr;
   ClassSsaSlotConsumerKind consumerKind = ClassSsaSlotConsumerKind::None;
   const MirInstruction *observingCall = nullptr;
+  // The field chain a FieldRead consumer reads.
+  const MirPlace *fieldView = nullptr;
 
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
 
-// The exact projected place a FieldRead slot's consumer reads: its one copied
-// operand, or the borrowed receiver of a text observer.
+// A nested field read `a.b.c` is built from the chain `a.b`, and MIR records
+// that shorter chain as its own place rooted at the same value. Such a prefix
+// record is untouched: no instruction, terminator, loan, or drop names it, so
+// it spells nothing and adds no consumer.
+[[nodiscard]] bool untouchedFieldPrefixRecord(const MirBody &body,
+                                              const MirPlace &view,
+                                              MirPlaceId placeId) {
+  const MirPlace *place = body.findPlace(placeId);
+  if (place == nullptr || view.root != MirPlaceRootKind::Value ||
+      place->root != MirPlaceRootKind::Value || place->value != view.value ||
+      place->projections.empty() ||
+      place->projections.size() >= view.projections.size() ||
+      !std::equal(place->projections.begin(), place->projections.end(),
+                  view.projections.begin()) ||
+      std::any_of(
+          body.loans.begin(), body.loans.end(),
+          [&](const MirLoan &loan) { return loan.protectsSource(placeId); }) ||
+      std::any_of(
+          body.dropObligations.begin(), body.dropObligations.end(),
+          [&](const MirDropObligation &drop) { return drop.place == placeId; }))
+    return false;
+  const auto touches = [&](const MirOperand &operand) {
+    return operand.place == placeId;
+  };
+  for (const MirBlock &block : body.blocks) {
+    const MirTerminator &terminator = block.terminator;
+    if ((terminator.value && touches(*terminator.value)) ||
+        std::any_of(terminator.targetArguments.begin(),
+                    terminator.targetArguments.end(), touches) ||
+        std::any_of(terminator.elseArguments.begin(),
+                    terminator.elseArguments.end(), touches) ||
+        std::any_of(terminator.switchTargets.begin(),
+                    terminator.switchTargets.end(),
+                    [&](const MirSwitchTarget &edge) {
+                      return std::any_of(edge.arguments.begin(),
+                                         edge.arguments.end(), touches);
+                    }))
+      return false;
+    for (const MirInstruction &instruction : block.instructions)
+      if (instruction.destination == placeId ||
+          instruction.successResultDestination == placeId ||
+          instruction.retainedOwnerPlace == placeId ||
+          (instruction.receiver && touches(*instruction.receiver)) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      touches))
+        return false;
+  }
+  return true;
+}
+
+// The one place a value's uses observe when every use roots a place of the
+// same field chain: the deepest root, with every other root an untouched
+// prefix record of it.
+[[nodiscard]] const MirPlace *
+observedFieldChain(const MirBody &body, const std::vector<MirValueUse> &uses) {
+  if (uses.empty() ||
+      !std::all_of(uses.begin(), uses.end(), [](const MirValueUse &use) {
+        return use.kind == MirValueUseKind::PlaceRoot && use.place != 0;
+      }))
+    return nullptr;
+  const MirPlace *view = nullptr;
+  for (const MirValueUse &use : uses) {
+    const MirPlace *root = body.findPlace(use.place);
+    if (root == nullptr)
+      return nullptr;
+    if (view == nullptr || root->projections.size() > view->projections.size())
+      view = root;
+  }
+  return std::all_of(uses.begin(), uses.end(),
+                     [&](const MirValueUse &use) {
+                       return use.place == view->id ||
+                              untouchedFieldPrefixRecord(body, *view,
+                                                         use.place);
+                     })
+             ? view
+             : nullptr;
+}
+
+// The exact projected place a FieldRead slot's consumer reads (its one copied
+// operand, or the borrowed receiver of a text observer), or an untouched
+// prefix record of that chain. The slot proof admits no other place rooted at
+// its value.
 [[nodiscard]] bool fieldReadSlotView(const ClassSsaLifetimeSlot &slot,
                                      const MirPlace &place) {
   if (slot.consumerKind != ClassSsaSlotConsumerKind::FieldRead ||
@@ -27380,21 +27376,12 @@ struct ClassSsaLifetimeSlot {
     return false;
   return (slot.consumer->operands.size() == 1 &&
           slot.consumer->operands.front().place == place.id) ||
-         textObserverOfPlace(*slot.consumer, place.id);
-}
-
-// An unreferenced intermediate of the projection a FieldRead slot's consumer
-// copies, as `make().inner` is for `make().inner.x`.
-[[nodiscard]] bool fieldReadSlotPrefix(const MirBody &body,
-                                       const ClassSsaLifetimeSlot &slot,
-                                       const MirPlace &place) {
-  if (slot.consumerKind != ClassSsaSlotConsumerKind::FieldRead ||
-      slot.consumer == nullptr || slot.consumer->operands.size() != 1)
-    return false;
-  const MirPlace *observed =
-      body.findPlace(slot.consumer->operands.front().place);
-  return observed != nullptr &&
-         unreferencedValueRootedPrefix(body, place, *observed);
+         textObserverOfPlace(*slot.consumer, place.id) ||
+         (slot.fieldView != nullptr && place.root == MirPlaceRootKind::Value &&
+          place.value == slot.fieldView->value && !place.projections.empty() &&
+          place.projections.size() < slot.fieldView->projections.size() &&
+          std::equal(place.projections.begin(), place.projections.end(),
+                     slot.fieldView->projections.begin()));
 }
 
 // The cleanup-free conditional join whose single Move is this slot's
@@ -27517,7 +27504,7 @@ plainCallStagedClassResult(const ClassSsaLifetimeSlot &slot) {
 // representation storage. It is not a semantic drop: the value is transferred
 // immediately to a Return, one by-value call parameter, or a cleanup-free
 // mutable binding assignment, or observed through
-// one scalar field read, and only a generated cleanup-free representation
+// one read of a field chain, and only a generated cleanup-free representation
 // remains to be ended by the slot. An unused cleanup-free call result retires
 // its representation immediately after successful publication.
 [[nodiscard]] ClassSsaLifetimeSlot
@@ -27556,7 +27543,7 @@ classSsaLifetimeSlot(const MirProgram &program,
           : transformedFailureCallee(program, representations, *producer);
   // Plain source calls need the same uninitialized staging when their result
   // replaces a binding, passes by value to one call, initializes one
-  // constructor field, is observed through one field projection, reaches a
+  // constructor field, is observed through one field chain, reaches a
   // Return that cannot spell the call as its return expression, or is
   // discarded. Default-constructing a C++ local would
   // introduce a source-observable constructor call, and publishing directly
@@ -27568,8 +27555,7 @@ classSsaLifetimeSlot(const MirProgram &program,
                 uses.front().kind == MirValueUseKind::InstructionOperand
             ? findInstruction(body, uses.front().instruction)
             : nullptr;
-    const bool projectedObservation =
-        observedValueRootPlace(body, uses) != nullptr;
+    const bool projectedObservation = observedFieldChain(body, uses) != nullptr;
     const bool returnedResult =
         uses.size() == 1 && uses.front().kind == MirValueUseKind::Terminator &&
         body.returnType == value->info.type &&
@@ -27724,10 +27710,10 @@ classSsaLifetimeSlot(const MirProgram &program,
       conditionalClassBindingJoinSlotForValue(program, body, valueId) ==
           nullptr &&
       mirTypeMoveIsDefinedFailureFree(program, value->info.type);
-  // A copy of a place observed only through the field projection below, as
-  // the copy of its committed destination that an assignment result such as
+  // A copy of a place observed only through the field read below, as the
+  // copy of its committed destination that an assignment result such as
   // `(p = q).x` reads. The Load constructs the slot from its source, so the
-  // projection observes the copy, never storage a later operand may write.
+  // read observes the copy, never storage a later operand may write.
   const MirPlace *copySource =
       producer != nullptr && producer->kind == MirInstructionKind::Load &&
               producer->operands.size() == 1 &&
@@ -27790,23 +27776,23 @@ classSsaLifetimeSlot(const MirProgram &program,
       value->info.traits.movable && classInstance->traits.movable;
 
   // A cleanup-free class result may be observed through one exact field
-  // projection before the full expression ends. The transformed callee still
-  // needs uninitialized representation storage; the projected place is only
-  // an lvalue view over that slot and owns no independent lifetime. A value
-  // moved out of a place, as in `std::move(a).x`, is staged the same way: the
-  // Move constructs the slot and leaves its source moved-from. A nested
-  // projection also roots its unreferenced intermediates at the value.
+  // chain, of any depth, before the full expression ends. The transformed
+  // callee still needs uninitialized representation storage; the projected
+  // place is only an lvalue view over that slot and owns no independent
+  // lifetime. A value moved out of a place, as in `std::move(a).x`, is staged
+  // the same way: the Move constructs the slot and leaves its source
+  // moved-from. The deepest place rooted at the value is the read chain; any
+  // other root must be an untouched prefix record of it.
   const std::vector<MirValueUse> allUses = body.usesOf(valueId);
-  if (const MirPlace *projection = observedValueRootPlace(body, allUses);
-      projection != nullptr &&
+  const MirPlace *projection = observedFieldChain(body, allUses);
+  if (projection != nullptr &&
       !std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                    [&](const MirDropObligation &drop) {
                      return drop.generatedValue == valueId;
                    })) {
     const bool exactProjection =
-        projection != nullptr && projection->root == MirPlaceRootKind::Value &&
+        projection->root == MirPlaceRootKind::Value &&
         projection->value == valueId && !projection->projections.empty() &&
-        (!directConstructionProducer || projection->projections.size() == 1) &&
         std::all_of(projection->projections.begin(),
                     projection->projections.end(),
                     [](const MirPlaceProjection &item) {
@@ -27943,7 +27929,8 @@ classSsaLifetimeSlot(const MirProgram &program,
               .producer = producer,
               .consumer = consumer,
               .consumerKind = ClassSsaSlotConsumerKind::FieldRead,
-              .observingCall = observingCall};
+              .observingCall = observingCall,
+              .fieldView = projection};
     }
   }
 
@@ -30067,8 +30054,7 @@ public:
       if (place.root == MirPlaceRootKind::Value) {
         const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
             program, representations, facts.body, place.value);
-        if (fieldReadSlotView(slot, place) ||
-            fieldReadSlotPrefix(facts.body, slot, place)) {
+        if (fieldReadSlotView(slot, place)) {
           continue;
         }
       }
@@ -36570,7 +36556,7 @@ private:
     if (instruction.kind == MirInstructionKind::Load && instruction.result &&
         (sequencedCopiedArgument(program, facts.body, *instruction.result,
                                  true) == &instruction ||
-         // A copy observed through one field projection constructs its slot.
+         // A copy observed through one field read constructs its slot.
          classSsaLifetimeSlot(program, representations, facts.body,
                               *instruction.result)
                  .producer == &instruction)) {
@@ -50450,8 +50436,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (place.root == MirPlaceRootKind::Value) {
       const ClassSsaLifetimeSlot slot =
           classSsaLifetimeSlot(program_, representations_, body, place.value);
-      if (fieldReadSlotView(slot, place) ||
-          fieldReadSlotPrefix(body, slot, place)) {
+      if (fieldReadSlotView(slot, place)) {
         continue;
       }
     }
