@@ -219,11 +219,11 @@ int main(int argc, std::vector<std::string> argv) {
   for (mut int round = 0; round < 2; round += 1) {
     switch (selected) {
       case BorrowedParse::ready(auto& value): total += value; break;
-      case BorrowedParse::failed: return 3;
+      case BorrowedParse::failed: return 4;
     }
   }
   if (total != 2 * owner)
-    return 3;
+    return 4;
   // make_label(a_local_string.view()) is rejected: forwarding through a
   // generic function cannot erase a dynamic text-owner dependency.
   std::println(std::to_string(inspect(owner, false).code));
