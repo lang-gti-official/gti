@@ -4,10 +4,11 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <set>
 #include <span>
-#include <unordered_set>
+#include <utility>
 
 namespace lang::mir_detail {
 namespace {
@@ -22,6 +23,14 @@ struct TextSources {
   // Text fields of formals or of the receiver that this text is read from:
   // ownerless only under the function's field contract (L-OWN-02).
   std::set<OwnerlessTextField> fields;
+
+  // Text that may hold either: known only when both are.
+  void join(const TextSources &other) {
+    known = known && other.known;
+    parameters.insert(other.parameters.begin(), other.parameters.end());
+    fields.insert(other.fields.begin(), other.fields.end());
+  }
+  friend bool operator==(const TextSources &, const TextSources &) = default;
 };
 
 struct TextBody {
@@ -92,7 +101,8 @@ bool fieldContractFunction(const MirProgram &program,
 
 class TextContracts {
 public:
-  explicit TextContracts(const MirProgram &program) : program(program) {}
+  explicit TextContracts(const MirProgram &program)
+      : program(program), returnSummaries(program.functionInstances().size()) {}
 
   MirVerificationResult verify();
 
@@ -124,7 +134,29 @@ private:
   // Formals whose text a construction published under its result's loan; the
   // constructor body must not also store them as ownerless text.
   std::set<std::pair<std::size_t, std::size_t>> publishedFormals;
-  std::unordered_set<HirFunctionInstanceId> activeReturns;
+  // Per function instance, by position: what its text result may hold
+  // (`returnSources`).
+  struct ReturnSummary {
+    // Empty: the result of no completed return. A summary only grows.
+    TextSources sources{.known = true};
+    // The 1-based position on the evaluation stack while its returns are
+    // being evaluated, and zero otherwise.
+    std::size_t depth = 0;
+    // A summary whose evaluation read one lower on the stack is provisional
+    // until an evaluation that read nothing lower completes; it keeps the
+    // lowest position it depends on.
+    std::size_t lowestRead = 0;
+    bool provisional = false;
+    bool complete = false;
+  };
+  std::vector<ReturnSummary> returnSummaries;
+  // Provisional summaries, in the order they were computed.
+  std::vector<std::size_t> provisionalSummaries;
+  std::size_t returnDepth = 0;
+  // The lowest stack position the current evaluation has read.
+  std::size_t readDepth = std::numeric_limits<std::size_t>::max();
+  // Whether a provisional summary grew in the current evaluation.
+  bool provisionalGrew = false;
   std::set<std::size_t> activeTemporaries;
 
   const MirInstruction *definition(const MirBody &body, MirValueId id) const {
@@ -427,61 +459,33 @@ private:
           instruction->borrowFields.empty()) {
         answer.known = true;
       } else if (target && textType(target->returnType) &&
-                 target->definitionKind == MirDefinitionKind::Source &&
-                 activeReturns.insert(target->id).second) {
+                 target->definitionKind == MirDefinitionKind::Source) {
         // Under its field contracts a callee may return a formal's or the
         // receiver's text field (L-OWN-02): the result holds what this call's
         // argument or receiver holds there.
-        const TextBody callee{
-            .body = target->body,
-            .types = target->parameterTypes,
-            .bindings = target->parameterBindings,
-            .fieldContracts =
-                fieldContractFunction(program, *target) ? target : nullptr};
-        bool sawReturn = false;
-        answer.known = true;
-        for (const auto &block : target->body.blocks) {
-          if (block.terminator.kind != MirTerminatorKind::Return ||
-              !block.terminator.value)
+        const auto returned = returnSources(*target);
+        answer.known = returned.known;
+        for (const auto parameter : returned.parameters) {
+          if (parameter >= instruction->operands.size()) {
+            answer.known = false;
             continue;
-          sawReturn = true;
-          std::set<std::pair<bool, std::size_t>> nested;
-          const auto returned =
-              sources(callee, *block.terminator.value, nested);
-          answer.known = answer.known && returned.known;
-          for (const auto parameter : returned.parameters) {
-            if (parameter >= instruction->operands.size()) {
-              answer.known = false;
-              continue;
-            }
-            const auto mapped =
-                sources(context, instruction->operands[parameter], active);
-            answer.known = answer.known && mapped.known;
-            answer.parameters.insert(mapped.parameters.begin(),
-                                     mapped.parameters.end());
-            answer.fields.insert(mapped.fields.begin(), mapped.fields.end());
           }
-          for (const auto &field : returned.fields) {
-            const MirOperand *origin =
-                field.receiver
-                    ? (instruction->receiver ? &*instruction->receiver
-                                             : nullptr)
-                : field.parameter < instruction->operands.size()
-                    ? &instruction->operands[field.parameter]
-                    : nullptr;
-            if (origin == nullptr) {
-              answer.known = false;
-              continue;
-            }
-            const auto held = heldFieldSources(context, *origin, field.field);
-            answer.known = answer.known && held.known;
-            answer.parameters.insert(held.parameters.begin(),
-                                     held.parameters.end());
-            answer.fields.insert(held.fields.begin(), held.fields.end());
-          }
+          answer.join(
+              sources(context, instruction->operands[parameter], active));
         }
-        answer.known = answer.known && sawReturn;
-        activeReturns.erase(target->id);
+        for (const auto &field : returned.fields) {
+          const MirOperand *origin =
+              field.receiver
+                  ? (instruction->receiver ? &*instruction->receiver : nullptr)
+              : field.parameter < instruction->operands.size()
+                  ? &instruction->operands[field.parameter]
+                  : nullptr;
+          if (origin == nullptr) {
+            answer.known = false;
+            continue;
+          }
+          answer.join(heldFieldSources(context, *origin, field.field));
+        }
       }
     } else if (!instruction) {
       answer = joinSources(context, operand.value, active);
@@ -585,6 +589,86 @@ private:
   TextSources sources(const TextBody &context, const MirOperand &operand) {
     std::set<std::pair<bool, std::size_t>> active;
     return sources(context, operand, active);
+  }
+
+  // What a source function's text result may hold, in terms of its own
+  // formals and their text fields: the least fixpoint over the returns of
+  // each set of mutually recursive functions. A call to a function whose
+  // returns are being evaluated reads its current summary through the
+  // call's arguments, so a recursive call that permutes formals reaches every
+  // formal that some depth of the recursion returns. The first function of a
+  // recursive set to be evaluated evaluates its returns again, together with
+  // one evaluation of each other member, until no summary of the set grows,
+  // and then completes them all.
+  TextSources returnSources(const MirFunctionInstance &target) {
+    const auto index =
+        static_cast<std::size_t>(&target - program.functionInstances().data());
+    auto &summary = returnSummaries[index];
+    if (summary.complete)
+      return summary.sources;
+    if (summary.depth != 0 || summary.provisional) {
+      readDepth = std::min(readDepth, summary.depth != 0 ? summary.depth
+                                                         : summary.lowestRead);
+      return summary.sources;
+    }
+    // The summary depends on the target alone, not on the body that first
+    // needed it.
+    auto temporaries = std::exchange(activeTemporaries, {});
+    const auto outerReadDepth = readDepth;
+    const bool outerGrew = provisionalGrew;
+    summary.depth = ++returnDepth;
+    const TextBody callee{.body = target.body,
+                          .types = target.parameterTypes,
+                          .bindings = target.parameterBindings,
+                          .fieldContracts =
+                              fieldContractFunction(program, target) ? &target
+                                                                     : nullptr};
+    for (;;) {
+      const auto mark = provisionalSummaries.size();
+      readDepth = std::numeric_limits<std::size_t>::max();
+      provisionalGrew = false;
+      auto next = summary.sources;
+      bool sawReturn = false;
+      for (const auto &block : target.body.blocks)
+        if (block.terminator.kind == MirTerminatorKind::Return &&
+            block.terminator.value) {
+          sawReturn = true;
+          next.join(sources(callee, *block.terminator.value));
+        }
+      next.known = next.known && sawReturn;
+      const bool grew = next != summary.sources;
+      summary.sources = std::move(next);
+      if (readDepth < summary.depth) {
+        // A lower evaluation completes this summary, and those computed
+        // here, which now depend on what this one depends on.
+        for (auto entry = mark; entry < provisionalSummaries.size(); ++entry)
+          returnSummaries[provisionalSummaries[entry]].lowestRead = readDepth;
+        summary.provisional = true;
+        summary.lowestRead = readDepth;
+        provisionalSummaries.push_back(index);
+        provisionalGrew = outerGrew || provisionalGrew || grew;
+        break;
+      }
+      // Each provisional summary computed in this pass depends on this one:
+      // a pass in which none grew completes them all.
+      const bool again = grew || provisionalGrew;
+      for (auto entry = mark; entry < provisionalSummaries.size(); ++entry) {
+        auto &member = returnSummaries[provisionalSummaries[entry]];
+        member.provisional = false;
+        member.complete = !again;
+      }
+      provisionalSummaries.resize(mark);
+      if (!again) {
+        summary.complete = true;
+        provisionalGrew = outerGrew;
+        break;
+      }
+    }
+    --returnDepth;
+    summary.depth = 0;
+    readDepth = std::min(outerReadDepth, readDepth);
+    activeTemporaries = std::move(temporaries);
+    return summary.sources;
   }
 
   // A construction whose result carries a read-only Stored loan designating

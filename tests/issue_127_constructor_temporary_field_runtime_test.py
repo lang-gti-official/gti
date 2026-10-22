@@ -86,16 +86,39 @@ def main() -> int:
         direct_field_reads = re.findall(
             r"__gti_mir_v_\d+\.get\(\)\.value", generated
         )
-        direct_slot_constructions = re.findall(
-            r"::new \(static_cast<void \*>\(__gti_mir_v_\d+\.construction_address\(\)\)\) "
-            r"[\w:]+\("
-            r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
-            generated,
-        )
+        def slot_constructions(types: str) -> list[str]:
+            return re.findall(
+                r"::new \(static_cast<void \*>\(__gti_mir_v_\d+\.construction_address\(\)\)\) "
+                rf"[\w:]*\b(?:{types})\("
+                r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
+                generated,
+            )
+
+        direct_slot_constructions = slot_constructions("plain_t|Fixed|Stamp")
         if len(direct_field_reads) != 11 or len(direct_slot_constructions) != 9:
             sys.stderr.write(
                 "generated C++ lost the exact constructor/call value-rooted "
                 "field-read slots\n"
+            )
+            return 1
+        # A nested read spells its whole field chain through the temporary's
+        # value slot; the shorter chains MIR records on the way spell nothing.
+        nested_field_reads = re.findall(
+            r"__gti_mir_v_\d+\.get\(\)\.(?:word|phrase|level|low)\.", generated
+        )
+        owned_nested_reads = re.findall(
+            r"__gti_mir_p_\d+\.get\(\)\.(?:word|phrase|level)\.", generated
+        )
+        nested_slot_constructions = slot_constructions(
+            "phrase_t|sentence_t|anchored_t"
+        )
+        if (
+            len(nested_field_reads) != 12
+            or owned_nested_reads
+            or len(nested_slot_constructions) != 7
+        ):
+            sys.stderr.write(
+                "generated C++ lost the value slots of nested field reads\n"
             )
             return 1
         # A temporary whose class has a destructor is read through MIR's own
