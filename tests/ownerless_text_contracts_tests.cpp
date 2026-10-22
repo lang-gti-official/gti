@@ -568,10 +568,18 @@ int main() {
 
   // A value over a local owner reaches a reference accessor only through a
   // relay (testTextReferenceRelays), never one that lets its receiver
-  // escape whole or stores what it reads.
-  for (const char *body :
-       {"kept = t.ref();", "keep(t);", "std::println(t.kindOf());",
-        "std::println(t.alias());"}) {
+  // escape whole or stores what it reads. An accessor returning another
+  // accessor's reference composes its relay.
+  const auto composed =
+      analyzeText(kReferenceAccessors +
+                  "int run() { std::string input{\"input\"}; Token t = "
+                  "Token(input.view(), 1); std::println(t.alias()); return 0; "
+                  "}\nint main() { return run(); }\n");
+  expect(composed.canGenerateCode() &&
+             lang::verifyMirProgram(composed.mir).valid(),
+         "a value over a local owner calls a composed reference relay");
+  for (const char *body : {"kept = t.ref();", "keep(t);",
+                           "std::println(t.kindOf());", "kept = t.alias();"}) {
     const auto rejected =
         analyzeText(kReferenceAccessors +
                     "int run() { std::string input{\"input\"}; Token t = "

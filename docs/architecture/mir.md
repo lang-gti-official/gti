@@ -1952,6 +1952,32 @@ the payload symbol, with no variant condition.
   `dependentDesignation` finds the subject's loan designating that payload
   (`directTextPayload`).
 
+Phase 2b extends designations to paths (`TextFieldPath`): a constructor may
+publish at `[field, payload]`, a text payload of one of its payload-enum
+fields.
+- `initializerTextInputs` reads a payload-enum field initializer whose
+  argument is a `PayloadConstruct`: each text operand's sources are
+  requirements, and a formal that alone fills one payload is a published input
+  at that path. The input is not exclusive when the body reads `this` or that
+  field back (`readsPlace`). The initializer's own payload construction is
+  then accounted by the initializer (`fieldInitializerValue`), not by the
+  ownerless payload rule. `publishesText` and `dependentTextFieldFormal` match
+  the call's loan path against it, and `directTextPath` checks the path's
+  types.
+- `dependentDesignationPath` finds a carrier's designation within an operand:
+  from the carrier binding, from a field projection of it that prefixes the
+  path (`switch (line.word)`), or from the producing construction.
+- In a field-contract function, a `PayloadExtract` of a text payload from a
+  contract formal's or the receiver's payload-enum field is that formal's
+  payload source (`contractPayloadExtraction`), so stores require it and
+  reference returns relay it. A whole use requires each text field and each
+  text payload of its payload-enum fields (`formalTextFields`), and
+  `heldFieldSources` maps a payload source onto the caller's argument.
+- A loan that a call returning a reference to text produced is not a whole
+  use of the formal it is rooted at, and neither is the receiver it borrows
+  for that call: readers resolve the text through `returnSources`, so a
+  method composing another accessor's reference relays what it relays.
+
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
 dependency the caller's value holds in that field:

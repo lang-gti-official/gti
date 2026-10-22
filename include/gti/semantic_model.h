@@ -829,10 +829,13 @@ struct RawBorrowContract {
 // A text field of a formal or of the receiver whose text a function lets
 // outlive the call, so every argument must hold ownerless text there
 // (L-OWN-02). A text formal's own requirement is ownerlessTextParameters.
+// With `payload`, the requirement is on that text payload of the field's
+// payload enum.
 struct OwnerlessTextField {
   bool receiver = false;
   std::size_t parameter = 0;
   SymbolId field = 0;
+  SymbolId payload = 0;
 
   friend auto operator<=>(const OwnerlessTextField &,
                           const OwnerlessTextField &) = default;
@@ -1610,6 +1613,9 @@ struct ResolvedOperatorInfo {
   // assignment receivers have no standalone AST occurrence, so downstream
   // lowering must not reconstruct these facts from a declaration symbol.
   ExpressionInfo receiverInfo;
+  // The receiver text field or payload that the operator's returned
+  // reference designates for this receiver's class (L-OWN-02).
+  std::optional<OwnerlessTextField> returnedTextReference;
 };
 
 // The receiver of the conversion operator an explicit conversion selected:

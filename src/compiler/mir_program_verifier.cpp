@@ -205,12 +205,12 @@ dependentTextPublication(const MirProgram &program,
   return mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter == instruction.borrowArgument &&
          mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
-         mapping.resultFields.size() == 1 &&
+         (mapping.resultFields.size() == 1 ||
+          mapping.resultFields.size() == 2) &&
          mapping.access == AccessMode::ReadOnly &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
-         mir_detail::dependentTextFieldFormal(program, constructor,
-                                              mapping.resultFields.front()) ==
-             mapping.parameter;
+         mir_detail::dependentTextFieldFormal(
+             program, constructor, mapping.resultFields) == mapping.parameter;
 }
 
 // A call whose target returns one by-value text formal in a direct text field

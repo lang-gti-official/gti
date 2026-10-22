@@ -2,6 +2,8 @@
 
 #include "gti/mir_verifier.h"
 
+#include <span>
+
 namespace lang::mir_detail {
 [[nodiscard]] MirVerificationResult
 verifyOwnerlessTextContracts(const MirProgram &program);
@@ -21,10 +23,15 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 [[nodiscard]] bool directTextPayload(const MirProgram &program,
                                      const SemanticType &type,
                                      SymbolId payload);
-// The formal that alone initializes the direct text field `field` of the
+// A direct text field of the class `type`, or a text payload of one of its
+// payload-enum fields: `{field}` or `{field, payload}`.
+[[nodiscard]] bool directTextPath(const MirProgram &program,
+                                  const SemanticType &type,
+                                  std::span<const SymbolId> path);
+// The formal that alone initializes the text field path `path` of the
 // constructor's class, when that formal reaches no other text initializer.
 [[nodiscard]] std::optional<std::size_t>
 dependentTextFieldFormal(const MirProgram &program,
                          const MirConstructorInstance &constructor,
-                         SymbolId field);
+                         std::span<const SymbolId> path);
 } // namespace lang::mir_detail

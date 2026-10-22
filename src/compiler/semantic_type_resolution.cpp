@@ -2386,11 +2386,13 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     const auto textInputs = ownerlessTextConstructorInputs(
         constructedType, selected.constructor->declaration,
         selected.parameterTypes);
-    for (const auto &[index, initializer] : textInputs) {
+    for (const auto &input : textInputs) {
+      const std::size_t index = input.parameter;
+      const ConstructorInitializer *initializer = input.initializer;
       // A relay names the one text field its formal stores.
       const bool soleField = std::count_if(textInputs.begin(), textInputs.end(),
-                                           [index = index](const auto &input) {
-                                             return input.first == index;
+                                           [index](const auto &other) {
+                                             return other.parameter == index;
                                            }) == 1;
       const ExprPtr *argument = nullptr;
       bool potentialPackView = false;
@@ -2417,7 +2419,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
         continue;
       // A fresh value this function returns relays a formal stored in its
       // text field: each call publishes its own argument's owner there.
-      if (!potentialPackView && soleField && index < arguments.size() &&
+      if (!potentialPackView && soleField && input.payload == 0 &&
+          index < arguments.size() &&
           initializer->target.name.segments.size() == 1)
         if (const ClassInfo *owner = classInfo(constructedType)) {
           const auto member =
@@ -2443,7 +2446,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (!potentialPackView && !contextualConstruction &&
           index < arguments.size()) {
         auto dependencies = textFieldInitializerDependencies(
-            constructedType, *initializer, *argument);
+            constructedType, *initializer, *argument, input.payload);
         restrictedOwner =
             !dependencies.empty() && !textPublicationOwner(constructedType);
         readingConstructor =
