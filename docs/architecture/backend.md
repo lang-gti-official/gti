@@ -65,10 +65,16 @@ exact typed enum-field/dereference chain and absence of runtime storage/address
 uses. Stored loans carry no native pointer; selected-reference extraction,
 reference-returning calls and exact return-pointer transfers supply their own
 runtime addresses. Generic Borrow or entry-address uses cannot hide behind this
-classification. Fresh owning enum returns may cross their verified erased
-Stored-to-Return borrow publication and EndBorrow markers without inventing a
-second result slot; all actual cleanup and success-only initialization remains
-in the original MIR order.
+classification. The same rule admits a place rooted at a field-less Stored
+loan, whose borrow-carrying local or class value holds its references
+internally. Such a place names the carried external owner, for example as the
+source of a reference selected from that carrier's payload. It is never spelled,
+so any runtime use of it rejects the body. A Stored dependency inherited from a
+reference binding names that binding's referent, as a parameter entry does.
+Fresh owning enum returns may cross their verified erased Stored-to-Return
+borrow publication and EndBorrow markers without inventing a second result
+slot; all actual cleanup and success-only initialization remains in the
+original MIR order.
 
 Payload alternatives construct in place from their already selected MIR
 operands. The native enum's in-place alternative constructor avoids temporary
