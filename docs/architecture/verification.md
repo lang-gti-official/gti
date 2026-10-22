@@ -1,5 +1,38 @@
 # Compiler Verification
 
+## Field reads of more cleanup-free conditional joins (0.458.5)
+
+A field read of a conditional temporary used to report `GTI-B0001` in two
+shapes, even for a single-level read: arms that pass a class by value to their
+constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, and arms
+that build a class holding a `std::string_view`. Traces of the join-arm
+recognizer showed two separate refusals:
+- a construction arm's prepared-argument `TransferOut` events, which only call
+  arms accepted;
+- a text view field, which made `passiveGeneratedClass` reject the class
+  although a `c_string` field does not.
+
+- `testCleanupFreeJoinTransferAndTextArms` emits one join of each shape. Both
+  publish their two arms into one representation-only join storage, which the
+  joined value's move empties and retires on the next line; the by-value arms
+  hand their staged arguments over with `take()`. Four MIR mutations stay
+  refused: a doubled, a conditional, and an `Initialize` arm transfer, and a
+  borrowed-state text arm.
+- `issue_127_constructor_temporary_field_runtime` adds six joins in every
+  mode: a by-value join read through `.word.kind`, the same join in a loop,
+  and text joins read as a scalar, as a view, through `.size()` and through a
+  read-only method. It counts 14 more constructions. The emitted C++ ends six
+  join storages after their moves; the method call borrows the join storage.
+- A join over owner-dependent text, `(c ? word_t(owner.view(), 1) :
+  word_t(owner.view(), 2)).kind`, is still `GTI-S2045` in semantics, before
+  and after.
+
+The recorded validation runs an `--emit-cpp` differential over every `.gti`
+file under `tests/` and `examples/` against main's compiler, without the
+`namespace-depth-63.gti` stress input. It fails on any text difference, any
+refusal-code change, or any program that stops building, and requires the
+issue-127 fixture to become accepted.
+
 ## Borrowed enum parameters stored in fields (0.458.4)
 
 `complete_borrow_summaries` covers the new fixture,
@@ -77,7 +110,8 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
 - The recorded validation repeats the differential against main at 0.458.2,
   without that stress input, and requires the same outcome.
 
-Still refused, both before and after, even for a single-level read:
+Still refused, both before and after, even for a single-level read (0.458.5
+admits both; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
 - a conditional join of a class that holds a text field, as in
