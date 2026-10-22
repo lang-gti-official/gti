@@ -468,6 +468,8 @@ public:
   int kind;
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
+  int& kindOf() { return this.kindRef(); }
 };
 class Box<T> {
 public:
@@ -494,7 +496,7 @@ int main() {
   kept = box.get();
   expected<int, std::string_view> failed = unexpected("failure");
   kept = failed.error();
-  return width(token) == 5 ? 0 : 1;
+  return width(token) == 5 && token.kindOf() == 1 ? 0 : 1;
 }
 )gti");
   if (!result.canGenerateCode())
@@ -523,6 +525,29 @@ int main() {
                          "ownerless text field contract omits an "
                          "independently derived requirement"),
            "MIR derives the field requirement through the accessor");
+  }
+  // A returned reference that a call borrowed from the receiver lets the
+  // whole receiver escape, so `kindOf` requires each of its text fields.
+  const lang::MirFunctionInstance *kindOf = nullptr;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        function.returnType.kind == lang::SemanticType::Reference &&
+        function.returnType.arguments.size() == 1 &&
+        function.returnType.arguments.front().kind ==
+            lang::SemanticType::Int32 &&
+        !function.ownerlessTextFields.empty())
+      kindOf = &function;
+  expect(kindOf != nullptr,
+         "returning a reference borrowed through a call is a whole use");
+  if (kindOf != nullptr) {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(kindOf->id))
+        ->ownerlessTextFields.clear();
+    expect(functionError(lang::verifyMirProgram(changed), kindOf->id,
+                         "ownerless text field contract omits an "
+                         "independently derived requirement"),
+           "MIR derives the whole use of a returned call reference");
   }
 
   for (const char *body : {"std::println(t.ref());", "kept = t.ref();",
