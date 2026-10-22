@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Field reads of more cleanup-free conditional joins (0.458.5)
+## Field reads of more cleanup-free conditional joins (0.459.1)
 
 A field read of a conditional temporary used to report `GTI-B0001` in two
 shapes, even for a single-level read: arms that pass a class by value to their
@@ -110,7 +110,7 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
 - The recorded validation repeats the differential against main at 0.458.2,
   without that stress input, and requires the same outcome.
 
-Still refused, both before and after, even for a single-level read (0.458.5
+Still refused, both before and after, even for a single-level read (0.459.1
 admits both; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
