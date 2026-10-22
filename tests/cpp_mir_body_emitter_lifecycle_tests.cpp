@@ -14461,6 +14461,8 @@ void testNestedCleanupFreeClassResult() {
          "operator()");
 }
 
+// A nested constructor-temporary read through its value slot, and two MIR near
+// misses the slot still refuses.
 void checkNestedConstructorTemporaryFieldRead(
     const lang::FrontendResult &nested,
     const lang::MirFunctionInstance &nestedEntry) {
