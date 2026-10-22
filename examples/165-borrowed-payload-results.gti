@@ -150,6 +150,9 @@ class StoredReading {
 public:
   implicit StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
   StoredReading() : slot(ReadingSlot::empty) {}
+  // A slot passed by value keeps its caller's owner in the field, whether the
+  // constructor moves it, as here, or copies it with slot(slot).
+  StoredReading(ReadingSlot slot) : slot(std::move(slot)) {}
   bool has_value() {
     switch (this.slot) {
       case ReadingSlot::ready: return true;
@@ -198,9 +201,29 @@ int main(int argc, std::vector<std::string> argv) {
   int& retained = std::move(stored).take();
   if (empty.has_value() || retained != owner || relay_reading(owner) != owner)
     return 1;
+  ReadingSlot slot = ReadingSlot::ready(owner);
+  mut auto handed = StoredReading(slot);
+  auto unset = StoredReading(ReadingSlot::empty);
+  if (!handed.has_value() || unset.has_value())
+    return 3;
+  int& handed_back = std::move(handed).take();
+  if (handed_back != owner)
+    return 3;
   auto label = make_label("static label");
   if (std::move(label).take() != "static label")
     return 2;
+  // A loop that cannot write the carrier (it is not `mut`) selects the same
+  // external reference on every iteration.
+  auto selected = borrowed_parse(owner, false);
+  mut int total = 0;
+  for (mut int round = 0; round < 2; round += 1) {
+    switch (selected) {
+      case BorrowedParse::ready(auto& value): total += value; break;
+      case BorrowedParse::failed: return 4;
+    }
+  }
+  if (total != 2 * owner)
+    return 4;
   // make_label(a_local_string.view()) is rejected: forwarding through a
   // generic function cannot erase a dynamic text-owner dependency.
   std::println(std::to_string(inspect(owner, false).code));
