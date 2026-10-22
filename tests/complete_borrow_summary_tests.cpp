@@ -11,6 +11,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 
 namespace lang {
 struct MirProgramTestAccess {
@@ -1992,6 +1993,141 @@ int main() { return 0; }
                      [](const auto &d) { return d.code == "GTI-B0001"; }),
              "reference relay rejects expired owner or mutable overlap in "
              "semantics");
+    }
+  }
+  {
+    // A field moved or copied from a by-value formal publishes that formal's
+    // guarded entry group. The constructor proof derives the group from the
+    // formal's typed entry contract, so a forged producer, group, guard or
+    // retirement is rejected; semantics still rejects an escaping owner.
+    std::ifstream fixture(root /
+                          "tests/fixtures/borrowed_enum_formal_fields.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "formal borrowed enum fixture exists");
+    const auto result = analyze(source);
+    const auto ctorProofFailed =
+        [](const lang::MirVerificationResult &checked) {
+          return std::any_of(
+              checked.errors.begin(), checked.errors.end(),
+              [](const auto &error) {
+                return error.message.find(
+                           "complete constructor dependency summary lacks") !=
+                       std::string::npos;
+              });
+        };
+    expect(result.canGenerateCode() &&
+               lang::verifyMirProgram(result.mir).valid(),
+           "moved and copied formal enum fields verify independently");
+    std::size_t moved = 0;
+    std::size_t copied = 0;
+    for (const auto &constructor : result.mir.constructorInstances()) {
+      if (!constructor.completeBorrow ||
+          constructor.completeBorrow->dependencies.empty())
+        continue;
+      const auto &body = constructor.body;
+      const lang::MirInstruction *transfer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &stage : block.instructions) {
+          if (stage.kind != lang::MirInstructionKind::Initialize ||
+              stage.constructorInitializer == 0 || stage.operands.size() != 1)
+            continue;
+          const auto *producer = lang::mir_detail::definitionFor(
+              body, stage.operands.front().value);
+          const auto *formal =
+              producer && producer->operands.size() == 1
+                  ? body.findPlace(producer->operands.front().place)
+                  : nullptr;
+          if (formal && formal->root == lang::MirPlaceRootKind::Binding &&
+              formal->projections.empty() &&
+              formal->type.kind == lang::SemanticType::Enum &&
+              (producer->kind == lang::MirInstructionKind::Move ||
+               producer->kind == lang::MirInstructionKind::Load))
+            transfer = producer;
+        }
+      if (!transfer)
+        continue;
+      ++(transfer->kind == lang::MirInstructionKind::Move ? moved : copied);
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed = lang::MirProgramTestAccess::constructors(
+            malformed)[constructor.id - 1];
+        auto group = std::find_if(
+            changed.body.loans.begin(), changed.body.loans.end(),
+            [](const auto &loan) {
+              return loan.entry && loan.kind == lang::MirLoanKind::Stored;
+            });
+        auto published = std::find_if(
+            changed.body.loans.begin(), changed.body.loans.end(),
+            [](const auto &loan) { return loan.escapes && loan.storedField; });
+        expect(group != changed.body.loans.end() &&
+                   published != changed.body.loans.end(),
+               "formal field publication names its entry group");
+        if (group == changed.body.loans.end() ||
+            published == changed.body.loans.end())
+          break;
+        for (auto &block : changed.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id == transfer->id && mutation == 0)
+              // A value from another place is not the formal's group.
+              instruction.operands.front().place = published->source + 1;
+            if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                instruction.loan == published->id && mutation == 1)
+              instruction.operands.front().loan = published->id;
+            if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                instruction.loan == group->id && mutation == 2)
+              instruction.tombstone = true;
+          }
+        if (mutation == 3)
+          group->conditions.clear();
+        if (mutation == 4)
+          published->designatedFields.clear();
+        if (mutation == 5)
+          group->entry = false;
+        const auto checked = lang::verifyMirProgram(malformed);
+        expect(!checked.valid() && (mutation == 2 || ctorProofFailed(checked)),
+               "formal field publication rejects a forged producer, group, "
+               "guard, path or retirement " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(moved >= 4 && copied >= 2,
+           "fixture moves and copies formal borrowed enums into fields");
+    const std::pair<std::string, std::string> rejectedCases[] = {
+        {"Shelf dangling() { int local = 3; return Shelf(Slot::ready(local)); "
+         "}",
+         "GTI-S2045"},
+        {"Copier dangling_copy() { int local = 3; Slot slot = "
+         "Slot::ready(local); return Copier(slot); }",
+         "GTI-S2045"},
+        {"int overlap() { mut int value = 3; Shelf shelf = "
+         "Shelf(Slot::ready(value)); value = 4; return shelf.get(); }",
+         "GTI-S2017"},
+        {"int exclusive() { mut int value = 3; mut Writer writer = "
+         "Writer(Cursor::at(value)); int seen = value; writer.write(5); "
+         "return seen; }",
+         "GTI-S2017"},
+        {"class Duplicate { mut Cursor cursor; public: Duplicate(Cursor "
+         "cursor) : cursor(cursor) {} };",
+         "GTI-S2003"}};
+    for (const auto &rejectedCase : rejectedCases) {
+      const auto &[extra, code] = rejectedCase;
+      const auto rejected = lang::Frontend().analyze(
+          root / "tests/formal-borrowed-enum-rejection.gti",
+          source + "\n" + extra, {root / "stdlib/prelude.gti"}, {},
+          {root / "stdlib"});
+      expect(!rejected.canGenerateCode() &&
+                 std::any_of(rejected.diagnostics.begin(),
+                             rejected.diagnostics.end(),
+                             [&](const auto &d) {
+                               return d.code == rejectedCase.second;
+                             }) &&
+                 std::none_of(
+                     rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-B0001"; }),
+             "formal borrowed enum fields reject an escaping owner, an "
+             "overlapping access or a duplicated exclusive capability in "
+             "semantics with " +
+                 code + ": " + extra);
     }
   }
   return failures ? 1 : 0;
