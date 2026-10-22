@@ -1,0 +1,149 @@
+// Reading a field of a class assignment's result reads the assigned value: a
+// copy of the destination taken right after the write, at the assignment's
+// own position. These reads used to fail MIR construction (GTI-B0001) in
+// function bodies and constructor initializers alike. The destination still
+// holds the assigned value afterwards, and a later operand that assigns the
+// same destination again leaves an earlier read unchanged. Producers that
+// are not assignments share the nested field-read rule (issues #195, #196).
+#include <std/string>
+#include <std/vector>
+
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+
+struct Segment {
+  Point start;
+  int32_t tag;
+  Segment(Point start, int32_t tag) : start(start), tag(tag) {}
+};
+
+struct Holder {
+  mut Point point;
+  Holder(Point point) : point(point) {}
+};
+
+// The read returns q.x and the destination holds q afterwards.
+int32_t pick(mut Point p, Point q) {
+  int32_t picked = (p = q).x;
+  std::println(p.x * 10 + p.y);
+  return picked;
+}
+
+class Line {
+public:
+  int32_t first;
+  int32_t second;
+  Line(mut Point p, Point q) : first((p = q).x), second(p.y) {}
+};
+
+int32_t nested(mut Segment s, Segment t) {
+  return (s = t).start.y * 100 + s.tag;
+}
+
+class Corner {
+public:
+  int32_t y;
+  int32_t tag;
+  Corner(mut Segment s, Segment t) : y((s = t).start.y), tag(s.tag) {}
+};
+
+// A whole class field copied out of the result.
+int32_t copied(mut Segment s, Segment t) {
+  Point start = (s = t).start;
+  return start.x * 10 + start.y;
+}
+
+// A read-only method of a class field of the result.
+int32_t observed(mut Segment s, Segment t) { return (s = t).start.digits(); }
+
+int32_t combine(int32_t first, int32_t second) { return first * 10 + second; }
+
+// The first argument keeps q.x although the second assigns p again.
+int32_t ordered(mut Point p, Point q, Point r) {
+  return combine((p = q).x, (p = r).x) * 10 + p.x;
+}
+
+int32_t field_destination(mut Holder h, Point q) {
+  return (h.point = q).y * 10 + h.point.x;
+}
+
+int32_t element_destination(Point q) {
+  mut Point[2] points = {Point(1, 2), Point(3, 4)};
+  return (points[1] = q).x * 10 + points[1].y;
+}
+
+int32_t referenced_destination(mut Point& p, Point q) { return (p = q).y; }
+
+class Tracker {
+public:
+  mut Point last;
+  Tracker() : last(Point(0, 0)) {}
+  // An implicit and an explicit receiver field as the destination.
+  int32_t record(Point q) mut {
+    return (last = q).x * 10 + (this.last = Point(q.y, q.x)).x;
+  }
+};
+
+Point at(int32_t index) { return Point(index * 2 + 1, index * 2 + 2); }
+
+// Each iteration reads the value it assigned, including a fresh call result
+// and a constructed value.
+int32_t loop_digits(int32_t count) {
+  mut Point current = Point(0, 0);
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < count; index++) {
+    total = total * 10 + (current = at(index)).x;
+  }
+  total = total * 10 + (current = Point(7, current.y + 1)).y;
+  return total * 10 + current.x;
+}
+
+// The checked addition after the read can fail; the assignment and the read
+// complete first.
+int32_t checked(mut Point p, Point q, int32_t extra) {
+  return (p = q).x + extra;
+}
+
+Segment make_segment(int32_t x) { return Segment(Point(x, x + 1), 9); }
+
+// Nested reads from a call result, a lambda call result, a conditional and a
+// moved local.
+int32_t produced(bool flag, Segment a, Segment b, mut Segment moved) {
+  auto make = [](int32_t x) -> Segment { return Segment(Point(x, x * 2), 3); };
+  return make_segment(4).start.y * 1000 + make(3).start.y * 100 +
+         (flag ? a : b).start.x * 10 + std::move(moved).start.y;
+}
+
+// Nested reads of a construction whose argument is a class call result.
+int32_t constructed(int32_t raw) {
+  auto make = [](int32_t x) -> Point { return Point(x, x + 3); };
+  return Segment(at(raw), 9).start.y * 10 + Segment(make(raw), 8).start.y;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println(pick(Point(1, 2), Point(5, 4)));
+  Line line = Line(Point(1, 2), Point(5, 4));
+  std::println(line.first * 10 + line.second);
+  std::println(nested(Segment(Point(1, 2), 3), Segment(Point(5, 6), 7)));
+  Corner corner = Corner(Segment(Point(1, 2), 3), Segment(Point(5, 6), 7));
+  std::println(corner.y * 10 + corner.tag);
+  std::println(copied(Segment(Point(1, 2), 3), Segment(Point(5, 6), 7)));
+  std::println(observed(Segment(Point(1, 2), 3), Segment(Point(5, 6), 7)));
+  std::println(ordered(Point(1, 2), Point(5, 4), Point(7, 8)));
+  std::println(field_destination(Holder(Point(1, 2)), Point(5, 4)));
+  std::println(element_destination(Point(5, 4)));
+  mut Point target = Point(1, 2);
+  std::println(referenced_destination(target, Point(5, 4)) * 10 + target.x);
+  mut Tracker tracker = Tracker();
+  std::println(tracker.record(Point(5, 4)) * 100 + tracker.last.digits());
+  std::println(loop_digits(3));
+  std::println(produced(false, Segment(Point(1, 2), 0), Segment(Point(8, 9), 0),
+                        Segment(Point(4, 7), 0)));
+  std::println(constructed(2));
+  std::println(checked(Point(1, 2), Point(5, 4), argc > 1 ? 2147483647 : 1));
+  return 0;
+}
