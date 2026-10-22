@@ -65,10 +65,16 @@ exact typed enum-field/dereference chain and absence of runtime storage/address
 uses. Stored loans carry no native pointer; selected-reference extraction,
 reference-returning calls and exact return-pointer transfers supply their own
 runtime addresses. Generic Borrow or entry-address uses cannot hide behind this
-classification. Fresh owning enum returns may cross their verified erased
-Stored-to-Return borrow publication and EndBorrow markers without inventing a
-second result slot; all actual cleanup and success-only initialization remains
-in the original MIR order.
+classification. The same rule admits a place rooted at a field-less Stored
+loan, whose borrow-carrying local or class value holds its references
+internally. Such a place names the carried external owner, for example as the
+source of a reference selected from that carrier's payload. It is never spelled,
+so any runtime use of it rejects the body. A Stored dependency inherited from a
+reference binding names that binding's referent, as a parameter entry does.
+Fresh owning enum returns may cross their verified erased Stored-to-Return
+borrow publication and EndBorrow markers without inventing a second result
+slot; all actual cleanup and success-only initialization remains in the
+original MIR order.
 
 Payload alternatives construct in place from their already selected MIR
 operands. The native enum's in-place alternative constructor avoids temporary
@@ -1548,15 +1554,19 @@ meaning, manufacture ordinary entry points for unrelated members, or make
 native exception behavior a lifetime authority; it exists only so an exact
 nested call can participate in an ordinary constructor full expression.
 
-A cleanup-free class result with one exact value-rooted field projection and
-one scalar `Load` uses the same uninitialized lifetime-slot representation.
+A cleanup-free class result with one exact value-rooted field chain and one
+scalar `Load` uses the same uninitialized lifetime-slot representation.
 An admitted GTI call or ordinary `Construct` publishes once into the slot, as
 does a failure-free `Move` of a whole object out of a place, as in
 `std::move(a).x`, which constructs the slot from its source, and the load
-spells through its verified field chain. The constructor form also
-requires exact target, owner, result, parameter, and operand metadata; one
-single-field projection; a trivial scalar copy load; and no active cleanup,
-lifecycle, borrowed-state, or drop obligation. A text view field
+spells through its verified field chain. The chain may be nested, as in
+`outer(inner(1)).inner.value`. MIR builds such a read from its shorter chains
+and records each of them as its own place rooted at the same value; that
+prefix record is admitted only when no instruction, terminator, loan, or drop
+touches it, and it declares and spells nothing. The constructor form also
+requires exact target, owner, result, parameter, and operand metadata; a
+trivial scalar copy load; and no active cleanup, lifecycle, borrowed-state, or
+drop obligation. A text view field
 (`std::string_view` or `c_string`) is read the same way: the view is a passive
 descriptor whose text is never the temporary's own storage. A construction that
 publishes a local owner's text (`L-OWN-02`) holds borrowed state only as that
@@ -1564,9 +1574,9 @@ verified `Stored` loan, so it too may take this one field read, though no
 transfer consumer. A text size or emptiness observer whose borrowed receiver is
 the projected view is the read itself, as a copying `Load` is; the slot retires
 right after it. The owned-result field view below admits the same observer.
-Additional consumers, nested or
-non-field projections, cleanup-owning temporaries, and incoherent type rows
-reject this route rather than falling back to native temporary behavior.
+Additional consumers, places outside the read chain, non-field projections,
+cleanup-owning temporaries, and incoherent type rows reject this route rather
+than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
 full-expression Drop, and may instead be read through field views of that
 slot. The result may come from a call, as in `make_tracked(7).number`, from
@@ -2719,6 +2729,23 @@ for passive classes: the copy reads the formal's entry value, runs no source
 code and cannot fail, and the published shell needs no rollback. Remaining
 stages are a class containing a class with deferred fields (an empty state for
 the containing class), carriers with active cleanup, and generic owners.
+
+A borrowed payload enum, such as `enum Slot { ready(int32_t& value), empty }`,
+also retains its caller's dependency in the field, but its native value has a
+passive empty state. Moving the formal into the field initializes it and then
+hands the formal's guarded entry group to the field's escaping `Stored` loan
+through one `Borrow` from that group, followed directly by the group's
+`EndBorrow`. The enum value already holds the reference, so that publication
+is proof-only (`storedFieldValueLoanProducer`), as for an in-place payload
+construction, and the move takes the drop-free route above in MIR order: after
+work that can fail, as in `Gauge(Slot slot, int32_t divisor) :
+ledger(Ledger(1, divisor)), slot(std::move(slot))`, or after an earlier read of
+the formal. The proof (`formalEntryGroupPayloadMove`) admits borrowed state in
+only that shape: the transfer of the exact moved value is the field's only
+publication, no other loan derives from or protects the formal's group, and
+every other record naming the group is a comment-only `EndBorrow`, such as the
+one on a failure route. A copy, `slot(slot)`, uses the native copy route
+below.
 
 Such a move is itself failure-free (see the MIR failure summary), so a
 constructor whose other work cannot fail, as in

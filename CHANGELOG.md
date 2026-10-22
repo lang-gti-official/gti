@@ -9,6 +9,66 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.4 — Borrowed enum parameters stored in fields
+
+- A constructor can store a borrowed payload enum that it takes by value.
+  For `enum Slot { ready(int32_t& value), empty }`,
+  `shelf(Slot slot) : slot(std::move(slot)) {}` and the copy `slot(slot)`
+  used to report `error[GTI-B0001]` (an internal compiler error), even with
+  no other initializer; they now work, as does the same move after an
+  initializer that can fail or after an earlier read of the parameter. The
+  stored field keeps the caller's owner: returning `shelf(Slot::ready(local))`
+  for a local `local` reports `error[GTI-S2045]`, and assigning to the owner
+  while the object is live reports `error[GTI-S2017]`. Generic enums such as
+  `Outcome<T&, E>`, including ones whose other alternative owns a string, and
+  enums holding a `mut` reference work the same way.
+
+## 0.458.3 — Nested field reads of temporaries
+
+- A field can now be read through a nested chain of a temporary whose class
+  has no destructor. With an `Outer` class that holds a `Token token`,
+  `int k = Outer(Token("literal", 1)).token.kind;` and
+  `std::string_view v = Outer(Token("literal", 2)).token.text;` used to
+  report `error[GTI-B0001]` (an internal compiler error); they now work.
+- The same holds for a nested read of a call or lambda result
+  (`make_outer(1).token.kind`) and of a moved value
+  (`std::move(outer).token.kind`), for `.size()` or a read-only method on the
+  nested field, and for a conditional such as
+  `(left ? Segment(1) : Segment(2)).start.x`.
+
+## 0.458.2 — Recursive functions that return text
+
+- A recursive function returning `std::string_view` or `c_string`, such as
+  `std::string_view loop(std::string_view s, int n) { if (n == 0) { return
+  "done"; } return loop(s, n - 1); }`, used to report `error[GTI-B0001]` (an
+  internal compiler error); it now compiles. So do mutually recursive
+  functions, a recursive call inside `?:`, a recursive result stored in a
+  text field, and a call nested in another call to the same function, such
+  as `id(id("literal"))`. A recursive result is ownerless when the function's
+  other returns are, so it can be stored or returned.
+- A recursion over values with text fields also compiles. For
+  `std::string_view pick(Token a, Token b, int n)` returning `a.text` or
+  `pick(b, a, n - 1)`, some depth of the recursion returns each argument's
+  `text`, so both arguments need ownerless text there. Passing a `Token` that
+  views a local string as either argument reports `error[GTI-S2045]`.
+- Compiling calls between functions that return text no longer takes time
+  exponential in the depth of the call chain. A chain of 20 such functions
+  whose two returns each call the next took about 16 seconds and now takes a
+  fraction of a second.
+
+## 0.458.1 — Reference bindings from a local payload enum
+
+- A `switch` can now bind `auto&` to a reference payload of an enum held in a
+  local variable. For `enum Slot { item(int& value), empty };`,
+  `auto slot = borrow_slot(local, true);` followed by
+  `case Slot::item(auto& value):` used to report `error[GTI-B0001]` (an
+  internal compiler error); it now works. The same holds when the local is
+  built directly, as in `auto slot = Slot::item(local);`, for a generic enum
+  such as `MaybeRef<int&>`, and for an enum field of a local class value, as
+  in `switch (holder.slot)`.
+- `mut auto&` writes through such a binding reach the referenced owner,
+  including an owner that is itself a `mut int&` parameter.
+
 ## 0.458.0 — Reading text fields of temporaries
 
 - A text field of a class temporary can now be read directly. For a
