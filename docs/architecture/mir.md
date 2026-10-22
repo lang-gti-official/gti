@@ -1853,6 +1853,15 @@ completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
 other returns are.
 
+Text read through a reference that a source call returned is summarized the
+same way: the callee's Return loans name the referent, and its sources are
+mapped through the call. A place rooted at a value, which is how a reference
+pattern binds a payload, holds that value's text, so a payload accessor such
+as `expected::error()` reads the extracted payload. A method that returns a
+reference to its receiver's direct text field lowers it as a plain borrow of
+that field. The text is the caller's, ownerless or under the method's field
+contract, so the borrow needs no stored dependency in the body.
+
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the
 target constructor's own summary stays empty, because its other call sites

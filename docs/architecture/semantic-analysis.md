@@ -2610,7 +2610,11 @@ A dependent argument or receiver records a `TextDependentRelay` with its
 designated fields, while its scope is live. The request's own finalization
 decides it, once every body that feeds the contracts is analyzed: it consumes
 the relay when the analyzed callee requires none of those fields, and
-otherwise reports `GTI-S2045` related to the callee. An instance analysis
+otherwise reports `GTI-S2045` related to the callee. A callee that returns a
+reference to text records no relay: the reference may designate the
+dependent field, and the view copied from it would carry no loan. For the
+same reason a contract formal passed to such a callee is not a forward but a
+whole use, which requires each of its text fields. An instance analysis
 records no field use, forward or relay. Its finalization leaves relays pending
 and skips the contract pass, because looking up the functions a contract names
 would record them as functions the instance consulted, and demand their

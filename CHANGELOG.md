@@ -9,6 +9,25 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.5 — Reading text through returned references
+
+- A method that returns a reference to a text field, such as
+  `std::string_view& ref() { return this.text; }`, used to report
+  `error[GTI-B0001]` (an internal compiler error) wherever it was called. It
+  now works, and text read through it can be stored when the value holds
+  ownerless text, as in `kept = literal.ref();` for
+  `Token literal = Token("literal", 1);`. Calling it on a temporary, as in
+  `Token("literal", 1).ref()`, reports `error[GTI-S2081]` instead of an
+  internal compiler error.
+- Storing text read through a generic accessor, such as `kept = box.get();`
+  for `T& get()` on a `Box<std::string_view>`, or `kept = r.error();` for
+  `expected<int, std::string_view> r = unexpected("literal");`, used to report
+  `error[GTI-B0001]`; it now compiles.
+- A value that views a local owner, such as `Token(input.view(), 1)`, cannot
+  yet call such a method or be passed to a function that calls one on it.
+  `t.ref()` reports `error[GTI-S2045]`, because a view copied from the
+  reference would not keep `input` borrowed.
+
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
 - A constructor can store a borrowed payload enum that it takes by value.

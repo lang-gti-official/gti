@@ -1,5 +1,30 @@
 # Compiler Verification
 
+## Text read through returned references (0.458.5)
+
+`ownerless_text_contracts` covers the accessors in
+`testTextReferenceAccessors`.
+- These verify: `kept = token.ref()` for a receiver's text field,
+  `kept = box.get()` for `T& get()` on a `Box<std::string_view>`,
+  `kept = failed.error()` for an `expected<int, std::string_view>`, and
+  `keep(token)` where `keep` stores `token.ref()`. Main reported
+  `GTI-B0001` for each: body lowering rejected the accessor, or `ownerless
+  text storage or call lacks exact producer evidence`.
+- MIR rejects `keep` with its field contract cleared, `ownerless text field
+  contract omits an independently derived requirement`. It derives the
+  requirement through the returned reference by itself.
+- A value over a local owner is `GTI-S2045` at source, never `GTI-B`. That
+  holds as a receiver, with `t.ref()` read or stored, and as an argument, in
+  `keep(t)` and `width(t)`. A temporary receiver, `Token("literal", 1).ref()`,
+  is `GTI-S2081`. Without these rules, `std::string_view v = t.ref();`
+  followed by a mutation of the owner would compile into a dangling view.
+- `text_reference_accessors_runtime` runs the fixture in every mode.
+
+The same-root differential against main at 0.458.4 covered 1,346 programs
+in `tests/fixtures/`, `tests/coverage/` and `examples/`. 1,345 emit
+byte-identical C++. Only the new `text_reference_accessors` fixture changes
+status: it now builds.
+
 ## Borrowed enum parameters stored in fields (0.458.4)
 
 `complete_borrow_summaries` covers the new fixture,

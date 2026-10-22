@@ -1,0 +1,46 @@
+// Text read through a returned reference is the text that the reference
+// designates: a direct text field of the receiver, or an enum payload. Each
+// value here holds ownerless text, so the reads can be stored.
+#include <std/string>
+
+mut std::string_view kept = "";
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+};
+
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+
+// Storing the text that a formal's accessor returns requires that formal's
+// text to be ownerless, as storing the field itself would.
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+
+int main() {
+  Token token = Token("token", 1);
+  kept = token.ref();
+  std::println(kept);
+  keep(token);
+  std::println(kept);
+  std::println(width(token));
+
+  Box<std::string_view> box = Box<std::string_view>("boxed");
+  kept = box.get();
+  std::println(kept);
+
+  expected<int, std::string_view> failed = unexpected("failure");
+  kept = failed.error();
+  std::println(kept);
+  expected<int, std::string_view> fine = 7;
+  std::println(fine.value());
+  return 0;
+}
