@@ -1821,7 +1821,8 @@ through a field, to a payload-enum text field, or any other checked text
 assignment outside local storage needs an operand whose source is known: a
 string or null literal (including `nullptr` for a `c_string` field), an
 ownerless field projection, unprojected static text storage, a temporary or
-block parameter whose every incoming value is known, or a formal parameter.
+block parameter whose every incoming value is known, a formal parameter, or
+the result of a call to a source function whose returns are known.
 A formal becomes a requirement of its function. Requirements propagate to a
 fixed point through calls and constructions and must equal the semantic
 `ownerlessTextParameters` exactly. Virtual, override or native dispatch,
@@ -1830,6 +1831,21 @@ requirement. Local text bindings and local text arrays are not field storage
 and may hold dynamic text. Static text storage counts as ownerless because
 semantics admits only ownerless initializers and stores into it; MIR checks
 assignments to it but does not yet re-verify global initializers.
+
+A call's result holds what its callee's returns hold, mapped through the
+call's arguments and receiver. `TextContracts` summarizes each source
+function's returns once, from bodies alone and never from a declared
+contract, so declarations cannot justify one another cyclically. A summary
+is the least fixpoint over the returns of each set of mutually recursive
+functions: it starts as that of no completed return and only grows. A
+recursive call reads the summary computed so far, so a recursion that
+permutes its formals, such as `return f(t, s, n - 1);` beside `return s;`,
+reaches every formal that some depth of it returns. The first function of a
+recursive set to be evaluated repeats its returns, with one evaluation of
+each other member per pass, until no summary of the set grows, and then
+completes them all; a summary that read an unfinished one stays provisional
+until then. A recursive text result is therefore ownerless exactly when its
+other returns are.
 
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the
