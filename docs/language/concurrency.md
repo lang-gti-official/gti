@@ -82,10 +82,13 @@ returns, subject to the ordinary checked origin and access rules.
 
 Initialization is lazy at the first evaluated use on each thread. A block
 declaration also performs that first-use check when execution reaches it.
-Initializers use ordinary GTI construction and rollback. Passive literal/zero
+Initializers use ordinary GTI construction and rollback. Eligible primitive literal/zero
 initialization has no user code, cleanup registration, heap allocation or dynamic
 guard. Other initializers use an explicit per-thread state transition; recursive
 initialization is defined failure `GTI-R0013`, not an implicit C++ rule.
+The passive fast path is currently literal-based; an integral-enum constant or
+a computed/aggregate constant still uses the ordinary lazy initializer. This is
+an optimization boundary, not a restriction on storing those owning values.
 
 Successful cleanup-owning initializations register exactly once. Cleanup runs on
 the same thread in reverse successful-initialization order, after automatic task
@@ -96,6 +99,16 @@ cleanup; a secondary failure uses the existing bounded two-record emergency and
 abandons remaining lifetimes. New initialization or resurrection during/after
 thread-exit cleanup is `GTI-R0013`. Access to another initialized, not-yet-retired
 slot remains permitted during cleanup.
+
+A library callable may use dynamic TLS when invoked under an attached GTI
+entry; it does not need to define its own hosted main. The runtime entry owns
+the drain boundary, not an implicit native destructor. A public per-thread
+enter/leave ABI for independent native embedding remains a separate goal;
+passive literal/zero primitive TLS needs no managed drain.
+Dynamic first-use on an unattached native thread is defined failure
+`GTI-R0013` before construction or registration. Merely compiling a hosted main
+does not attach an arbitrary foreign callback thread; GTI-owned entries establish
+and close that runtime lifetime explicitly.
 
 A TLS reference is not a process-lifetime promise or an alias exemption. Direct
 accesses and hidden accesses through GTI helpers, constructors, operators,

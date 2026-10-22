@@ -3276,9 +3276,6 @@ private:
   void bindIntrinsicCallDeclaration(const Call &call,
                                     const CallableCandidate &function);
 
-  void recordDefaultArgumentEffects(const Call &call,
-                                    const CallableCandidate &function);
-
   [[nodiscard]] bool
   containsCAbiRawPointer(const SemanticType &type,
                          std::unordered_set<ClassId> &visiting) const;
@@ -4439,6 +4436,9 @@ private:
                                           std::size_t temporaryUnknownStart);
   void recordStorageBorrowCleanup(const Symbol &symbol);
   void recordProgramScopeBorrowCleanup();
+  void recordFullExpressionStorageBorrowCleanup(const SourceSpan &site,
+                                                std::size_t edgeStart,
+                                                std::size_t unknownStart);
   void recordProgramCallEffectTargets(const Expr &expression);
   void validateProgramStorageBorrowEffects();
   [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;

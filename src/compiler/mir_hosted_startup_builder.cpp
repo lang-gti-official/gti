@@ -369,6 +369,15 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
   MirBlock &entryBlock = appendBlock();
   body.entry = entryBlock.id;
+  if (!program.threadLocalStorage().empty()) {
+    const auto operation =
+        beginOperation(MirHostedStartupOperationKind::BeginThreadLocals,
+                       MirHostedStartupFailureBehavior::None, entryBlock.id);
+    MirInstruction begin;
+    begin.kind = MirInstructionKind::BeginThreadLocals;
+    begin.info = generatedInfo(SemanticType::Void);
+    appendInstruction(operation, entryBlock, std::move(begin));
+  }
   const auto drainThreadLocals = [&](MirBlock &block) {
     if (program.threadLocalStorage().empty())
       return;

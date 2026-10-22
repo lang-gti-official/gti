@@ -1386,6 +1386,15 @@ selectCppMirBackendProgramRoute(const CppMirProgramPlan &plan) {
       detail = plan.issues.front().detail;
     } else if (!plan.unsupported.empty()) {
       detail = "sealed representation plan contains an unsupported surface";
+      const auto &surface = plan.unsupported.front();
+      if (surface.body)
+        detail += " (body-kind " +
+                  std::to_string(static_cast<int>(surface.body->kind)) +
+                  " owner " + std::to_string(surface.body->owner) + ")";
+      if (surface.thunk)
+        detail += " (thunk-kind " +
+                  std::to_string(static_cast<int>(surface.thunk->kind)) +
+                  " owner " + std::to_string(surface.thunk->owner) + ")";
     } else {
       detail = "unknown representation-plan failure";
     }

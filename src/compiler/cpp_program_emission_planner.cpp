@@ -7859,22 +7859,27 @@ public:
                   "  return true;\n}\n";
       }
       writeIndent();
-      output << "bool __gti_tls_ensure_" << id
-             << "(::gti_failure_record_v2 *record, std::uint32_t site) {\n"
-             << "  auto &slot = __gti_tls_slot_" << id
-             << ";\n"
-                "  if (slot.state == 2) return true;\n"
-                "  if (slot.state == 1 || slot.state == 3 ||\n"
-                "      ::gti_runtime_detail::thread_local_cleanup_active()) {\n"
-                "    *record = "
-                "::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2,\n"
-                "      GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1,\n"
-                "      slot.state == 1 ? "
-                "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1\n"
-                "        : "
-                "GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_"
-                "SHUTDOWN_V2,\n"
-                "      site, 0, {";
+      output
+          << "bool __gti_tls_ensure_" << id
+          << "(::gti_failure_record_v2 *record, std::uint32_t site) {\n"
+          << "  auto &slot = __gti_tls_slot_" << id
+          << ";\n"
+             "  if (slot.state == 2) return true;\n"
+             "  if (slot.state == 1 || slot.state == 3 ||\n"
+             "      "
+             "!::gti_runtime_detail::thread_local_storage_lifetime_active() "
+             "||\n"
+             "      ::gti_runtime_detail::thread_local_cleanup_active()) {\n"
+             "    *record = "
+             "::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2,\n"
+             "      GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1,\n"
+             "      slot.state == 1 ? "
+             "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1\n"
+             "        : ::gti_runtime_detail::thread_local_cleanup_active() ? "
+             "GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_"
+             "SHUTDOWN_V2 : "
+             "GTI_FAILURE_DETAIL_THREAD_LOCAL_OUTSIDE_ATTACHED_LIFETIME_V2,\n"
+             "      site, 0, {";
       const auto &identity = mir.failureMetadata().artifactIdentity().bytes;
       for (std::size_t index = 0; index < identity.size(); ++index) {
         if (index != 0)
@@ -9289,6 +9294,13 @@ public:
     output << "}();\n\n";
   }
 
+  void emitHostedThreadLocalAttachment() {
+    if (mir.threadLocalStorage().empty())
+      return;
+    writeIndent();
+    output << "::gti_runtime_detail::begin_thread_local_storage_lifetime();\n";
+  }
+
   void emitRuntimeModuleInitializationCall() {
     if (!moduleRuntimeEmission) {
       return;
@@ -9388,6 +9400,7 @@ public:
         }
         output << "\nint main() {\n";
         ++indentation;
+        emitHostedThreadLocalAttachment();
         writeIndent();
         output << "::gti_failure_record_v2 __gti_failure_record{};\n";
         writeIndent();
@@ -9433,6 +9446,7 @@ public:
       if (!moduleRuntimeEmission && !mir.requiresCThreadRuntime()) {
         output << "\nint main() {\n";
         ++indentation;
+        emitHostedThreadLocalAttachment();
         writeIndent();
         output << "const auto __gti_result = ";
         emitLoweredQualifiedFunctionName(*entryRow, *entryDeclaration);
@@ -9448,6 +9462,7 @@ public:
       }
       output << "\nint main() {\n";
       ++indentation;
+      emitHostedThreadLocalAttachment();
       if (moduleRuntimeMayRaise) {
         writeIndent();
         output << "::gti_failure_record_v2 __gti_failure_record{};\n";
@@ -9582,6 +9597,7 @@ public:
     output << "\nint main(int __gti_native_argc, "
               "char **__gti_native_argv) {\n";
     ++indentation;
+    emitHostedThreadLocalAttachment();
     if (failure || moduleRuntimeMayRaise) {
       writeIndent();
       output << "::gti_failure_record_v2 __gti_failure_record{};\n";

@@ -17,6 +17,10 @@ static_assert(
         lang::DefinedFailureDetail::ThreadLocalInitializationDuringShutdown) ==
     GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2);
 static_assert(sizeof(gti_failure_record_v1) == 48);
+static_assert(
+    static_cast<gti_failure_detail_v1>(
+        lang::DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime) ==
+    GTI_FAILURE_DETAIL_THREAD_LOCAL_OUTSIDE_ATTACHED_LIFETIME_V2);
 static_assert(static_cast<std::uint16_t>(lang::DefinedFailureCode::Panic) ==
               GTI_FAILURE_CODE_PANIC_V2);
 static_assert(

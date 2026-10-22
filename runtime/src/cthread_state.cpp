@@ -316,6 +316,7 @@ bool enterCThreadCallback(CThreadEntry entry) noexcept {
     return false;
   }
   attachment.phase = EntryPhase::Entered;
+  gti_runtime_detail::begin_thread_local_storage_lifetime();
   return true;
 }
 

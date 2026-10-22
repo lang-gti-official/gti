@@ -36,6 +36,7 @@ thread_local bool activeTaskObjectCleanup = false;
 thread_local gti_thread_state_v1 *emergencyHandoffWorker = nullptr;
 thread_local uint64_t scopedTestFailureAfter = UINT64_MAX;
 enum class ThreadLocalCleanupPhase { Open, Draining, Complete };
+thread_local bool threadLocalStorageAttached = false;
 thread_local ThreadLocalCleanupPhase threadLocalCleanupPhase =
     ThreadLocalCleanupPhase::Open;
 thread_local gti_runtime_detail::thread_local_cleanup_entry
@@ -271,7 +272,9 @@ void releaseTaskContext(void *context,
 class ThreadLocalExitScope final {
 public:
   explicit ThreadLocalExitScope(gti_thread_state_v1 &owner) noexcept
-      : state(owner) {}
+      : state(owner) {
+    gti_runtime_detail::begin_thread_local_storage_lifetime();
+  }
   ~ThreadLocalExitScope() {
     gti_runtime_detail::drain_thread_local_cleanup();
     if (!workerFailed(state) || state.resultContext == nullptr)
@@ -304,8 +307,20 @@ private:
 
 namespace gti_runtime_detail {
 
+void begin_thread_local_storage_lifetime() noexcept {
+  if (threadLocalStorageAttached ||
+      threadLocalCleanupPhase != ThreadLocalCleanupPhase::Open)
+    std::terminate();
+  threadLocalStorageAttached = true;
+}
+
+bool thread_local_storage_lifetime_active() noexcept {
+  return threadLocalStorageAttached;
+}
+
 void register_thread_local_cleanup(thread_local_cleanup_entry *entry) noexcept {
-  if (threadLocalCleanupPhase != ThreadLocalCleanupPhase::Open ||
+  if (!threadLocalStorageAttached ||
+      threadLocalCleanupPhase != ThreadLocalCleanupPhase::Open ||
       entry == nullptr || entry->registered || entry->storage == nullptr ||
       entry->cleanup == nullptr)
     std::terminate();
@@ -417,6 +432,7 @@ void drain_thread_local_cleanup(
                                               .secondary = failure};
       threadLocalCleanup = nullptr;
       threadLocalCleanupPhase = ThreadLocalCleanupPhase::Complete;
+      threadLocalStorageAttached = false;
       gti_rt_failure_terminate_cleanup_v2(&combined, primaryArtifact,
                                           entry->artifact);
     }
@@ -430,6 +446,7 @@ void drain_thread_local_cleanup(
   // TLS slots own byte storage and must not execute implicit native cleanup.
   threadLocalCleanup = nullptr;
   threadLocalCleanupPhase = ThreadLocalCleanupPhase::Complete;
+  threadLocalStorageAttached = false;
   if (hasPrimary && primary == nullptr && activeWorker == nullptr)
     gti_rt_failure_terminate_v2(&pending, primaryArtifact, nullptr, nullptr);
 }

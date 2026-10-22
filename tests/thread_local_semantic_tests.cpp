@@ -15,8 +15,10 @@ void expect(bool condition, std::string_view message) {
   }
 }
 
-lang::FrontendResult analyze(std::string source, bool concurrent = true) {
+lang::FrontendResult analyze(std::string source, bool concurrent = true,
+                             bool executableRepresentation = false) {
   lang::FrontendOptions options;
+  options.requireFunctionDefinitions = executableRepresentation;
   options.target = lang::TargetInfo::host();
   if (concurrent) {
     options.target.executionProfile = lang::ExecutionProfile::Concurrent;
@@ -190,8 +192,22 @@ void modify() { value = 2; }
         "void update(mut int& input) { input = 3; } void forwarded() { "
         "update(value); } int main() { int& borrowed = value; forwarded(); "
         "return borrowed; }",
+        "int initialize() { modify(); return 3; } int read(int copied = "
+        "initialize()) { return copied; } int main() { int& borrowed = value; "
+        "int copied = read(); return borrowed + copied; }",
+        "int initialize() { modify(); return 3; } int read(int& input, int "
+        "copied = initialize()) { return input + copied; } int main() { return "
+        "read(value); }",
         "struct Cleanup { ~Cleanup() { modify(); } }; int& current() { Cleanup "
         "cleanup{}; return value; } int main() { return current(); }",
+        "struct Cleanup { ~Cleanup() { modify(); } }; int main() { int& "
+        "borrowed = value; [[discard]] Cleanup(); return borrowed; }",
+        "struct Cleanup { ~Cleanup() { modify(); } }; void inspect(Cleanup& "
+        "input) {} int main() { int& borrowed = value; inspect(Cleanup()); "
+        "return borrowed; }",
+        "struct Cleanup { ~Cleanup() { modify(); } }; int main() { mut Cleanup "
+        "destination{}; int& borrowed = value; destination = Cleanup(); return "
+        "borrowed; }",
         "struct Cleanup { ~Cleanup() { modify(); } }; struct Hold { int& "
         "input; Hold(int& source) : input(source) {} ~Hold() { int copied = "
         "this.input; } }; int main() { Hold first{value}; Cleanup second{}; "
@@ -209,6 +225,11 @@ void modify() { value = 2; }
                     "main() { return current(); }",
            "completed earlier cleanup does not conflict with a later returned "
            "borrow");
+  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); } }; int main() { "
+                    "int& borrowed = value; Cleanup held{}; int copied = "
+                    "borrowed; return copied; }",
+           "constructing an owned local does not prematurely run its deferred "
+           "cleanup");
   positive(prefix + "struct Cleanup { ~Cleanup() { modify(); } }; struct Hold "
                     "{ int& input; Hold(int& source) : input(source) {} "
                     "~Hold() { int copied = this.input; } }; int main() { "
@@ -275,6 +296,20 @@ void invalidDeclarations() {
            "checked borrowed state cannot be retained in TLS through thread "
            "shutdown");
   }
+  const std::string library =
+      "int initialize() { return 1; } thread_local int state = initialize(); "
+      "int read() { return state; }";
+  const auto executableLibrary = analyze(library, true, true);
+  expect(executableLibrary.semanticValid,
+         "a library callable can use dynamic TLS under the explicit runtime "
+         "attachment contract");
+  expect(analyze(library).semanticValid,
+         "declaration/tooling analysis does not require an artifact's hosted "
+         "entry");
+  expect(analyze("thread_local int state = 1; int read() { return state; }",
+                 true, true)
+             .semanticValid,
+         "passive TLS requires no managed drain in a library artifact");
 }
 } // namespace
 

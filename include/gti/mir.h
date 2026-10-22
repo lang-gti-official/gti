@@ -599,6 +599,7 @@ enum class MirInstructionKind {
   RestoreRangeCursor,
   EnsureThreadLocal,
   DrainThreadLocals,
+  BeginThreadLocals,
   Count,
 };
 
@@ -1707,6 +1708,7 @@ enum class MirHostedStartupOperationKind {
   BeginCThreadRuntime,
   EndCThreadRuntime,
   DrainThreadLocals,
+  BeginThreadLocals,
   Count,
 };
 

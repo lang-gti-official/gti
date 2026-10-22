@@ -153,10 +153,11 @@ constexpr std::string_view kFailureDetails[] = {
     "shared_owner",
     "explicit_panic",
     "thread_local_initialization_during_shutdown",
+    "thread_local_outside_attached_lifetime",
 };
 
 static_assert(std::size(kFailureCategories) == 18);
-static_assert(std::size(kFailureDetails) == 39);
+static_assert(std::size(kFailureDetails) == 40);
 
 struct ReportOutput {
   WriteFunction write = nullptr;
@@ -279,7 +280,9 @@ struct ResolvedFailure {
            detail ==
                GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1 ||
            detail ==
-               GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2;
+               GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2 ||
+           detail ==
+               GTI_FAILURE_DETAIL_THREAD_LOCAL_OUTSIDE_ATTACHED_LIFETIME_V2;
   case GTI_FAILURE_CODE_KEY_NOT_FOUND_V1:
     return detail == GTI_FAILURE_DETAIL_KEY_LOOKUP_V1;
   case GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1:

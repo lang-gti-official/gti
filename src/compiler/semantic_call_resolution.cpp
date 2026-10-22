@@ -7334,26 +7334,6 @@ auto SemanticVisitor::Impl::bindIntrinsicCallDeclaration(
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 
-auto SemanticVisitor::Impl::recordDefaultArgumentEffects(
-    const Call &call, const CallableCandidate &function) -> void {
-  if (function.declaration == nullptr ||
-      call.arguments().size() >= function.parameterTypes.size()) {
-    return;
-  }
-  const SourceSpan callSite = tokenSpan(call.paren());
-  for (std::size_t index = call.arguments().size();
-       index < function.parameterTypes.size(); ++index) {
-    if (index >= function.record().defaultArgumentEffectOwners.size() ||
-        function.record().defaultArgumentEffectOwners[index] == 0) {
-      continue;
-    }
-    addProgramEffectEdge(
-        {.kind = ProgramEffectOwnerKind::FunctionDefaultArgument,
-         .id = function.record().defaultArgumentEffectOwners[index]},
-        callSite);
-  }
-}
-
 auto SemanticVisitor::Impl::containsCAbiRawPointer(
     const SemanticType &type, std::unordered_set<ClassId> &visiting) const
     -> bool {
@@ -7482,7 +7462,6 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   recordCallableForwardings(call, function);
   recordOwnerlessTextCall(call, function);
   recordTextFieldCall(call, function);
-  recordDefaultArgumentEffects(call, function);
   if (requestSession.hasCThreadRequirements && !instanceAnalysisActive &&
       function.declaration != nullptr) {
     requestSession.cThreadCallUses.push_back(

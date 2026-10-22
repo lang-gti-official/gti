@@ -9922,6 +9922,13 @@ verifyMirHostedStartup(const MirProgram &program) {
                             .info = generatedInfo(SemanticType::Void)});
   };
 
+  if (!program.threadLocalStorage().empty()) {
+    const TakenOperation begin = take(
+        MirHostedStartupOperationKind::BeginThreadLocals,
+        MirHostedStartupFailureBehavior::None, 1, true, false, false, false);
+    exactInstruction(begin, {.kind = MirInstructionKind::BeginThreadLocals,
+                             .info = generatedInfo(SemanticType::Void)});
+  }
   if (plan.kind == ProgramEntryKind::NoArguments) {
     MirBlockId currentBlock = 1;
     if (!entry.parameterTypes.empty() || plan.appendFunction != 0 ||

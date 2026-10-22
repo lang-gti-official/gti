@@ -15,11 +15,23 @@ void expect(bool condition, std::string_view message) {
   }
 }
 
-lang::FrontendResult fixture(std::string_view storage) {
-  return lang::Frontend().analyze("/tmp/gti-mir-persistent-storage/main.gti",
-                                  std::string(storage) +
-                                      R"( mut int32_t first = 1;
-)" + std::string(storage) + R"( mut int32_t second = 2;
+lang::FrontendResult fixture(std::string_view storage, bool cleanup) {
+  const std::string declarations =
+      std::string(storage) + " mut int32_t first = 1;\n" +
+      std::string(storage) + " mut int32_t second = 2;\n";
+  const std::string source = cleanup ? R"(
+class Worker {
+public:
+  Worker() = default;
+  ~Worker() { second = 9; }
+};
+int main() {
+  int32_t& borrowed = first;
+  { Worker task{}; }
+  return borrowed;
+}
+)"
+                                     : R"(
 void change() { second = 9; }
 void relay() { change(); }
 int main() {
@@ -27,7 +39,9 @@ int main() {
   relay();
   return borrowed;
 }
-)");
+)";
+  return lang::Frontend().analyze("/tmp/gti-mir-persistent-storage/main.gti",
+                                  declarations + source);
 }
 
 lang::SymbolId symbol(const lang::FrontendResult &frontend,
@@ -38,8 +52,8 @@ lang::SymbolId symbol(const lang::FrontendResult &frontend,
   return 0;
 }
 
-void independentHiddenEffects(std::string_view storage) {
-  const auto frontend = fixture(storage);
+void independentHiddenEffects(std::string_view storage, bool cleanup) {
+  const auto frontend = fixture(storage, cleanup);
   for (const auto &diagnostic : frontend.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(frontend.canGenerateCode(),
@@ -57,7 +71,8 @@ void independentHiddenEffects(std::string_view storage) {
   auto forged = frontend.mir;
   bool changed = false;
   for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
-    if (address.kind != lang::MirBodyKind::Function)
+    if (address.kind != lang::MirBodyKind::Function &&
+        address.kind != lang::MirBodyKind::Destructor)
       continue;
     auto *body = lang::findMirBody(forged, address);
     bool mutated = false;
@@ -123,11 +138,39 @@ int main() {
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "MIR hidden effects preserve field projections and EndBorrow");
 }
+void readySlotThroughNestedCalls() {
+  const auto frontend =
+      lang::Frontend().analyze("/tmp/gti-mir-persistent-storage/ready.gti", R"(
+thread_local mut int32_t first = 1;
+int32_t initialize() { first = 7; return 2; }
+thread_local int32_t second = initialize();
+int32_t read_second() { return second; }
+int32_t relay() { return read_second(); }
+int main() {
+  int32_t& ready = second;
+  int32_t& protected_first = first;
+  int32_t copied = relay();
+  return ready + protected_first + copied;
+}
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "an existing exact TLS loan proves initialization completed through "
+         "nested helpers");
+  if (frontend.canGenerateCode())
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "MIR readiness retains the conditional initializer edge, not a "
+           "blanket call exemption");
+}
 } // namespace
 
 int main() {
-  independentHiddenEffects("thread_local");
-  independentHiddenEffects("");
+  for (const bool cleanup : {false, true}) {
+    independentHiddenEffects("thread_local", cleanup);
+    independentHiddenEffects("", cleanup);
+  }
   nonLexicalAndFieldBoundaries();
+  readySlotThroughNestedCalls();
   return passed ? 0 : 1;
 }

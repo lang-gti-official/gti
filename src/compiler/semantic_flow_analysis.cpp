@@ -1062,6 +1062,27 @@ auto SemanticVisitor::Impl::recordReturnedStorageBorrowCleanup(
                                    unknownStart);
 }
 
+auto SemanticVisitor::Impl::recordFullExpressionStorageBorrowCleanup(
+    const SourceSpan &site, std::size_t edgeStart, std::size_t unknownStart)
+    -> void {
+  if (!currentProgramEffectOwner.valid())
+    return;
+  auto check = captureProgramStorageBorrows(site);
+  if (check.protections.empty())
+    return;
+  const auto owner = currentProgramEffectOwner;
+  const auto &summary = programEffects[owner];
+  for (std::size_t index = edgeStart; index < summary.edges.size(); ++index)
+    if (summary.edges[index].cleanup)
+      check.targets.push_back(summary.edges[index].target);
+  for (std::size_t index = unknownStart; index < summary.unknown.size();
+       ++index)
+    if (summary.unknown[index].cleanup)
+      check.unknown.push_back(summary.unknown[index]);
+  publishProgramStorageBorrowCheck(
+      std::move(check), owner, summary.edges.size(), summary.unknown.size());
+}
+
 auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
     const Expr &expression) -> void {
   if (!currentProgramEffectOwner.valid()) {
@@ -1171,14 +1192,26 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
     return;
   }
   const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-  if (resolved == nullptr || resolved->intrinsic != IntrinsicKind::None) {
+  if (resolved == nullptr) {
     return;
   }
-  recordProgramArgumentBoundaryEffects(resolved->parameterTypes,
-                                       ResolvedCallArguments(*call, resolved));
   const FunctionInfo *target =
       resolved->function == 0 ? nullptr
                               : semanticModel.findFunction(resolved->function);
+  if (target != nullptr) {
+    for (std::size_t index = resolvedCallArgumentCount(*call, resolved);
+         index < resolved->parameterTypes.size(); ++index)
+      if (index < target->defaultArgumentEffectOwners.size() &&
+          target->defaultArgumentEffectOwners[index] != 0)
+        addProgramEffectEdge(
+            {.kind = ProgramEffectOwnerKind::FunctionDefaultArgument,
+             .id = target->defaultArgumentEffectOwners[index]},
+            tokenSpan(call->paren()));
+  }
+  if (resolved->intrinsic != IntrinsicKind::None)
+    return;
+  recordProgramArgumentBoundaryEffects(resolved->parameterTypes,
+                                       ResolvedCallArguments(*call, resolved));
   if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
     return;
   }

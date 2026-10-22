@@ -114,6 +114,35 @@ int main() {
       },
       "thread-local access is not dominated");
   reject(
+      program, "substituted storage place type rejected",
+      [](auto &forged) {
+        for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+          auto *body = lang::findMirBody(forged, address);
+          for (auto &place : body->places)
+            if (place.root == lang::MirPlaceRootKind::Symbol &&
+                place.projections.empty() &&
+                forged.findThreadLocalStorage(place.symbol)) {
+              place.type = lang::SemanticType::Bool;
+              return;
+            }
+        }
+      },
+      "thread-local place diverges");
+  reject(
+      program, "substituted loan identity key rejected",
+      [](auto &forged) {
+        for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+          auto *body = lang::findMirBody(forged, address);
+          for (auto &place : body->places)
+            if (place.root == lang::MirPlaceRootKind::Symbol && place.key &&
+                forged.findThreadLocalStorage(place.symbol)) {
+              ++place.key->root;
+              return;
+            }
+        }
+      },
+      "thread-local place diverges");
+  reject(
       program, "substituted guard target rejected",
       [](auto &forged) {
         for (const auto address : lang::enumerateMirBodyAddresses(forged)) {

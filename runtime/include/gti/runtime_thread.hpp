@@ -30,6 +30,10 @@ struct thread_local_cleanup_entry {
 };
 
 void register_thread_local_cleanup(thread_local_cleanup_entry *entry) noexcept;
+// Verified hosted entry, managed task entry and dedicated manual-thread entry
+// establish this scope before any dynamic per-thread object is initialized.
+void begin_thread_local_storage_lifetime() noexcept;
+[[nodiscard]] bool thread_local_storage_lifetime_active() noexcept;
 // Includes the completed shutdown state: new initialization is forbidden once
 // thread exit starts, while an already-live slot may still be observed.
 [[nodiscard]] bool thread_local_cleanup_active() noexcept;

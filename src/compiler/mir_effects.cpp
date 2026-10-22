@@ -90,6 +90,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.dependsOnLoan = true},   // RestoreRangeCursor.
     unknownEffects(), // EnsureThreadLocal invokes the exact initializer once.
     unknownEffects(), // DrainThreadLocals runs exact initialized TLS cleanup.
+    unknownEffects(), // BeginThreadLocals attaches the hosted thread lifetime.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -521,6 +522,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "restore-range-cursor",
     "ensure-thread-local",
     "drain-thread-locals",
+    "begin-thread-locals",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
