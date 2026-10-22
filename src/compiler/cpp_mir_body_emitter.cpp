@@ -9031,12 +9031,21 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
              publicationBlock->parameters.empty() &&
              publicationBlock->failureParameter == 0 &&
              publicationBlock->activeFailure == 0 &&
-             publicationBlock->instructions.size() == 1 &&
-             publicationBlock->instructions.front().id == initialize->id) {
+             !publicationBlock->instructions.empty() &&
+             publicationBlock->instructions.front().id == initialize->id &&
+             std::all_of(publicationBlock->instructions.begin() + 1,
+                         publicationBlock->instructions.end(),
+                         [](const MirInstruction &instruction) {
+                           return instruction.kind ==
+                                  MirInstructionKind::EndBorrow;
+                         })) {
     // The status constructor writes the slot at Invoke, and engages it only
     // on success. Only its unique, work-free success path may separate
-    // construction from publication; failure retains the original cleanup
-    // edge and never reaches the join. Constructor-boundary admission remains
+    // construction from publication. After publication, the arm may end its
+    // input loans before joining; these verified loan endpoints neither
+    // compute another value nor alter the published object. Failure retains
+    // the original cleanup edge and never reaches the join.
+    // Constructor-boundary admission remains
     // responsible for proving the selected status constructor is supported.
     std::size_t incoming = 0;
     for (const MirBlock &candidate : body.blocks) {
@@ -16121,12 +16130,18 @@ passiveGeneratedClass(const MirProgram &program, const SemanticType &type,
         }
         return self(self, fieldType) != nullptr;
       }
+      // A leaf is passive when its representation copies bitwise and its
+      // destruction runs no source cleanup: a scalar, an enum, a raw or null
+      // pointer (a C string is a raw pointer) or a text view. A text view's
+      // dependency on its owner, when it has one, is a MIR loan with no
+      // representation, so it neither changes the copy nor adds cleanup.
       const auto representation = expectedTypeRepresentation(fieldType);
       return representation &&
              (*representation == CppMirTypeRepresentationKind::Scalar ||
               *representation == CppMirTypeRepresentationKind::Enum ||
               *representation == CppMirTypeRepresentationKind::RawPointer ||
-              *representation == CppMirTypeRepresentationKind::NullPointer);
+              *representation == CppMirTypeRepresentationKind::NullPointer ||
+              *representation == CppMirTypeRepresentationKind::StringView);
     };
     const bool passive = std::all_of(
         instance->declaredFields.begin(), instance->declaredFields.end(),
@@ -27974,13 +27989,33 @@ classSsaLifetimeSlot(const MirProgram &program,
       conditionalClassBindingJoinSlotForValue(program, body, valueId) ==
           nullptr &&
       mirTypeMoveIsDefinedFailureFree(program, value->info.type);
+  // A copy of a place observed only through the field read below, as the
+  // copy of its committed destination that an assignment result such as
+  // `(p = q).x` reads. The Load constructs the slot from its source, so the
+  // read observes the copy, never storage a later operand may write.
+  const MirPlace *copySource =
+      producer != nullptr && producer->kind == MirInstructionKind::Load &&
+              producer->operands.size() == 1 &&
+              producer->operands.front().kind == MirOperandKind::Copy
+          ? body.findPlace(producer->operands.front().place)
+          : nullptr;
+  const bool copyLoadProducer =
+      value != nullptr && value->info.type.kind == SemanticType::Class &&
+      copySource != nullptr && copySource->type == value->info.type &&
+      producer->operands.front().type == value->info.type &&
+      !producer->destination && !producer->receiver && !producer->loan &&
+      producer->definedFailure.empty() && producer->localFailureSites.empty() &&
+      producer->lifecycle.empty() &&
+      (!producer->ownership ||
+       producer->ownership->kind == OwnershipEventKind::Read) &&
+      value->info.traits.copyable;
   if (value == nullptr ||
       (value->info.type.kind != SemanticType::Class && !cleanupFreeArray) ||
       value->info.category != ValueCategory::Value || producer == nullptr ||
       (callee == nullptr && !callableClassProducer &&
        !defaultConstructionProducer && !directConstructionProducer &&
        !raisingAssignedConstruction && !directMoveProducer &&
-       !joinMoveProducer) ||
+       !joinMoveProducer && !copyLoadProducer) ||
       !producer->result || *producer->result != valueId ||
       producer->info.type != value->info.type ||
       (callee != nullptr && callee->returnType != value->info.type) ||
@@ -28005,11 +28040,14 @@ classSsaLifetimeSlot(const MirProgram &program,
   if (classInstance == nullptr ||
       classInstance->destructorStatus != SpecialMemberStatus::Generated ||
       classInstance->destructor || classInstance->requiresActiveCleanup ||
-      ((directConstructionProducer || directMoveProducer) &&
+      ((directConstructionProducer || directMoveProducer || copyLoadProducer) &&
        (classInstance->requiresActiveDropState ||
         classInstance->traits.containsBorrowedState ||
         (value->info.traits.containsBorrowedState &&
-         !publishedTextConstruction)))) {
+         !publishedTextConstruction))) ||
+      (copyLoadProducer &&
+       (!classInstance->traits.copyable ||
+        classInstance->copyConstructor == SpecialMemberStatus::Deleted))) {
     return {};
   }
 
@@ -28174,6 +28212,10 @@ classSsaLifetimeSlot(const MirProgram &program,
               .fieldView = projection};
     }
   }
+
+  // A copied place keeps its own copy-load routes for every other consumer.
+  if (copyLoadProducer)
+    return {};
 
   // A fresh immovable result can be observed in place above, but none of the
   // transfer consumers below may acquire move permission from that fact.
@@ -36824,8 +36866,12 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Load && instruction.result &&
-        sequencedCopiedArgument(program, facts.body, *instruction.result,
-                                true) == &instruction) {
+        (sequencedCopiedArgument(program, facts.body, *instruction.result,
+                                 true) == &instruction ||
+         // A copy observed through one field read constructs its slot.
+         classSsaLifetimeSlot(program, representations, facts.body,
+                              *instruction.result)
+                 .producer == &instruction)) {
       const auto *source =
           facts.body.findPlace(instruction.operands.front().place);
       writeIndent();

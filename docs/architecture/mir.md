@@ -379,6 +379,19 @@ Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.
 
+A by-value conditional carrier formal, such as a payload enum with a reference
+alternative, names no single stored reference. When such a function's complete
+result contract is independently proved, the per-function return summary
+admits that formal as its argument origin, as it does for a complete reference
+result. When the function returns the formal whole, its `Return` loan must be
+the one `Borrow` of the formal's guarded entry group, taken from the formal's
+typed entry contract, with the same source, access, guards and paths. The
+group's designated fields are then the source paths that the returned-field
+contract of a class result is compared against. Relaying another function's
+result for such a formal, as in `return relay(std::move(slot));`, is not yet
+admitted: call lowering publishes the referent place while the call-result
+check expects the argument's own place.
+
 The shared context-free result-domain utility combines alternative suppliers
 for one exact result field/guard/access as an OR. It preserves every available
 supplier and treats an unresolved supplier as unknown even when another is
@@ -1838,6 +1851,13 @@ and may hold dynamic text. Static text storage counts as ownerless because
 semantics admits only ownerless initializers and stores into it; MIR checks
 assignments to it but does not yet re-verify global initializers.
 
+An external C declaration returning an untracked `c_string` is also an exact
+text producer. Its pointer validity and retention obligations belong to the
+native boundary; the verifier does not require a source body for that call.
+This admission requires C linkage, no source definition, and no result loan or
+borrow contract on the target or call. It does not apply to GTI-owned strings'
+dependent C-string observers or erase an annotated native result's dependency.
+
 A call's result holds what its callee's returns hold, mapped through the
 call's arguments and receiver. `TextContracts` summarizes each source
 function's returns once, from bodies alone and never from a declared
@@ -2232,7 +2252,15 @@ A `MirBody` owns:
   or a `Move` out of a place. `std::move(a).x` therefore moves `a` into a
   temporary (leaving `a` moved-from) and reads the field of that temporary;
   an owning class arms the temporary's full-expression obligation with the
-  Move's lifecycle event;
+  Move's lifecycle event. A built-in class assignment is the producer of its
+  own value: an explicit copy `Load` of the committed destination placed
+  directly after the `Assign`, before any later operand runs and before a
+  selected accessor's store loan ends, while the `Assign`'s own result stays
+  expression bookkeeping. `(p = q).x` therefore reads that copy, which a later
+  write of `p` in the same full-expression cannot change. Only a copyable
+  class without borrowed state or active cleanup has such a copy; lowering
+  refuses a projection of any other assignment result rather than aliasing the
+  destination;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - for the bounded ordinary-invocation slices, one non-removable,
