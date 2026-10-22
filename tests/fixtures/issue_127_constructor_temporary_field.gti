@@ -263,6 +263,150 @@ int32_t owning_observations() {
          owning_base_initializer();
 }
 
+// A cleanup-free temporary may be read through a nested field chain. MIR keeps
+// each shorter chain as an untouched place on the same temporary; the read
+// still goes through the temporary's one value slot, which retires after it.
+mut int32_t nested_constructions = 0;
+
+class word_t {
+public:
+  std::string_view text;
+  int32_t kind;
+  word_t(std::string_view text, int32_t kind) : text(text), kind(kind) {
+    nested_constructions += 1;
+  }
+  int32_t twice() { return this.kind * 2; }
+};
+
+class phrase_t {
+public:
+  word_t word;
+  phrase_t(word_t word) : word(word) { nested_constructions += 1; }
+};
+
+class sentence_t {
+public:
+  phrase_t phrase;
+  int32_t tail;
+  sentence_t(phrase_t phrase, int32_t tail) : phrase(phrase), tail(tail) {
+    nested_constructions += 1;
+  }
+};
+
+class anchored_t {
+public:
+  word_t word;
+  anchored_t(int32_t kind) : word(word_t("anchored", kind)) {
+    nested_constructions += 1;
+  }
+  anchored_t(anchored_t& other) = delete;
+  anchored_t(anchored_t&& other) = delete;
+};
+
+class level_t {
+public:
+  int32_t value;
+  level_t(int32_t value) : value(value) { nested_constructions += 1; }
+};
+
+class tier_t {
+public:
+  level_t level;
+  tier_t(int32_t value) : level(level_t(value)) { nested_constructions += 1; }
+};
+
+struct corner_t {
+  mut int32_t x = 0;
+  mut int32_t y = 0;
+};
+
+struct span_t {
+  mut corner_t low;
+  mut corner_t high;
+};
+
+phrase_t make_phrase(int32_t kind) { return phrase_t(word_t("made", kind)); }
+
+span_t make_span(int32_t x) {
+  mut span_t span{};
+  span.low.x = x;
+  return span;
+}
+
+int32_t nested_initializer_position() {
+  int32_t kind = phrase_t(word_t("scalar", 1)).word.kind;
+  return kind;
+}
+
+int32_t nested_text_position() {
+  std::string_view text = phrase_t(word_t("words", 2)).word.text;
+  return text.size() == 5 ? 1 : 0;
+}
+
+int32_t nested_observer_position() {
+  return phrase_t(word_t("four", 3)).word.text.size() == 4 ? 1 : 0;
+}
+
+int32_t nested_member_position() {
+  return sentence_t(phrase_t(word_t("member", 4)), 0).phrase.word.twice() ==
+                 8
+             ? 1
+             : 0;
+}
+
+int32_t nested_deep_position() {
+  return sentence_t(phrase_t(word_t("deep", 1)), 9).phrase.word.kind;
+}
+
+int32_t nested_short_circuit_position() {
+  bool skip = false;
+  if (skip || phrase_t(word_t("either", 1)).word.kind == 1) {
+    return 1;
+  }
+  return 0;
+}
+
+// The one Move out of a cleanup-free conditional join stages the joined
+// object for its read.
+int32_t nested_join_position() {
+  bool left = false;
+  return (left ? tier_t(2) : tier_t(1)).level.value;
+}
+
+int32_t nested_call_position() { return make_phrase(1).word.kind; }
+
+int32_t nested_aggregate_call_position() { return make_span(1).low.x; }
+
+int32_t nested_moved_position() {
+  phrase_t local = phrase_t(word_t("moved", 1));
+  return std::move(local).word.kind;
+}
+
+int32_t nested_lambda_position() {
+  auto make = [](int32_t kind) -> phrase_t {
+    return phrase_t(word_t("lambda", kind));
+  };
+  return make(1).word.kind;
+}
+
+int32_t nested_immovable_loop() {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index += 1) {
+    // Each iteration publishes into the same slot after the last one retired.
+    total += anchored_t(index).word.kind;
+  }
+  return total == 3 ? 1 : 0;
+}
+
+int32_t nested_observations() {
+  return nested_initializer_position() + nested_text_position() +
+         nested_observer_position() + nested_member_position() +
+         nested_deep_position() + nested_short_circuit_position() +
+         nested_join_position() + nested_call_position() +
+         nested_aggregate_call_position() + nested_moved_position() +
+         nested_lambda_position() + nested_immovable_loop();
+}
+
 int32_t main() {
   int32_t total = if_position() + while_position() + switch_position() +
                   argument_position() + return_position() + index_position() +
@@ -274,6 +418,9 @@ int32_t main() {
   }
   if (owning_observations() != 15 || drops != 20) {
     return 2;
+  }
+  if (nested_observations() != 12 || nested_constructions != 28) {
+    return 3;
   }
   return total - 67;
 }
