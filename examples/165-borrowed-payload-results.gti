@@ -203,8 +203,11 @@ int main(int argc, std::vector<std::string> argv) {
     return 1;
   ReadingSlot slot = ReadingSlot::ready(owner);
   mut auto handed = StoredReading(slot);
-  if (!handed.has_value() || std::move(handed).take() != owner ||
-      StoredReading(ReadingSlot::empty).has_value())
+  auto unset = StoredReading(ReadingSlot::empty);
+  if (!handed.has_value() || unset.has_value())
+    return 3;
+  int& handed_back = std::move(handed).take();
+  if (handed_back != owner)
     return 3;
   auto label = make_label("static label");
   if (std::move(label).take() != "static label")
