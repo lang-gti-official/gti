@@ -7582,6 +7582,73 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testClassConditionalJoinBorrowedInputs() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-conditional-borrowed-input.gti", R"gti(
+#include <std/string>
+struct Packet {
+  int value;
+  Packet(int value) : value(value) {}
+};
+Packet first(std::string_view text) { return Packet(text[0] == 'a' ? 1 : 2); }
+int choose(bool left) {
+  std::string a{"a"};
+  std::string b{"b"};
+  Packet result = left ? first(a.view()) : first(b.view());
+  return result.value;
+}
+int main() { return choose(true) + choose(false) - 3; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "conditional class calls with borrowed inputs pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto *function = namedFunction(frontend, "choose");
+  expect(function != nullptr,
+         "the borrowed-input conditional has its own body");
+  if (function == nullptr)
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, function->id};
+  const auto supported = [&](const lang::MirProgram &program) {
+    return lang::CppMirBodyEmitter(program, rows)
+        .supportsFailureBodyText(address);
+  };
+  expect(supported(frontend.mir),
+         "the arm may end its input loan after publishing its class result");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "the complete backend emits conditional borrowed-input calls");
+  std::vector<lang::MirBlockId> publications;
+  for (const auto &block : function->body.blocks)
+    if (block.instructions.size() == 2 &&
+        block.instructions.front().kind ==
+            lang::MirInstructionKind::Initialize &&
+        block.instructions.back().kind == lang::MirInstructionKind::EndBorrow)
+      publications.push_back(block.id);
+  expect(
+      publications.size() == 2,
+      "each conditional arm has a publication followed by its input loan end");
+  if (publications.size() != 2)
+    return;
+  for (int mutation = 0; mutation < 2; ++mutation) {
+    auto changed = frontend.mir;
+    auto *target = const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function->id));
+    auto *block = const_cast<lang::MirBlock *>(
+        target->body.findBlock(publications.front()));
+    if (mutation == 0) {
+      std::swap(block->instructions.front(), block->instructions.back());
+      expect(!supported(changed),
+             "loan-only tails do not permit work before the publication");
+    } else {
+      block->instructions.back().loan =
+          target->body.findBlock(publications.back())->instructions.back().loan;
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "ending the other arm's loan remains invalid MIR");
+    }
+  }
+}
+
 void testNestedCleanupFreeJoinMove() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-nested-cleanup-free-join.gti", R"(
@@ -8636,6 +8703,8 @@ constexpr NamedTest kTests[] = {
      testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testClassConditionalJoinBorrowedInputs",
+     testClassConditionalJoinBorrowedInputs},
     {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
     {"testNestedCleanupFreeJoinMove", testNestedCleanupFreeJoinMove},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},

@@ -944,9 +944,12 @@ The passive proof uses the class's generated destructor and active-cleanup
 facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
 without requiring an active cleanup operation. A constructor `Invoke` may
 separate an arm from publication only when its unique success block contains
-only that publication. The selected status constructor writes the slot at the
-original Invoke and engages it only on success; its original failure edge and
-cleanup remain intact. Ordinary constructor-boundary admission still verifies
+that publication followed only by verified `EndBorrow` instructions. These
+loan endpoints let a fallible source call retire its borrowed inputs after
+publishing the arm's class result, without computing another value or altering
+the result. The selected status constructor writes the slot at the original
+Invoke and engages it only on success; its original failure edge and cleanup
+remain intact. Ordinary constructor-boundary admission still verifies
 the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
