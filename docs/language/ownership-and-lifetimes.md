@@ -1783,7 +1783,13 @@ class, such as a `Holder` storing an `expected<int&, E>`, is not yet supported
 (`GTI-S2067`); classes with unconditional reference fields remain valid
 payloads. A reference selected from a conditional carrier is
 relayed only from a named local, parameter or temporary carrier, not through a
-field, element or dereference of another value (`GTI-S2045`). A free function
+field, element or dereference of another value (`GTI-S2045`). Inside a loop, a
+selection from a carrier declared before the loop requires a carrier the loop
+cannot write: a local or parameter declared without `mut`, including a
+read-only reference parameter. A writable carrier's dependency set is not yet
+carried across iterations (`GTI-S2067`), so a `mut auto&` selection, which
+needs mutable enum storage like any mutable payload borrow, is made before
+the loop. A free function
 whose carrier result could borrow from more than one eligible parameter is
 ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
 reference return. Empty-body constructors
