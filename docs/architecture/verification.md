@@ -40,9 +40,9 @@ body route would admit, since that route trusts verified MIR. All of them are
 rejected. The emitter census lists the new test and
 `testMovedBorrowedPayloadAfterFallibleSibling`, which the manifest lacked.
 
-An `--emit-cpp` differential at -O0 and -O3 over the 1,813 programs in
+An `--emit-cpp` differential at -O0 and -O3 over the 1,816 programs in
 `tests/fixtures`, `tests/coverage` and `examples`, against main's compiler
-(`d2a6ca6b4`) with one `GTI_STDLIB_PATH`:
+(`7ac95ca4a`) with one `GTI_STDLIB_PATH`:
 - Only `deferred_bound_fields.gti` changes status, from `GTI-B0001` to
   success; the 738 other failing runs report identical diagnostics.
 - Nine programs change text. Eight gain deferred storage for carrier fields
