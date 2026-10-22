@@ -50,7 +50,7 @@ def main():
                                            env=environment, timeout=180)
                     assert built.returncode == 0, (command, built.stdout, built.stderr)
                     assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
-                    modes_to_run = range(10) if source == failures else (0,)
+                    modes_to_run = range(11) if source == failures else (0,)
                     for mode in modes_to_run:
                         ran = subprocess.run([str(binary), *(["x"] * mode)],
                                              capture_output=True, text=True,
@@ -63,6 +63,8 @@ def main():
                         cleanup = ("outer\n" if mode == 0 else
                                    "inner\ninner\nouter\n" if mode in (8, 9) else
                                    "inner\nouter\n")
+                        if mode == 10:
+                            cleanup = "condition\npattern\nfirst\nsecond\n" + cleanup
                         if mode == 0 or (mode == 3 and disabled):
                             assert (ran.returncode, ran.stdout, ran.stderr) == (0, "", cleanup), (
                                 name, disabled, mode, ran)
@@ -84,6 +86,7 @@ def main():
                             6: ("message-computation", "message computation failed"),
                             8: ("worker", "worker assertion"),
                             9: ("worker", "worker assertion"),
+                            10: ("ordered", "ordered 1 then 2"),
                         }[mode]
                         expected = (cleanup + f'{site(marker)}: runtime error[GTI-R0017]: '
                                     f'panic: "{message}"\n')
