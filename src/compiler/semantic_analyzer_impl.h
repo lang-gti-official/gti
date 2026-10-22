@@ -2059,6 +2059,21 @@ private:
   // The receiver text field that an implicit member read names.
   [[nodiscard]] std::optional<OwnerlessTextField>
   implicitReceiverTextField(const Variable &variable) const;
+  // A text call result that carries the dependency its argument or receiver
+  // holds in one direct text field: the callee returns that field.
+  struct FieldSourcedTextResult {
+    // The argument or receiver; null for an implicit receiver call.
+    const ExprPtr *origin = nullptr;
+    bool receiver = false;
+    SymbolId field = 0;
+  };
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  fieldSourcedTextResult(const Call &call,
+                         const ResolvedCallInfo &resolved) const;
+  // The contract formal or receiver of the current scope that such a
+  // result's origin names, with its field: the result reads that field.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  fieldSourcedTextFormal(const FieldSourcedTextResult &result) const;
   // The direct text fields of a class, as tooling symbols.
   [[nodiscard]] std::vector<SymbolId>
   directTextFieldSymbols(const SemanticType &type) const;
@@ -4302,11 +4317,22 @@ private:
     bool ownerDependent = false;
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
+    // A direct text field of the origin (L-OWN-02): the result carries the
+    // dependency the caller's value holds in that field, not the origin's.
+    SymbolId field = 0;
   };
 
   [[nodiscard]] PredeclaredTextBorrowSource predeclaredTextBorrowSource(
       const ExprPtr &expression, const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
+
+  // The direct text field of a read-only formal or the receiver that
+  // `expression` reads, when `function` can carry field-level text contracts.
+  // With `field`, `expression` names the formal or receiver and the field is
+  // given: a helper returns that field of it.
+  [[nodiscard]] std::optional<PredeclaredTextBorrowSource>
+  predeclaredTextFieldSource(const ExprPtr &expression,
+                             const FunctionInfo &function, SymbolId field = 0);
 
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,

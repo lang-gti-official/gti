@@ -1589,6 +1589,23 @@ functionPointerSignatureOrigin(const MirProgram &program,
   return origin;
 }
 
+bool textFieldResult(const SemanticType &returnType, BorrowOriginKind origin,
+                     std::size_t parameter,
+                     std::span<const BorrowedFieldOrigin> fields) {
+  if ((returnType.kind != SemanticType::StringView &&
+       returnType.kind != SemanticType::CString) ||
+      fields.size() != 1)
+    return false;
+  const BorrowedFieldOrigin &mapping = fields.front();
+  return mapping.resultFields.empty() && mapping.sourceFields.size() == 1 &&
+         mapping.resultConditions.empty() &&
+         mapping.sourceConditions.empty() &&
+         mapping.access == AccessMode::ReadOnly && mapping.origin == origin &&
+         mapping.parameter == parameter &&
+         (origin == BorrowOriginKind::Receiver ||
+          origin == BorrowOriginKind::Argument);
+}
+
 std::optional<MirReturnOriginFormal>
 returnOriginFormal(std::span<const SemanticType> parameterTypes,
                    std::span<const HirBindingId> parameterBindings,

@@ -109,6 +109,14 @@ struct MirReturnOriginFormal {
 returnOriginFormal(std::span<const SemanticType> parameterTypes,
                    std::span<const HirBindingId> parameterBindings,
                    std::size_t expandedIndex);
+// A text result that returns one direct text field of its origin formal or
+// receiver (L-OWN-02). It carries the dependency the caller's value holds in
+// that field; inside the callee the field's text is ownerless, so no loan
+// names the origin there. TextContracts proves the returned field.
+[[nodiscard]] bool
+textFieldResult(const SemanticType &returnType, BorrowOriginKind origin,
+                std::size_t parameter,
+                std::span<const BorrowedFieldOrigin> fields);
 
 [[nodiscard]] bool functionPointerOperation(const MirProgram &program,
                                             const MirInstruction &instruction);
