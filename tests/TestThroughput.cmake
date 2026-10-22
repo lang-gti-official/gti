@@ -77,6 +77,7 @@ if(Python3_Interpreter_FOUND)
     expected_class_return_runtime expected_constructor_return_runtime expected_consuming_return_runtime
     mixed_constructor_parameter_runtime
     moved_passive_constructor_field_runtime
+    passive_text_view_class_runtime
     view_fields_runtime
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime
