@@ -1,5 +1,24 @@
 # Compiler Verification
 
+## Consuming a borrowed wrapper on only some paths (0.459.4)
+
+`consuming_receiver_types` adds `checkConditionalCarrierConsumption` over
+`conditional_carrier_consume.gti`. It consumes a borrowed wrapper in the right
+operand of `||` and `&&`, in one arm of `?:`, in one branch of an `if`, in both
+branches, in a by-value parameter, and through an unrelated generic carrier,
+`Cell<T>` over `MaybeRef<T&>`. The fixture verifies and emits. Every
+`EndBorrow` of a stored group that ends in more than one block is tombstoned
+in turn, and each forged program fails verification; the fixture has at least
+eight such retirements. `borrow_origin_runtime` runs the fixture in all eight
+native modes, and `tryable_propagation_runtime` runs example 165, which now
+consumes a wrapper under `||`.
+
+An emitted-C++ differential compared main's compiler with the candidate over
+1,950 corpus programs at `-O0` and `-O3`. Only example 165 and the new fixture
+changed, both from `GTI-B0001` to accepted; every other program, accepted or
+rejected, produced the same output. The MIR and lowered-program censuses are
+unchanged.
+
 ## Classes holding text views (0.459.1)
 
 `passive_text_view_class_runtime` runs `passive_text_view_classes.gti`.
