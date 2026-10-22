@@ -972,8 +972,11 @@ inputs, as in `Pod t = c ? std::move(a).pod() : make(std::move(b));`. The
 passive result has no obligation, so the arm call's lifecycle must be exactly
 one unconditional `TransferOut` per prepared input, the schedule
 `exactPreparedInputTransfers` proves, and no activation of its own
-(`onlyPreparedInputTransfers`). Virtual calls and constructions with lifecycle
-events stay outside this form. An arm may also move a whole named local out,
+(`onlyPreparedInputTransfers`). A construction arm may likewise hand by-value
+arguments to its constructor, as in `(c ? seg(pt(1)) : seg(pt(2))).flat`; its
+lifecycle is then exactly those transfers. Virtual calls, and constructions
+with any other lifecycle event, stay outside this form. An arm may also move
+a whole named local out,
 as in `Pod t = c ? std::move(a) : std::move(b);`. The passive class has no
 obligation to hand over, so MIR gives that `Move` no lifecycle event, only the
 ownership event that takes the local's key to `Moved`, and the local keeps its
