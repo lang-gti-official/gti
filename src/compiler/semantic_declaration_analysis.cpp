@@ -7293,11 +7293,10 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
 auto SemanticVisitor::Impl::predeclaredTextFieldSource(
     const ExprPtr &expression, const FunctionInfo &function, SymbolId given)
     -> std::optional<PredeclaredTextBorrowSource> {
-  if (!expression ||
-      !textFieldContractFunction(
-          function.declaration, function.bodyDeclaration(),
-          function.virtualMethod || function.overrideMethod,
-          function.ownerClass))
+  if (!expression || !textFieldContractFunction(
+                         function.declaration, function.bodyDeclaration(),
+                         function.virtualMethod || function.overrideMethod,
+                         function.ownerClass))
     return std::nullopt;
   const auto unwrap = [](const Expr *current) {
     while (const auto *group = exprAs<Grouping>(current))
@@ -7306,8 +7305,8 @@ auto SemanticVisitor::Impl::predeclaredTextFieldSource(
   };
   const FunctionDecl &declaration = *function.bodyDeclaration();
   const auto &parameters = declaration.parameters();
-  const auto formal = [&](const Variable &variable)
-      -> std::optional<std::size_t> {
+  const auto formal =
+      [&](const Variable &variable) -> std::optional<std::size_t> {
     for (std::size_t index = 0; index < parameters.size(); ++index)
       if (parameters[index].name.lexeme == variable.name().lexeme)
         return index;
@@ -7514,10 +7513,9 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
       if (receiverType.kind == SemanticType::Reference &&
           receiverType.arguments.size() == 1)
         receiverType = SemanticType(receiverType.arguments.front());
-      const MemberInfo *method =
-          receiverType.kind == SemanticType::Class
-              ? findMember(receiverType, member->name())
-              : nullptr;
+      const MemberInfo *method = receiverType.kind == SemanticType::Class
+                                     ? findMember(receiverType, member->name())
+                                     : nullptr;
       if (method != nullptr && method->symbol.overloads.size() == 1 &&
           method->symbol.overloads.front().declaration != nullptr)
         if (const auto relayed =
@@ -7596,8 +7594,8 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
                     summary->parameter < call->arguments().size()
                 ? call->arguments()[summary->parameter]
                 : implicitReceiver;
-        return fieldRelay(target, origin).value_or(
-            PredeclaredTextBorrowSource{});
+        return fieldRelay(target, origin)
+            .value_or(PredeclaredTextBorrowSource{});
       }
       if (summary && summary->origin == BorrowOriginKind::Argument &&
           summary->parameters.empty() &&
@@ -7668,10 +7666,10 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
       continue;
     }
     if (source.field != 0) {
-      fieldsAgree = fieldsAgree && (!field || (field->origin == source.origin &&
-                                               field->parameter ==
-                                                   source.parameter &&
-                                               field->field == source.field));
+      fieldsAgree =
+          fieldsAgree && (!field || (field->origin == source.origin &&
+                                     field->parameter == source.parameter &&
+                                     field->field == source.field));
       field = source;
       continue;
     }

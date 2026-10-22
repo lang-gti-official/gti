@@ -2,7 +2,8 @@
 // read-only dependency (L-OWN-02). A constructor that stores a text parameter
 // and a designated list publish it; copies alias it, a move transfers it, and
 // a field read yields a view of the same owner, and functions and methods
-// that keep the text within the call accept it. An ownerless value of the
+// that keep the text within the call accept it. A function that returns one
+// text field relays what the value holds there. An ownerless value of the
 // same type keeps every capability, including storage.
 #include <std/string>
 
@@ -12,6 +13,7 @@ public:
   int kind;
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   uint64_t width() { return this.text.size(); }
+  std::string_view name() { return this.text; }
 };
 
 struct Diag {
@@ -33,6 +35,9 @@ void keep(Token token) { kept = token.text; }
 uint64_t measure(Token token) { return token.text.size(); }
 uint64_t measureRef(Token& token) { return token.text.size(); }
 uint64_t total(Token token) { return measure(token) + measureRef(token); }
+// Returning one text field relays what the argument holds there.
+std::string_view firstOf(Pair pair) { return pair.first; }
+std::string_view secondOf(Pair pair) { return pair.second; }
 
 int main() {
   std::string input{"token text"};
@@ -59,6 +64,14 @@ int main() {
   Pair pair = Pair(input.view(), "fixed");
   std::println(pair.first);
   std::println(pair.second);
+
+  // A returned field view holds what the value holds in that field: the
+  // owner's text for the published field, ownerless text for the other.
+  std::string_view returned = firstOf(pair);
+  std::println(returned);
+  std::println(token.name().size());
+  kept = secondOf(pair);
+  std::println(kept);
 
   // A token over a literal is ownerless and can leave this body.
   Token literal = Token("literal", 1);

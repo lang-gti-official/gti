@@ -1475,8 +1475,8 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
   // a contract formal here, reads that formal's field.
   if (const auto *call = exprAs<Call>(current)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-    const auto result =
-        resolved == nullptr ? std::nullopt
+    const auto result = resolved == nullptr
+                            ? std::nullopt
                             : fieldSourcedTextResult(*call, *resolved);
     return result ? fieldSourcedTextFormal(*result) : std::nullopt;
   }
@@ -1501,9 +1501,8 @@ auto SemanticVisitor::Impl::fieldSourcedTextResult(
     if (mapping.parameter >= resolvedCallArgumentCount(call, &resolved))
       return std::nullopt;
     result.origin = resolvedCallArgument(call, &resolved, mapping.parameter);
-    return result.origin != nullptr && *result.origin
-               ? std::optional{result}
-               : std::nullopt;
+    return result.origin != nullptr && *result.origin ? std::optional{result}
+                                                      : std::nullopt;
   }
   if (mapping.origin != BorrowOriginKind::Receiver)
     return std::nullopt;

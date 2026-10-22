@@ -202,8 +202,7 @@ void checkStoredViewReturns() {
       }
     }
   }
-  expect(ownerless >= 5 && relayed >= 4 && alternatives >= 1 &&
-             dependent >= 1,
+  expect(ownerless >= 5 && relayed >= 4 && alternatives >= 1 && dependent >= 1,
          "field, element, nested, parameter and generic stored views are "
          "exercised beside a dependent relay");
 

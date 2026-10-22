@@ -1598,8 +1598,7 @@ bool textFieldResult(const SemanticType &returnType, BorrowOriginKind origin,
     return false;
   const BorrowedFieldOrigin &mapping = fields.front();
   return mapping.resultFields.empty() && mapping.sourceFields.size() == 1 &&
-         mapping.resultConditions.empty() &&
-         mapping.sourceConditions.empty() &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
          mapping.access == AccessMode::ReadOnly && mapping.origin == origin &&
          mapping.parameter == parameter &&
          (origin == BorrowOriginKind::Receiver ||
