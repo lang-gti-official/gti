@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Conditional joins whose arms take a class by value (0.459.4)
+## Conditional joins whose arms take a class by value (0.459.5)
 
 A field read of a conditional temporary whose arms pass a class by value to
 their constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, used
@@ -30,6 +30,30 @@ file under `tests/` and `examples/` against main's compiler, without the
 `namespace-depth-63.gti` stress input. It fails on any text difference, any
 refusal-code change, or any program that stops building, and requires the
 issue-127 fixture to become accepted.
+
+## Returning borrowed enum parameters (0.459.4)
+
+`complete_borrow_summaries` covers the new fixture,
+`borrowed_enum_relay_returns`.
+- Seven functions return a by-value borrowed carrier formal whole: a payload
+  enum moved, copied and under `borrowed_from`, a class whose borrowed state
+  is such an enum, a concrete generic `Outcome<int&, E>` with plain and owning
+  errors, and a `mut` reference enum. All verify.
+- Six MIR mutations per relay are rejected: a `Return` borrow from itself, a
+  removed retirement of the entry group, a guard cleared from the group, a
+  path cleared from the `Return` loan, a group that is no longer an entry, and
+  a moved `Return` source.
+- Source rejections, with no backend error: relaying a moved or a copied slot
+  of a local (`GTI-S2045`) and writing the owner while a relayed result is
+  live (`GTI-S2017`).
+
+`borrow_origin_runtime` runs the fixture in all eight native modes, including
+the sanitized one. `tryable_propagation_runtime` runs example 165, which now
+also hands a slot back by value, in nine modes.
+
+The change only widens what the program verifier accepts; the backend emits
+from the same MIR, so programs accepted before produce the same C++. The
+census changes only for example 165: one more function body and declaration.
 
 ## Assignment result field reads (0.459.3)
 
@@ -224,7 +248,7 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
   without that stress input, and requires the same outcome.
 
 Still refused, both before and after, even for a single-level read (0.459.1 admits
-the text join and 0.459.4 the by-value one; see above):
+the text join and 0.459.5 the by-value one; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
 - a conditional join of a class that holds a text field, as in
