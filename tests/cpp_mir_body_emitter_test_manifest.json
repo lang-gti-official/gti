@@ -318,6 +318,10 @@
       "suite": "text"
     },
     {
+      "name": "testPassiveTextViewClassAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedChainReturnConstruction",
       "suite": "text"
     },
@@ -495,6 +499,10 @@
     },
     {
       "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
+      "name": "testClassConditionalJoinBorrowedInputs",
       "suite": "text"
     },
     {
@@ -779,6 +787,14 @@
     },
     {
       "name": "testMovedPlaceFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testAssignmentResultFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedClassResultFieldView",
       "suite": "lifecycle"
     },
     {

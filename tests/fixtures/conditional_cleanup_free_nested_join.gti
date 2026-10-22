@@ -171,7 +171,26 @@ int run(bool left) {
   return raising(left, 1, 12, 7);
 }
 
+// Each source call returns a cleanup-free record after reading borrowed text.
+// Its success block publishes the record before ending that arm's input loan.
+Pod text_first(std::string_view text) { return Pod(text[0] == 'a' ? 1 : 2); }
+
+int borrowed_inputs(bool left) {
+  mut std::string a{"a"};
+  mut std::string b{"b"};
+  mut int total = 0;
+  for (mut int i = 0; i < 3; i += 1) {
+    Pod result = left ? text_first(a.view()) : text_first(b.view());
+    total += result.x;
+  }
+  a.clear();
+  b.clear();
+  return total;
+}
+
 int main(int argc, std::vector<std::string> argv) {
+  if (borrowed_inputs(true) != 3 ||
+      borrowed_inputs(false) != 6) { return 2; }
   std::println(run(true));
   std::println(run(false));
   // Scenario 1 fails the nested raising arm on the loop's last iteration.
