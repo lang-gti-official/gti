@@ -257,8 +257,7 @@ private:
         }
       } else if (kind == TokenKind::UNSAFE || kind == TokenKind::VIRTUAL ||
                  kind == TokenKind::STATIC || kind == TokenKind::THREAD_LOCAL ||
-                 kind == TokenKind::CONSTEXPR ||
-                 kind == TokenKind::MUT) {
+                 kind == TokenKind::CONSTEXPR || kind == TokenKind::MUT) {
         ++offset;
       } else {
         break;
@@ -1259,9 +1258,8 @@ private:
     std::optional<Token> staticKeyword;
     std::optional<Token> threadLocalKeyword;
     while (match({TokenKind::STATIC, TokenKind::THREAD_LOCAL})) {
-      auto &keyword = previous().kind == TokenKind::STATIC
-                          ? staticKeyword
-                          : threadLocalKeyword;
+      auto &keyword = previous().kind == TokenKind::STATIC ? staticKeyword
+                                                           : threadLocalKeyword;
       if (keyword)
         throw error(previous(), "A storage specifier cannot be repeated.");
       keyword = previous();
@@ -2110,8 +2108,8 @@ private:
     return std::make_shared<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer),
         std::move(staticKeyword), false, std::move(constexprKeyword), false,
-        false, std::move(mutKeyword), false, linkage,
-        std::move(nativeLinkName), std::move(threadLocalKeyword));
+        false, std::move(mutKeyword), false, linkage, std::move(nativeLinkName),
+        std::move(threadLocalKeyword));
   }
 
   StmtPtr mutableFieldGroupDeclaration(Token keyword) {
@@ -3058,8 +3056,8 @@ private:
     }
 
     if (isTypedDeclaration() && !check(TokenKind::STATIC) &&
-        !check(TokenKind::THREAD_LOCAL) &&
-        !check(TokenKind::CONSTEXPR) && !check(TokenKind::VIRTUAL)) {
+        !check(TokenKind::THREAD_LOCAL) && !check(TokenKind::CONSTEXPR) &&
+        !check(TokenKind::VIRTUAL)) {
       const std::size_t declarationStart = current;
       const Mutability mutability =
           match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;

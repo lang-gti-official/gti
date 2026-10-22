@@ -488,7 +488,7 @@ void writeCppSupportPreamble(std::ostream &output,
   const bool usesManagedThreads = features.managedThreads;
   const bool usesAtomics = features.atomics;
   const bool usesMutexes = features.mutexes;
-  if (usesManagedThreads || features.threadLocalStorage) {
+  if (usesManagedThreads) {
     output << "#include <tuple>\n";
   }
   if (usesAtomics || features.cThreads) {

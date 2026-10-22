@@ -911,7 +911,7 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    standard-library string and vector identities. No native `char**` or other
    pointer-shaped main signature is provided. *)
 
-variable-declaration   = [ "constexpr" ] [ "mut" ] type IDENTIFIER
+variable-declaration   = [ "thread_local" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          { array-extent }
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
@@ -922,7 +922,9 @@ structured-binding-declaration
                          "=" initializer-expression ";" ;
 
 static-variable-declaration
-                       = "static" [ "constexpr" ] [ "mut" ] type IDENTIFIER
+                       = ( "static" [ "thread_local" ]
+                         | "thread_local" "static" )
+                         [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          { array-extent }
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
@@ -930,7 +932,12 @@ static-variable-declaration
 (* At namespace scope, `static` gives a variable or function source-unit
    internal linkage: it is visible only inside the file that declares it and
    may reuse a name used by another source unit. `main` cannot be static.
-   Block-scope static declarations are intentionally not supported. *)
+   Ordinary block-scope static declarations are not supported. Block-local
+   thread_local declarations may optionally include static. A thread_local
+   field must be static; thread_local constexpr is ill-formed. Initializers
+   cannot depend on automatic bindings, parameters or an instance receiver.
+   Generic-function, generic-class and lambda-local TLS declarations are
+   diagnosed pending per-instance initialization support. *)
 
 (* `constexpr` bindings are immutable and initialized; class and struct fields
    must also be static. The compiler-owned evaluator supports fixed-width

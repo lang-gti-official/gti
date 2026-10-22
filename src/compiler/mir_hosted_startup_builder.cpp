@@ -369,6 +369,17 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
   MirBlock &entryBlock = appendBlock();
   body.entry = entryBlock.id;
+  const auto drainThreadLocals = [&](MirBlock &block) {
+    if (program.threadLocalStorage().empty())
+      return;
+    const auto operation =
+        beginOperation(MirHostedStartupOperationKind::DrainThreadLocals,
+                       MirHostedStartupFailureBehavior::None, block.id);
+    MirInstruction drain;
+    drain.kind = MirInstructionKind::DrainThreadLocals;
+    drain.info = generatedInfo(SemanticType::Void);
+    appendInstruction(operation, block, std::move(drain));
+  };
   const auto cThreadBoundary = [&](MirBlock &block, bool begin) {
     if (!program.requiresCThreadRuntime()) {
       return;
@@ -431,6 +442,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     }
     plan.entryResult = entryResult;
 
+    drainThreadLocals(*startupBlock);
     cThreadBoundary(*startupBlock, false);
 
     const MirHostedStartupOperationId returnOperation =
@@ -928,6 +940,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     }
     plan.entryResult = entryResult;
 
+    drainThreadLocals(*finalBlock);
     cThreadBoundary(*finalBlock, false);
 
     const MirHostedStartupOperationId returnOperation =

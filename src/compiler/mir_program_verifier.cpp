@@ -6,7 +6,9 @@
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_storage_effects.h"
 #include "mir_text_contracts.h"
+#include "mir_thread_local.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
@@ -9124,6 +9126,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
       // step.
       continue;
     }
+    if (symbolRoot && place.capture == 0 &&
+        program.findThreadLocalStorage(place.symbol) != nullptr) {
+      // First-use TLS construction is proved independently by exact Ensure
+      // success dominance, not by an eager module storage transition.
+      continue;
+    }
     std::optional<ProgramInitializationStepId> identity;
     bool exact = true;
     const auto requireIdentity = [&](ProgramInitializationStepId candidate) {
@@ -9878,6 +9886,16 @@ verifyMirHostedStartup(const MirProgram &program) {
     return normalBlock;
   };
 
+  const auto takeThreadLocalDrain = [&](MirBlockId block) {
+    if (program.threadLocalStorage().empty())
+      return;
+    const TakenOperation drain =
+        take(MirHostedStartupOperationKind::DrainThreadLocals,
+             MirHostedStartupFailureBehavior::None, block, true, false, false,
+             false);
+    exactInstruction(drain, {.kind = MirInstructionKind::DrainThreadLocals,
+                             .info = generatedInfo(SemanticType::Void)});
+  };
   const auto takeCThreadBoundary = [&](MirBlockId block, bool begin) {
     const auto targetId = begin ? plan.cThreadBegin : plan.cThreadEnd;
     if (!program.requiresCThreadRuntime()) {
@@ -9946,6 +9964,7 @@ verifyMirHostedStartup(const MirProgram &program) {
       currentBlock =
           takeFailureRoute(currentBlock, callEntry.expected.instruction, {});
     }
+    takeThreadLocalDrain(currentBlock);
     takeCThreadBoundary(currentBlock, false);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
@@ -10477,6 +10496,7 @@ verifyMirHostedStartup(const MirProgram &program) {
       finalBlock =
           takeFailureRoute(finalBlock, callEntry.expected.instruction, {});
     }
+    takeThreadLocalDrain(finalBlock);
     takeCThreadBoundary(finalBlock, false);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
@@ -12406,6 +12426,7 @@ completeBorrowSourcePath(const MirProgram &program,
     return {.root = place->root,
             .binding = place->binding,
             .symbol = place->symbol,
+            .capture = place->capture,
             .temporary = place->temporary,
             .value = place->value,
             .projections = place->projections};
@@ -20023,6 +20044,9 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
   }
   appendVerification(result, verifyMirProgramContracts(program));
+  appendVerification(result, verifyMirThreadLocalStorage(program));
+  if (result.valid())
+    appendVerification(result, verifyMirPersistentStorageEffects(program));
   appendVerification(result, verifyMirEffectSummaries(program));
   return result;
 }

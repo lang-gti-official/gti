@@ -65,7 +65,8 @@ int main() {
     check(*program.declarations()[2], true);
     const auto *owner =
         lang::stmtAs<lang::ClassDecl>(program.declarations()[3].get());
-    expect(owner && owner->members().size() == 1, "TLS field retains its owner");
+    expect(owner && owner->members().size() == 1,
+           "TLS field retains its owner");
     check(*owner->members().front(), true);
     const auto *function =
         lang::stmtAs<lang::FunctionDecl>(program.declarations()[4].get());
@@ -76,10 +77,10 @@ int main() {
 }
 
 void invalidModifiersAndRecovery() {
-  for (const std::string source : {
-           "thread_local thread_local int invalid; int recovered;",
-           "static static thread_local int invalid; int recovered;",
-           "thread_local void invalid() {} int recovered;"}) {
+  for (const std::string source :
+       {"thread_local thread_local int invalid; int recovered;",
+        "static static thread_local int invalid; int recovered;",
+        "thread_local void invalid() {} int recovered;"}) {
     lang::Lexer lexer;
     lang::Parser parser(lexer.scan(source, "thread-local-invalid.gti"));
     const auto program = parser.parse();

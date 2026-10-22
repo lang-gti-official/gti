@@ -1300,6 +1300,14 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   instruction.operands.front().type == instruction.info.type;
           break;
         }
+        case MirInstructionKind::EnsureThreadLocal: {
+          const auto *storage =
+              program.findThreadLocalStorage(instruction.threadLocalStorage);
+          valid = storage != nullptr && storage->dataInitializer &&
+                  instruction.definedFailure.empty();
+          break;
+        }
+        case MirInstructionKind::DrainThreadLocals:
         case MirInstructionKind::Borrow:
         case MirInstructionKind::ActivateBorrow:
         case MirInstructionKind::Construct:
@@ -1928,6 +1936,15 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
           return false;
         }
         break;
+      case MirInstructionKind::EnsureThreadLocal: {
+        const auto *storage =
+            program.findThreadLocalStorage(instruction.threadLocalStorage);
+        if (storage == nullptr || !storage->dataInitializer ||
+            !instruction.definedFailure.empty())
+          return false;
+        break;
+      }
+      case MirInstructionKind::DrainThreadLocals:
       case MirInstructionKind::Modify:
       case MirInstructionKind::Borrow:
       case MirInstructionKind::ActivateBorrow:

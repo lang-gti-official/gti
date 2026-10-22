@@ -1,6 +1,7 @@
 // Build with --execution-profile concurrent. Every thread owns its state;
 // workers need no mutex to update their own thread-local objects.
 #include <std/atomic>
+#include <std/format>
 #include <std/thread>
 #include <std/string>
 

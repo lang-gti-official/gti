@@ -38,8 +38,8 @@ thread_local uint64_t scopedTestFailureAfter = UINT64_MAX;
 enum class ThreadLocalCleanupPhase { Open, Draining, Complete };
 thread_local ThreadLocalCleanupPhase threadLocalCleanupPhase =
     ThreadLocalCleanupPhase::Open;
-thread_local gti_runtime_detail::thread_local_cleanup_entry *threadLocalCleanup =
-    nullptr;
+thread_local gti_runtime_detail::thread_local_cleanup_entry
+    *threadLocalCleanup = nullptr;
 std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
 std::mutex quarantineMutex;
@@ -344,7 +344,8 @@ void drain_thread_local_cleanup(
   bool emergency = false;
   if (activeWorker != nullptr) {
     const std::lock_guard lock(activeWorker->failureMutex);
-    emergency = activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
+    emergency =
+        activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
     if (activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
       pending = activeWorker->failure;
       primaryArtifact = activeWorker->primaryArtifact;
@@ -361,16 +362,21 @@ void drain_thread_local_cleanup(
     try {
       if (activeWorker != nullptr) {
         ActiveTaskObjectCleanupScope cleanup;
-        succeeded = entry->cleanup(entry->storage, &failure, hasPrimary);
+        succeeded = entry->cleanup(entry->storage, &failure,
+                                   hasPrimary ? &pending : nullptr,
+                                   hasPrimary ? primaryArtifact : nullptr);
       } else {
-        succeeded = entry->cleanup(entry->storage, &failure, hasPrimary);
+        succeeded = entry->cleanup(entry->storage, &failure,
+                                   hasPrimary ? &pending : nullptr,
+                                   hasPrimary ? primaryArtifact : nullptr);
       }
     } catch (const worker_failure_handoff &) {
       clear_managed_failure_handoff();
       if (activeWorker == nullptr)
         std::terminate();
       const std::lock_guard lock(activeWorker->failureMutex);
-      emergency = activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
+      emergency =
+          activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
       if (!emergency) {
         pending = activeWorker->failure;
         primaryArtifact = activeWorker->primaryArtifact;
@@ -401,16 +407,18 @@ void drain_thread_local_cleanup(
     if (activeWorker != nullptr) {
       const std::lock_guard lock(activeWorker->failureMutex);
       recordWorkerFailure(*activeWorker, failure, entry->artifact);
-      emergency = activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
+      emergency =
+          activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
     } else if (hasPrimary) {
-      const gti_failure_emergency_v2 combined{
-          .abi_version = GTI_FAILURE_ABI_VERSION_V2,
-          .reserved = 0,
-          .primary = pending,
-          .secondary = failure};
+      const gti_failure_emergency_v2 combined{.abi_version =
+                                                  GTI_FAILURE_ABI_VERSION_V2,
+                                              .reserved = 0,
+                                              .primary = pending,
+                                              .secondary = failure};
       threadLocalCleanup = nullptr;
       threadLocalCleanupPhase = ThreadLocalCleanupPhase::Complete;
-      gti_rt_failure_terminate_cleanup_v2(&combined, primaryArtifact, entry->artifact);
+      gti_rt_failure_terminate_cleanup_v2(&combined, primaryArtifact,
+                                          entry->artifact);
     }
     if (!hasPrimary) {
       pending = failure;

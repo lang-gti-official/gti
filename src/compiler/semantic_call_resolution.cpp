@@ -6404,6 +6404,24 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   if (contextual) {
     semanticModel.recordContextualConversion(site, std::move(resolved));
   } else if (projection) {
+    auto check = captureProgramStorageBorrows(tokenSpan(token));
+    const AccessMode access =
+        resolved.receiverMutability == ReceiverMutability::ReadOnly
+            ? AccessMode::ReadOnly
+            : AccessMode::Mutable;
+    if (receiver)
+      appendProgramStorageBorrowInput(check, receiver, access);
+    else if (receiverState)
+      for (const auto &place : loanPlaces(receiverState->place))
+        appendProgramStorageBorrowProtection(check, place, access,
+                                             tokenSpan(token));
+    const auto owner = currentProgramEffectOwner;
+    const auto edgeStart = programEffects[owner].edges.size();
+    const auto unknownStart = programEffects[owner].unknown.size();
+    recordProgramOperatorTargetEffects(site, resolved);
+    if (owner.valid())
+      publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
+                                       unknownStart);
     semanticModel.recordProjectionOperator(site, std::move(resolved));
   } else {
     semanticModel.recordOperator(site, std::move(resolved));

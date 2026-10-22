@@ -89,6 +89,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.dependsOnLoan = true},   // ParkRangeCursor.
     MirEffectTraits{.dependsOnLoan = true},   // RestoreRangeCursor.
     unknownEffects(), // EnsureThreadLocal invokes the exact initializer once.
+    unknownEffects(), // DrainThreadLocals runs exact initialized TLS cleanup.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -518,6 +519,8 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "cleanup-before-assign",
     "park-range-cursor",
     "restore-range-cursor",
+    "ensure-thread-local",
+    "drain-thread-locals",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -1446,7 +1449,8 @@ struct ExactTargets {
          instruction.kind == MirInstructionKind::InitializeBase ||
          instruction.kind == MirInstructionKind::Drop ||
          instruction.kind == MirInstructionKind::CleanupBeforeAssign ||
-         instruction.kind == MirInstructionKind::CallBody;
+         instruction.kind == MirInstructionKind::CallBody ||
+         instruction.kind == MirInstructionKind::EnsureThreadLocal;
 }
 
 struct EffectNode {
@@ -2170,11 +2174,10 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
   }
 
   for (const auto &storage : program.threadLocalStorage())
-    nodes.push_back(
-        {.address = {.kind = MirBodyKind::ThreadLocalInitializer,
-                     .owner = storage.symbol},
-         .body = &storage.initializer,
-         .exactDefinition = true});
+    nodes.push_back({.address = {.kind = MirBodyKind::ThreadLocalInitializer,
+                                 .owner = storage.symbol},
+                     .body = &storage.initializer,
+                     .exactDefinition = true});
 
   for (EffectNode &node : nodes) {
     node.local.traits = harmless();
@@ -2437,7 +2440,8 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
        ++index) {
     result.lambdas.push_back(std::move(summaries[next++]));
   }
-  for (std::size_t index = 0; index < program.threadLocalStorage().size(); ++index)
+  for (std::size_t index = 0; index < program.threadLocalStorage().size();
+       ++index)
     result.threadLocalInitializers.push_back(std::move(summaries[next++]));
   return result;
 }
@@ -2455,7 +2459,8 @@ MirVerificationResult verifyMirEffectSummaries(const MirProgram &program) {
       required.constructors.size() != program.constructorInstances().size() ||
       required.destructors.size() != program.destructorInstances().size() ||
       required.lambdas.size() != program.lambdaInstances().size() ||
-      required.threadLocalInitializers.size() != program.threadLocalStorage().size()) {
+      required.threadLocalInitializers.size() !=
+          program.threadLocalStorage().size()) {
     reject({}, "derived MIR effect summary cardinality is invalid");
     return result;
   }
@@ -2486,6 +2491,16 @@ MirVerificationResult verifyMirEffectSummaries(const MirProgram &program) {
       reject({.kind = MirBodyKind::Lambda, .owner = index + 1},
              "lambda effect summary under-approximates its MIR body");
     }
+  }
+  for (std::size_t index = 0; index < required.threadLocalInitializers.size();
+       ++index) {
+    const auto &storage = program.threadLocalStorage()[index];
+    if (!summaryCovers(storage.effectSummary,
+                       required.threadLocalInitializers[index]))
+      reject({.kind = MirBodyKind::ThreadLocalInitializer,
+              .owner = storage.symbol},
+             "thread-local initializer effect summary under-approximates its "
+             "MIR body");
   }
   return result;
 }

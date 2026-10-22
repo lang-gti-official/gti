@@ -802,9 +802,9 @@ private:
       output << '-';
     }
     output << ";mutability=" << number(value.mutability)
-           << ";flags=" << value.staticStorage << ':' << value.internalLinkage
-           << ':' << value.constexprStorage << ':' << value.hasInitializer
-           << ')';
+           << ";flags=" << value.staticStorage << ':'
+           << value.threadLocalStorage << ':' << value.internalLinkage << ':'
+           << value.constexprStorage << ':' << value.hasInitializer << ')';
   }
 
   void printValue(const LoweredAccessDeclaration &value) {

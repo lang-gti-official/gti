@@ -77,11 +77,13 @@ public:
   struct ProgramEffectEdge {
     ProgramEffectOwner target;
     SourceSpan span;
+    bool cleanup = false;
   };
 
   struct ProgramUnknownEffect {
     SourceSpan span;
     std::string reason;
+    bool cleanup = false;
   };
 
   struct ProgramBorrowStorageUse {
@@ -94,6 +96,9 @@ public:
     SemanticLoanPlace place;
     AccessMode access = AccessMode::ReadOnly;
     SourceSpan origin;
+    // Zero denotes an invocation/result-scoped dependency. Named loans reuse
+    // the ordinary structured last-use proof before effect checks are closed.
+    SemanticLoanId loan = 0;
   };
 
   struct ProgramStorageBorrowCheck {
@@ -984,6 +989,7 @@ private:
     std::vector<ActiveLoanFlowConditionalArm> path;
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
     std::vector<std::size_t> loops;
+    std::optional<std::size_t> programStorageCheck;
     Diagnostic diagnostic;
   };
 
@@ -1094,6 +1100,7 @@ private:
   };
 
   struct LoanFlowState {
+    bool finalized = false;
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
@@ -4329,9 +4336,9 @@ private:
       const FunctionInfo &function,
       const BorrowSummaryCandidateIndex &candidateIndex);
 
-  void
-  collectBorrowReturnExpressions(const Stmt *statement,
-                                 std::vector<const ExprPtr *> &returns) const;
+  void collectBorrowReturnExpressions(
+      const Stmt *statement, std::vector<const ExprPtr *> &returns,
+      std::vector<const VariableDecl *> *locals = nullptr) const;
 
   [[nodiscard]] std::optional<std::vector<RestoredBorrowField>>
   restoredReferenceFields(const SemanticType &referent);
@@ -4412,7 +4419,26 @@ private:
                                   SemanticBindingKind bindingKind,
                                   SymbolId symbol, OccurrenceRole roles);
   void recordProgramBorrowStorageEffect(const Expr &expression,
-                                       OccurrenceRole roles);
+                                        OccurrenceRole roles);
+  void appendProgramStorageBorrowProtection(ProgramStorageBorrowCheck &check,
+                                            const SemanticLoanPlace &place,
+                                            AccessMode access,
+                                            const SourceSpan &origin,
+                                            SemanticLoanId loan = 0);
+  [[nodiscard]] ProgramStorageBorrowCheck
+  captureProgramStorageBorrows(const SourceSpan &site);
+  void appendProgramStorageBorrowInput(
+      ProgramStorageBorrowCheck &check, const ExprPtr &input,
+      std::optional<AccessMode> directAccess = std::nullopt);
+  void publishProgramStorageBorrowCheck(ProgramStorageBorrowCheck check,
+                                        ProgramEffectOwner owner,
+                                        std::size_t edgeStart,
+                                        std::size_t unknownStart);
+  void recordReturnedStorageBorrowCleanup(const ReturnStmt &statement,
+                                          std::size_t temporaryEdgeStart,
+                                          std::size_t temporaryUnknownStart);
+  void recordStorageBorrowCleanup(const Symbol &symbol);
+  void recordProgramScopeBorrowCleanup();
   void recordProgramCallEffectTargets(const Expr &expression);
   void validateProgramStorageBorrowEffects();
   [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;
@@ -4899,13 +4925,14 @@ private:
                                    bool instanceDependentType = false,
                                    bool threadLocal = false);
 
-  [[nodiscard]] bool validateThreadLocalDeclaration(const VariableDecl &declaration);
+  [[nodiscard]] bool
+  validateThreadLocalDeclaration(const VariableDecl &declaration);
   void recordThreadLocalDeclaration(const VariableDecl &declaration);
   [[nodiscard]] bool isThreadLocalStorage(SymbolId symbol) const;
   [[nodiscard]] bool isThreadLocalDataOnly(const VariableDecl &declaration,
-                                          const SemanticType &type) const;
-  [[nodiscard]] DefinedFailureOperation threadLocalEnsureFailure(
-      SymbolId symbol, const Token &site) const;
+                                           const SemanticType &type) const;
+  [[nodiscard]] DefinedFailureOperation
+  threadLocalEnsureFailure(SymbolId symbol, const Token &site) const;
 
   SymbolId recordParameterBinding(const Parameter &parameter,
                                   const SemanticType &type);

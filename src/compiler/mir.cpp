@@ -6,6 +6,7 @@
 #include "gti/optimization/coverage.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_storage_effects.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
@@ -335,8 +336,8 @@ enumerateMirBodyAddresses(const MirProgram &program) {
                  (program.hostedStartup() == nullptr ? 0 : 1));
   result.push_back({.kind = MirBodyKind::Module});
   for (const auto &storage : program.threadLocalStorage())
-    result.push_back({.kind = MirBodyKind::ThreadLocalInitializer,
-                      .owner = storage.symbol});
+    result.push_back(
+        {.kind = MirBodyKind::ThreadLocalInitializer, .owner = storage.symbol});
   for (const MirClassInstance &instance : program.classInstances()) {
     result.push_back(
         {.kind = MirBodyKind::FieldInitializers, .owner = instance.id});
@@ -1129,6 +1130,7 @@ struct MirCanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
   SymbolId symbol = 0;
+  std::size_t capture = 0;
   MirTemporaryId temporary = 0;
   MirValueId value = 0;
   std::vector<MirPlaceProjection> projections;
@@ -1330,6 +1332,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
         return {.root = place->root,
                 .binding = place->binding,
                 .symbol = place->symbol,
+                .capture = place->capture,
                 .temporary = place->temporary,
                 .value = place->value,
                 .projections = place->projections};
@@ -1347,6 +1350,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     return {.root = place->root,
             .binding = place->binding,
             .symbol = place->symbol,
+            .capture = place->capture,
             .temporary = place->temporary,
             .value = place->value,
             .projections = place->projections,
@@ -1426,6 +1430,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
         return {.root = place->root,
                 .binding = place->binding,
                 .symbol = place->symbol,
+                .capture = place->capture,
                 .temporary = place->temporary,
                 .value = place->value,
                 .projections = place->projections};
@@ -1442,6 +1447,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     return {.root = place->root,
             .binding = place->binding,
             .symbol = place->symbol,
+            .capture = place->capture,
             .temporary = place->temporary,
             .value = place->value,
             .projections = place->projections,
@@ -1462,7 +1468,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
   case MirPlaceRootKind::Binding:
     return left.binding == right.binding;
   case MirPlaceRootKind::Symbol:
-    return left.symbol == right.symbol;
+    return left.symbol == right.symbol && left.capture == right.capture;
   case MirPlaceRootKind::This:
     return true;
   case MirPlaceRootKind::Temporary:
@@ -1496,7 +1502,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
 [[nodiscard]] bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
                                          const MirCanonicalPlace &actual) {
   if (!expected.valid() || actual.ambiguous ||
-      actual.root != MirPlaceRootKind::Symbol ||
+      actual.root != MirPlaceRootKind::Symbol || actual.capture != 0 ||
       actual.symbol != expected.root ||
       actual.projections.size() != expected.projections.size()) {
     return false;
@@ -2682,8 +2688,16 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
   return authority;
 }
 
-[[nodiscard]] MirVerificationResult verifyMirLoanFlow(const MirBody &body,
-                                                      std::size_t owner) {
+[[nodiscard]] MirVerificationResult
+verifyMirLoanFlow(const MirBody &body, std::size_t owner,
+                  std::span<const MirPersistentStorageAccess> hidden = {},
+                  std::vector<MirPersistentStorageAccess> *direct = nullptr,
+                  const MirPersistentStorageEffectQuery *query = nullptr) {
+  std::unordered_map<MirInstructionId,
+                     std::vector<const MirPersistentStorageAccess *>>
+      ambient;
+  for (const auto &access : hidden)
+    ambient[access.instruction].push_back(&access);
   std::vector<std::size_t> producerCounts(body.loans.size(), 0);
   std::vector<std::size_t> activationCounts(body.loans.size(), 0);
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
@@ -3229,6 +3243,29 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                            std::string(context),
                        block.id, instruction);
       }
+      if (direct && place.root == MirPlaceRootKind::Symbol &&
+          place.capture == 0 && place.symbol != 0 &&
+          std::none_of(place.projections.begin(), place.projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind ==
+                                    MirProjectionKind::RawIndex ||
+                                projection.kind ==
+                                    MirProjectionKind::RawDereference;
+                       })) {
+        auto projections = place.projections;
+        // An enum payload selector refines physical layout, not ambient access
+        // authority. Preserve the containing subject when summarizing it.
+        if (!place.payloadSelections.empty())
+          projections.resize(
+              std::min(projections.size(),
+                       place.payloadSelections.front().projectionOffset));
+        direct->push_back(
+            {.block = block.id,
+             .instruction = instruction,
+             .symbol = place.symbol,
+             .projections = std::move(projections),
+             .access = write ? AccessMode::Mutable : AccessMode::ReadOnly});
+      }
       // An abstract Stored entry names external referents through a checked
       // receiver/formal, not a second borrow of that physical shell. Resolve
       // only its exact declared field paths; the shell's access and the
@@ -3674,6 +3711,48 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
 
     std::optional<MirLoanId> activatedForCommit;
     for (const MirInstruction &instruction : block.instructions) {
+      if (const auto found = ambient.find(instruction.id);
+          found != ambient.end()) {
+        std::vector<MirPersistentStorageAccess> queried;
+        if (query) {
+          // A live checked loan into a current-thread TLS slot proves Ready.
+          // Preserve that fact through nested helper calls, not just a direct
+          // Ensure instruction. Captured referents may belong to another
+          // thread and never establish readiness of the local instance.
+          std::vector<SymbolId> ready;
+          for (const auto &loan : body.loans) {
+            if (active[loan.id - 1] == MirLoanFlowState::Inactive)
+              continue;
+            const auto origin =
+                canonicalPlace(body, loan.source, bindingLoans, active);
+            if (!origin.ambiguous && origin.root == MirPlaceRootKind::Symbol &&
+                origin.capture == 0)
+              ready.push_back(origin.symbol);
+          }
+          queried = (*query)(block.id, instruction.id, ready);
+        }
+        const auto checkAccess = [&](const MirPersistentStorageAccess &access)
+            -> std::optional<MirVerificationResult> {
+          const MirCanonicalPlace place{.root = MirPlaceRootKind::Symbol,
+                                        .symbol = access.symbol,
+                                        .projections = access.projections};
+          return checkCanonicalPlace(
+              0, place, access.access == AccessMode::Mutable,
+              "an ambient source call or cleanup", instruction.id);
+        };
+        if (query) {
+          for (const auto &access : queried)
+            if (auto invalid = checkAccess(access))
+              return *invalid;
+        } else {
+          for (const auto *access : found->second) {
+            if (access->block != block.id)
+              continue;
+            if (auto invalid = checkAccess(*access))
+              return *invalid;
+          }
+        }
+      }
       const MirRangeIteration *parkedRange = nullptr;
       for (const auto &range : body.rangeIterations) {
         if (!range.endpointParking)
@@ -5737,6 +5816,14 @@ joinLifecycleState(const MirLifecycleState &left,
 
 } // namespace
 
+MirVerificationResult verifyMirPersistentStorageLoanFlow(
+    const MirBody &body, std::size_t owner,
+    std::span<const MirPersistentStorageAccess> hidden,
+    std::vector<MirPersistentStorageAccess> *direct,
+    const MirPersistentStorageEffectQuery *query) {
+  return verifyMirLoanFlow(body, owner, hidden, direct, query);
+}
+
 bool mirCanonicalPlaceContains(const MirBody &body, MirPlaceId parent,
                                MirPlaceId child) {
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
@@ -6995,6 +7082,7 @@ validFailureInstructionShape(const MirInstruction &instruction) {
       instruction.kind != MirInstructionKind::CallInput &&
       instruction.kind != MirInstructionKind::Call &&
       instruction.kind != MirInstructionKind::AllocateObject &&
+      instruction.kind != MirInstructionKind::EnsureThreadLocal &&
       instruction.kind != MirInstructionKind::CleanupBeforeAssign &&
       instruction.kind != MirInstructionKind::Construct) {
     return false;
@@ -7309,6 +7397,14 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   // aborts the process. It has no record handoff, cleanup successor or Invoke.
   if (!instruction.definedFailure.mayUnwind())
     return false;
+  if (instruction.kind == MirInstructionKind::EnsureThreadLocal)
+    return instruction.threadLocalStorage != 0 &&
+           instruction.bodyTarget ==
+               std::optional<MirBodyAddress>{
+                   {.kind = MirBodyKind::ThreadLocalInitializer,
+                    .owner = instruction.threadLocalStorage}} &&
+           instruction.definedFailure.propagation ==
+               FailurePropagationKind::BodyCall;
   // Forming a checked reference evaluates its indexed place without loading
   // the referent. Failure must propagate before any reference is published;
   // it is not a terminal containment boundary merely because it is a Borrow.
@@ -8262,7 +8358,9 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
                             return instruction.hostedStartupOperation != 0 ||
                                    instruction.kind ==
                                        MirInstructionKind::CallBody ||
-                                   instruction.bodyTarget.has_value();
+                                   (instruction.bodyTarget.has_value() &&
+                                    instruction.kind !=
+                                        MirInstructionKind::EnsureThreadLocal);
                           });
              });
 }
@@ -8919,6 +9017,7 @@ CanonicalPlace canonicalBorrowOrigin(
   return {.root = canonical.root,
           .binding = canonical.binding,
           .symbol = canonical.symbol,
+          .capture = canonical.capture,
           .temporary = canonical.temporary,
           .value = canonical.value,
           .projections = std::move(canonical.projections),
@@ -8931,6 +9030,7 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
   const MirCanonicalPlace lhs{.root = left.root,
                               .binding = left.binding,
                               .symbol = left.symbol,
+                              .capture = left.capture,
                               .temporary = left.temporary,
                               .value = left.value,
                               .projections = left.projections,
@@ -8939,6 +9039,7 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
   const MirCanonicalPlace rhs{.root = right.root,
                               .binding = right.binding,
                               .symbol = right.symbol,
+                              .capture = right.capture,
                               .temporary = right.temporary,
                               .value = right.value,
                               .projections = right.projections,
@@ -8952,6 +9053,7 @@ bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
   const MirCanonicalPlace canonical{.root = actual.root,
                                     .binding = actual.binding,
                                     .symbol = actual.symbol,
+                                    .capture = actual.capture,
                                     .temporary = actual.temporary,
                                     .value = actual.value,
                                     .projections = actual.projections,
@@ -11059,14 +11161,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              !instruction.functionTarget && !instruction.constructorTarget &&
              !instruction.lambdaTarget && instruction.threadLocalStorage != 0 &&
              instruction.bodyTarget ==
-                 std::optional<MirBodyAddress>{{
-                     .kind = MirBodyKind::ThreadLocalInitializer,
-                     .owner = instruction.threadLocalStorage}} &&
+                 std::optional<MirBodyAddress>{
+                     {.kind = MirBodyKind::ThreadLocalInitializer,
+                      .owner = instruction.threadLocalStorage}} &&
              instruction.info.type == SemanticType::Void &&
              instruction.lifecycle.empty() &&
              (instruction.definedFailure.propagation ==
                   FailurePropagationKind::BodyCall ||
               instruction.definedFailure.empty());
+    case MirInstructionKind::DrainThreadLocals:
+      return body.kind == MirBodyKind::HostedStartup && noOperation &&
+             !hasResult && !instruction.destination && !instruction.receiver &&
+             instruction.operands.empty() &&
+             instruction.parameterTypes.empty() && !instruction.loan &&
+             !instruction.functionTarget && !instruction.constructorTarget &&
+             !instruction.lambdaTarget && !instruction.bodyTarget &&
+             instruction.definedFailure.empty() &&
+             instruction.info.type == SemanticType::Void &&
+             instruction.lifecycle.empty();
     case MirInstructionKind::AllocateObject: {
       const MirDropObligation *allocation =
           body.findDropObligation(instruction.objectAllocation);
