@@ -950,9 +950,12 @@ The passive proof uses the class's generated destructor and active-cleanup
 facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
 without requiring an active cleanup operation. A constructor `Invoke` may
 separate an arm from publication only when its unique success block contains
-only that publication. The selected status constructor writes the slot at the
-original Invoke and engages it only on success; its original failure edge and
-cleanup remain intact. Ordinary constructor-boundary admission still verifies
+that publication followed only by verified `EndBorrow` instructions. These
+loan endpoints let a fallible source call retire its borrowed inputs after
+publishing the arm's class result, without computing another value or altering
+the result. The selected status constructor writes the slot at the original
+Invoke and engages it only on success; its original failure edge and cleanup
+remain intact. Ordinary constructor-boundary admission still verifies
 the selected constructor. The shared class-publication query is used by both
 transformed constructor admission and emission; recognizing storage in the
 prologue alone is insufficient.
@@ -1563,10 +1566,14 @@ spells through its verified field chain. The chain may be nested, as in
 `outer(inner(1)).inner.value`. MIR builds such a read from its shorter chains
 and records each of them as its own place rooted at the same value; that
 prefix record is admitted only when no instruction, terminator, loan, or drop
-touches it, and it declares and spells nothing. The constructor form also
-requires exact target, owner, result, parameter, and operand metadata; a
-trivial scalar copy load; and no active cleanup, lifecycle, borrowed-state, or
-drop obligation. A text view field
+touches it, and it declares and spells nothing. The copy `Load` that MIR uses
+for a class assignment's result, as in `(p = q).x`, copy-constructs the slot
+from the committed destination the same way; it requires a copyable class with
+a generated destructor and no active drop state or borrowed state, takes no
+other consumer, and keeps every other copy-load route unchanged. The
+constructor form also requires exact target, owner, result, parameter, and
+operand metadata; a trivial scalar copy load; and no active cleanup,
+lifecycle, borrowed-state, or drop obligation. A text view field
 (`std::string_view` or `c_string`) is read the same way: the view is a passive
 descriptor whose text is never the temporary's own storage. A construction that
 publishes a local owner's text (`L-OWN-02`) holds borrowed state only as that

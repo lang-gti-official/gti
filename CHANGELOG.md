@@ -31,6 +31,58 @@ for what minor and patch releases mean.
 - `unexpected(input.view())` gives an `unexpected_value`; converting it into
   an `expected`, and `optional<std::string_view>`, are still to come.
 
+## 0.459.5 — Borrowed fields copied through references
+
+- A constructor that copies a borrowed payload enum out of a reference
+  parameter into a field, such as
+  `Shelf(Slot& slot) : slot(slot) {}` for
+  `enum Slot { ready(int32_t& value), empty }`, used to report
+  `error[GTI-B0001]` (an internal compiler error). It now reports
+  `error[GTI-S2045]` at the argument, as the same copy of a class with a
+  reference field already does. Taking the enum by value,
+  `Shelf(Slot slot) : slot(slot) {}`, works.
+
+## 0.459.4 — Returning borrowed enum parameters
+
+- A function can return a borrowed payload enum that it takes by value. For
+  `enum Slot { ready(int32_t& value), empty }`,
+  `Slot relay(Slot slot) { return std::move(slot); }`, the copy
+  `return slot;` and the `[[borrowed_from(slot)]]` form used to report
+  `error[GTI-B0001]` (an internal compiler error); they now work. So does
+  returning a class whose borrowed state is such an enum, and a concrete
+  generic enum such as `Outcome<int&, std::string>`. The result keeps the
+  caller's owner: relaying a slot of a local reports `error[GTI-S2045]`, and
+  assigning to the owner while the result is live reports `error[GTI-S2017]`.
+- Returning another relay's result, `return relay(std::move(slot));`, still
+  reports `error[GTI-B0001]`.
+
+## 0.459.3 — Reading fields of assignment results
+
+- A field of a class assignment's result can now be read. For a struct
+  `Point`, `return (p = q).x;` and a constructor initializer such as
+  `first((p = q).x)` used to report `error[GTI-B0001]` (an internal compiler
+  error); they now read the assigned value, and `p` holds `q` afterwards.
+  Nested reads such as `(s = t).start.y`, and destinations that are a field
+  or a reference parameter, as in `(h.point = q).x`, work too.
+- The result is the assigned value, not the destination: in
+  `combine((p = q).x, (p = r).x)` the first argument is still `q.x`.
+- Using the whole result of a class assignment, as in `Point r = (p = q);`,
+  and reading a field of a move-only class's assignment result still report
+  `error[GTI-B0001]`.
+
+## 0.459.2 — Native C-string ownership and conditional call results
+
+- An untracked `c_string` returned by an external C function can again be
+  retained in an ordinary native-resource wrapper. MIR recognizes the exact
+  native producer instead of reporting `GTI-B0001`; GTI owner-dependent strings
+  retain their existing lifetime checks and native pointer validity remains
+  the binding's obligation.
+- A conditional can bind a class result returned by either of two fallible
+  calls with borrowed text inputs. The backend preserves each arm's input-loan
+  ending after result publication, including cleanup-free records without a
+  default constructor. This repairs the editor's conditional stdout/stderr
+  logging path.
+
 ## 0.459.1 — Moving classes that hold text views
 
 - A class with a `std::string_view` field can now be moved into another
