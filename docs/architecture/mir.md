@@ -1792,7 +1792,13 @@ loans. For a conditional statement, only HIR's exact declared enclosing endpoint
 can be acknowledged by nested transfers. Each arm has independent endpoint
 state; the join retains an acknowledgment only when every normally reaching
 arm supplies the same identity. A terminating arm supplies no fallthrough
-evidence. Loop and switch bodies cannot export an unproved path-only transfer
+evidence. When a consuming call retires a carrier's group in one arm of an
+`if`, `?:`, `&&` or `||`, the carrier is moved on that path, so semantics
+rejects any later use of it. Lowering then retires the same group at the end of
+every other normally reaching arm, records the same endpoint there, and only
+then joins, so every edge agrees. This applies only to a cleanup-free group: a
+lifecycle-bound group is still needed by its carrier's drop, and a carrier with
+a destructor consumed on only some paths is not yet lowered. Loop and switch bodies cannot export an unproved path-only transfer
 acknowledgment. The result still retains every source dependency; live child
 reborrows and unrelated overlapping loans remain conflicts.
 
