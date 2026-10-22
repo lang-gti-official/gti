@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Conditional joins whose arms take a class by value (0.459.5)
+## Conditional joins whose arms take a class by value (0.459.6)
 
 A field read of a conditional temporary whose arms pass a class by value to
 their constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, used
@@ -32,6 +32,17 @@ against main's compiler at 0.459.3 on the same sources:
   374 fail with both, with the same error codes.
 - Only `issue_127_constructor_temporary_field.gti` changes status: it now
   builds. No other program is newly accepted.
+
+## Borrowed fields copied through references (0.459.5)
+
+`complete_borrow_summaries` checks the new `GTI-S2045` for a borrowed enum
+copied out of a reference parameter into a field, moved through one, and a
+generic carrier copied through one: code, message and the exact span of the
+argument, with no backend error. In-place, copied and moved by-value
+initializers stay accepted. `borrow_origin`, `borrow_origin_runtime`,
+`contextual_borrowed_construction_runtime`, `mir_census_regression` and
+`lowered_program_corpus_census` pass, so no fixture or example is newly
+rejected.
 
 ## Returning borrowed enum parameters (0.459.4)
 
@@ -250,7 +261,7 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
   without that stress input, and requires the same outcome.
 
 Still refused, both before and after, even for a single-level read (0.459.1 admits
-the text join and 0.459.5 the by-value one; see above):
+the text join and 0.459.6 the by-value one; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
 - a conditional join of a class that holds a text field, as in
