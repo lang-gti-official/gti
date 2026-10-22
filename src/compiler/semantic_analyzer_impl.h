@@ -2128,6 +2128,19 @@ private:
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
   [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
+  // Whether `result`, this function's returned value of type `type`, relays
+  // the formal `argument` names at its text field `field` (L-OWN-02),
+  // recording it in publishedTextFields instead of an ownerless requirement.
+  // `constructor` is the selected constructor of a returned construction.
+  [[nodiscard]] bool relayReturnedTextFormal(const Expr &result,
+                                             const SemanticType &type,
+                                             const ConstructorDecl *constructor,
+                                             const ExprPtr &argument,
+                                             SymbolId field);
+  // A callee that returns an argument in a text field of its fresh result
+  // makes `call` publish that argument's owner there, as a constructor does.
+  void publishTextCallResult(const Call &call, ResolvedCallInfo &resolved,
+                             const FunctionInfo &callee);
   void recordOwnerlessTextCall(const Call &call,
                                const CallableCandidate &target);
   void finalizeOwnerlessTextContracts();

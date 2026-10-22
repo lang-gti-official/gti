@@ -2436,6 +2436,26 @@ kept = Token("literal", 5).text;                          // valid: ownerless
 A temporary over literal text has ownerless fields, which may be stored or
 returned.
 
+A function that returns a fresh value of its return type whose text field
+holds one of its text parameters relays that parameter, as a constructor
+does. It may build the value directly or return a call of another such
+function. Each call's result holds the argument's text in that field:
+
+```gti
+Token makeToken(std::string_view text) { return Token(text, 1); }
+
+Token made = makeToken(input.view());          // made.text views input
+std::pair<std::string_view, int> p = std::make_pair(input.view(), 1);
+kept = makeToken("literal").text;              // valid: ownerless
+kept = made.text;                              // GTI-S2045
+```
+
+A generic function relays the same way after substitution, as
+`std::make_pair` and `unexpected` do. Using the parameter's value any other
+way inside the function, for example keeping it in a local and returning
+that, still requires ownerless text. So does a recursive call, even when it
+is returned.
+
 A dependent value still cannot be passed to a constructor, a lambda, a
 virtual method or a generic function, nor returned itself, captured, bound by
 a reference, assigned into existing storage, or stored in a global, a field,

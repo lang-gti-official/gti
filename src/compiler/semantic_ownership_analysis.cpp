@@ -1250,7 +1250,7 @@ auto SemanticVisitor::Impl::textDependentFields(const Expr &expression) const
                     mapping.resultFields.end());
     return fields;
   }
-  if (const auto *call = exprAs<Call>(&expression))
+  if (const auto *call = exprAs<Call>(&expression)) {
     if (const auto *payload = semanticModel.findPayloadConstruction(*call);
         payload != nullptr && payload->dependentTextPublication) {
       for (const auto &mapping : payload->borrowFields)
@@ -1258,6 +1258,14 @@ auto SemanticVisitor::Impl::textDependentFields(const Expr &expression) const
                       mapping.resultFields.end());
       return fields;
     }
+    if (const auto *resolved = semanticModel.findCall(*call);
+        resolved != nullptr && resolved->dependentTextPublication) {
+      for (const auto &mapping : resolved->borrowFields)
+        fields.insert(fields.end(), mapping.resultFields.begin(),
+                      mapping.resultFields.end());
+      return fields;
+    }
+  }
   const auto *variable = exprAs<Variable>(&expression);
   const Symbol *symbol =
       variable == nullptr ? nullptr : resolvedBorrowVariable(*variable);
@@ -1998,6 +2006,109 @@ auto SemanticVisitor::Impl::requireOwnerlessTextParameter(
     semanticModel.record(*updated.declaration, std::move(updated));
   }
   return true;
+}
+
+auto SemanticVisitor::Impl::relayReturnedTextFormal(
+    const Expr &result, const SemanticType &type,
+    const ConstructorDecl *constructor, const ExprPtr &argument, SymbolId field)
+    -> bool {
+  // Only the function's own returned value of its return type relays a
+  // formal; a construction or call anywhere else keeps the requirement.
+  const Expr *returned = contextualReturnValue;
+  while (const auto *group = exprAs<Grouping>(returned))
+    returned = group->expression() ? group->expression().get() : nullptr;
+  if (returned != &result || field == 0 || lambdaDepth != 0 ||
+      constructorDepth != 0 || destructorDepth != 0)
+    return false;
+  const auto index = ownerlessTextForwardingParameter(argument);
+  const auto *function = currentFunctionInfo();
+  if (!index || !function || !function->declaration ||
+      function->virtualMethod || function->overrideMethod ||
+      function->linkage != LanguageLinkage::Gti ||
+      function->returnType != type || !textPublicationOwner(type) ||
+      (constructor != nullptr &&
+       !constructionKeepsPublishedText(type, constructor)))
+    return false;
+  FunctionInfo updated = *function;
+  const PublishedTextField entry{.parameter = *index, .field = field};
+  const auto position =
+      std::lower_bound(updated.publishedTextFields.begin(),
+                       updated.publishedTextFields.end(), entry);
+  if (position == updated.publishedTextFields.end() || *position != entry) {
+    updated.publishedTextFields.insert(position, entry);
+    semanticModel.record(*updated.declaration, std::move(updated));
+  }
+  return true;
+}
+
+auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
+                                                  ResolvedCallInfo &resolved,
+                                                  const FunctionInfo &callee)
+    -> void {
+  // A callee whose body is still being analyzed may relay a formal it has
+  // not recorded yet, so text passed to it must be ownerless here.
+  const FunctionDecl *body = callee.bodyDeclaration();
+  const bool provisional = body != nullptr && bodiesInProgress.contains(body);
+  if ((callee.publishedTextFields.empty() && !provisional) ||
+      resolved.returnType.kind != SemanticType::Class ||
+      !textPublicationOwner(resolved.returnType))
+    return;
+  if (provisional) {
+    resolved.provisionalTextRelays = true;
+    semanticModel.record(call, resolved);
+  }
+  std::vector<BorrowedFieldOrigin> published;
+  const std::size_t count = resolvedCallArgumentCount(call, &resolved);
+  for (std::size_t parameter = 0;
+       parameter < count && parameter < resolved.parameterTypes.size();
+       ++parameter) {
+    const auto kind = resolved.parameterTypes[parameter].kind;
+    const ExprPtr *argument = resolvedCallArgument(call, &resolved, parameter);
+    if ((kind != SemanticType::StringView && kind != SemanticType::CString) ||
+        argument == nullptr || !isOwnerDependentTextExpression(*argument))
+      continue;
+    if (provisional) {
+      if (!requireOwnerlessTextParameter(*argument))
+        reportOwnerDependentTextStorage(
+            *argument, "passed to a recursive call whose result may hold it");
+      continue;
+    }
+    for (const auto &entry : callee.publishedTextFields) {
+      if (entry.parameter != parameter ||
+          !directTextField(resolved.returnType, entry.field))
+        continue;
+      if (relayReturnedTextFormal(call, resolved.returnType, nullptr, *argument,
+                                  entry.field))
+        continue;
+      if (requireOwnerlessTextParameter(*argument))
+        break;
+      if (textFieldOwnerDependency(*argument, entry.field).empty()) {
+        reportOwnerDependentTextStorage(
+            *argument, "passed to a function that returns it in a field");
+        break;
+      }
+      if (!published.empty()) {
+        // Phase 1 of L-OWN-02 publishes one owner per value.
+        report(expressionToken(*argument),
+               "A value can hold dynamic text from one owner; this argument "
+               "would add a second owner dependency.",
+               "GTI-S2045");
+        break;
+      }
+      published.push_back({.resultFields = {entry.field},
+                           .origin = BorrowOriginKind::Argument,
+                           .parameter = parameter,
+                           .access = AccessMode::ReadOnly});
+    }
+  }
+  if (published.empty())
+    return;
+  resolved.borrowOrigin = BorrowOriginKind::Argument;
+  resolved.borrowArgument = published.front().parameter;
+  resolved.borrowAccess = AccessMode::ReadOnly;
+  resolved.borrowFields = std::move(published);
+  resolved.dependentTextPublication = true;
+  semanticModel.record(call, resolved);
 }
 
 auto SemanticVisitor::Impl::recordOwnerlessTextCall(

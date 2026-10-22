@@ -7100,6 +7100,7 @@ private:
     call.borrowArguments = value.borrowArguments;
     call.borrowFields = value.borrowFields;
     call.dependentTextPublication = value.dependentTextPublication;
+    call.provisionalTextRelays = value.provisionalTextRelays;
     call.borrowPlace = value.borrowPlace;
     call.restoresReferenceResult = value.restoresReferenceResult;
     call.restoredBorrowFields = value.restoredBorrowFields;

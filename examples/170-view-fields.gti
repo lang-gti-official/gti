@@ -4,7 +4,9 @@
 // be copied, moved and read, and passed to functions and methods that keep
 // its text within the call or return it. It cannot be returned, captured or
 // stored itself. A temporary works the same way within its expression, and a
-// payload enum's text payload can hold such a view too.
+// payload enum's text payload can hold such a view too. A function that
+// returns a fresh value over its text parameter hands the caller a value over
+// the argument's owner.
 #include <std/string>
 
 // A token views its input; it owns no text.
@@ -30,6 +32,10 @@ struct Note {
 // Keeps the token's text within the call, so a relayed token is accepted.
 uint64_t measure(Token token) { return token.text.size(); }
 
+// Returns a fresh token over its text: the result views whatever the
+// argument views.
+Token keyword(std::string_view text) { return Token(text, 2); }
+
 int main() {
   std::string line{"count = 42"};
 
@@ -51,6 +57,9 @@ int main() {
   // depend on `line` beyond the temporary itself.
   std::string_view head = Token(line.view(), 2).text;
   std::println(head.size() + Token(line.view(), 3).spelling().size());
+  // The factory's token views `line`, as the token it constructs does.
+  Token made = keyword(line.view());
+  std::println(made.spelling());
 
   // Matching the payload binds a view of `line` as well.
   Lexeme lexeme = Lexeme::word(line.view());

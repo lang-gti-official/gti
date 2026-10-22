@@ -2606,6 +2606,33 @@ text field of its receiver. That result holds the owner's text and borrows
 nothing of the temporary, so `ephemeralBorrowResultSupported` does not apply
 to it.
 
+A function may return a fresh value that holds one of its by-value text
+formals in a direct text field (phase 2a). Its `publishedTextFields` lists
+each such (formal, field) relay; it is a callee fact, not a return-borrow
+summary, so an ownerless call keeps no result borrow.
+- The relay is decided where the ownerless requirement used to be recorded.
+  `relayReturnedTextFormal` runs at a construction of the function's own
+  return type, and at a call of another relaying function. It applies when
+  the expression is the function's `contextualReturnValue`, the argument is
+  exactly the formal, the class is a publication owner, and the constructor
+  stores that formal in one field. Any other use of the formal there keeps
+  `requireOwnerlessTextParameter`.
+- A generic function decides the relay in its open analysis, which records
+  its conditional formal requirements today; an instance re-derives it after
+  clearing its contract sets. A call reads the callee's relays from the
+  body-analyzed declaration and checks the field against the concrete result
+  type with `directTextField`.
+- `publishTextCallResult` gives a call whose relayed argument is dynamic the
+  constructor's call-site facts: `dependentTextPublication`, `borrowFields`
+  and an Argument origin. The result is a `textDependentValueInfo` value, and
+  `textDependentFields`, `storedBorrowDependencies` and confinement treat it
+  as a publishing construction. A temporary owner or a second owner is
+  `GTI-S2045`, as for constructors.
+- A callee whose body is in `bodiesInProgress` (recursion) may relay formals
+  it has not recorded yet. The call is marked `provisionalTextRelays`; a
+  formal argument there is required ownerless and a dynamic one is
+  `GTI-S2045`.
+
 A dependent argument or receiver records a `TextDependentRelay` with its
 designated fields, while its scope is live. The request's own finalization
 decides it, once every body that feeds the contracts is analyzed: it consumes
