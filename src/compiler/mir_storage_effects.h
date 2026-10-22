@@ -18,6 +18,7 @@ struct MirPersistentStorageAccess {
   SymbolId symbol = 0;
   std::vector<MirPlaceProjection> projections;
   AccessMode access = AccessMode::ReadOnly;
+  bool destructiveTransfer = false;
 
   friend bool operator==(const MirPersistentStorageAccess &,
                          const MirPersistentStorageAccess &) = default;
@@ -34,7 +35,8 @@ using MirPersistentStorageEffectQuery =
     const MirBody &body, std::size_t owner,
     std::span<const MirPersistentStorageAccess> hidden,
     std::vector<MirPersistentStorageAccess> *direct = nullptr,
-    const MirPersistentStorageEffectQuery *query = nullptr);
+    const MirPersistentStorageEffectQuery *query = nullptr,
+    std::span<const SymbolId> persistent = {});
 
 [[nodiscard]] MirVerificationResult
 verifyMirPersistentStorageEffects(const MirProgram &program);

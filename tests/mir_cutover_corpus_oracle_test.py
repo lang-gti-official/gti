@@ -36,7 +36,7 @@ MARKER_PATTERN = re.compile(
     r"(module-instance|field-initializers-instance|"
     r"static-field-initializers-instance|function-instance|"
     r"constructor-instance|destructor-instance|lambda-instance|"
-    r"hosted-startup-instance) (\d+)"
+    r"hosted-startup-instance|thread-local-initializer) (\d+)"
 )
 ALLOWED_MARKERS = {
     "deduced-callable-v1",

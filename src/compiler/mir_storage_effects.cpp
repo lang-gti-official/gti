@@ -148,8 +148,15 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
       if (!proof.valid())
         return proof;
       for (const auto &access : direct)
-        if (isPersistent(access.symbol))
+        if (isPersistent(access.symbol)) {
+          if (access.destructiveTransfer)
+            return mir_detail::verificationFailure(
+                *node.body, node.address.owner,
+                "persistent storage cannot be destructively transferred "
+                "without a represented restoration proof",
+                access.block, access.instruction);
           mergeAccess(node.summary, access);
+        }
       node.direct = node.summary;
     }
     for (const auto &block : node.body->blocks) {
@@ -215,7 +222,30 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
   }
 
   for (const auto &node : nodes) {
-    if (node.body->loans.empty())
+    const bool stagedPersistentInput = std::any_of(
+        node.body->blocks.begin(), node.body->blocks.end(),
+        [&](const auto &block) {
+          return block.reachable &&
+                 std::any_of(
+                     block.instructions.begin(), block.instructions.end(),
+                     [&](const auto &input) {
+                       if (input.tombstone ||
+                           input.kind != MirInstructionKind::CallInput ||
+                           (input.callInputKind !=
+                                HirCallInputKind::ReadBorrow &&
+                            input.callInputKind !=
+                                HirCallInputKind::MutableBorrow) ||
+                           input.operands.size() != 1)
+                         return false;
+                       const auto *place =
+                           node.body->findPlace(input.operands.front().place);
+                       return place &&
+                              place->root == MirPlaceRootKind::Symbol &&
+                              place->capture == 0 &&
+                              isPersistent(place->symbol);
+                     });
+        });
+    if (node.body->loans.empty() && !stagedPersistentInput)
       continue;
     std::vector<MirPersistentStorageAccess> hidden;
     std::map<MirInstructionId, const Invocation *> roots;
@@ -233,13 +263,21 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
       hidden.push_back(
           {.block = invocation.block, .instruction = invocation.instruction});
     }
-    if (hidden.empty())
+    if (hidden.empty() && !stagedPersistentInput)
       continue;
     using QueryKey = std::pair<MirInstructionId, std::vector<SymbolId>>;
     std::map<QueryKey, std::vector<MirPersistentStorageAccess>> cache;
     const MirPersistentStorageEffectQuery query =
         [&](MirBlockId block, MirInstructionId instruction,
             std::span<const SymbolId> readySymbols) {
+          // With no live persistent/unknown origin there is no ambient loan to
+          // conflict with. Ordinary local/parameter/capture loans still use
+          // the existing checker; callers validate their concrete arguments.
+          if (std::none_of(readySymbols.begin(), readySymbols.end(),
+                           [&](SymbolId symbol) {
+                             return symbol == 0 || isPersistent(symbol);
+                           }))
+            return std::vector<MirPersistentStorageAccess>{};
           std::vector<SymbolId> ready;
           for (const auto symbol : readySymbols)
             if (program.findThreadLocalStorage(symbol))
@@ -287,7 +325,7 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
           return accesses;
         };
     auto proof = verifyMirPersistentStorageLoanFlow(
-        *node.body, node.address.owner, hidden, nullptr, &query);
+        *node.body, node.address.owner, hidden, nullptr, &query, persistent);
     if (!proof.valid())
       return proof;
   }

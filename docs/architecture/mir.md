@@ -2433,6 +2433,14 @@ accesses at each invocation's live-loan state. Initializer edges retain their
 readiness condition through nested helpers. Captured referents have a distinct
 canonical capture domain from same-thread TLS lookup. Native/raw-pointer
 obligations remain the unsafe boundary; this is not a pointer-provenance solver.
+For an exact persistent-storage reference input, the independently verified
+`CallInput` checkpoint also starts protection before later inputs execute.
+Its unique consuming invocation (or an interrupted invocation's terminal
+boundary) ends that explicit scheduling interval. The verifier walks that
+interval through the existing CFG and uses the same canonical overlap rules,
+including hidden callee effects; it does not infer another NLL lifetime or
+invent a temporary borrow that an otherwise legal returned reference would
+need to outlive. Already-loaned inputs retain their ordinary loan proof.
 
 Every type-owned static function retains an exact owner but no instance receiver:
 it cannot carry virtual/pure/override flags, virtual roots, mutable/consuming

@@ -16,6 +16,7 @@
 #include <iterator>
 #include <limits>
 #include <queue>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -2692,12 +2693,111 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
 verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   std::span<const MirPersistentStorageAccess> hidden = {},
                   std::vector<MirPersistentStorageAccess> *direct = nullptr,
-                  const MirPersistentStorageEffectQuery *query = nullptr) {
+                  const MirPersistentStorageEffectQuery *query = nullptr,
+                  std::span<const SymbolId> persistent = {}) {
   std::unordered_map<MirInstructionId,
                      std::vector<const MirPersistentStorageAccess *>>
       ambient;
   for (const auto &access : hidden)
     ambient[access.instruction].push_back(&access);
+  // Ordered inputs already have an independently verified unique consumer.
+  // Their reference binding protects persistent storage before later inputs
+  // run, even when no named semantic loan is needed. This is the explicit
+  // checkpoint-to-invocation protocol, not a second NLL inference engine.
+  struct StagedStorageInput {
+    MirPlaceId source = 0;
+    AccessMode access = AccessMode::ReadOnly;
+    MirInstructionId consumer = 0;
+  };
+  std::unordered_map<MirInstructionId, std::vector<StagedStorageInput>> staged;
+  if (query != nullptr) {
+    std::unordered_map<MirValueId, MirInstructionId> inputConsumers;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone || !orderedInvocation(instruction))
+          continue;
+        const auto retain = [&](const MirOperand &operand) {
+          if (operand.kind == MirOperandKind::Value)
+            inputConsumers.emplace(operand.value, instruction.id);
+        };
+        if (instruction.receiver)
+          retain(*instruction.receiver);
+        for (const auto &operand : instruction.operands)
+          retain(operand);
+      }
+    for (const auto &inputBlock : body.blocks) {
+      if (!inputBlock.reachable)
+        continue;
+      for (std::size_t start = 0; start < inputBlock.instructions.size();
+           ++start) {
+        const auto &input = inputBlock.instructions[start];
+        if (input.tombstone || input.kind != MirInstructionKind::CallInput ||
+            !input.result || input.operands.size() != 1 ||
+            (input.callInputKind != HirCallInputKind::ReadBorrow &&
+             input.callInputKind != HirCallInputKind::MutableBorrow))
+          continue;
+        const auto &operand = input.operands.front();
+        const auto *source = body.findPlace(operand.place);
+        if ((operand.kind != MirOperandKind::BorrowRead &&
+             operand.kind != MirOperandKind::BorrowWrite) ||
+            source == nullptr || source->root != MirPlaceRootKind::Symbol ||
+            source->capture != 0 ||
+            !std::binary_search(persistent.begin(), persistent.end(),
+                                source->symbol) ||
+            std::any_of(source->projections.begin(), source->projections.end(),
+                        [](const auto &projection) {
+                          return projection.kind ==
+                                     MirProjectionKind::RawIndex ||
+                                 projection.kind ==
+                                     MirProjectionKind::RawDereference;
+                        }))
+          continue;
+        const auto foundConsumer = inputConsumers.find(*input.result);
+        const MirInstructionId consumer =
+            foundConsumer == inputConsumers.end() ? 0 : foundConsumer->second;
+        // An interrupted invocation has no consumer; its already bound inputs
+        // remain protected until the verified terminal failure boundary.
+        std::vector<std::pair<MirBlockId, std::size_t>> pending{
+            {inputBlock.id, start + 1}};
+        std::set<std::pair<MirBlockId, std::size_t>> visited;
+        while (!pending.empty()) {
+          const auto position = pending.back();
+          pending.pop_back();
+          if (!visited.insert(position).second)
+            continue;
+          const auto *current = body.findBlock(position.first);
+          if (current == nullptr || !current->reachable)
+            continue;
+          bool consumed = false;
+          for (std::size_t index = position.second;
+               index < current->instructions.size(); ++index) {
+            const auto &instruction = current->instructions[index];
+            if (instruction.tombstone)
+              continue;
+            if (instruction.id == input.id)
+              return failure(
+                  body, owner,
+                  "persistent input crosses its own binding checkpoint",
+                  current->id, instruction.id);
+            staged[instruction.id].push_back(
+                {.source = source->id,
+                 .access =
+                     input.callInputKind == HirCallInputKind::MutableBorrow
+                         ? AccessMode::Mutable
+                         : AccessMode::ReadOnly,
+                 .consumer = consumer});
+            if (instruction.id == consumer) {
+              consumed = true;
+              break;
+            }
+          }
+          if (!consumed)
+            for (const auto successor : successors(current->terminator))
+              pending.emplace_back(successor, 0);
+        }
+      }
+    }
+  }
   std::vector<std::size_t> producerCounts(body.loans.size(), 0);
   std::vector<std::size_t> activationCounts(body.loans.size(), 0);
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
@@ -3243,6 +3343,22 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                            std::string(context),
                        block.id, instruction);
       }
+      if (const auto found = staged.find(instruction); found != staged.end())
+        for (const auto &input : found->second) {
+          // The consuming invocation may use its own prepared operands.
+          // Ambient accesses inside its source body still need the proof.
+          if (input.consumer == instruction && placeId != 0)
+            continue;
+          if ((write || input.access == AccessMode::Mutable) &&
+              canonicalPlacesOverlap(
+                  place,
+                  canonicalPlace(body, input.source, bindingLoans, active)))
+            return failure(body, owner,
+                           "persistent call input is invalidated before its "
+                           "invocation completes in " +
+                               std::string(context),
+                           block.id, instruction);
+        }
       if (direct && place.root == MirPlaceRootKind::Symbol &&
           place.capture == 0 && place.symbol != 0 &&
           std::none_of(place.projections.begin(), place.projections.end(),
@@ -3574,6 +3690,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         return checkPlace(resolved.place, false, context, instruction,
                           inputLoan);
       case MirOperandKind::Move: {
+        if (direct) {
+          const auto origin =
+              canonicalPlace(body, resolved.place, bindingLoans, active);
+          if (!origin.ambiguous && origin.root == MirPlaceRootKind::Symbol &&
+              origin.capture == 0 &&
+              std::none_of(origin.projections.begin(), origin.projections.end(),
+                           [](const auto &projection) {
+                             return projection.kind ==
+                                        MirProjectionKind::RawIndex ||
+                                    projection.kind ==
+                                        MirProjectionKind::RawDereference;
+                           }))
+            direct->push_back({.block = block.id,
+                               .instruction = instruction,
+                               .symbol = origin.symbol,
+                               .projections = origin.projections,
+                               .access = AccessMode::Mutable,
+                               .destructiveTransfer = true});
+        }
         const MirPlace *moved = body.findPlace(resolved.place);
         if (moved != nullptr && moved->root == MirPlaceRootKind::Binding &&
             moved->projections.empty()) {
@@ -3720,15 +3855,28 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           // Ensure instruction. Captured referents may belong to another
           // thread and never establish readiness of the local instance.
           std::vector<SymbolId> ready;
+          const auto retainOrigin = [&](MirPlaceId source) {
+            if (source == 0)
+              return;
+            const auto origin =
+                canonicalPlace(body, source, bindingLoans, active);
+            if (origin.ambiguous)
+              ready.push_back(0); // Unknown origins cannot authorize skipping.
+            else if (origin.root == MirPlaceRootKind::Symbol &&
+                     origin.capture == 0)
+              ready.push_back(origin.symbol);
+          };
           for (const auto &loan : body.loans) {
             if (active[loan.id - 1] == MirLoanFlowState::Inactive)
               continue;
-            const auto origin =
-                canonicalPlace(body, loan.source, bindingLoans, active);
-            if (!origin.ambiguous && origin.root == MirPlaceRootKind::Symbol &&
-                origin.capture == 0)
-              ready.push_back(origin.symbol);
+            retainOrigin(loan.source);
+            for (const auto &dependency : loan.additionalDependencies)
+              retainOrigin(dependency.source);
           }
+          if (const auto inputs = staged.find(instruction.id);
+              inputs != staged.end())
+            for (const auto &input : inputs->second)
+              retainOrigin(input.source);
           queried = (*query)(block.id, instruction.id, ready);
         }
         const auto checkAccess = [&](const MirPersistentStorageAccess &access)
@@ -5820,8 +5968,9 @@ MirVerificationResult verifyMirPersistentStorageLoanFlow(
     const MirBody &body, std::size_t owner,
     std::span<const MirPersistentStorageAccess> hidden,
     std::vector<MirPersistentStorageAccess> *direct,
-    const MirPersistentStorageEffectQuery *query) {
-  return verifyMirLoanFlow(body, owner, hidden, direct, query);
+    const MirPersistentStorageEffectQuery *query,
+    std::span<const SymbolId> persistent) {
+  return verifyMirLoanFlow(body, owner, hidden, direct, query, persistent);
 }
 
 bool mirCanonicalPlaceContains(const MirBody &body, MirPlaceId parent,

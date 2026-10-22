@@ -19,6 +19,7 @@ GENERATED_KINDS = (
     "native_interop_adapter",
     "thread_task_adapter",
     "concrete_instance_adapter",
+    "thread_local_storage",
 )
 
 

@@ -28,6 +28,8 @@ constexpr std::array generatedKinds{
               "thread_task_adapter"},
     std::pair{lang::LoweredGeneratedItemKind::ConcreteInstanceAdapter,
               "concrete_instance_adapter"},
+    std::pair{lang::LoweredGeneratedItemKind::ThreadLocalStorage,
+              "thread_local_storage"},
 };
 static_assert([] {
   if (generatedKinds.size() !=
