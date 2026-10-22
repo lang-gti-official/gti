@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.459.3 — Reading fields of assignment results
+
+- A field of a class assignment's result can now be read. For a struct
+  `Point`, `return (p = q).x;` and a constructor initializer such as
+  `first((p = q).x)` used to report `error[GTI-B0001]` (an internal compiler
+  error); they now read the assigned value, and `p` holds `q` afterwards.
+  Nested reads such as `(s = t).start.y`, and destinations that are a field
+  or a reference parameter, as in `(h.point = q).x`, work too.
+- The result is the assigned value, not the destination: in
+  `combine((p = q).x, (p = r).x)` the first argument is still `q.x`.
+- Using the whole result of a class assignment, as in `Point r = (p = q);`,
+  and reading a field of a move-only class's assignment result still report
+  `error[GTI-B0001]`.
+
 ## 0.459.2 — Native C-string ownership and conditional call results
 
 - An untracked `c_string` returned by an external C function can again be
