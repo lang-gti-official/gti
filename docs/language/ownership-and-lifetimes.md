@@ -2391,7 +2391,25 @@ that field; another field of the same value stays ownerless. The relay applies
 only when every return of the function that may hold dynamic text reads the
 same field of the same formal or receiver, possibly through such a function.
 A function that returns that field beside another source, or two different
-fields, keeps the requirement above instead.
+fields, keeps the requirement above instead. So does a function whose returns
+reach a call to itself, directly or through other functions. Some depth of the
+recursion may return any formal that it passes along, so a recursion that
+permutes its formals requires ownerless text in each of them:
+
+```gti
+std::string_view pick(Token a, Token b, int n) {
+  if (n == 0) {
+    return a.text;
+  }
+  return pick(b, a, n - 1);  // a deeper call returns b.text
+}
+
+pick(Token("ab", 1), Token("xyz", 2), 1);  // valid: returns "xyz"
+pick(Token("ab", 1), token, 1);            // GTI-S2045: token views input
+```
+
+A recursive text result is ownerless whenever the function's other returns
+are.
 
 Literal-backed values satisfy every contract, so existing calls are
 unaffected. Inside such a function, reading the field gives a dependent view
