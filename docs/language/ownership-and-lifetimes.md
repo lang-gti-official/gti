@@ -2310,7 +2310,12 @@ same return dependency after substituting the exact parameter and return
 types. A literal-backed argument remains an ownerless static view and needs no
 runtime loan; a dynamic argument transfers its existing owner dependency to
 the result. That retained loan prevents mutation, movement, or destruction of
-the owner until the last local carrier ends. A dynamic view cannot escape a
+the owner until the last local carrier ends. A function whose returns reach a
+call to itself, directly or through other functions, does not yet relay a
+parameter's view: returning one there reports `GTI-S2045`. Its text result is
+ownerless when its other returns are, as for
+`std::string_view loop(std::string_view s, int n)` returning `"done"` or
+`loop(s, n - 1)`. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
 storage, or be nested in a global, static, array, or dynamic container. It
 reaches a field only through the owner-tracked view fields described below.
@@ -2391,7 +2396,22 @@ that field; another field of the same value stays ownerless. The relay applies
 only when every return of the function that may hold dynamic text reads the
 same field of the same formal or receiver, possibly through such a function.
 A function that returns that field beside another source, or two different
-fields, keeps the requirement above instead.
+fields, keeps the requirement above instead. So does a function whose returns
+reach a call to itself, directly or through other functions. Some depth of the
+recursion may return any formal that it passes along, so a recursion that
+permutes its formals requires ownerless text in each of them:
+
+```gti
+std::string_view pick(Token a, Token b, int n) {
+  if (n == 0) {
+    return a.text;
+  }
+  return pick(b, a, n - 1);  // a deeper call returns b.text
+}
+
+pick(Token("ab", 1), Token("xyz", 2), 1);  // valid: returns "xyz"
+pick(Token("ab", 1), token, 1);            // GTI-S2045: token views input
+```
 
 Literal-backed values satisfy every contract, so existing calls are
 unaffected. Inside such a function, reading the field gives a dependent view
