@@ -9080,7 +9080,7 @@ prerequisite checkpoints as full acceptance.
       value. The C++ emitter's cleanup-free field-read slot admits text view
       fields, published constructions and text observers; before this, even an
       ownerless temporary's text field was refused.
-    - *Implemented in 0.459.0: recursive relays.* A recursive or mutually
+    - *Implemented in 0.460.0: recursive relays.* A recursive or mutually
       recursive function relays the text formal, formal field or receiver
       field that its other returns relay. Semantics proposes the relay as a
       least fixpoint over each recursive set, so a recursion that permutes
