@@ -2310,7 +2310,12 @@ same return dependency after substituting the exact parameter and return
 types. A literal-backed argument remains an ownerless static view and needs no
 runtime loan; a dynamic argument transfers its existing owner dependency to
 the result. That retained loan prevents mutation, movement, or destruction of
-the owner until the last local carrier ends. A dynamic view cannot escape a
+the owner until the last local carrier ends. A function whose returns reach a
+call to itself, directly or through other functions, does not yet relay a
+parameter's view: returning one there reports `GTI-S2045`. Its text result is
+ownerless when its other returns are, as for
+`std::string_view loop(std::string_view s, int n)` returning `"done"` or
+`loop(s, n - 1)`. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
 storage, or be nested in a global, static, array, or dynamic container. It
 reaches a field only through the owner-tracked view fields described below.
@@ -2407,9 +2412,6 @@ std::string_view pick(Token a, Token b, int n) {
 pick(Token("ab", 1), Token("xyz", 2), 1);  // valid: returns "xyz"
 pick(Token("ab", 1), token, 1);            // GTI-S2045: token views input
 ```
-
-A recursive text result is ownerless whenever the function's other returns
-are.
 
 Literal-backed values satisfy every contract, so existing calls are
 unaffected. Inside such a function, reading the field gives a dependent view
