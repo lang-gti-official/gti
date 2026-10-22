@@ -14183,8 +14183,46 @@ private:
     if (fact.dependencies.empty())
       return !publication && !fact.possibleAlternatives.empty();
     const auto *producer = definitionFor(body, value);
-    const auto *input =
-        producer && producer->loan ? body.findLoan(*producer->loan) : nullptr;
+    const MirLoan *input = nullptr;
+    std::vector<MirLoanDependency> exact;
+    if (producer && producer->loan) {
+      // A constructing producer carries its fresh group on its own loan.
+      input = body.findLoan(*producer->loan);
+      if (input) {
+        exact.push_back({.source = input->source,
+                         .parent = input->parent,
+                         .designatedFields = input->designatedFields,
+                         .access = input->access,
+                         .conditions = input->conditions});
+        exact.insert(exact.end(), input->additionalDependencies.begin(),
+                     input->additionalDependencies.end());
+      }
+    } else if (producer &&
+               (producer->kind == MirInstructionKind::Move ||
+                producer->kind == MirInstructionKind::Load) &&
+               producer->operands.size() == 1) {
+      // A whole-value move or copy of a by-value formal carries that formal's
+      // guarded entry group. The group and its complete contents come from
+      // the formal's typed entry contract, never from the value annotation,
+      // and the transferred value must still hold exactly that entry set.
+      const auto &operand = producer->operands.front();
+      const auto *carrier = body.findPlace(operand.place);
+      const auto entry =
+          carrier && carrier->root == MirPlaceRootKind::Binding
+              ? completeBorrowParameterEntryFact(program, body, constructor.id,
+                                                 carrier->binding)
+              : std::nullopt;
+      if (!entry || !entry->group || entry->carrier != operand.place ||
+          (operand.kind != MirOperandKind::Move &&
+           operand.kind != MirOperandKind::Copy) ||
+          (operand.kind == MirOperandKind::Move) !=
+              (producer->kind == MirInstructionKind::Move) ||
+          operand.type != initializer->targetType ||
+          entry->dependencies.possibleAlternatives != fact.possibleAlternatives)
+        return false;
+      input = body.findLoan(entry->group);
+      exact = entry->dependencies.dependencies;
+    }
     if (!input || !publication || input->kind != MirLoanKind::Stored ||
         input->escapes || input->storedDependency ||
         publication->kind != MirLoanKind::Stored || publication->entry ||
@@ -14194,18 +14232,8 @@ private:
         publication->access != input->access ||
         publication->designatedFields != input->designatedFields ||
         publication->conditions != input->conditions ||
-        publication->additionalDependencies != input->additionalDependencies)
-      return false;
-    const std::vector<MirLoanDependency> primary{
-        {.source = input->source,
-         .parent = input->parent,
-         .designatedFields = input->designatedFields,
-         .access = input->access,
-         .conditions = input->conditions}};
-    auto exact = primary;
-    exact.insert(exact.end(), input->additionalDependencies.begin(),
-                 input->additionalDependencies.end());
-    if (exact != fact.dependencies)
+        publication->additionalDependencies != input->additionalDependencies ||
+        exact != fact.dependencies)
       return false;
     bool published = false;
     bool retired = false;
