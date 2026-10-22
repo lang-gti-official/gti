@@ -212,11 +212,23 @@ int main(int argc, std::vector<std::string> argv) {
   auto label = make_label("static label");
   if (std::move(label).take() != "static label")
     return 2;
+  // A loop that cannot write the carrier (it is not `mut`) selects the same
+  // external reference on every iteration.
+  auto selected = borrowed_parse(owner, false);
+  mut int total = 0;
+  for (mut int round = 0; round < 2; round += 1) {
+    switch (selected) {
+      case BorrowedParse::ready(auto& value): total += value; break;
+      case BorrowedParse::failed: return 4;
+    }
+  }
+  if (total != 2 * owner)
+    return 4;
   // A consuming call may sit in the right operand of ||. The path that skips
   // it retires the wrapper's dependency before the two paths join.
   mut auto maybe = StoredReading(owner);
   if (!maybe.has_value() || std::move(maybe).take() != owner)
-    return 4;
+    return 5;
   // make_label(a_local_string.view()) is rejected: forwarding through a
   // generic function cannot erase a dynamic text-owner dependency.
   std::println(std::to_string(inspect(owner, false).code));

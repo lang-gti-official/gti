@@ -1122,5 +1122,149 @@ int main() { int owner = 42; auto view = GenericView<int>(owner); return view.re
           "concrete instance must recheck and reject a dangling deferred arm");
     }
   }
+  // A loop body is analyzed once. A selection inside it may use the complete
+  // dependency set of a carrier the loop cannot write; a writable carrier's
+  // set is not carried across iterations, and the diagnostic says so.
+  const std::string loopCarriers = R"gti(
+enum Slot { item(int& value), empty };
+Slot borrow_slot(int& owner, bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(owner);
+}
+enum Edit { item(mut int& value), empty };
+Edit edit_slot(mut int& owner) { return Edit::item(owner); }
+int sum_parameter(Slot& slot, int count) {
+  mut int total = 0;
+  mut int index = 0;
+  while (index < count) {
+    index += 1;
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: continue;
+    }
+  }
+  return total;
+}
+)gti";
+  acceptedSemantics(analyze(loopCarriers + R"gti(
+int main() {
+  int owner = 3;
+  auto slot = borrow_slot(owner, true);
+  mut int total = 0;
+  for (mut int index = 0; index < 2; index += 1) {
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: return 1;
+    }
+  }
+  do {
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: return 2;
+    }
+  } while (false);
+  return total + sum_parameter(slot, 2);
+}
+)gti"));
+  const auto loopDiagnostic = [&](const std::string &body,
+                                  const std::string &selected,
+                                  const std::string &message,
+                                  const std::string &hint) {
+    const std::string source = loopCarriers + body;
+    const auto result = analyze(source);
+    const auto site = source.find(selected, loopCarriers.size());
+    const auto found = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [&](const auto &diagnostic) {
+          return diagnostic.code == "GTI-S2067" &&
+                 diagnostic.message.find(message) != std::string::npos;
+        });
+    return result.syntaxValid && !result.semanticValid &&
+           site != std::string::npos && found != result.diagnostics.end() &&
+           found->primary.start == site + selected.find("value") &&
+           found->primary.end == found->primary.start + 5 &&
+           (hint.empty()
+                ? found->hints.empty()
+                : found->hints.size() == 1 &&
+                      found->hints.front().find(hint) != std::string::npos) &&
+           std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.message.find("consuming handoff") !=
+                                 std::string::npos;
+                        });
+  };
+  expect(loopDiagnostic(R"gti(
+int main() {
+  int owner = 3;
+  mut auto slot = borrow_slot(owner, true);
+  mut int total = 0;
+  for (mut int index = 0; index < 2; index += 1) {
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: return 1;
+    }
+  }
+  return total;
+}
+)gti",
+                        "auto& value): total",
+                        "requires the subject's complete checked external",
+                        "such as one declared without 'mut'"),
+         "a writable loop carrier's selection names the loop boundary");
+  expect(loopDiagnostic(R"gti(
+int main() {
+  mut int owner = 3;
+  mut auto slot = edit_slot(owner);
+  for (mut int index = 0; index < 2; index += 1) {
+    switch (slot) {
+    case Edit::item(mut auto& value): value += 1; break;
+    case Edit::empty: return 1;
+    }
+  }
+  return 0;
+}
+)gti",
+                        "mut auto& value): value",
+                        "requires the subject's complete checked external",
+                        "select the mutable reference before the loop"),
+         "a mutable loop selection is told to select before the loop");
+  expect(loopDiagnostic(R"gti(
+int main() {
+  mut int owner = 3;
+  auto slot = edit_slot(owner);
+  switch (slot) {
+  case Edit::item(mut auto& value): value += 1; return 0;
+  case Edit::empty: return 1;
+  }
+}
+)gti",
+                        "mut auto& value): value",
+                        "requires a mutable enum receiver", ""),
+         "an exclusive stored reborrow needs mutable enum storage");
+  const auto moved = analyze(loopCarriers + R"gti(
+void take(Slot slot) {}
+int main() {
+  int owner = 3;
+  auto slot = borrow_slot(owner, true);
+  for (mut int index = 0; index < 2; index += 1) {
+    switch (slot) {
+    case Slot::item(auto& value): if (value != 3) { return 1; } break;
+    case Slot::empty: return 2;
+    }
+    take(std::move(slot));
+  }
+  return 0;
+}
+)gti");
+  expect(moved.syntaxValid && !moved.semanticValid &&
+             std::any_of(moved.diagnostics.begin(), moved.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2018";
+                         }) &&
+             std::none_of(moved.diagnostics.begin(), moved.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code == "GTI-S2067";
+                          }),
+         "a carrier moved inside the loop fails value flow at the backedge");
   return failures == 0 ? 0 : 1;
 }
