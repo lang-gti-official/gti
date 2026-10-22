@@ -641,6 +641,185 @@ int main() { return 0; }
          "a dependent payload value is not returned in this phase");
 }
 
+// A class temporary may be read within its expression (L-OWN-02). A
+// dependent temporary's text field, a relay of the temporary and its method
+// relay hold the owner's text; an ownerless temporary's text field is
+// ownerless text that may be stored or returned.
+void testTemporaries() {
+  const auto result = analyzeText(kDeclarations + R"gti(
+std::string_view literalText() { return Token("literal", 1).text; }
+int main() {
+  std::string input{"token text"};
+  std::string_view field = Token(input.view(), 1).text;
+  std::string_view relayed = first(Token(input.view(), 2));
+  std::string_view named = Token(input.view(), 3).name();
+  uint64_t size = Token(input.view(), 4).text.size() +
+                  Token(input.view(), 5).width();
+  kept = Pair(input.view(), "fixed").second;
+  std::string_view literal = Token("literal", 6).text;
+  return field.size() + relayed.size() + named.size() + size == 50 &&
+                 kept.size() + literal.size() + literalText().size() == 19
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a temporary's text field, relay and method relay hold its owner's "
+         "text; an ownerless temporary's field is ownerless");
+  if (!result.canGenerateCode())
+    return;
+  const auto found = publications(result.mir);
+  expect(found.size() == 6, "each dependent temporary publishes its owner");
+  if (found.size() != 6)
+    return;
+  auto *main = const_cast<lang::MirFunctionInstance *>(
+      result.mir.findFunctionInstance(found.front().function));
+  const auto loanOf = [](lang::MirProgram &program,
+                         const Location &location) -> lang::MirLoan * {
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        program.findFunctionInstance(location.function));
+    const auto &instruction = instructionAt(program, location);
+    return instruction.loan && *instruction.loan <= function->body.loans.size()
+               ? &function->body.loans[*instruction.loan - 1]
+               : nullptr;
+  };
+  // Only the field read's binding carries a temporary's own loan; the others
+  // end with their expression.
+  std::size_t carried = 0;
+  for (const auto &location : found) {
+    const auto *loan =
+        loanOf(const_cast<lang::MirProgram &>(result.mir), location);
+    expect(location.function == main->id && loan != nullptr &&
+               loan->kind == lang::MirLoanKind::Stored &&
+               loan->access == lang::AccessMode::ReadOnly &&
+               loan->designatedFields.size() == 1 && loan->conditions.empty(),
+           "a temporary's loan designates its one published text field");
+    if (loan != nullptr && !loan->carriers.empty())
+      ++carried;
+  }
+  expect(carried == 1, "only the field read's binding carries a temporary's "
+                       "own loan");
+  // The relay and the method relay publish their results under loans that
+  // their bindings carry.
+  std::vector<Location> relays;
+  for (std::size_t block = 0; block < main->body.blocks.size(); ++block)
+    for (std::size_t index = 0;
+         index < main->body.blocks[block].instructions.size(); ++index) {
+      const auto &call = main->body.blocks[block].instructions[index];
+      const auto *target =
+          call.kind == lang::MirInstructionKind::Call && call.functionTarget
+              ? result.mir.findFunctionInstance(*call.functionTarget)
+              : nullptr;
+      if (target != nullptr &&
+          target->returnType.kind == lang::SemanticType::StringView &&
+          target->returnBorrowFields.size() == 1)
+        relays.push_back({main->id, block, index});
+    }
+  expect(relays.size() == 2, "a relay and a method relay of a temporary");
+  for (const auto &location : relays) {
+    const auto *loan =
+        loanOf(const_cast<lang::MirProgram &>(result.mir), location);
+    expect(loan != nullptr && loan->kind == lang::MirLoanKind::Stored &&
+               !loan->carriers.empty(),
+           "a temporary's relayed field result carries its owner's loan");
+  }
+  // Without its publication the field read's argument must be ownerless.
+  const auto fieldRead =
+      std::find_if(found.begin(), found.end(), [&](const auto &location) {
+        const auto *loan =
+            loanOf(const_cast<lang::MirProgram &>(result.mir), location);
+        return loan != nullptr && !loan->carriers.empty();
+      });
+  if (fieldRead != found.end()) {
+    auto unpublished = result.mir;
+    instructionAt(unpublished, *fieldRead).dependentTextPublication = false;
+    expect(!lang::verifyMirProgram(unpublished).valid(),
+           "a temporary without its publication is rejected by MIR");
+  }
+  // The relay's result holds the owner's text, so it keeps its loan.
+  if (!relays.empty()) {
+    auto unloaned = result.mir;
+    instructionAt(unloaned, relays.front()).loan.reset();
+    expect(!lang::verifyMirProgram(unloaned).valid(),
+           "a relay of a dependent temporary keeps its result loan");
+  }
+  // Designating the pair's other field makes `kept = ....second` store the
+  // owner's text, which MIR rejects by itself.
+  auto retargeted = result.mir;
+  for (const auto &location : found) {
+    const auto &instruction = instructionAt(retargeted, location);
+    for (const auto &instance : retargeted.classInstances())
+      if (instance.type == instruction.info.type &&
+          instance.declaredFields.size() == 2 &&
+          instance.declaredFields[1].type.kind ==
+              lang::SemanticType::StringView)
+        loanOf(retargeted, location)->designatedFields = {
+            instance.declaredFields[1].symbol};
+  }
+  const auto rejected = lang::verifyMirProgram(retargeted);
+  expect(!rejected.valid() &&
+             std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("ownerless text") !=
+                                  std::string::npos;
+                         }),
+         "a temporary's field relabeled as dependent is rejected where it is "
+         "stored");
+
+  struct Case {
+    const char *body;
+    const char *code;
+    const char *description;
+  };
+  const Case cases[] = {
+      {"kept = Token(input.view(), 1).text;", "GTI-S2045",
+       "a dependent temporary's field is not ownerless text"},
+      {"kept = first(Token(input.view(), 1));", "GTI-S2045",
+       "a relay of a dependent temporary is not ownerless text"},
+      {"kept = Token(input.view(), 1).name();", "GTI-S2045",
+       "a method relay of a dependent temporary is not ownerless text"},
+      {"Token(input.view(), 1).save();", "GTI-S2045",
+       "a dependent temporary cannot reach a storing method"},
+      {"keepFirst(Token(input.view(), 1));", "GTI-S2045",
+       "a dependent temporary cannot reach a storing function"},
+      {"uint64_t n = Logged(input.view()).text.size();", "GTI-S2045",
+       "a class with a destructor keeps its text fields ownerless"},
+      {"std::string_view v = Token(std::string(\"x\").view(), 1).text;",
+       "GTI-S2045", "a temporary owner cannot outlive the field read"},
+      {"mut std::string_view v = \"x\"; v = Token(input.view(), 1).text;",
+       "GTI-S2045",
+       "a temporary's field cannot be assigned to existing "
+       "storage"},
+      {"std::string_view v = first(Token(owner.view(), 1)); "
+       "owner.append(\"!\"); uint64_t n = v.size();",
+       "GTI-S2017", "the owner stays borrowed while a relayed view is live"},
+  };
+  for (const auto &entry : cases) {
+    const auto rejectedCase = analyzeText(
+        kDeclarations +
+        "int run() { std::string input{\"token text\"}; mut std::string "
+        "owner{\"owner\"}; " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(!rejectedCase.canGenerateCode(), entry.description);
+    expect(hasDiagnosticCode(rejectedCase.diagnostics, entry.code),
+           std::string(entry.description) + " (" + entry.code + ")");
+    expect(std::none_of(rejectedCase.diagnostics.begin(),
+                        rejectedCase.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string(entry.description) + " is diagnosed at source");
+  }
+  const auto returned = analyzeText(kDeclarations + R"gti(
+std::string_view leak(std::string& input) { return Token(input.view(), 1).text; }
+int main() { return 0; }
+)gti");
+  expect(hasDiagnosticCode(returned.diagnostics, "GTI-S2045"),
+         "a dependent temporary's field is not returned in this phase");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -649,6 +828,7 @@ constexpr NamedTest kTests[] = {
     {"testConstructorReads", testConstructorReads},
     {"testFieldResults", testFieldResults},
     {"testPayloads", testPayloads},
+    {"testTemporaries", testTemporaries},
 };
 } // namespace
 

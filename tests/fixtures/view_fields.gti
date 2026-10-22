@@ -4,8 +4,9 @@
 // a field read yields a view of the same owner, and functions and methods
 // that keep the text within the call accept it. A function that returns one
 // text field relays what the value holds there. A payload enum's text
-// payload holds its owner the same way. An ownerless value of the same type
-// keeps every capability, including storage.
+// payload holds its owner the same way, and so does a temporary within its
+// expression. An ownerless value of the same type keeps every capability,
+// including storage.
 #include <std/string>
 
 class Token {
@@ -84,6 +85,16 @@ int main() {
   case Lexeme::word(text): std::println(text.size()); break;
   case Lexeme::count(value): std::println(value); break;
   }
+
+  // A temporary's text field holds what its construction put there: the
+  // owner's text for a dynamic argument, ownerless text over a literal.
+  std::string_view fresh = Token(input.view(), 4).text;
+  std::println(fresh);
+  std::println(firstOf(Pair(input.view(), "fixed")).size());
+  std::println(Token(input.view(), 5).name().size() +
+               Token(input.view(), 6).text.size());
+  kept = Token("temporary", 7).text;
+  std::println(kept);
 
   // A token over a literal is ownerless and can leave this body.
   Token literal = Token("literal", 1);

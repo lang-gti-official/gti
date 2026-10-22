@@ -6798,6 +6798,20 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
           !typeTraits(function.returnType).containsBorrowedState);
 }
 
+auto SemanticVisitor::Impl::receiverTextFieldRelay(
+    const CallableCandidate &function) const -> bool {
+  if (function.receiverMutability != ReceiverMutability::ReadOnly ||
+      function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+      (function.returnType.kind != SemanticType::StringView &&
+       function.returnType.kind != SemanticType::CString) ||
+      function.returnBorrowFields.size() != 1)
+    return false;
+  const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
+  return mapping.origin == BorrowOriginKind::Receiver &&
+         mapping.sourceFields.size() == 1 && mapping.resultFields.empty() &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty();
+}
+
 auto SemanticVisitor::Impl::consumingReceiverValue(
     const ExprPtr &receiver) const -> bool {
   const ExpressionInfo *info =
@@ -6833,9 +6847,12 @@ auto SemanticVisitor::Impl::receiverModeForObject(
       isMutableObject(receiver)) {
     return CallReceiverMode::MutablePlace;
   }
+  // A text field relay returns what a dependent temporary holds in that
+  // field, its owner's text, never a view of the temporary itself.
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
-       ephemeralBorrowResultSupported(function)) &&
+       ephemeralBorrowResultSupported(function) ||
+       (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
        consumingReceiverValue(receiver))) {
     return function.receiverMutability == ReceiverMutability::Mutable
