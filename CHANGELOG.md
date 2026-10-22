@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.1 — Reference bindings from a local payload enum
+
+- A `switch` can now bind `auto&` to a reference payload of an enum held in a
+  local variable. For `enum Slot { item(int& value), empty };`,
+  `auto slot = borrow_slot(local, true);` followed by
+  `case Slot::item(auto& value):` used to report `error[GTI-B0001]` (an
+  internal compiler error); it now works. The same holds when the local is
+  built directly, as in `auto slot = Slot::item(local);`, for a generic enum
+  such as `MaybeRef<int&>`, and for an enum field of a local class value, as
+  in `switch (holder.slot)`.
+- `mut auto&` writes through such a binding reach the referenced owner,
+  including an owner that is itself a `mut int&` parameter.
+
 ## 0.458.0 — Reading text fields of temporaries
 
 - A text field of a class temporary can now be read directly. For a
