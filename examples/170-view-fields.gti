@@ -6,7 +6,8 @@
 // stored itself. A temporary works the same way within its expression, and a
 // payload enum's text payload can hold such a view too. A function that
 // returns a fresh value over its text parameter hands the caller a value over
-// the argument's owner.
+// the argument's owner. A method that returns a reference to its text field,
+// even on a generic class, reads that field.
 #include <std/string>
 
 // A token views its input; it owns no text.
@@ -19,6 +20,16 @@ public:
   // Returning the text field hands the caller a view of whatever the token
   // views.
   std::string_view spelling() { return this.text; }
+  // So does returning a reference to it.
+  std::string_view& textRef() { return this.text; }
+};
+
+// A generic holder's accessor reads its field in a text instance too.
+class Holder<T> {
+public:
+  T value;
+  Holder(T value) : value(value) {}
+  T& get() { return this.value; }
 };
 
 // A lexeme views its input through a payload.
@@ -60,6 +71,12 @@ int main() {
   // The factory's token views `line`, as the token it constructs does.
   Token made = keyword(line.view());
   std::println(made.spelling());
+  // Reading through a returned reference views `line`, including through a
+  // generic holder.
+  std::println(name.textRef());
+  Holder<std::string_view> holder = Holder<std::string_view>(line.view());
+  std::string_view held = holder.get();
+  std::println(held.size());
 
   // Matching the payload binds a view of `line` as well.
   Lexeme lexeme = Lexeme::word(line.view());
