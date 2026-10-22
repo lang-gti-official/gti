@@ -1791,7 +1791,12 @@ establish the result from their exact field initializers, including a proved
 reference-free alternative. The initializer may construct the enum in place or
 move or copy a by-value enum parameter into the field, as in
 `Shelf(Slot slot) : slot(std::move(slot))`; the object then keeps that
-argument's external owners. A missing proof is not an empty alternative.
+argument's external owners. As for a nested unconditional carrier, copying the
+carrier out of a reference parameter, as in `Shelf(Slot& slot) : slot(slot)`,
+is rejected (`GTI-S2045`) at that argument: the field and the caller's object
+would share one guarded group, which constructor publication does not yet
+represent. Take the carrier by value instead. A missing proof is not an empty
+alternative.
 Implicit copying remains conditional on all fields being copyable; copying a
 shared-reference wrapper retains the same external owners, while moving a
 wrapper does not move those owners. A consuming method may return a selected
