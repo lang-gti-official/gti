@@ -9034,12 +9034,21 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
              publicationBlock->parameters.empty() &&
              publicationBlock->failureParameter == 0 &&
              publicationBlock->activeFailure == 0 &&
-             publicationBlock->instructions.size() == 1 &&
-             publicationBlock->instructions.front().id == initialize->id) {
+             !publicationBlock->instructions.empty() &&
+             publicationBlock->instructions.front().id == initialize->id &&
+             std::all_of(publicationBlock->instructions.begin() + 1,
+                         publicationBlock->instructions.end(),
+                         [](const MirInstruction &instruction) {
+                           return instruction.kind ==
+                                  MirInstructionKind::EndBorrow;
+                         })) {
     // The status constructor writes the slot at Invoke, and engages it only
     // on success. Only its unique, work-free success path may separate
-    // construction from publication; failure retains the original cleanup
-    // edge and never reaches the join. Constructor-boundary admission remains
+    // construction from publication. After publication, the arm may end its
+    // input loans before joining; these verified loan endpoints neither
+    // compute another value nor alter the published object. Failure retains
+    // the original cleanup edge and never reaches the join.
+    // Constructor-boundary admission remains
     // responsible for proving the selected status constructor is supported.
     std::size_t incoming = 0;
     for (const MirBlock &candidate : body.blocks) {
@@ -16038,16 +16047,18 @@ passiveGeneratedClass(const MirProgram &program, const SemanticType &type,
         }
         return self(self, fieldType) != nullptr;
       }
-      // A text view is a borrowed descriptor, like a `c_string` pointer:
-      // destroying or copying it is trivial and observes nothing. MIR loans,
-      // not class passivity, carry any owner it depends on.
+      // A leaf is passive when its representation copies bitwise and its
+      // destruction runs no source cleanup: a scalar, an enum, a raw or null
+      // pointer (a C string is a raw pointer) or a text view. A text view's
+      // dependency on its owner, when it has one, is a MIR loan with no
+      // representation, so it neither changes the copy nor adds cleanup.
       const auto representation = expectedTypeRepresentation(fieldType);
       return representation &&
              (*representation == CppMirTypeRepresentationKind::Scalar ||
               *representation == CppMirTypeRepresentationKind::Enum ||
-              *representation == CppMirTypeRepresentationKind::StringView ||
               *representation == CppMirTypeRepresentationKind::RawPointer ||
-              *representation == CppMirTypeRepresentationKind::NullPointer);
+              *representation == CppMirTypeRepresentationKind::NullPointer ||
+              *representation == CppMirTypeRepresentationKind::StringView);
     };
     const bool passive = std::all_of(
         instance->declaredFields.begin(), instance->declaredFields.end(),

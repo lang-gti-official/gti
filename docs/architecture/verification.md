@@ -1,22 +1,21 @@
 # Compiler Verification
 
-## Field reads of more cleanup-free conditional joins (0.459.1)
+## Conditional joins whose arms take a class by value (0.459.3)
 
-A field read of a conditional temporary used to report `GTI-B0001` in two
-shapes, even for a single-level read: arms that pass a class by value to their
-constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, and arms
-that build a class holding a `std::string_view`. Traces of the join-arm
-recognizer showed two separate refusals:
-- a construction arm's prepared-argument `TransferOut` events, which only call
-  arms accepted;
-- a text view field, which made `passiveGeneratedClass` reject the class
-  although a `c_string` field does not.
+A field read of a conditional temporary whose arms pass a class by value to
+their constructor, as in `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`, used
+to report `GTI-B0001`, even for a single-level read. Traces of the join-arm
+recognizer showed each arm construction's prepared-argument `TransferOut`
+events, which only call arms accepted. Construction arms now accept the same
+exact transfers (`onlyPreparedInputTransfers`); an arm with no lifecycle event
+is admitted as before.
 
-- `testCleanupFreeJoinTransferAndTextArms` emits one join of each shape. Both
-  publish their two arms into one representation-only join storage, which the
-  joined value's move empties and retires on the next line; the by-value arms
-  hand their staged arguments over with `take()`. Four MIR mutations stay
-  refused: a doubled, a conditional, and an `Initialize` arm transfer, and a
+- `testCleanupFreeJoinTransferAndTextArms` emits a by-value join and a join of
+  a class holding a text view (passive since 0.459.1). Both publish their two
+  arms into one representation-only join storage, which the joined value's
+  move empties and retires on the next line; the by-value arms hand their
+  staged arguments over with `take()`. Four MIR mutations stay refused: a
+  doubled, a conditional, and an `Initialize` arm transfer, and a
   borrowed-state text arm.
 - `issue_127_constructor_temporary_field_runtime` adds six joins in every
   mode: a by-value join read through `.word.kind`, the same join in a loop,
@@ -24,14 +23,70 @@ recognizer showed two separate refusals:
   read-only method. It counts 14 more constructions. The emitted C++ ends six
   join storages after their moves; the method call borrows the join storage.
 - A join over owner-dependent text, `(c ? word_t(owner.view(), 1) :
-  word_t(owner.view(), 2)).kind`, is still `GTI-S2045` in semantics, before
-  and after.
+  word_t(owner.view(), 2)).kind`, is still `GTI-S2045` in semantics.
 
 The recorded validation runs an `--emit-cpp` differential over every `.gti`
 file under `tests/` and `examples/` against main's compiler, without the
 `namespace-depth-63.gti` stress input. It fails on any text difference, any
 refusal-code change, or any program that stops building, and requires the
 issue-127 fixture to become accepted.
+
+## Classes holding text views (0.459.1)
+
+`passive_text_view_class_runtime` runs `passive_text_view_classes.gti`.
+- The reported program moves a `Name` holding one `std::string_view` into a
+  field after a `std::vector` field; its copy variant copies it. Both return 7.
+- `Shelved` moves a `Tagged` (a view, a C string and a rank) and a nested
+  `Labelled` record after a `Ledger` field that can fail. `Copied` copies a
+  `Tagged` after its own ledger. In each, a later sibling or the body can fail.
+- When the ledger itself fails, before the move or copy, the object has no
+  ledger to drop. When a later sibling or the body fails, the built ledger is
+  rolled back exactly once, and `main`'s live ledgers close once each. Every
+  failure exits with status 70 and the division diagnostic.
+- A conditional join of copies and of moves, and a copy assigned into a
+  mutable field, give the expected values.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`d2873bde`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`, `testPassiveTextViewClassAfterFallibleSibling`:
+- The moved constructor has no loans, only the formal's inert binding drop,
+  and a `Move` and `Initialize` without lifecycle events.
+- The native owned-field proof refuses it. The failure form admits it, starts
+  the field empty and publishes it once after the vector.
+- The copied variant is an exact parameter copy, published as
+  `name(__gti_mir_arg_0)` with no lifetime slot.
+- Forging borrowed state on the class, or active cleanup on its field, fails
+  closed for the move. Forging active cleanup also fails closed for the copy.
+- Mutation checks:
+  - with text views removed from the passive leaf rule (main's behavior), the
+    test fails at failure-form admission;
+  - with the `passiveMove` borrowed-state check removed, only the
+    borrowed-state forgery fails.
+
+An `--emit-cpp` differential against main `d2873bde`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,812 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,616 of 3,624 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics.
+- Only the new fixture changes status, from `GTI-B0001` to success.
+- Three programs change text, all in one family: `examples/008-expected.gti`,
+  `constexpr_results.gti` and `ownerless_text_contracts.gti` build
+  `expected<T, std::string_view>` from `unexpected_value<std::string_view>`,
+  which is now passive. Its formal's failure-route drop is natively trivial, so
+  `ConstructorNoFailureProof` proves the `expected` constructor cannot fail.
+  The caller drops its dead failure-status branch, and an ordinary overload is
+  emitted beside the failure form.
+- Built with both compilers and run at O0 and O3, those three programs give
+  the same exit status, stdout and stderr. Their `__text` is unchanged at O3
+  and up to 140 bytes smaller at O0.
+
+Two shapes stay outside the passive route, on main as for scalar-field
+classes:
+- A constructor that body-stages a passive class move and also copies a
+  passive class after a fallible field is still `GTI-B0001`. Once moves are
+  body-staged, every native copy must be a first-field prefix.
+- A class holding a function item, moved after fallible work, is still
+  `GTI-B0001`: function items are not passive leaves.
 
 ## Borrowed enum parameters stored in fields (0.458.4)
 
@@ -110,8 +165,8 @@ An `--emit-cpp` differential over every `.gti` file under `tests/` and
 - The recorded validation repeats the differential against main at 0.458.2,
   without that stress input, and requires the same outcome.
 
-Still refused, both before and after, even for a single-level read (0.459.1
-admits both; see above):
+Still refused, both before and after, even for a single-level read (0.459.1 admits
+the text join and 0.459.3 the by-value one; see above):
 - a conditional join whose arms pass a class by value, as in
   `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
 - a conditional join of a class that holds a text field, as in
