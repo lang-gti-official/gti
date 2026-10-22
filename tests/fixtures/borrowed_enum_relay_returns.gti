@@ -1,0 +1,104 @@
+#include <std/panic>
+#include <std/string>
+#include <std/utility>
+
+// A function returns a by-value borrowed payload enum parameter whole: moved,
+// copied, or under an explicit borrowed_from contract. The result keeps the
+// caller's external owner; the empty alternative publishes none.
+enum Slot { ready(int& value), empty };
+
+Slot relay(Slot slot) { return std::move(slot); }
+Slot copy_relay(Slot slot) { return slot; }
+[[borrowed_from(slot)]] Slot annotated(Slot slot) { return std::move(slot); }
+
+int peek(Slot slot) {
+  switch (slot) {
+  case Slot::ready(auto& value): return value;
+  case Slot::empty: return -1;
+  }
+}
+
+// A class whose only borrowed state is such an enum relays the same way.
+class Reading {
+  Slot slot;
+public:
+  Reading(int& value) : slot(Slot::ready(value)) {}
+  Reading() : slot(Slot::empty) {}
+  int peek() {
+    switch (this.slot) {
+    case Slot::ready(auto& value): return value;
+    case Slot::empty: return -1;
+    }
+  }
+};
+
+Reading pass(Reading reading) { return std::move(reading); }
+
+// An unrelated generic carrier: a borrowed success or an owned error.
+enum Outcome<T, E> { ready(T value), failed(E error) };
+
+Outcome<int&, int> forward_plain(Outcome<int&, int> outcome) {
+  return std::move(outcome);
+}
+
+Outcome<int&, std::string> forward_owned(Outcome<int&, std::string> outcome) {
+  return std::move(outcome);
+}
+
+// An exclusive carrier relays its unique capability.
+enum Cursor { at(mut int& value), done };
+
+Cursor hand_over(Cursor cursor) { return std::move(cursor); }
+
+void write(mut Cursor cursor, int value) {
+  switch (cursor) {
+  case Cursor::at(mut auto& target): target = value; break;
+  case Cursor::done: break;
+  }
+}
+
+int main() {
+  int owner = 3;
+  if (peek(relay(Slot::ready(owner))) != 3 ||
+      peek(copy_relay(Slot::ready(owner))) != 3 ||
+      peek(annotated(Slot::ready(owner))) != 3 ||
+      peek(relay(Slot::empty)) != -1)
+    return 1;
+  Slot named = Slot::ready(owner);
+  Slot kept = copy_relay(named);
+  if (peek(kept) != 3 || peek(named) != 3)
+    return 2;
+  Reading reading = pass(Reading(owner));
+  Reading unset = pass(Reading());
+  if (reading.peek() != 3 || unset.peek() != -1)
+    return 3;
+  int other = 9;
+  auto plain = forward_plain(Outcome<int&, int>::ready(other));
+  auto owned = forward_owned(Outcome<int&, std::string>::ready(other));
+  auto refused = forward_owned(
+      Outcome<int&, std::string>::failed(std::string("refused")));
+  switch (plain) {
+  case Outcome<int&, int>::ready(auto& value):
+    if (value != 9)
+      return 4;
+    break;
+  case Outcome<int&, int>::failed: return 4;
+  }
+  switch (owned) {
+  case Outcome<int&, std::string>::ready(auto& value):
+    if (value != 9)
+      return 5;
+    break;
+  case Outcome<int&, std::string>::failed: return 5;
+  }
+  switch (refused) {
+  case Outcome<int&, std::string>::ready: return 6;
+  case Outcome<int&, std::string>::failed(auto& error):
+    if (error != "refused")
+      return 6;
+    break;
+  }
+  mut int target = 1;
+  write(hand_over(Cursor::at(target)), 7);
+  return target == 7 ? 0 : 7;
+}

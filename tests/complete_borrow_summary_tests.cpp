@@ -2130,5 +2130,103 @@ int main() { return 0; }
                  code + ": " + extra);
     }
   }
+  {
+    // A function returning a by-value borrowed carrier formal whole publishes
+    // that formal's guarded entry group through its Return loan. The complete
+    // result proof, not a single stored reference, identifies the group, so a
+    // forged transfer, guard, path, retirement or entry is rejected.
+    std::ifstream fixture(root /
+                          "tests/fixtures/borrowed_enum_relay_returns.gti");
+    const std::string source((std::istreambuf_iterator<char>(fixture)), {});
+    expect(!source.empty(), "borrowed relay fixture exists");
+    const auto result = analyze(source);
+    expect(result.canGenerateCode() &&
+               lang::verifyMirProgram(result.mir).valid(),
+           "by-value borrowed carrier relays verify independently");
+    std::size_t relays = 0;
+    for (const auto &function : result.mir.functionInstances()) {
+      if (!function.completeReturnBorrow)
+        continue;
+      const auto &body = function.body;
+      const lang::MirInstruction *transfer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto *published =
+              instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+          const auto *group =
+              instruction.operands.size() == 1 &&
+                      instruction.operands.front().kind ==
+                          lang::MirOperandKind::Loan
+                  ? body.findLoan(instruction.operands.front().loan)
+                  : nullptr;
+          if (instruction.kind == lang::MirInstructionKind::Borrow &&
+              published && published->kind == lang::MirLoanKind::Return &&
+              group && group->entry && group->kind == lang::MirLoanKind::Stored)
+            transfer = &instruction;
+        }
+      if (!transfer)
+        continue;
+      ++relays;
+      const auto returnLoan = *transfer->loan;
+      const auto groupLoan = transfer->operands.front().loan;
+      for (int mutation = 0; mutation < 6; ++mutation) {
+        auto malformed = result.mir;
+        auto &changed =
+            lang::MirProgramTestAccess::functions(malformed)[function.id - 1]
+                .body;
+        auto &published = changed.loans[returnLoan - 1];
+        auto &group = changed.loans[groupLoan - 1];
+        for (auto &block : changed.blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.id == transfer->id && mutation == 0)
+              instruction.operands.front().loan = returnLoan;
+            if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                instruction.loan == groupLoan && mutation == 1)
+              instruction.tombstone = true;
+          }
+        if (mutation == 2)
+          group.conditions.clear();
+        if (mutation == 3)
+          published.designatedFields.clear();
+        if (mutation == 4)
+          group.entry = false;
+        if (mutation == 5)
+          published.source = published.source + 1;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "borrowed relay rejects a forged transfer, retirement, guard, "
+               "path, entry or source " +
+                   std::to_string(mutation));
+      }
+    }
+    expect(relays >= 6, "fixture relays enum, class and generic formals whole");
+    const std::pair<std::string, std::string> rejectedCases[] = {
+        {"Slot dangling() { int local = 3; return relay(Slot::ready(local)); "
+         "}",
+         "GTI-S2045"},
+        {"Slot dangling_copy() { int local = 3; return "
+         "copy_relay(Slot::ready(local)); }",
+         "GTI-S2045"},
+        {"int overlap() { mut int value = 3; Slot slot = "
+         "relay(Slot::ready(value)); value = 4; return peek(slot); }",
+         "GTI-S2017"}};
+    for (const auto &rejectedCase : rejectedCases) {
+      const auto &[extra, code] = rejectedCase;
+      const auto rejected = lang::Frontend().analyze(
+          root / "tests/borrowed-relay-rejection.gti", source + "\n" + extra,
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      expect(!rejected.canGenerateCode() &&
+                 std::any_of(rejected.diagnostics.begin(),
+                             rejected.diagnostics.end(),
+                             [&](const auto &d) {
+                               return d.code == rejectedCase.second;
+                             }) &&
+                 std::none_of(
+                     rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-B0001"; }),
+             "borrowed relays reject an escaping owner or an overlapping "
+             "write in semantics with " +
+                 code + ": " + extra);
+    }
+  }
   return failures ? 1 : 0;
 }
