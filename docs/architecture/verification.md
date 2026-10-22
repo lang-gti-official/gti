@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Classes holding text views (0.458.4)
+## Classes holding text views (0.458.5)
 
 `passive_text_view_class_runtime` runs `passive_text_view_classes.gti`.
 - The reported program moves a `Name` holding one `std::string_view` into a
@@ -56,6 +56,44 @@ classes:
   body-staged, every native copy must be a first-field prefix.
 - A class holding a function item, moved after fallible work, is still
   `GTI-B0001`: function items are not passive leaves.
+
+## Borrowed enum parameters stored in fields (0.458.4)
+
+`complete_borrow_summaries` covers the new fixture,
+`borrowed_enum_formal_fields`.
+- Eight constructors move or copy a by-value borrowed enum formal into a
+  field: moved, copied and then read again, moved or copied after a fallible
+  sibling, moved after an earlier read, a generic `Outcome<T&, E>` with plain
+  and owning errors, and a `mut` reference enum. All verify.
+- Six MIR mutations per constructor are rejected: a transfer from another
+  place, a publication borrowing from itself, a removed retirement, a guard
+  cleared from the entry group, a publication path cleared, and a group that
+  is no longer an entry. Each except the retirement fails the constructor
+  proof itself.
+- Source rejections, with no backend error: returning a moved or a copied
+  carrier of a local (`GTI-S2045`), writing the owner while the object is live
+  and reading the owner while a `mut` carrier is live (`GTI-S2017`), and
+  copying a `mut` reference enum (`GTI-S2003`).
+
+`cpp_mir_body_emitter_text` adds
+`testMovedBorrowedPayloadAfterFallibleSibling`: the failure form starts the
+field empty and moves the formal after the ledger. A publication from another
+producer, and an entry-group record that is not a comment-only retirement,
+are both refused.
+
+`borrow_origin_runtime` runs the fixture in all eight native modes, including
+the sanitized one, and a second run whose ledger fails before the move
+(`GTI-R0002`, exit 70). `tryable_propagation_runtime` runs example 165,
+which now also stores a by-value slot, in nine modes.
+
+The census changes only for example 165: one more constructor body and
+declaration.
+
+An `--emit-cpp` differential at -O0 and -O3 over all 1,948 corpus programs,
+against main's compiler (f0e13a1de) on the same sources:
+- 1,946 programs emit byte-identical C++ with identical diagnostics.
+- Only example 165 and the `borrowed_enum_formal_fields` fixture change
+  status: they reported `GTI-B0001` on main and now build.
 
 ## Nested field reads of cleanup-free temporaries (0.458.3)
 

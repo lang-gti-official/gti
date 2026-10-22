@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.458.4 — Moving classes that hold text views
+## 0.458.5 — Moving classes that hold text views
 
 - A class with a `std::string_view` field can now be moved into another
   class's field after an initializer that can fail, when it has no destructor
@@ -24,6 +24,20 @@ for what minor and patch releases mean.
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field, as in `holder.name = other;`. Each used to
   report `error[GTI-B0001]`.
+
+## 0.458.4 — Borrowed enum parameters stored in fields
+
+- A constructor can store a borrowed payload enum that it takes by value.
+  For `enum Slot { ready(int32_t& value), empty }`,
+  `shelf(Slot slot) : slot(std::move(slot)) {}` and the copy `slot(slot)`
+  used to report `error[GTI-B0001]` (an internal compiler error), even with
+  no other initializer; they now work, as does the same move after an
+  initializer that can fail or after an earlier read of the parameter. The
+  stored field keeps the caller's owner: returning `shelf(Slot::ready(local))`
+  for a local `local` reports `error[GTI-S2045]`, and assigning to the owner
+  while the object is live reports `error[GTI-S2017]`. Generic enums such as
+  `Outcome<T&, E>`, including ones whose other alternative owns a string, and
+  enums holding a `mut` reference work the same way.
 
 ## 0.458.3 — Nested field reads of temporaries
 
