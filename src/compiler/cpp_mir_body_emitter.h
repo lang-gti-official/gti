@@ -481,6 +481,17 @@ cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
 cppMirFailureConstructorEmptyFieldsEligible(const MirProgram &program,
                                             HirClassInstanceId instance);
 
+// True when the field is declared in deferred storage: an anonymous union
+// whose backend-private inert member is active until a constructor publishes
+// the field at its verified MIR point. Only a passive bound shell (a class
+// carrying references, with generated, observation-free copy, move and
+// destruction) that has no native empty state and can follow other
+// initialization work qualifies. The planner's field declaration and every
+// constructor proof consult this one query.
+[[nodiscard]] bool cppMirDeferredFieldStorage(const MirProgram &program,
+                                              HirClassInstanceId owner,
+                                              SymbolId field);
+
 // An exact selected base initializer. Native fusion preserves observation-free
 // scalar parameter copy-loads/literals. A prepared binding instead selects
 // the admitted executable pre-base partition below; it never reconstructs

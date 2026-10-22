@@ -2710,9 +2710,59 @@ the field or is produced by the moved value. A user-defined borrowed carrier,
 such as a class with a `T&` field, is a different family. Its field retains
 the dependency through a `Stored` publication, and its native class has no
 empty representation, because its references must be bound when the object is
-constructed. Moving, copying or constructing such a carrier after work that
-can fail therefore stays outside the failure form; only the first-field prefix
-routes below publish one.
+constructed. Such a field uses deferred field storage, described next, unless
+it is its class's only carrier and its first field, which the first-field
+prefix routes below publish.
+
+A field whose type is a passive bound shell (a class or struct carrying
+references, with generated, observation-free copy, move and destruction, no
+active cleanup, user destructor, base or capability) and no native empty
+state can follow other initialization work whenever it is not the first
+field or a state-bearing base precedes it. The C++ class then declares that
+field, and every other bound shell of the same class, in deferred storage: an
+anonymous union whose other member is an inert byte with a default member
+initializer, `union { unsigned char __gti_deferred_cursor{}; Cursor cursor; };`.
+The field keeps its name, type, size and alignment, and every access spells
+it as before. The inert byte is active until a constructor publishes the
+field. A native member initializer still publishes the field where an exact
+native route proves it, such as the first-field prefix, a constructed
+sequence, or a parameter copy; otherwise the field is left out of the
+member-initializer list and the verified body publishes it at its MIR point.
+A moved or copied formal is constructed into the storage with
+`std::construct_at`, and a carrier constructor builds in place there through
+its ordinary or status-tag overload, with no prior `std::destroy_at`, since no
+field value exists yet. The `Stored` loan that follows the publication remains
+a proof-only record. A moved formal keeps its lexical shell drop, and the
+body-staged move proof requires the exact cleanup-free schedule: Move and
+`Initialize` without lifecycle events, no value or construction-rollback
+obligation, and the field's one `Stored` loan published from the moved value
+right after the `Initialize`, sourced at the formal, whose input loan ends at
+once. A failure before the publication leaves the inert byte, and the caller
+ends the unpublished object; a failure after it leaves a bound shell whose
+ending runs no source code. Neither needs a rollback, so the failure form's
+per-field rollback proof accepts deferred storage as it stands, and owning
+siblings follow their own verified rollback. The union never records which
+member is active, so the class asserts at native compile time that the shell
+is trivially destructible. Its generated copy and move are trivial copies of
+the bound references and scalars, so the enclosing class's special members
+copy and move the published field unchanged. Deferred storage is therefore
+restricted to shells whose every leaf is a reference, scalar, text view,
+pointer, function item, plain enum, fixed array of these, or another such
+shell; a payload enum leaf stays outside. A generic owner may share one native
+class template across instances, so deferred storage applies only to
+non-generic classes for now.
+
+This keeps GTI's construction order for every producer semantics admits for a
+carrier field: the move or copy of an exact carrier formal, or a construction
+from exact formals, including a carrier constructor that checks its input or
+prints, as in `Built(int32_t& value, int32_t divisor) : ledger(Ledger(3,
+divisor)), cursor(Checked(value, divisor))`. If the ledger fails, the checking
+constructor never runs. A copy of a formal that nothing changes is still
+published by the native parameter-copy route, ahead of the earlier work, as
+for passive classes: the copy reads the formal's entry value, runs no source
+code and cannot fail, and the published shell needs no rollback. Remaining
+stages are a class containing a class with deferred fields (an empty state for
+the containing class), carriers with active cleanup, and generic owners.
 
 A borrowed payload enum, such as `enum Slot { ready(int32_t& value), empty }`,
 also retains its caller's dependency in the field, but its native value has a

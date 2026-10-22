@@ -877,25 +877,27 @@ private:
                              .field = field});
     };
     // The call that consumes a CallInput's result, and the callee formal or
-    // receiver it binds.
-    const auto consumer = [&](const MirBlock &block,
-                              const MirInstruction &input)
+    // receiver it binds. A later checked argument places the call in another
+    // block than the input.
+    const auto consumer = [&](const MirInstruction &input)
         -> std::pair<const MirInstruction *, OwnerlessTextField> {
       if (input.kind != MirInstructionKind::CallInput || !input.result)
         return {nullptr, {}};
-      for (const auto &candidate : block.instructions) {
-        if (candidate.kind != MirInstructionKind::Call &&
-            candidate.kind != MirInstructionKind::Construct)
-          continue;
-        if (candidate.receiver &&
-            candidate.receiver->kind == MirOperandKind::Value &&
-            candidate.receiver->value == *input.result)
-          return {&candidate, {.receiver = true}};
-        for (std::size_t index = 0; index < candidate.operands.size(); ++index)
-          if (candidate.operands[index].kind == MirOperandKind::Value &&
-              candidate.operands[index].value == *input.result)
-            return {&candidate, {.parameter = index}};
-      }
+      for (const auto &block : context.body.blocks)
+        for (const auto &candidate : block.instructions) {
+          if (candidate.kind != MirInstructionKind::Call &&
+              candidate.kind != MirInstructionKind::Construct)
+            continue;
+          if (candidate.receiver &&
+              candidate.receiver->kind == MirOperandKind::Value &&
+              candidate.receiver->value == *input.result)
+            return {&candidate, {.receiver = true}};
+          for (std::size_t index = 0; index < candidate.operands.size();
+               ++index)
+            if (candidate.operands[index].kind == MirOperandKind::Value &&
+                candidate.operands[index].value == *input.result)
+              return {&candidate, {.parameter = index}};
+        }
       return {nullptr, {}};
     };
     // The callee a formal is forwarded into, when it carries field contracts
@@ -946,7 +948,7 @@ private:
             const auto formal = wholeUse(operand);
             if (!formal)
               return;
-            const auto [call, calleeFormal] = consumer(block, instruction);
+            const auto [call, calleeFormal] = consumer(instruction);
             const auto *target =
                 forwardTarget(call, calleeFormal, formalType(*formal));
             if (!target) {
@@ -972,7 +974,7 @@ private:
             instruction.operands.size() == 1)
           if (const auto designated = dependentDesignation(
                   context.body, instruction.operands.front())) {
-            const auto [call, calleeFormal] = consumer(block, instruction);
+            const auto [call, calleeFormal] = consumer(instruction);
             const auto *target =
                 call && call->kind == MirInstructionKind::Call &&
                         call->functionTarget
