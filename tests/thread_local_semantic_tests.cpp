@@ -123,6 +123,25 @@ void lifetimeAndEffects() {
            "void modify() { second += 1; } int main() { int& borrowed = first; "
            "modify(); return borrowed; }",
            "a live TLS borrow does not prevent unrelated TLS storage mutation");
+  for (const std::string storage : {"", "thread_local "}) {
+    const std::string prefix =
+        storage + "mut int value = 1; " + storage + "mut int other = 2; ";
+    const auto captured = analyze(
+        prefix + "void modify() { value = 3; } int main() { int& input = "
+                 "value; auto callback = [&input]() -> int { modify(); return "
+                 "input; }; return callback(); }",
+        !storage.empty());
+    expect(!captured.semanticValid && code(captured, "GTI-S2045") &&
+               !code(captured, "GTI-B0001"),
+           "captured loans retain exact process/TLS origins through hidden "
+           "same-thread callback effects");
+    positive(prefix + "void modify() { other = 3; } int main() { int& input = "
+                      "value; auto callback = [&input]() -> int { modify(); "
+                      "return input; }; return callback(); }",
+             "captured loans do not alias disjoint persistent callback "
+             "effects",
+             !storage.empty());
+  }
   positive(
       "thread_local int value = 1; int read() { return value; } int main() { "
       "int& borrowed = value; int copied = read(); return borrowed + copied; }",
