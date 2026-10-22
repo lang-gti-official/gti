@@ -1001,6 +1001,132 @@ int main() { return 0; }
          "a published value of a local owner is not returned");
 }
 
+const std::string kOrderDeclarations = R"gti(
+class Label<T> {
+public:
+  T text;
+  int kind;
+  Label(T text, int kind) : text(text), kind(kind) {}
+};
+class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+Label<T> outerLabel<T>(T input) { return innerLabel(input); }
+Label<T> innerLabel<T>(T input) { return Label<T>(input, 3); }
+Token countdown(std::string_view text, int n) {
+  if (n == 0)
+    return Token(text, n);
+  return countdown(text, n - 1);
+}
+Label<T> countdownLabel<T>(T text, int n) {
+  if (n == 0)
+    return Label<T>(text, n);
+  return countdownLabel(text, n - 1);
+}
+Point walk(std::string_view text, int n) {
+  if (n == 0)
+    return Point(n, 2);
+  std::string local{"abc"};
+  return walk(local.view(), n - 1);
+}
+)gti";
+
+// A generic function relays through a generic call whose callee is declared
+// after it, because the open body records the composition. A recursive call
+// whose result has a text field requires ownerless text; one whose result has
+// none takes any text.
+void testPublishedResultOrder() {
+  const auto result = analyzeText(kDeclarations + kOrderDeclarations + R"gti(
+int main() {
+  std::string input{"ordered"};
+  Label<std::string_view> made = outerLabel(input.view());
+  Token counted = countdown("literal", 2);
+  kept = counted.text;
+  std::string_view literal = "literal";
+  Label<std::string_view> label = countdownLabel(literal, 2);
+  Point point = walk(input.view(), 2);
+  return made.text.size() + label.text.size() == 14 && point.y == 2 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "relays compose in any declaration order; recursion without a text "
+         "result takes dynamic text");
+  if (!result.canGenerateCode())
+    return;
+  const lang::MirFunctionInstance *outer = nullptr;
+  std::size_t genericRelays = 0;
+  std::size_t recursiveRelays = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (function.publishedTextFields.size() != 1)
+      continue;
+    if (function.ownerlessTextParameters == std::vector<std::size_t>{0}) {
+      // The recursive function relays its construction's formal and requires
+      // the formal it passes to itself. A generic one's instance is analyzed
+      // after its open body and relays both; callers are checked against the
+      // open declaration's requirement.
+      ++recursiveRelays;
+      continue;
+    }
+    if (function.typeArguments.size() != 1 ||
+        !function.ownerlessTextParameters.empty())
+      continue;
+    ++genericRelays;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget)
+          if (const auto *target =
+                  result.mir.findFunctionInstance(*instruction.functionTarget);
+              target != nullptr && !target->publishedTextFields.empty())
+            outer = &function;
+  }
+  expect(genericRelays == 3, "the generic instances relay their formal");
+  expect(recursiveRelays == 1,
+         "a recursive call with a text result requires ownerless text");
+  expect(outer != nullptr, "the wrapper relays through its callee's relay");
+  const auto found = publications(result.mir);
+  expect(std::count_if(found.begin(), found.end(),
+                       [&](const Location &location) {
+                         return instructionAt(
+                                    const_cast<lang::MirProgram &>(result.mir),
+                                    location)
+                                    .kind == lang::MirInstructionKind::Call;
+                       }) == 1,
+         "only the dynamic wrapper call publishes its argument's owner");
+  if (outer == nullptr)
+    return;
+  auto unrelayed = result.mir;
+  for (const auto &function : unrelayed.functionInstances())
+    if (function.id == outer->id)
+      const_cast<lang::MirFunctionInstance &>(function)
+          .publishedTextFields.clear();
+  expect(!lang::verifyMirProgram(unrelayed).valid(),
+         "a composed relay that is omitted is rejected by MIR");
+
+  for (const char *body :
+       {"Token t = countdown(input.view(), 2);",
+        "Label<std::string_view> l = countdownLabel(input.view(), 2);"}) {
+    const auto rejected =
+        analyzeText(kDeclarations + kOrderDeclarations +
+                    "int run() { std::string input{\"x\"}; " + body +
+                    " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"),
+           std::string("a recursive text result requires ownerless text: ") +
+               body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + body);
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -1011,6 +1137,7 @@ constexpr NamedTest kTests[] = {
     {"testPayloads", testPayloads},
     {"testTemporaries", testTemporaries},
     {"testPublishedResults", testPublishedResults},
+    {"testPublishedResultOrder", testPublishedResultOrder},
 };
 } // namespace
 

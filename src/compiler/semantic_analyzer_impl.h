@@ -2080,9 +2080,11 @@ private:
   // result's origin names, with its field: the result reads that field.
   [[nodiscard]] std::optional<OwnerlessTextField>
   fieldSourcedTextFormal(const FieldSourcedTextResult &result) const;
-  // The direct text fields of a class, as tooling symbols.
+  // The direct text fields of a class, as tooling symbols; `conditional`
+  // adds open type-parameter fields, as directTextField does.
   [[nodiscard]] std::vector<SymbolId>
-  directTextFieldSymbols(const SemanticType &type) const;
+  directTextFieldSymbols(const SemanticType &type,
+                         bool conditional = false) const;
   void noteTextFieldFormalUse(const Expr &expression,
                               OwnerlessTextField formal);
   void consumeTextFieldFormalUse(const ExprPtr &expression);
@@ -2105,9 +2107,10 @@ private:
   readsConstructedObject(const Expr &expression, const ClassInfo &owner,
                          const std::vector<Parameter> *formals) const;
 
-  // Whether `field` names a direct text field of the class `type`.
-  [[nodiscard]] bool directTextField(const SemanticType &type,
-                                     SymbolId field) const;
+  // Whether `field` names a direct text field of the class `type`, or with
+  // `conditional` an open type-parameter field an instance may make text.
+  [[nodiscard]] bool directTextField(const SemanticType &type, SymbolId field,
+                                     bool conditional = false) const;
 
   // The sole named owner of a dynamic text argument, designating `field`.
   // Empty when the argument is ownerless or its owner is not a named place.

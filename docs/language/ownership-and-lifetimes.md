@@ -2453,8 +2453,8 @@ kept = made.text;                              // GTI-S2045
 A generic function relays the same way after substitution, as
 `std::make_pair` and `unexpected` do. Using the parameter's value any other
 way inside the function, for example keeping it in a local and returning
-that, still requires ownerless text. So does a recursive call, even when it
-is returned.
+that, still requires ownerless text. So does a recursive call whose result
+has a text field, even when it is returned.
 
 A dependent value still cannot be passed to a constructor, a lambda, a
 virtual method or a generic function, nor returned itself, captured, bound by
