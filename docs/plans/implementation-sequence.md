@@ -9081,6 +9081,14 @@ prerequisite checkpoints as full acceptance.
       value. The C++ emitter's cleanup-free field-read slot admits text view
       fields, published constructions and text observers; before this, even an
       ownerless temporary's text field was refused.
+    - *Implemented in 0.461.0: recursive relays.* A recursive or mutually
+      recursive function relays the text formal, formal field or receiver
+      field that its other returns relay. Semantics proposes the relay as a
+      least fixpoint over each recursive set, so a recursion that permutes
+      formals relays none of them. MIR accepts a return of another relay's
+      `Stored` call-result loan, and `TextContracts` finds a `CallInput`'s
+      consumer across blocks. Both rules also fix non-recursive compositions
+      such as `return id(s, n);` and `return first(t, n - 1);`.
   - Acceptance: relayed, receiver, payload-enum and returned shapes compile
     and run at O0/O3 with exact semantic, HIR and MIR loan identities, and
     ownerless programs emit identical C++.
