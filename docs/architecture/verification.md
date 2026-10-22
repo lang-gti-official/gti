@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Consuming a borrowed wrapper on only some paths (0.459.4)
+## Consuming a borrowed wrapper on only some paths (0.459.5)
 
 `consuming_receiver_types` adds `checkConditionalCarrierConsumption` over
 `conditional_carrier_consume.gti`. It consumes a borrowed wrapper in the right
@@ -18,6 +18,30 @@ candidate built on it over 1,950 corpus programs at `-O0` and `-O3`. Only
 example 165 and the new fixture changed, both from `GTI-B0001` to accepted;
 every other program, accepted or rejected, produced the same output. The MIR
 and lowered-program censuses are unchanged.
+
+## Returning borrowed enum parameters (0.459.4)
+
+`complete_borrow_summaries` covers the new fixture,
+`borrowed_enum_relay_returns`.
+- Seven functions return a by-value borrowed carrier formal whole: a payload
+  enum moved, copied and under `borrowed_from`, a class whose borrowed state
+  is such an enum, a concrete generic `Outcome<int&, E>` with plain and owning
+  errors, and a `mut` reference enum. All verify.
+- Six MIR mutations per relay are rejected: a `Return` borrow from itself, a
+  removed retirement of the entry group, a guard cleared from the group, a
+  path cleared from the `Return` loan, a group that is no longer an entry, and
+  a moved `Return` source.
+- Source rejections, with no backend error: relaying a moved or a copied slot
+  of a local (`GTI-S2045`) and writing the owner while a relayed result is
+  live (`GTI-S2017`).
+
+`borrow_origin_runtime` runs the fixture in all eight native modes, including
+the sanitized one. `tryable_propagation_runtime` runs example 165, which now
+also hands a slot back by value, in nine modes.
+
+The change only widens what the program verifier accepts; the backend emits
+from the same MIR, so programs accepted before produce the same C++. The
+census changes only for example 165: one more function body and declaration.
 
 ## Assignment result field reads (0.459.3)
 

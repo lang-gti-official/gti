@@ -16,7 +16,8 @@ if __name__ == "__main__":
              "borrow_direct_projected_return", "borrow_static_return_alternative",
              "borrowed_enum_fields", "borrowed_enum_generic_fields",
              "borrowed_enum_formal_fields", "borrowed_enum_local_selection",
-             "conditional_carrier_consume", "borrow_stored_view_return")
+             "borrowed_enum_relay_returns", "conditional_carrier_consume",
+             "borrow_stored_view_return")
     # The original map is deliberately empty: compilation must succeed, but
     # its checked at() call must retain the defined missing-key failure. The
     # reproducer only reads the row, so it selects the read-only at().
