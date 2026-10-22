@@ -58,6 +58,12 @@ An `--emit-cpp` differential at -O0 and -O3 over the 1,817 programs in
   compiler (`d3a966bbd`), the ten changed programs, #267's fixture and
   `conditional_carrier_consume.gti` emit exactly as above at -O0 and -O3.
 
+The full local suite passed on that head (`0d860401b`, 808 tests). Main
+then gained #258 (generic view fields: semantics, MIR and verifier, no
+backend change). Against its compiler (`2113151d1`), the ten changed
+programs, `view_fields.gti` and example 170 emit as above, and the recorded
+verify reran the 26 emitter, carrier, view-field, census and corpus tests.
+
 ## Conditional joins whose arms take a class by value (0.459.7)
 
 A field read of a conditional temporary whose arms pass a class by value to
