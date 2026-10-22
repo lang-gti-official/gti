@@ -405,6 +405,16 @@ private:
       const auto *loan = operand.kind == MirOperandKind::Loan
                              ? context.body.findLoan(operand.loan)
                              : nullptr;
+      // A reference that a call returned designates what the callee's
+      // returned reference does, whatever place its loan is rooted at; so
+      // does a returned reborrow of it.
+      if (loan != nullptr) {
+        if (const auto *call = textReferenceCall(context.body, loan->id))
+          return callResultSources(context, *call, active);
+        if (const auto *forwarded = forwardedLoan(context.body, loan->id))
+          if (const auto *call = textReferenceCall(context.body, *forwarded))
+            return callResultSources(context, *call, active);
+      }
       const auto *place =
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
@@ -578,6 +588,17 @@ private:
       answer.join(heldFieldSources(context, *origin, field.field));
     }
     return answer;
+  }
+
+  // The loan that a Borrow producing `loan` reborrows, if any.
+  const MirLoanId *forwardedLoan(const MirBody &body, MirLoanId loan) const {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Borrow &&
+            instruction.loan == loan && instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Loan)
+          return &instruction.operands.front().loan;
+    return nullptr;
   }
 
   // The source call whose returned reference to text `loan` holds.

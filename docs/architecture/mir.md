@@ -1865,7 +1865,11 @@ receiver that carries a `Stored` loan designating that field, a view copied
 through the reference carries the call's result loan, whose stored
 dependency is that owner loan. Which bindings carry it is a semantic
 decision here, as for a view copied from a field read: MIR checks the loan's
-shape, not its carriers.
+shape, not its carriers. A method that returns another call's text reference
+publishes a `Return` loan that reborrows the call's result loan.
+`TextContracts` follows that reborrow to the call, and the verifier's carrier
+shell rule takes the expected stored dependency exactly from the forwarded
+result loan, which is none when the callee's receiver holds ownerless text.
 
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the

@@ -11,6 +11,7 @@ public:
   int kind;
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   std::string_view& ref() { return this.text; }
+  std::string_view& alias() { return this.ref(); }
 };
 
 class Box<T> {
@@ -28,6 +29,8 @@ uint64_t width(Token& token) { return token.ref().size(); }
 int main() {
   Token token = Token("token", 1);
   kept = token.ref();
+  std::println(kept);
+  kept = token.alias();
   std::println(kept);
   keep(token);
   std::println(kept);
