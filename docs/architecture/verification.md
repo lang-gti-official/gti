@@ -1,5 +1,41 @@
 # Compiler Verification
 
+## Dependent text payloads (0.457.0)
+
+`view_fields` covers payloads in `testPayloads`.
+- A published payload, its copy and move, a switch's by-value view, and a
+  partly dependent value whose ownerless payload is stored all compile. Each
+  published loan designates one payload with no condition, and its bindings
+  carry it.
+- Three MIR mutations are rejected independently: dropping the publication
+  flag, conditioning the loan on its variant, and designating the other,
+  ownerless payload. In the last case MIR rejects that payload's store by
+  itself.
+- Source rejections, with no backend error:
+  - storing the switch view;
+  - an `auto&` binding of the dependent payload;
+  - passing the value, and returning it;
+  - a temporary owner;
+  - two owners;
+  - a consuming switch;
+  - mutating the owner while the value is live.
+- `view_fields_runtime` runs a payload view in every mode. All 47 payload and
+  enum tests pass unchanged.
+
+An `--emit-cpp` differential over all 1,343 corpus programs, against main's
+compiler on the same sources:
+- 1,341 programs emit byte-identical C++.
+- Only example 170 and the `view_fields` fixture change status: they now build
+  because they hold dependent payloads.
+
+Lowering found three constraints:
+- `borrowOriginPlace` materializes a place for a call's own result, so the
+  payload path reads the text argument's loan instead.
+- A `Compute` may carry a loan only as a closure or a staged payload
+  construction, so a published text payload is staged.
+- A guarded loan needs a complete-set proof, so the published loan is
+  unconditional.
+
 ## Returned text fields of relayed values (0.456.0)
 
 `view_fields` covers field-sourced returns.
