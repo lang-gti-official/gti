@@ -918,6 +918,9 @@ selected method must return `void`, an ordinary scalar, or an owned value with
 no tracked borrowed state, except that a read-only member may provide a
 nonescaping receiver-tied read observation through a read-only reference or
 string view. Such a borrow cannot outlive the temporary's full expression.
+A read-only member that returns one text field of a temporary that holds a
+local owner's text is not such a borrow: its result is a view of that owner
+(see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
 Consuming members cannot return any reference or tracked borrowed state.
 
 For an ordinary GTI function or non-operator method call, a direct fresh
