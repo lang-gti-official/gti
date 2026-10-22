@@ -17954,6 +17954,102 @@ failureFreeFixedArrayAggregateMove(const MirProgram &program,
          !initialize.conditional && !initialize.failureCleanup;
 }
 
+struct FixedArrayInitializerPublication {
+  const MirInstruction *aggregate = nullptr;
+  const MirPlace *result = nullptr;
+  const MirBlock *returned = nullptr;
+
+  [[nodiscard]] explicit operator bool() const {
+    return aggregate != nullptr && result != nullptr && returned != nullptr;
+  }
+};
+
+// An initializer body receives uninitialized final-address storage. Its
+// aggregate may construct there under the same element-transfer proof used
+// by ordinary storage Initialize. This is not an additional ordinary
+// function-return spelling: only the typed initializer result has this
+// destination, and no fallible work may follow publication in this slice.
+[[nodiscard]] FixedArrayInitializerPublication
+fixedArrayInitializerPublication(const MirProgram &program, const MirBody &body,
+                                 MirValueId valueId) {
+  if (body.kind != MirBodyKind::ThreadLocalInitializer ||
+      body.returnType.kind != SemanticType::Array)
+    return {};
+  const auto *value = body.findValue(valueId);
+  if (!value || value->info.type != body.returnType)
+    return {};
+  const auto *aggregate =
+      value ? findInstruction(body, value->definition) : nullptr;
+  const auto *drop =
+      value ? uniqueValueLifetimeDrop(body, valueId, value->info.type)
+            : nullptr;
+  const auto *slot = drop ? body.findPlace(drop->place) : nullptr;
+  if (!value || value->info.type != body.returnType ||
+      value->info.category != ValueCategory::Value ||
+      value->info.traits.containsBorrowedState || !aggregate ||
+      !failureFreeFixedArrayAggregateMove(program, body, *aggregate) ||
+      aggregate->destination || aggregate->receiver ||
+      aggregate->functionTarget || aggregate->constructorTarget ||
+      aggregate->bodyTarget || aggregate->lambdaTarget || aggregate->loan ||
+      !drop || drop->kind != MirDropObligationKind::Value ||
+      drop->initiallyActive || drop->dropType.type != body.returnType ||
+      !slot || slot->root != MirPlaceRootKind::Value ||
+      slot->value != valueId || slot->type != body.returnType ||
+      !slot->projections.empty() || slot->initiallyAvailable ||
+      slot->sourceValue != value->sourceValue ||
+      drop->value != value->sourceValue)
+    return {};
+  bool resultRoot = false;
+  const MirBlock *returned = nullptr;
+  for (const auto &use : body.usesOf(valueId)) {
+    if (use.kind == MirValueUseKind::PlaceRoot && use.place == slot->id &&
+        !resultRoot) {
+      resultRoot = true;
+      continue;
+    }
+    if (use.kind != MirValueUseKind::Terminator || returned)
+      return {};
+    returned = body.findBlock(use.block);
+  }
+  if (!resultRoot || !returned || returned->id != value->definitionBlock ||
+      returned->terminator.kind != MirTerminatorKind::Return ||
+      returned->terminator.returnLoan || !returned->terminator.value ||
+      returned->terminator.value->kind != MirOperandKind::Value ||
+      returned->terminator.value->value != valueId ||
+      returned->terminator.value->type != body.returnType)
+    return {};
+  for (const auto &block : body.blocks)
+    if (block.id != returned->id &&
+        block.terminator.kind == MirTerminatorKind::Return)
+      return {};
+  bool afterAggregate = false;
+  std::size_t publications = 0;
+  for (const auto &instruction : returned->instructions) {
+    if (&instruction == aggregate) {
+      afterAggregate = true;
+      continue;
+    }
+    if (!afterAggregate || instruction.tombstone)
+      continue;
+    if (instruction.kind != MirInstructionKind::Lifecycle ||
+        instruction.result || instruction.destination || instruction.receiver ||
+        instruction.loan || !instruction.operands.empty() ||
+        !instruction.definedFailure.empty() ||
+        instruction.cleanupBoundaryEnd != 0)
+      return {};
+    for (const auto &event : instruction.lifecycle) {
+      if (event.kind != MirLifecycleEventKind::TransferOut ||
+          event.source != drop->id || event.target != 0 || event.conditional ||
+          event.failureCleanup)
+        return {};
+      ++publications;
+    }
+  }
+  return afterAggregate && publications == 1
+             ? FixedArrayInitializerPublication{aggregate, slot, returned}
+             : FixedArrayInitializerPublication{};
+}
+
 struct PassiveFixedArrayConstructAggregate {
   const MirInstruction *aggregate = nullptr;
   const MirInstruction *initialize = nullptr;
@@ -25262,6 +25358,10 @@ returnMoveDefinitionByScan(const MirBody &body, MirValueId value) {
 pendingReturnPlacementPlace(const MirProgram &program,
                             const CppMirBodyEmissionMap &representations,
                             const MirBody &body, const MirPlace &place) {
+  if (place.root == MirPlaceRootKind::Value &&
+      fixedArrayInitializerPublication(program, body, place.value).result ==
+          &place)
+    return true;
   return place.root == MirPlaceRootKind::Value && place.projections.empty() &&
          returnResultObligation(body, place.value) != nullptr &&
          (placementDirectReturnCall(program, representations, body,
@@ -30330,6 +30430,8 @@ public:
         // second SSA slot for those values would be an unrelated object.
         continue;
       }
+      if (fixedArrayInitializerPublication(program, facts.body, value.id))
+        continue; // This exact aggregate already names the ABI result storage.
       const MirInstruction *valueDefinition =
           findInstruction(facts.body, value.definition);
       if (valueDefinition &&
@@ -33139,12 +33241,22 @@ private:
         owningDestination = fixedArrayAggregateInputPlace(program, facts.body,
                                                           *instruction.result);
       }
-      if (const MirPlace *destination = owningDestination) {
-        const MirPlaceId slot = canonicalSlotPlaceId(facts.body, *destination);
-        const bool field = destination->root == MirPlaceRootKind::This;
+      const FixedArrayInitializerPublication initializerResult =
+          failureForm && instruction.result
+              ? fixedArrayInitializerPublication(program, facts.body,
+                                                 *instruction.result)
+              : FixedArrayInitializerPublication{};
+      if (const MirPlace *destination = owningDestination;
+          destination || initializerResult) {
+        const MirPlaceId slot =
+            destination ? canonicalSlotPlaceId(facts.body, *destination) : 0;
+        const bool field =
+            destination && destination->root == MirPlaceRootKind::This;
         const bool byteArray =
             cppRequiresIndirectValueTransport(program, instruction.info.type);
-        if (field) {
+        if (initializerResult) {
+          output << "::new (static_cast<void *>(__gti_mir_out_result)) ";
+        } else if (field) {
           output << "std::destroy_at(std::addressof("
                  << destinationSpelling(facts, destination->id) << "));\n";
           writeIndent();
@@ -33162,7 +33274,9 @@ private:
           if (byteArray) {
             writeIndent();
             output << "::gti_internal::backend::assign_representation(";
-            if (field)
+            if (initializerResult)
+              output << "(*__gti_mir_out_result)";
+            else if (field)
               output << destinationSpelling(facts, destination->id);
             else
               output << "(*__gti_mir_p_" << slot << ".construction_address())";
@@ -33194,7 +33308,7 @@ private:
         }
         if (!byteArray)
           output << "};\n";
-        if (!field) {
+        if (!field && !initializerResult) {
           writeIndent();
           output << "__gti_mir_p_" << slot << ".mark_constructed();\n";
         }
@@ -41317,6 +41431,12 @@ private:
             // result, and the success edge transferred that identity out.
             writeIndent();
             output << "// GTI MIR placement value published at its call\n";
+          } else if (terminator.value->kind == MirOperandKind::Value &&
+                     fixedArrayInitializerPublication(
+                         program, facts.body, terminator.value->value)) {
+            writeIndent();
+            output
+                << "// GTI MIR initializer array published at its aggregate\n";
           } else {
             writeIndent();
             const bool classPublication =
@@ -50533,6 +50653,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     const MirInstruction *owningDefinition =
         findInstruction(body, value.definition);
+    if (fixedArrayInitializerPublication(program_, body, value.id)) {
+      if (!failureForm)
+        return false;
+      continue;
+    }
     if (passiveArrayCopyPublication(program_, body, value.id))
       continue;
     if (owningDefinition != nullptr &&

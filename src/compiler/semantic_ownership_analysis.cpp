@@ -12728,10 +12728,9 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
   const Variable *variable = movedVariable(argument);
   if (variable == nullptr) {
     const std::optional<Symbol> symbol = resolveExpressionSymbol(argument);
-    if (symbol &&
-        (symbol->bindingKind == SemanticBindingKind::GlobalVariable ||
-         (symbol->variableDeclaration != nullptr &&
-          symbol->variableDeclaration->isThreadLocal()))) {
+    if (symbol && (symbol->bindingKind == SemanticBindingKind::GlobalVariable ||
+                   (symbol->variableDeclaration != nullptr &&
+                    symbol->variableDeclaration->isThreadLocal()))) {
       report(expressionToken(argument),
              "std::move cannot consume a global binding because its move "
              "state is not locally provable.",
@@ -12802,8 +12801,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
                         symbol->variableDeclaration->isThreadLocal()
                     ? "thread-local"
                     : "global") +
-               " binding '" +
-               variable->name().lexeme +
+               " binding '" + variable->name().lexeme +
                "' because its move state is not locally provable.",
            "GTI-S2018");
     currentType = SemanticType::Unknown;

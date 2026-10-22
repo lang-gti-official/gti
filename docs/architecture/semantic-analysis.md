@@ -1263,6 +1263,18 @@ temporaries and protects a published reference or borrowed result. Body cleanup
 summaries retain conservative rollback effects until the closed execution/failure
 proof can establish a narrower path.
 
+The closed source effect graph also computes a monotone may-propagate-failure
+bit from typed local defined-failure outcomes, unknown GTI boundaries and exact
+selected callees. It executes no GTI and adds no alternate failure semantics.
+Deferred lifecycle edges remain conservative for process-initializer ordering;
+hidden persistent-storage checks traverse them when a body can fail, alongside
+the unconditional cleanup effects recorded at actual scope/full-expression and
+replacement endpoints. Thus a no-fail constructor that moves a parameter into a
+field does not appear to destroy that moved parameter, but a potentially failing
+constructor retains field/input rollback. Concrete effect import preserves
+deferred versus executed paths rather than flattening a conditional destructor
+into an unconditional ambient write.
+
 Value-generic arithmetic needed before complete program HIR/MIR is retained as
 an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
 Substitution reuses the checked constant-operation kernel and exact-specialization

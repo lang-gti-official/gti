@@ -4489,15 +4489,16 @@ private:
       const Expr &operation,
       const std::vector<ProgramTemporaryCleanup> &temporaries);
   void recordProgramExecutedCleanupEffects(const SemanticType &type,
-                                            const SourceSpan &span,
-                                            bool includeDirect = true);
+                                           const SourceSpan &span,
+                                           bool includeDirect = true);
   [[nodiscard]] bool
   programFailureMayHappen(const ProgramFailureCondition &condition) const;
   void closeProgramFailureEffects();
   void recordProgramReplacementCleanup(const Expr &operation,
                                        const SemanticType &type);
-  void recordProgramOrderedInputEffects(
-      const ProgramStorageBorrowCheck &earlier, const ExprPtr &input);
+  void
+  recordProgramOrderedInputEffects(const ProgramStorageBorrowCheck &earlier,
+                                   const ExprPtr &input);
   void recordProgramCallEffectTargets(const Expr &expression);
   void validateProgramStorageBorrowEffects();
   [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;
@@ -6207,7 +6208,8 @@ private:
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
     std::vector<ProgramStorageBorrowCheck> programStorageBorrowChecks;
     std::size_t indexedFullExpressions = 0;
-    std::unordered_map<const Expr *, SemanticFullExpression> fullExpressionRoots;
+    std::unordered_map<const Expr *, SemanticFullExpression>
+        fullExpressionRoots;
     std::vector<ProgramFullExpressionState> fullExpressionStates;
     std::unordered_map<const Expr *, ProgramExpressionEffects>
         programExpressionEffects;

@@ -52,7 +52,7 @@ struct Slot {
     return std::launder(reinterpret_cast<Resource *>(bytes));
   }
 };
-thread_local Slot slot{};
+constinit thread_local Slot slot{};
 bool cleanup(void *raw, gti_failure_record_v2 *, const gti_failure_record_v2 *,
              const gti_failure_artifact_descriptor_v1 *) {
   auto &value = *static_cast<Slot *>(raw);
@@ -60,9 +60,12 @@ bool cleanup(void *raw, gti_failure_record_v2 *, const gti_failure_record_v2 *,
   std::destroy_at(value.address());
   return true;
 }
-void ensure() {
-  if (slot.state == 2)
-    return;
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+void ensureCold() {
   if (slot.state == 1 || slot.state == 3 ||
       !gti_runtime_detail::thread_local_storage_lifetime_active() ||
       gti_runtime_detail::thread_local_cleanup_active())
@@ -79,6 +82,10 @@ void ensure() {
   slot.entry.cleanup = &cleanup;
   gti_runtime_detail::register_thread_local_cleanup(&slot.entry);
 }
+inline void ensure() {
+  if (slot.state != 2) [[unlikely]]
+    ensureCold();
+}
 void add(std::uint64_t value) {
   ensure();
   slot.address()->value = checkedAdd(slot.address()->value, value);
@@ -88,7 +95,7 @@ std::uint64_t read() {
   return slot.address()->value;
 }
 #else
-thread_local std::uint64_t counter = 0;
+constinit thread_local std::uint64_t counter = 0;
 void add(std::uint64_t value) { counter = checkedAdd(counter, value); }
 std::uint64_t read() { return counter; }
 #endif
@@ -101,8 +108,20 @@ int main() {
   const auto iterations = gti_tls_bench_iterations();
   const auto start = gti_tls_bench_clock();
   for (std::uint64_t index = 0; index < iterations;
-       index = checkedAdd(index, 1))
-    add(gti_tls_bench_step(index));
+       index = checkedAdd(index, 1)) {
+#ifdef GTI_TLS_BENCH_DYNAMIC
+    // GTI prepares the receiver before evaluating explicit arguments.
+    ensure();
+    Resource *receiver = slot.address();
+    const auto amount = gti_tls_bench_step(index);
+    receiver->value = checkedAdd(receiver->value, amount);
+#else
+    // GTI's primitive compound update reads its old value before the RHS.
+    const auto previous = counter;
+    const auto amount = gti_tls_bench_step(index);
+    counter = checkedAdd(previous, amount);
+#endif
+  }
   const auto elapsed = checkedSubtract(gti_tls_bench_clock(), start);
   const auto value = read();
   gti_runtime_detail::drain_thread_local_cleanup();

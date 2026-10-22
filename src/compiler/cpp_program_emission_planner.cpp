@@ -7805,7 +7805,8 @@ public:
       output << "}\n";
       if (storage.dataInitializer) {
         writeIndent();
-        output << "thread_local " << type << " __gti_tls_data_" << id << " = ";
+        output << "constinit thread_local " << type << " __gti_tls_data_" << id
+               << " = ";
         emitMirLiteral(*storage.dataInitializer, storage.type);
         output << ";\n";
         writeIndent();
@@ -7825,8 +7826,8 @@ public:
              << "  " << type << " *address() { return std::launder("
              << "reinterpret_cast<" << type << " *>(bytes)); }\n};\n";
       writeIndent();
-      output << "thread_local __gti_tls_slot_type_" << id << " __gti_tls_slot_"
-             << id << ";\n";
+      output << "constinit thread_local __gti_tls_slot_type_" << id
+             << " __gti_tls_slot_" << id << "{};\n";
       writeIndent();
       output << type << " &__gti_tls_value_" << id
              << "() { return *__gti_tls_slot_" << id << ".address(); }\n";
@@ -7859,12 +7860,17 @@ public:
                   "  return true;\n}\n";
       }
       writeIndent();
+      output << "#if defined(__GNUC__) || defined(__clang__)\n"
+                "__attribute__((__cold__, __noinline__))\n"
+                "#elif defined(_MSC_VER)\n"
+                "__declspec(noinline)\n"
+                "#endif\n";
+      writeIndent();
       output
-          << "bool __gti_tls_ensure_" << id
+          << "bool __gti_tls_ensure_cold_" << id
           << "(::gti_failure_record_v2 *record, std::uint32_t site) {\n"
           << "  auto &slot = __gti_tls_slot_" << id
           << ";\n"
-             "  if (slot.state == 2) return true;\n"
              "  if (slot.state == 1 || slot.state == 3 ||\n"
              "      "
              "!::gti_runtime_detail::thread_local_storage_lifetime_active() "
@@ -7901,6 +7907,12 @@ public:
                 "::gti_runtime_detail::register_thread_local_cleanup(&slot."
                 "entry);\n"
                 "  return true;\n}\n";
+      writeIndent();
+      output << "__gti_small_source_inline bool __gti_tls_ensure_" << id
+             << "(::gti_failure_record_v2 *record, std::uint32_t site) {\n"
+             << "  if (__gti_tls_slot_" << id << ".state != 2) [[unlikely]]\n"
+             << "    return __gti_tls_ensure_cold_" << id << "(record, site);\n"
+             << "  return true;\n}\n";
     }
   }
 

@@ -56,7 +56,7 @@ interior-synchronization type.
 
 ## Thread-Local Storage
 
-`thread_local` gives a declaration one distinct object per attached GTI thread.
+`thread_local` gives a declaration one distinct storage instance per thread.
 It is available in both execution profiles and does not require its type to be
 share-capable. For example:
 
@@ -130,6 +130,10 @@ functions, `constexpr` TLS, native TLS declarations, generic-instance TLS, or
 lambda-local TLS declarations. A local initializer cannot depend on an automatic
 binding, parameter or instance receiver; guarded lexical/per-instance
 initialization is a separate goal. A source diagnostic identifies these shapes.
+Generic function-local and generic class-static storage require a descriptor key
+that includes the exact concrete function/class instance, rather than the
+unspecialized source `SymbolId`; until that inventory is represented and
+verified, both shapes are rejected instead of sharing a slot across instances.
 `thread_local` does not add thread-specific-storage keys, detach, arbitrary
 foreign-thread entry or async suspension. Runnable example:
 [`171-thread-local-storage.gti`](../../examples/171-thread-local-storage.gti).

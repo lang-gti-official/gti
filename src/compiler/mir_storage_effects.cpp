@@ -73,7 +73,7 @@ bool mergeAccess(std::vector<MirPersistentStorageAccess> &into,
   return false;
 }
 
-bool unknownSourceInvocation(const MirBody &body,
+bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction,
                              const MirInvocationTargets &targets) {
   if (!targets.boundary)
@@ -81,6 +81,13 @@ bool unknownSourceInvocation(const MirBody &body,
   if (instruction.nativeCalleeType || instruction.nativeCallbackAdapter)
     return false; // Native invocation keeps its explicit unsafe ABI
                   // obligations.
+  if (instruction.functionTarget) {
+    const auto *function =
+        program.findFunctionInstance(*instruction.functionTarget);
+    if (function && function->linkage == LanguageLinkage::C &&
+        function->definitionKind != MirDefinitionKind::Source)
+      return false; // A declared foreign boundary, not an unknown GTI body.
+  }
   if (instruction.kind == MirInstructionKind::Drop) {
     for (const auto &event : instruction.lifecycle)
       if (event.kind == MirLifecycleEventKind::Drop && event.source != 0 &&
@@ -174,8 +181,8 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
                 instruction.kind == MirInstructionKind::EnsureThreadLocal
                     ? instruction.threadLocalStorage
                     : 0,
-            .unknown =
-                unknownSourceInvocation(*node.body, instruction, targets)};
+            .unknown = unknownSourceInvocation(program, *node.body, instruction,
+                                               targets)};
         for (const auto address : targets.addresses) {
           const auto found = indices.find(key(address));
           if (found != indices.end())

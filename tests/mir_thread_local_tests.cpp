@@ -22,12 +22,14 @@ void reject(const lang::MirProgram &source, std::string_view message,
   mutate(forged);
   const auto result = lang::verifyMirProgram(forged);
   expect(!result.valid(), message);
-  expect(std::any_of(result.errors.begin(), result.errors.end(),
-                     [&](const auto &error) {
-                       return error.message.find(diagnostic) !=
-                              std::string::npos;
-                     }),
-         diagnostic);
+  const bool expected = std::any_of(
+      result.errors.begin(), result.errors.end(), [&](const auto &error) {
+        return error.message.find(diagnostic) != std::string::npos;
+      });
+  if (!expected)
+    for (const auto &error : result.errors)
+      std::cerr << error.message << '\n';
+  expect(expected, diagnostic);
 }
 auto &storage(lang::MirProgram &program) {
   return const_cast<std::vector<lang::MirThreadLocalStorage> &>(
@@ -169,8 +171,9 @@ int main() {
                   lang::MirInstructionKind::EnsureThreadLocal)
                 for (auto &origin : instruction.definedFailure.localOrigins)
                   std::erase_if(origin.outcomes, [](const auto &outcome) {
-                    return outcome.detail == lang::DefinedFailureDetail::
-                                                 ThreadLocalOutsideAttachedLifetime;
+                    return outcome.detail ==
+                           lang::DefinedFailureDetail::
+                               ThreadLocalOutsideAttachedLifetime;
                   });
         }
       },
@@ -208,8 +211,8 @@ int main() {
 
   // Matching literal tokens alone do not prove data-only initialization:
   // changing an intermediate precision can round before the final widening.
-  const auto precise = lang::Frontend().analyze(
-      "/tmp/gti-mir-thread-local/precision.gti", R"(
+  const auto precise =
+      lang::Frontend().analyze("/tmp/gti-mir-thread-local/precision.gti", R"(
 thread_local double exact = 16777217;
 int main() { return 0; }
 )");
@@ -251,8 +254,8 @@ int main() { return 0; }
           },
           "thread-local data initializer");
   }
-  const auto pointer = lang::Frontend().analyze(
-      "/tmp/gti-mir-thread-local/null-pointer.gti", R"(
+  const auto pointer =
+      lang::Frontend().analyze("/tmp/gti-mir-thread-local/null-pointer.gti", R"(
 thread_local mut int32_t* address = nullptr;
 int main() { return address == nullptr ? 0 : 1; }
 )");
@@ -272,7 +275,8 @@ int main() { int& value = current(); return value - 7; }
          "dynamic local first-use declaration has an exact failure site");
   if (localDynamic.canGenerateCode())
     reject(
-        localDynamic.mir, "caller witness cannot hide an unguarded callee return",
+        localDynamic.mir,
+        "caller witness cannot hide an unguarded callee return",
         [](auto &forged) {
           for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
             auto *body = lang::findMirBody(forged, address);
@@ -280,12 +284,65 @@ int main() { int& value = current(); return value - 7; }
               continue;
             for (auto &block : body->blocks)
               for (auto &instruction : block.instructions)
-                if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal) {
+                if (instruction.kind ==
+                    lang::MirInstructionKind::EnsureThreadLocal) {
                   const auto id = instruction.id;
-                  instruction = lang::MirInstruction{.id = id, .tombstone = true};
+                  instruction =
+                      lang::MirInstruction{.id = id, .tombstone = true};
                 }
           }
         },
         "thread-local access is not dominated");
+  const auto owningArray =
+      lang::Frontend().analyze("/tmp/gti-mir-thread-local/owning-array.gti", R"(
+class State {
+  int value;
+public:
+  State(int value) : value(value) {}
+  int read() { return this.value; }
+  ~State() {}
+};
+thread_local State states[2] = {State(3), State(4)};
+int main() { return states[0].read() + states[1].read() - 7; }
+)");
+  for (const auto &diagnostic : owningArray.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(owningArray.canGenerateCode(),
+         "owning initializer array has exact element and result obligations");
+  if (owningArray.canGenerateCode()) {
+    reject(
+        owningArray.mir, "missing array result publication rejected",
+        [](auto &forged) {
+          auto &item = storage(forged).front();
+          auto &body = item.initializer;
+          for (auto &block : body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == lang::MirInstructionKind::Lifecycle &&
+                  instruction.lifecycle.size() == 1) {
+                const auto &event = instruction.lifecycle.front();
+                const auto *drop = body.findDropObligation(event.source);
+                if (event.kind == lang::MirLifecycleEventKind::TransferOut &&
+                    drop && drop->dropType.type == item.type) {
+                  const auto id = instruction.id;
+                  instruction =
+                      lang::MirInstruction{.id = id, .tombstone = true};
+                }
+              }
+        },
+        "active drop obligation");
+    reject(
+        owningArray.mir, "duplicate array element publication rejected",
+        [](auto &forged) {
+          auto &body = storage(forged).front().initializer;
+          for (auto &block : body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == lang::MirInstructionKind::Compute &&
+                  instruction.operation == lang::MirOperation::Aggregate &&
+                  instruction.lifecycle.size() >= 3)
+                instruction.lifecycle[1].source =
+                    instruction.lifecycle[0].source;
+        },
+        "transfer");
+  }
   return passed ? 0 : 1;
 }
