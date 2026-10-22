@@ -7493,6 +7493,43 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     return predeclaredTextFieldSource(origin, function, field)
         .value_or(PredeclaredTextBorrowSource{});
   };
+  // A recursive call reads its target's summary computed so far (see
+  // dynamicTextReturnBorrowSummary): ownerless while that has no dependent
+  // return, and otherwise mapped through the call's arguments and receiver
+  // as a completed summary is. Nullopt for a target whose summary is
+  // complete, and for an explicit receiver's relay, which the member-call
+  // relay below maps.
+  const auto recursiveRelay = [&](const FunctionInfo *target,
+                                  const ExprPtr &receiver)
+      -> std::optional<PredeclaredTextBorrowSource> {
+    const auto summary =
+        target ? dynamicTextReturnBorrowSummary(*target) : std::nullopt;
+    if (target == nullptr || !textBorrowSummaryInProgress(*target))
+      return std::nullopt;
+    if (!summary)
+      return PredeclaredTextBorrowSource{};
+    const bool argument = summary->origin == BorrowOriginKind::Argument;
+    if (argument && summary->parameter >= call->arguments().size())
+      return PredeclaredTextBorrowSource{};
+    if (!summary->fields.empty())
+      return fieldRelay(target, argument ? call->arguments()[summary->parameter]
+                                         : receiver)
+          .value_or(PredeclaredTextBorrowSource{});
+    if (argument)
+      return predeclaredTextBorrowSource(call->arguments()[summary->parameter],
+                                         function, ownerType);
+    if (summary->origin == BorrowOriginKind::None)
+      return PredeclaredTextBorrowSource{.known = true};
+    if (receiver)
+      return std::nullopt;
+    // An implicit receiver call relays this method's own receiver.
+    if (summary->origin == BorrowOriginKind::Receiver &&
+        function.ownerClass != 0 && !function.staticMember)
+      return PredeclaredTextBorrowSource{.known = true,
+                                         .ownerDependent = true,
+                                         .origin = BorrowOriginKind::Receiver};
+    return PredeclaredTextBorrowSource{};
+  };
   if (const auto *member = exprAs<Get>(call->callee().get())) {
     // A method of a contract formal's class resolves by its declared name;
     // the selected call's body analysis validates the actual return.
@@ -7517,12 +7554,14 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
                                      ? findMember(receiverType, member->name())
                                      : nullptr;
       if (method != nullptr && method->symbol.overloads.size() == 1 &&
-          method->symbol.overloads.front().declaration != nullptr)
-        if (const auto relayed =
-                fieldRelay(semanticModel.findFunction(
-                               *method->symbol.overloads.front().declaration),
-                           member->object()))
+          method->symbol.overloads.front().declaration != nullptr) {
+        const FunctionInfo *target = semanticModel.findFunction(
+            *method->symbol.overloads.front().declaration);
+        if (const auto recursive = recursiveRelay(target, member->object()))
+          return *recursive;
+        if (const auto relayed = fieldRelay(target, member->object()))
           return *relayed;
+      }
     }
     // Predeclare a receiver-rooted relay contract, not a proof that an
     // arbitrary member call borrows its receiver. Body analysis checks the
@@ -7555,10 +7594,11 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
         method->symbol.overloads.front().declaration != nullptr &&
         !method->symbol.staticMember) {
       static const ExprPtr implicitReceiver;
-      if (const auto relayed =
-              fieldRelay(semanticModel.findFunction(
-                             *method->symbol.overloads.front().declaration),
-                         implicitReceiver))
+      const FunctionInfo *target = semanticModel.findFunction(
+          *method->symbol.overloads.front().declaration);
+      if (const auto recursive = recursiveRelay(target, implicitReceiver))
+        return *recursive;
+      if (const auto relayed = fieldRelay(target, implicitReceiver))
         return *relayed;
     }
   const std::optional<CallableCandidate> intrinsic =
@@ -7585,10 +7625,12 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
           candidate.declaration
               ? semanticModel.findFunction(*candidate.declaration)
               : nullptr;
+      static const ExprPtr implicitReceiver;
+      if (const auto recursive = recursiveRelay(target, implicitReceiver))
+        return *recursive;
       const auto summary =
           target ? dynamicTextReturnBorrowSummary(*target) : std::nullopt;
       if (summary && !summary->fields.empty()) {
-        static const ExprPtr implicitReceiver;
         const ExprPtr &origin =
             summary->origin == BorrowOriginKind::Argument &&
                     summary->parameter < call->arguments().size()
@@ -7612,31 +7654,93 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
                                      ownerType);
 }
 
+void SemanticVisitor::Impl::TextRelaySources::add(
+    const PredeclaredTextBorrowSource &source) {
+  if (!source.known) {
+    unknown = true;
+  } else if (!source.ownerDependent) {
+    return;
+  } else if (source.field != 0) {
+    fields.emplace(source.origin, source.parameter, source.field);
+  } else {
+    direct.emplace(source.origin, source.parameter);
+  }
+}
+
+auto SemanticVisitor::Impl::textRelaySummary(const TextRelaySources &sources)
+    -> std::optional<FunctionReturnBorrowSummary> {
+  // Unknown provenance and a proven absence of dependencies are distinct.
+  // Every safe write to a by-value text field already requires ownerless
+  // storage; reading that field need not invent a dependency on its shell.
+  if (sources.settled())
+    return std::nullopt;
+  if (!sources.direct.empty()) {
+    const auto [origin, parameter] = *sources.direct.begin();
+    return FunctionReturnBorrowSummary{.origin = origin,
+                                       .parameter = parameter,
+                                       .access = AccessMode::ReadOnly};
+  }
+  // A contract formal's text field relays that field's dependency only when
+  // every dependent return reads it (L-OWN-02). Beside another source it is an
+  // ownerless alternative, under a field requirement on the function.
+  if (sources.fields.size() != 1)
+    return FunctionReturnBorrowSummary{};
+  const auto [origin, parameter, field] = *sources.fields.begin();
+  return FunctionReturnBorrowSummary{
+      .origin = origin,
+      .parameter = parameter,
+      .access = AccessMode::ReadOnly,
+      .fields = {
+          {.origin = origin, .parameter = parameter, .sourceFields = {field}}}};
+}
+
+auto SemanticVisitor::Impl::textBorrowSummaryInProgress(
+    const FunctionInfo &function) -> bool {
+  return std::any_of(textBorrowSummaries.begin(), textBorrowSummaries.end(),
+                     [&](const TextBorrowSummaryEntry &entry) {
+                       return entry.declaration == function.declaration &&
+                              (entry.depth != 0 || entry.provisional);
+                     });
+}
+
 auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     const FunctionInfo &function, const SemanticType &ownerType)
     -> std::optional<FunctionReturnBorrowSummary> {
+  if (function.declaration == nullptr)
+    return std::nullopt;
+  // One query's summaries, from the outermost call: the semantic state they
+  // read does not change within it.
+  const auto found =
+      std::find_if(textBorrowSummaries.begin(), textBorrowSummaries.end(),
+                   [&](const TextBorrowSummaryEntry &entry) {
+                     return entry.declaration == function.declaration;
+                   });
+  // A recursive call reads the summary computed so far, including a generic
+  // instance's call reached through its declaration's open signature. Body
+  // analysis validates the resolved call against the summary.
+  if (found != textBorrowSummaries.end() &&
+      (found->complete || found->depth != 0 || found->provisional)) {
+    if (!found->complete)
+      textBorrowReadDepth =
+          std::min(textBorrowReadDepth,
+                   found->depth != 0 ? found->depth : found->lowestRead);
+    return textRelaySummary(found->sources);
+  }
   if ((function.returnType.kind != SemanticType::StringView &&
        function.returnType.kind != SemanticType::CString) ||
       function.intrinsic != IntrinsicKind::None ||
-      function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr) {
     return std::nullopt;
   }
-  if (!activeTextBorrowSummaries.insert(function.declaration).second)
-    return std::nullopt;
-  struct ActiveSummary {
-    std::unordered_set<const FunctionDecl *> &active;
-    const FunctionDecl *declaration;
-    ~ActiveSummary() { active.erase(declaration); }
-  } active{activeTextBorrowSummaries, function.declaration};
+  const auto index =
+      static_cast<std::size_t>(found - textBorrowSummaries.begin());
+  if (found == textBorrowSummaries.end())
+    textBorrowSummaries.push_back({.declaration = function.declaration});
+  auto &summary = textBorrowSummaries[index];
 
   std::vector<const ExprPtr *> returns;
   collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
                                  returns);
-  if (returns.empty()) {
-    return std::nullopt;
-  }
-
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   const SourceUnitId enclosingSourceUnit = currentSourceUnit;
   const std::optional<ClassId> enclosingClass = currentClass;
@@ -7646,60 +7750,76 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
 
-  std::optional<FunctionReturnBorrowSummary> result;
-  // A contract formal's text field relays that field's dependency only when
-  // every dependent return reads it (L-OWN-02). Beside another source it is an
-  // ownerless alternative, under a field requirement on the function.
-  std::optional<PredeclaredTextBorrowSource> field;
-  bool fieldsAgree = true;
-  bool valid = true;
-  for (const ExprPtr *returned : returns) {
-    const PredeclaredTextBorrowSource source =
-        returned == nullptr
-            ? PredeclaredTextBorrowSource{}
-            : predeclaredTextBorrowSource(*returned, function, ownerType);
-    if (!source.known) {
-      valid = false;
+  // The least fixpoint over the returns of each set of mutually recursive
+  // functions: every summary starts as that of no completed return, and a
+  // recursive call reads the summary computed so far through its arguments.
+  // A recursion that permutes formals thus reaches every formal some depth
+  // of it returns. The first function of a set to be evaluated repeats its
+  // returns, with one evaluation of each other member per pass, until no
+  // summary of the set grows, and then completes them all.
+  const auto outerReadDepth = textBorrowReadDepth;
+  const bool outerGrew = provisionalTextBorrowGrew;
+  summary.depth = ++textBorrowSummaryDepth;
+  for (;;) {
+    const auto mark = provisionalTextBorrowSummaries.size();
+    textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
+    provisionalTextBorrowGrew = false;
+    TextRelaySources next = summary.sources;
+    next.unknown = next.unknown || returns.empty();
+    for (const ExprPtr *returned : returns) {
+      if (next.settled())
+        break;
+      next.add(returned == nullptr ? PredeclaredTextBorrowSource{}
+                                   : predeclaredTextBorrowSource(
+                                         *returned, function, ownerType));
+    }
+    const bool grew = next != summary.sources;
+    summary.sources = std::move(next);
+    if (textBorrowReadDepth < summary.depth) {
+      // A lower evaluation completes this summary, and those computed here,
+      // which now depend on what this one depends on.
+      for (auto entry = mark; entry < provisionalTextBorrowSummaries.size();
+           ++entry)
+        textBorrowSummaries[provisionalTextBorrowSummaries[entry]].lowestRead =
+            textBorrowReadDepth;
+      summary.provisional = true;
+      summary.lowestRead = textBorrowReadDepth;
+      provisionalTextBorrowSummaries.push_back(index);
+      provisionalTextBorrowGrew =
+          outerGrew || provisionalTextBorrowGrew || grew;
       break;
     }
-    if (!source.ownerDependent) {
-      continue;
+    // Each provisional summary computed in this pass depends on this one: a
+    // pass in which none grew completes them all.
+    const bool again = grew || provisionalTextBorrowGrew;
+    for (auto entry = mark; entry < provisionalTextBorrowSummaries.size();
+         ++entry) {
+      auto &member = textBorrowSummaries[provisionalTextBorrowSummaries[entry]];
+      member.provisional = false;
+      member.complete = !again;
     }
-    if (source.field != 0) {
-      fieldsAgree =
-          fieldsAgree && (!field || (field->origin == source.origin &&
-                                     field->parameter == source.parameter &&
-                                     field->field == source.field));
-      field = source;
-      continue;
-    }
-    FunctionReturnBorrowSummary candidate{.origin = source.origin,
-                                          .parameter = source.parameter,
-                                          .access = AccessMode::ReadOnly};
-    if (result && (result->origin != candidate.origin ||
-                   result->parameter != candidate.parameter)) {
-      valid = false;
+    provisionalTextBorrowSummaries.resize(mark);
+    if (!again) {
+      summary.complete = true;
+      provisionalTextBorrowGrew = outerGrew;
       break;
     }
-    result = candidate;
   }
-  if (valid && !result && field && fieldsAgree)
-    result = FunctionReturnBorrowSummary{
-        .origin = field->origin,
-        .parameter = field->parameter,
-        .access = AccessMode::ReadOnly,
-        .fields = {{.origin = field->origin,
-                    .parameter = field->parameter,
-                    .sourceFields = {field->field}}}};
+  --textBorrowSummaryDepth;
+  summary.depth = 0;
+  textBorrowReadDepth = std::min(outerReadDepth, textBorrowReadDepth);
 
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
-  // Unknown provenance and a proven absence of dependencies are distinct.
-  // Every safe write to a by-value text field already requires ownerless
-  // storage; reading that field need not invent a dependency on its shell.
-  return valid ? std::optional(result.value_or(FunctionReturnBorrowSummary{}))
-               : std::nullopt;
+  const auto result = textRelaySummary(summary.sources);
+  if (textBorrowSummaryDepth == 0) {
+    textBorrowSummaries.clear();
+    provisionalTextBorrowSummaries.clear();
+    textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
+    provisionalTextBorrowGrew = false;
+  }
+  return result;
 }
 
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(

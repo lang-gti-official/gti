@@ -6619,7 +6619,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           transfer = &instruction;
         }
       }
-      const bool exactTransfer =
+      const bool transferShape =
           storedCarrierEntryLoan != nullptr && !loan->entry &&
           storedCarrierEntryLoan->access == instance.returnBorrowAccess &&
           loan->source == storedCarrierEntryLoan->source && loan->parent == 0 &&
@@ -6628,9 +6628,52 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           transfer != nullptr && transfer->kind == MirInstructionKind::Borrow &&
           transfer->operands.size() == 1 &&
           transfer->operands.front().kind == MirOperandKind::Loan &&
-          transfer->operands.front().loan == storedCarrierEntryLoan->id &&
           transfer->operands.front().type == expectedPayload &&
           transfer->info.type == expectedPayload;
+      // A dynamic text relay may instead return another relay's result,
+      // including its own recursive call's: that call's Stored loan, whose
+      // source verifyMirBorrowProducers proves is the call's selected input,
+      // names this formal and carries the entry's exact dependency.
+      const auto relayedCall = [&](MirLoanId id) -> const MirInstruction * {
+        const auto *relayed = body.findLoan(id);
+        if (!dynamicTextCarrier || relayed == nullptr ||
+            relayed->kind != MirLoanKind::Stored || relayed->entry ||
+            relayed->escapes || relayed->parent != 0 ||
+            relayed->source != storedCarrierEntryLoan->source ||
+            relayed->access != instance.returnBorrowAccess ||
+            !relayed->designatedFields.empty() ||
+            relayed->additionalDependencies !=
+                storedCarrierEntryLoan->additionalDependencies)
+          return nullptr;
+        const MirInstruction *producer = nullptr;
+        for (const MirBlock &candidateBlock : body.blocks)
+          for (const MirInstruction &instruction : candidateBlock.instructions)
+            if (instruction.loan == id &&
+                instruction.kind != MirInstructionKind::EndBorrow &&
+                instruction.kind != MirInstructionKind::ActivateBorrow) {
+              if (producer != nullptr)
+                return nullptr;
+              producer = &instruction;
+            }
+        const bool relay =
+            producer != nullptr && producer->kind == MirInstructionKind::Call &&
+            producer->functionTarget && producer->result &&
+            producer->hirValue == relayed->producedBy &&
+            producer->borrowOrigin == BorrowOriginKind::Argument &&
+            producer->borrowAccess == instance.returnBorrowAccess &&
+            producer->borrowFields.empty() &&
+            producer->info.type == expectedPayload;
+        return relay ? producer : nullptr;
+      };
+      const MirInstruction *relay =
+          transferShape &&
+                  transfer->operands.front().loan != storedCarrierEntryLoan->id
+              ? relayedCall(transfer->operands.front().loan)
+              : nullptr;
+      const bool exactTransfer =
+          transferShape &&
+          (transfer->operands.front().loan == storedCarrierEntryLoan->id ||
+           relay != nullptr);
       if (!exactTransfer) {
         return verificationFailure(
             body, instance.id,
@@ -6682,13 +6725,20 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         verifiedValueSource = runtime;
       } else {
         const MirOperand &published = transfer->operands.front();
-        const bool exactCarrier =
-            published.place == 0 && published.value != 0 &&
+        // A relayed call result is itself the runtime value of its loan.
+        const bool exactRelay =
+            relay != nullptr && published.place == 0 &&
+            (published.value == 0 || published.value == *relay->result) &&
             block.terminator.value->kind == MirOperandKind::Value &&
-            block.terminator.value->value == published.value &&
-            exactStoredCarrierValueTransfer(program, body, published.value,
-                                            *storedCarrierEntryLoan,
-                                            instance.returnType, *transfer);
+            block.terminator.value->value == *relay->result;
+        const bool exactCarrier =
+            exactRelay ||
+            (relay == nullptr && published.place == 0 && published.value != 0 &&
+             block.terminator.value->kind == MirOperandKind::Value &&
+             block.terminator.value->value == published.value &&
+             exactStoredCarrierValueTransfer(program, body, published.value,
+                                             *storedCarrierEntryLoan,
+                                             instance.returnType, *transfer));
         if (!exactCarrier) {
           return verificationFailure(
               body, instance.id,
@@ -6696,9 +6746,12 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
               "exact runtime carrier of its entry dependency",
               block.id);
         }
-        verifiedValueEntry = storedCarrierEntryLoan;
-        const auto *producer = definitionFor(body, published.value);
-        verifiedValueSource = body.findPlace(producer->operands.front().place);
+        if (!exactRelay) {
+          verifiedValueEntry = storedCarrierEntryLoan;
+          const auto *producer = definitionFor(body, published.value);
+          verifiedValueSource =
+              body.findPlace(producer->operands.front().place);
+        }
       }
     }
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult) {
