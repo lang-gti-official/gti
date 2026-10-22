@@ -1,0 +1,142 @@
+// A user-defined class whose fields are only text views, C strings or
+// scalars is a passive generated class: each field copies bitwise and
+// destroying it runs no source cleanup. A by-value text field of another
+// class holds ownerless text, so moving or copying such a class into a field
+// after initializer work that can fail publishes in body order, exactly like
+// a class of scalar fields. Work before the move or copy, a later sibling or
+// the constructor body can still fail, and the owning field built first is
+// then dropped exactly once. A nested record of such a class, a conditional
+// join of two of them and a copy assigned into a field take the same passive
+// routes. Moving one after a fallible field, joining two and assigning a copy
+// into a field were GTI-B0001.
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+mut int stage = 0;
+
+int32_t divisor_for(int at) { return stage == at ? 0 : 1; }
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() { std::println("close ledger"); }
+};
+
+class Name {
+public:
+  std::string_view text;
+  Name(std::string_view text) : text(text) {}
+};
+
+// The class is moved after a library owner.
+class shelf {
+  std::vector<int32_t> v;
+  Name name;
+public:
+  shelf(Name name) : v(std::vector<int32_t>()), name(std::move(name)) {}
+  int32_t get() { return name.text.size() == 3 ? 7 : 1; }
+};
+
+// The same class copied after a library owner.
+class copied_shelf {
+  std::vector<int32_t> v;
+  Name name;
+public:
+  copied_shelf(Name name) : v(std::vector<int32_t>()), name(name) {}
+  int32_t get() { return name.text.size() == 3 ? 7 : 1; }
+};
+
+class Tagged {
+public:
+  std::string_view text;
+  c_string tag;
+  int32_t rank;
+  Tagged(std::string_view text, c_string tag, int32_t rank)
+      : text(text), tag(tag), rank(rank) {}
+};
+
+struct Labelled {
+  Tagged tagged;
+  int32_t weight;
+  Labelled(Tagged tagged, int32_t weight) : tagged(tagged), weight(weight) {}
+};
+
+int32_t tag_length(c_string tag) {
+  unsafe {
+    auto text = std::string::try_from_c_string(tag);
+    return text ? int32_t(text.value().size()) : 0;
+  }
+}
+
+int32_t measure(Tagged tagged) {
+  return int32_t(tagged.text.size()) * 10 + tag_length(tagged.tag) +
+         tagged.rank;
+}
+
+// A fallible owning field precedes a moved class and a moved nested record;
+// a sibling after them and the body can fail.
+class Shelved {
+public:
+  Ledger ledger;
+  Tagged tagged;
+  Labelled labelled;
+  int32_t quotient;
+  mut int32_t extra;
+  Shelved(Tagged tagged, Labelled labelled)
+      : ledger(Ledger(31, divisor_for(1))), tagged(std::move(tagged)),
+        labelled(std::move(labelled)), quotient(60 / divisor_for(2)),
+        extra(0) {
+    this.extra = 60 / divisor_for(3);
+  }
+};
+
+// The same schedule with a copied class.
+class Copied {
+public:
+  Ledger ledger;
+  Tagged tagged;
+  int32_t quotient;
+  mut int32_t extra;
+  Copied(Tagged tagged)
+      : ledger(Ledger(37, divisor_for(4))), tagged(tagged),
+        quotient(60 / divisor_for(5)), extra(0) {
+    this.extra = 60 / divisor_for(6);
+  }
+};
+
+class Holder {
+public:
+  mut Tagged tagged;
+  Holder(Tagged tagged) : tagged(tagged) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  shelf moved = shelf(Name("abc"));
+  copied_shelf copied = copied_shelf(Name("abc"));
+  std::println(moved.get() + copied.get());
+
+  Shelved shelved = Shelved(Tagged("moved", "mm", 1),
+                            Labelled(Tagged("labelled", "lll", 3), 4));
+  std::println(measure(shelved.tagged) + measure(shelved.labelled.tagged) +
+               shelved.labelled.weight);
+  std::println(shelved.ledger.id + shelved.quotient + shelved.extra);
+
+  Copied copy = Copied(Tagged("copy", "c", 2));
+  std::println(measure(copy.tagged));
+  std::println(copy.ledger.id + copy.quotient + copy.extra);
+
+  Tagged first = Tagged("first", "f", 5);
+  Tagged second = Tagged("second", "ss", 6);
+  bool pick = first.text.size() == 5;
+  Tagged chosen = pick ? first : second;
+  Tagged taken = pick ? std::move(second) : std::move(first);
+  std::println(measure(chosen) + measure(taken));
+
+  mut Holder holder = Holder(Tagged("held", "h", 7));
+  holder.tagged = chosen;
+  std::println(measure(holder.tagged));
+  return 0;
+}
