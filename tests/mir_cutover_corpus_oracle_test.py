@@ -53,6 +53,8 @@ ALLOWED_MARKERS = {
     "scalar-cfg-destructor-failure-v1",
     "native-boundary-v1",
     "hosted-entry-v1",
+    # Each lazy TLS initializer is a separately verified concrete MIR body.
+    "thread-local-initializer-v1",
 }
 
 
@@ -94,7 +96,7 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
         str(source),
         *(
             ["--execution-profile", "concurrent"]
-            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti", "171-thread-local-storage.gti"}
+            if source.name in {"066-managed-threads.gti", "076-scalar-atomics.gti", "172-thread-local-storage.gti"}
             else []
         ),
         f"-{optimization}",

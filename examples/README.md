@@ -67,7 +67,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
-| Keep independent per-thread state with lazy initialization and deterministic cleanup | [171: thread-local storage](171-thread-local-storage.gti) |
+| Keep independent per-thread state with lazy initialization and deterministic cleanup | [172: thread-local storage](172-thread-local-storage.gti) |
 | Keep views of a local string in a value's text fields without copying the text | [170: view fields](170-view-fields.gti) |
 | Return a caller's text through recursive functions and methods without copying it | [171: recursive text relays](171-recursive-text-relays.gti) |
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
