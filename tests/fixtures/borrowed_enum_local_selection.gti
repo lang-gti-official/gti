@@ -1,0 +1,116 @@
+// A reference selected from a payload enum that a local value holds. The
+// local may come from a call result or a direct construction, may be a field
+// of a class value, and may be generic. The carrier's dependency names the
+// caller's owner only as provenance: the selected reference is read from the
+// payload itself, and a write through it reaches that owner.
+enum Slot { item(int& value), empty };
+
+Slot borrow_slot(int& owner, bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(owner);
+}
+
+int read_parameter(int& owner) {
+  auto slot = borrow_slot(owner, true);
+  switch (slot) {
+  case Slot::item(auto& value): return value;
+  case Slot::empty: return -1;
+  }
+}
+
+enum Edit { item(mut int& value), empty };
+
+Edit edit_slot(mut int& owner, bool present) {
+  if (!present) { return Edit::empty; }
+  return Edit::item(owner);
+}
+
+void bump(mut int& owner) {
+  mut auto slot = edit_slot(owner, true);
+  switch (slot) {
+  case Edit::item(mut auto& value): value += 1; return;
+  case Edit::empty: return;
+  }
+}
+
+enum MaybeRef<T> { some(T value), none(int code) };
+
+MaybeRef<int&> find(int& owner, bool present) {
+  if (!present) { return MaybeRef<int&>::none(4); }
+  return MaybeRef<int&>::some(owner);
+}
+
+class Holder {
+public:
+  Slot slot;
+  Holder(int& owner) : slot(Slot::item(owner)) {}
+  Holder() : slot(Slot::empty) {}
+};
+
+Holder hold(int& owner, bool present) {
+  if (!present) { return Holder(); }
+  return Holder(owner);
+}
+
+enum Pair { both(int& first, int& second), none };
+
+Pair pair_of(int& first, int& second) { return Pair::both(first, second); }
+
+int main() {
+  int local = 19;
+  auto called = borrow_slot(local, true);
+  switch (called) {
+  case Slot::item(auto& value): if (value != 19) { return 1; } break;
+  case Slot::empty: return 2;
+  }
+  auto missing = borrow_slot(local, false);
+  switch (missing) {
+  case Slot::item(auto& value): return value == 19 ? 3 : 30;
+  case Slot::empty: break;
+  }
+  auto direct = Slot::item(local);
+  switch (direct) {
+  case Slot::item(auto& value): if (value != 19) { return 4; } break;
+  case Slot::empty: return 5;
+  }
+  if (read_parameter(local) != 19) { return 6; }
+
+  mut int counter = 7;
+  bump(counter);
+  bump(counter);
+  if (counter != 9) { return 7; }
+  mut auto edit = edit_slot(counter, true);
+  switch (edit) {
+  case Edit::item(mut auto& value): value += 10; if (value != 19) { return 8; } break;
+  case Edit::empty: return 9;
+  }
+
+  auto found = find(local, true);
+  switch (found) {
+  case MaybeRef<int&>::some(auto& value): if (value != 19) { return 10; } break;
+  case MaybeRef<int&>::none: return 11;
+  }
+
+  auto holder = hold(local, true);
+  switch (holder.slot) {
+  case Slot::item(auto& value): if (value != 19) { return 12; } break;
+  case Slot::empty: return 13;
+  }
+  auto vacant = hold(local, false);
+  switch (vacant.slot) {
+  case Slot::item(auto& value): return value == 19 ? 14 : 40;
+  case Slot::empty: break;
+  }
+
+  int right = 23;
+  auto pair = pair_of(local, right);
+  switch (pair) {
+  case Pair::both(auto& first, second): if (first + second != 42) { return 15; } break;
+  case Pair::none: return 16;
+  }
+  // A second switch selects again from the same carrier.
+  switch (called) {
+  case Slot::item(auto& again): return again == 19 ? 0 : 17;
+  case Slot::empty: return 18;
+  }
+}
