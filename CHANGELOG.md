@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.458.5 — Borrowed carriers stored after other fields
+
+- A constructor can store a class that holds references (such as
+  `class Cursor { int32_t& current; ... }`) in a field that follows other
+  fields. `Holder(Cursor cursor) : v(std::vector<int32_t>()),
+  cursor(std::move(cursor)) {}`, the copy `cursor(cursor)` and the
+  construction `cursor(Cursor(x))` used to report `error[GTI-B0001]` (an
+  internal compiler error) whenever an earlier field could fail or did other
+  work; they now work. Fields still initialize in order: if an earlier field
+  fails, the carrier's constructor never runs, and the fields already built
+  are dropped once. The carrier's own constructor may check its input and
+  fail, or print.
+- Generic classes holding such a carrier after another field, and carriers
+  that also own resources, still report `error[GTI-B0001]`.
+
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
 - A constructor can store a borrowed payload enum that it takes by value.

@@ -23917,33 +23917,37 @@ bool cppMirFailureConstructorEmptyFieldsEligible(
 bool cppMirDeferredFieldStorage(const MirProgram &program,
                                 HirClassInstanceId ownerId, SymbolId symbol) {
   const MirClassInstance *owner = program.findClassInstance(ownerId);
-  // A generic owner may share one native class template across instances,
-  // so its field declarations stay exact native members.
-  if (owner == nullptr || owner->declaration == 0 || symbol == 0 ||
-      (owner->kind != ClassKind::Class && owner->kind != ClassKind::Struct) ||
-      owner->cAbiRecord || owner->unionLayout ||
-      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-      !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
-      std::count_if(program.classInstances().begin(),
-                    program.classInstances().end(),
-                    [&](const MirClassInstance &instance) {
-                      return instance.declaration == owner->declaration;
-                    }) != 1)
+  if (owner == nullptr || symbol == 0)
     return false;
-  const auto eligible = [&](const MirClassFieldInfo &field) {
-    std::unordered_set<HirClassInstanceId> visiting;
-    return field.type.kind == SemanticType::Class &&
-           failureConstructorPassiveBoundField(program, field, true) &&
-           !failureConstructorEmptyDefaultFieldType(
-               program, field.type, EmptyFieldUse::Construction) &&
-           deferredShellLeavesTrivial(program, field.type, visiting);
-  };
   const auto field =
       std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                    [&](const MirClassFieldInfo &candidate) {
                      return candidate.symbol == symbol;
                    });
-  if (field == owner->declaredFields.end() || !eligible(*field))
+  // A generic owner may share one native class template across instances,
+  // so its field declarations stay exact native members.
+  if (field == owner->declaredFields.end() ||
+      field->type.kind != SemanticType::Class ||
+      field->dropKind != DropKind::Lexical || owner->declaration == 0 ||
+      (owner->kind != ClassKind::Class && owner->kind != ClassKind::Struct) ||
+      owner->cAbiRecord || owner->unionLayout ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      !owner->type.arguments.empty() || !owner->type.valueArguments.empty())
+    return false;
+  const auto eligible = [&](const MirClassFieldInfo &candidate) {
+    std::unordered_set<HirClassInstanceId> visiting;
+    return candidate.type.kind == SemanticType::Class &&
+           failureConstructorPassiveBoundField(program, candidate, true) &&
+           !failureConstructorEmptyDefaultFieldType(
+               program, candidate.type, EmptyFieldUse::Construction) &&
+           deferredShellLeavesTrivial(program, candidate.type, visiting);
+  };
+  if (!eligible(*field) || std::count_if(program.classInstances().begin(),
+                                         program.classInstances().end(),
+                                         [&](const MirClassInstance &instance) {
+                                           return instance.declaration ==
+                                                  owner->declaration;
+                                         }) != 1)
     return false;
   // The first field follows no initialization work unless a state-bearing
   // base precedes it, so a class whose only bound shell is its first field
@@ -23961,7 +23965,8 @@ bool deferredFieldPlace(const MirProgram &program, const MirBody &body,
                         const MirPlace &place) {
   if (body.kind != MirBodyKind::Constructor ||
       place.root != MirPlaceRootKind::This || place.projections.size() != 1 ||
-      place.projections.front().kind != MirProjectionKind::Field)
+      place.projections.front().kind != MirProjectionKind::Field ||
+      place.type.kind != SemanticType::Class)
     return false;
   for (const MirConstructorInstance &constructor :
        program.constructorInstances())
