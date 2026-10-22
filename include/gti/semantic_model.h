@@ -882,6 +882,9 @@ struct FunctionInfo {
   std::vector<std::size_t> ownerlessTextParameters;
   // Sorted and unique; inferred like ownerlessTextParameters.
   std::vector<OwnerlessTextField> ownerlessTextFields;
+  // The receiver's direct text field that every returned reference to text
+  // designates (L-OWN-02): reading the result reads that field.
+  std::optional<OwnerlessTextField> returnedTextReference;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1380,6 +1383,8 @@ struct ResolvedCallInfo {
   std::vector<std::size_t> borrowArguments;
   std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
+  // The callee's returnedTextReference.
+  std::optional<OwnerlessTextField> returnedTextReference;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   CallReceiverMode receiverMode = CallReceiverMode::None;

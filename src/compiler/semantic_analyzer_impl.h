@@ -765,6 +765,7 @@ private:
     std::vector<std::size_t> returnBorrowParameters;
     std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::optional<OwnerlessTextField> returnedTextReference;
     std::vector<FunctionId> virtualRoots;
     bool compilerPrivate = false;
   };
@@ -794,6 +795,7 @@ private:
     std::vector<std::size_t> returnBorrowParameters;
     std::vector<BorrowedFieldOrigin> returnBorrowFields;
     std::optional<BorrowOriginPlace> returnBorrowPlace;
+    std::optional<OwnerlessTextField> returnedTextReference;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
     bool compilerPrivate = false;
@@ -2076,6 +2078,10 @@ private:
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
+  // A call whose callee returns a reference to one direct text field of its
+  // receiver: reading the result reads that field of the receiver.
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  textReferenceRelay(const Call &call, const ResolvedCallInfo &resolved) const;
   // The contract formal or receiver of the current scope that such a
   // result's origin names, with its field: the result reads that field.
   [[nodiscard]] std::optional<OwnerlessTextField>
@@ -2085,6 +2091,9 @@ private:
   directTextFieldSymbols(const SemanticType &type) const;
   void noteTextFieldFormalUse(const Expr &expression,
                               OwnerlessTextField formal);
+  // A returned reference that a call borrowed from a contract formal or the
+  // receiver lets that whole formal escape: a whole use (L-OWN-02).
+  void noteReturnedFormalReference(const Expr &returned);
   void consumeTextFieldFormalUse(const ExprPtr &expression);
   void recordTextFieldCall(const Call &call, const CallableCandidate &target);
   bool requireOwnerlessTextField(const FunctionDecl *function,
@@ -4350,6 +4359,11 @@ private:
   dynamicTextReturnBorrowSummary(
       const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
+
+  // The receiver's direct text field that every returned reference to text
+  // designates, in a field-contract method.
+  [[nodiscard]] std::optional<OwnerlessTextField>
+  textReferenceReturnSummary(const FunctionInfo &function);
 
   [[nodiscard]] std::optional<BorrowOriginPlace>
   globalReturnBorrowPlace(const FunctionInfo &function);

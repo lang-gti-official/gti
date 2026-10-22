@@ -7647,6 +7647,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                       : candidateOwnsBorrow ? function.returnBorrowFields
                                             : concreteBorrow.fields,
       .borrowPlace = returnBorrowPlace,
+      .returnedTextReference = function.returnedTextReference,
       .dispatch =
           function.virtualMethod ? CallDispatch::Virtual : CallDispatch::Static,
       .dispatchOwner = function.dispatchOwner,
