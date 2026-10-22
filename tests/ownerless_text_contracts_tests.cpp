@@ -459,8 +459,110 @@ void testRecursiveTextSummaryScaling() {
          "all call each other return ownerless text");
 }
 
+const std::string kReferenceAccessors = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+};
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+)gti";
+
+// Text read through a returned reference is the text that the reference
+// designates: the receiver's direct text field, or an enum payload. Values
+// holding ownerless text may store it. A value over a local owner cannot
+// reach such an accessor yet, because a view copied from the reference would
+// not keep the owner borrowed.
+void testTextReferenceAccessors() {
+  const auto result = analyzeText(kReferenceAccessors + R"gti(
+int main() {
+  Token token = Token("token", 1);
+  kept = token.ref();
+  keep(token);
+  Box<std::string_view> box = Box<std::string_view>("boxed");
+  kept = box.get();
+  expected<int, std::string_view> failed = unexpected("failure");
+  kept = failed.error();
+  return width(token) == 5 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "text that ownerless values return by reference may be stored");
+  if (!result.canGenerateCode())
+    return;
+  // Storing a formal's text through its accessor requires that field, which
+  // MIR derives through the returned reference by itself.
+  const lang::MirFunctionInstance *keep = nullptr;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        function.returnType.kind == lang::SemanticType::Void &&
+        function.parameterTypes.size() == 1 &&
+        function.ownerlessTextFields.size() == 1)
+      keep = &function;
+  expect(keep != nullptr,
+         "storing text through a formal's accessor requires its field");
+  if (keep != nullptr) {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(keep->id))
+        ->ownerlessTextFields.clear();
+    expect(functionError(lang::verifyMirProgram(changed), keep->id,
+                         "ownerless text field contract omits an "
+                         "independently derived requirement"),
+           "MIR derives the field requirement through the accessor");
+  }
+
+  for (const char *body : {"std::println(t.ref());", "kept = t.ref();",
+                           "keep(t);", "std::println(width(t));"}) {
+    const auto rejected =
+        analyzeText(kReferenceAccessors +
+                    "int run() { std::string input{\"input\"}; Token t = "
+                    "Token(input.view(), 1); " +
+                    body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"),
+           std::string("a value over a local owner reaches no text "
+                       "accessor: ") +
+               body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + body);
+  }
+  // A temporary receiver would need a result loan for its text reference.
+  const auto temporary = analyzeText(kReferenceAccessors + R"gti(
+int main() {
+  kept = Token("literal", 1).ref();
+  return kept.size() == 7 ? 0 : 1;
+}
+)gti");
+  expect(hasDiagnosticCode(temporary.diagnostics, "GTI-S2081") &&
+             std::none_of(temporary.diagnostics.begin(),
+                          temporary.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "a temporary receiver of a text reference accessor is diagnosed at "
+         "source");
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
+    {"testTextReferenceAccessors", testTextReferenceAccessors},
     {"testOwnerlessTextAliasWrites", testOwnerlessTextAliasWrites},
     {"testRecursiveOwnerlessReturns", testRecursiveOwnerlessReturns},
     {"testPermutingRecursiveFieldContracts",

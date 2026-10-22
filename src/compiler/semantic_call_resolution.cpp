@@ -4906,9 +4906,16 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
   if (member != nullptr && receiverMode == CallReceiverMode::Value) {
     const ExpressionInfo *receiver =
         semanticModel.findExpression(*member->object());
+    // A reference to a temporary's text has no result loan to carry it yet.
+    const bool textReference =
+        function.returnType.kind == SemanticType::Reference &&
+        function.returnType.arguments.size() == 1 &&
+        (function.returnType.arguments.front().kind ==
+             SemanticType::StringView ||
+         function.returnType.arguments.front().kind == SemanticType::CString);
     if (receiver != nullptr && receiver->category == ValueCategory::Value &&
         receiver->type.kind == SemanticType::Class &&
-        receiver->traits.containsBorrowedState) {
+        (receiver->traits.containsBorrowedState || textReference)) {
       reportMutableReceiverFailure(member->object(), paren, function, "Method");
       return false;
     }

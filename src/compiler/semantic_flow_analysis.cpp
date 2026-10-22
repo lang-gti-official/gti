@@ -6784,14 +6784,21 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
   // as a non-virtual one does.
   // A nonescaping read observation keeps the fresh owner alive through the
   // full expression. The ordinary borrow-origin checks still reject storing
-  // or returning a view/reference whose temporary owner would expire.
+  // or returning a view/reference whose temporary owner would expire. A
+  // reference to the temporary's text has no result loan to carry it yet.
+  const bool textReference =
+      function.returnType.kind == SemanticType::Reference &&
+      function.returnType.arguments.size() == 1 &&
+      (function.returnType.arguments.front().kind == SemanticType::StringView ||
+       function.returnType.arguments.front().kind == SemanticType::CString);
   const bool readObservation =
       function.receiverMutability == ReceiverMutability::ReadOnly &&
       function.returnBorrowOrigin == BorrowOriginKind::Receiver &&
       function.returnBorrowAccess == AccessMode::ReadOnly &&
       (function.returnType.kind == SemanticType::StringView ||
        (function.returnType.kind == SemanticType::Reference &&
-        function.returnType.referenceAccess == AccessMode::ReadOnly));
+        function.returnType.referenceAccess == AccessMode::ReadOnly &&
+        !textReference));
   return readObservation ||
          (function.returnType.kind != SemanticType::Reference &&
           function.returnBorrowOrigin == BorrowOriginKind::None &&

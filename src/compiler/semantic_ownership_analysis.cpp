@@ -1677,6 +1677,11 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
                                  target.virtualMethod || target.overrideMethod,
                                  target.ownerClass))
     return;
+  const bool textReference =
+      target.returnType.kind == SemanticType::Reference &&
+      target.returnType.arguments.size() == 1 &&
+      (target.returnType.arguments.front().kind == SemanticType::StringView ||
+       target.returnType.arguments.front().kind == SemanticType::CString);
   // An argument is classified before its formal's class is queried: most
   // calls relay and forward nothing.
   const auto record = [&](const ExprPtr &argument, OwnerlessTextField formal,
@@ -1688,8 +1693,10 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
     if (isTextDependentValue(*info)) {
       const auto found =
           requestSession.textDependentValues.find(argument.get());
+      // A returned reference to text may view the value's designated field,
+      // and a view copied from it would not keep the owner borrowed.
       if (found == requestSession.textDependentValues.end() ||
-          !textPublicationOwner(formalType))
+          !textPublicationOwner(formalType) || textReference)
         return;
       found->second.relayed = true;
       requestSession.textDependentRelays.push_back(
@@ -1700,9 +1707,11 @@ auto SemanticVisitor::Impl::recordTextFieldCall(const Call &call,
       return;
     }
     // A formal passed on as the callee's formal or receiver of the same class
-    // carries the callee's requirements on it back to the caller.
+    // carries the callee's requirements on it back to the caller. A text
+    // reference the callee returns may view any of its text fields, so the
+    // use stays a whole use.
     const auto caller = textFieldContractFormal(*argument);
-    if (!caller)
+    if (!caller || textReference)
       return;
     requestSession.textFieldForwardUses.push_back(
         {.caller = currentFunctionDeclaration,

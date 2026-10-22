@@ -2469,6 +2469,22 @@ published field back through `this` as ownerless text. A value holds dynamic
 text from at most one owner, and that owner must be a named place: a view of a
 temporary owner is rejected as before.
 
+A method or function that returns a reference to text, such as
+`std::string_view& ref() { return this.text; }`, `T& get()` over a text field,
+or `expected::error()`, gives the text that the reference designates. A value
+that holds ownerless text may store what it reads through the reference. A
+temporary cannot yet be the receiver of such an accessor (`GTI-S2081`). A
+dependent value cannot yet call one or be passed to a function that calls
+one on it: a view copied from the reference would not keep the owner
+borrowed, so each is `GTI-S2045`:
+
+```gti
+Token literal = Token("literal", 1);
+kept = literal.ref();                     // valid: ownerless
+Token token = Token(input.view(), 2);
+std::println(token.ref());                // GTI-S2045
+```
+
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
 constructor. The adapter borrows the view object and retains its underlying

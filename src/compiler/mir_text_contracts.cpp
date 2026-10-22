@@ -335,6 +335,18 @@ private:
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
         return {};
+      // Text read through a reference that a call returned is the text that
+      // the callee's returned reference designates.
+      if (place->root == MirPlaceRootKind::Loan && place->projections.empty())
+        if (const auto *call = textReferenceCall(context.body, place->loan))
+          return callResultSources(context, *call, active);
+      // A reference bound to a payload views the extracted payload value.
+      if (place->root == MirPlaceRootKind::Value && place->projections.empty())
+        return sources(context,
+                       {.kind = MirOperandKind::Value,
+                        .value = place->value,
+                        .type = place->type},
+                       active);
       // A published field read back through `this` inside its constructor
       // holds that formal's text, not ownerless text.
       if (context.publishedFields && place->root == MirPlaceRootKind::This &&
@@ -446,40 +458,74 @@ private:
                instruction->functionTarget) {
       const auto *target =
           program.findFunctionInstance(*instruction->functionTarget);
-      if (target && textType(target->returnType) &&
-          target->definitionKind == MirDefinitionKind::Source) {
-        // Under its field contracts a callee may return a formal's or the
-        // receiver's text field (L-OWN-02): the result holds what this call's
-        // argument or receiver holds there.
-        const auto returned = returnSources(*target);
-        answer.known = returned.known;
-        for (const auto parameter : returned.parameters) {
-          if (parameter >= instruction->operands.size()) {
-            answer.known = false;
-            continue;
-          }
-          answer.join(
-              sources(context, instruction->operands[parameter], active));
-        }
-        for (const auto &field : returned.fields) {
-          const MirOperand *origin =
-              field.receiver
-                  ? (instruction->receiver ? &*instruction->receiver : nullptr)
-              : field.parameter < instruction->operands.size()
-                  ? &instruction->operands[field.parameter]
-                  : nullptr;
-          if (origin == nullptr) {
-            answer.known = false;
-            continue;
-          }
-          answer.join(heldFieldSources(context, *origin, field.field));
-        }
-      }
+      if (target && textType(target->returnType))
+        answer = callResultSources(context, *instruction, active);
     } else if (!instruction) {
       answer = joinSources(context, operand.value, active);
     }
     active.erase({true, operand.value});
     return answer;
+  }
+
+  // The text a source call returns, or that its returned reference
+  // designates, in terms of this call's arguments and receiver. Under its
+  // field contracts a callee may return a formal's or the receiver's text
+  // field (L-OWN-02): the result holds what that argument or receiver holds
+  // there.
+  TextSources
+  callResultSources(const TextBody &context, const MirInstruction &instruction,
+                    std::set<std::pair<bool, std::size_t>> &active) {
+    const auto *target =
+        instruction.functionTarget
+            ? program.findFunctionInstance(*instruction.functionTarget)
+            : nullptr;
+    if (!target || target->definitionKind != MirDefinitionKind::Source)
+      return {};
+    const auto returned = returnSources(*target);
+    TextSources answer{.known = returned.known};
+    for (const auto parameter : returned.parameters) {
+      if (parameter >= instruction.operands.size()) {
+        answer.known = false;
+        continue;
+      }
+      answer.join(sources(context, instruction.operands[parameter], active));
+    }
+    for (const auto &field : returned.fields) {
+      const MirOperand *origin =
+          field.receiver
+              ? (instruction.receiver ? &*instruction.receiver : nullptr)
+          : field.parameter < instruction.operands.size()
+              ? &instruction.operands[field.parameter]
+              : nullptr;
+      if (origin == nullptr) {
+        answer.known = false;
+        continue;
+      }
+      answer.join(heldFieldSources(context, *origin, field.field));
+    }
+    return answer;
+  }
+
+  // The source call whose returned reference to text `loan` holds.
+  const MirInstruction *textReferenceCall(const MirBody &body,
+                                          MirLoanId loan) const {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            instruction.loan != loan || !instruction.functionTarget)
+          continue;
+        const auto *target =
+            program.findFunctionInstance(*instruction.functionTarget);
+        if (target == nullptr)
+          return nullptr;
+        const auto &type = target->returnType;
+        return type.kind == SemanticType::Reference &&
+                       type.arguments.size() == 1 &&
+                       textType(type.arguments.front())
+                   ? &instruction
+                   : nullptr;
+      }
+    return nullptr;
   }
 
   // A conditional's result: each branch initializes the same temporary before

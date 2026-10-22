@@ -5496,6 +5496,18 @@ private:
                       });
   }
 
+  // A direct text field of the receiver holds the caller's text: ownerless,
+  // or relayed under the method's field contract (L-OWN-02). A reference to
+  // it needs no stored dependency in this body.
+  [[nodiscard]] bool receiverTextFieldPlace(MirPlaceId id) const {
+    const MirPlace *place = output.findPlace(id);
+    return place != nullptr && place->root == MirPlaceRootKind::This &&
+           (place->type.kind == SemanticType::StringView ||
+            place->type.kind == SemanticType::CString) &&
+           place->projections.size() == 1 &&
+           place->projections.front().kind == MirProjectionKind::Field;
+  }
+
   [[nodiscard]] MirLoanId storedDependencyForPlace(MirPlaceId id) const {
     const MirPlace *place = output.findPlace(id);
     if (place == nullptr)
@@ -10828,7 +10840,8 @@ private:
     if (shellReference) {
       output.loans[loan - 1].storedDependency =
           storedDependencyForPlace(sourcePlace);
-      if (output.loans[loan - 1].storedDependency == 0)
+      if (output.loans[loan - 1].storedDependency == 0 &&
+          !receiverTextFieldPlace(sourcePlace))
         valid = false;
     }
     (void)appendInstruction(
