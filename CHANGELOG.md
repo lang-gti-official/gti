@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.459.7 — Field reads of conditionals whose arms take a class by value
+
+- A field of a conditional temporary can now be read when its arms pass a
+  class by value to their constructor, as in
+  `(left ? Segment(Point(1)) : Segment(Point(2))).flat`, including nested
+  reads such as `.low.x` and reads inside loops. It used to report
+  `error[GTI-B0001]` (an internal compiler error).
+
 ## 0.459.6 — Consuming a borrowed wrapper on only some paths
 
 - A consuming method of a borrowed wrapper can now run on only some paths:
