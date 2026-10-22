@@ -1593,6 +1593,11 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
     }
+    // An implicit receiver text field reads like `this.field` (L-OWN-02).
+    if (borrowedTextType(type) && implicitReceiverTextField(variable))
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
     // A local binding that retains a dependent text value (L-OWN-02). A
     // reference binding's loan is its referent's, not a text dependency.
     if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
@@ -1748,6 +1753,16 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                     mutableAccess ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly);
     }
+    // A text field read through a formal or the receiver may hold a relayed
+    // owner's dynamic text, under the function's field contract (L-OWN-02).
+    if (borrowedTextType(type) && member != nullptr &&
+        get.access().kind != TokenKind::ARROW && get.object() &&
+        textFieldContractFormal(*get.object()) &&
+        directTextField(memberObjectType,
+                        symbolForDeclaration(member->symbol.declaration)))
+      return ownerDependentTextInfo(type, ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
     // A text field that a dependent value's owner dependency designates
     // holds that owner's dynamic text (L-OWN-02). Its other fields stay
     // ownerless.
@@ -2498,10 +2513,16 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   // the body that created it (L-OWN-02).
   if (isTextDependentValue(info))
     noteTextDependentValue(expr);
+  // Inside a field-contract scope a formal or the receiver of a publishable
+  // class is noted the same way: field reads and forwarding calls consume it.
+  if (exprAs<Variable>(&expr) != nullptr || exprAs<This>(&expr) != nullptr)
+    if (const auto formal = textFieldContractFormal(expr))
+      noteTextFieldFormalUse(expr, *formal);
   if (const auto *get = exprAs<Get>(&expr);
-      get != nullptr && result != SemanticType::Function)
+      get != nullptr && result != SemanticType::Function) {
     consumeTextDependentValue(get->object());
-  else if (const auto *group = exprAs<Grouping>(&expr))
+    consumeTextFieldFormalUse(get->object());
+  } else if (const auto *group = exprAs<Grouping>(&expr))
     consumeTextDependentValue(group->expression());
   else if (const auto *call = exprAs<Call>(&expr);
            call != nullptr && call->arguments().size() == 1 &&

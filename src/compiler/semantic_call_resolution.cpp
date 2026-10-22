@@ -7463,6 +7463,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   }
   recordCallableForwardings(call, function);
   recordOwnerlessTextCall(call, function);
+  recordTextFieldCall(call, function);
   recordDefaultArgumentEffects(call, function);
   if (requestSession.hasCThreadRequirements && !instanceAnalysisActive &&
       function.declaration != nullptr) {
