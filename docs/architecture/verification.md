@@ -25,11 +25,13 @@ is admitted as before.
 - A join over owner-dependent text, `(c ? word_t(owner.view(), 1) :
   word_t(owner.view(), 2)).kind`, is still `GTI-S2045` in semantics.
 
-The recorded validation runs an `--emit-cpp` differential over every `.gti`
-file under `tests/` and `examples/` against main's compiler, without the
-`namespace-depth-63.gti` stress input. It fails on any text difference, any
-refusal-code change, or any program that stops building, and requires the
-issue-127 fixture to become accepted.
+An `--emit-cpp` differential over every `.gti` file under `tests/` and
+`examples/` (1,837 files, without the `namespace-depth-63.gti` stress input),
+against main's compiler at 0.459.3 on the same sources:
+- 1,462 programs build with both compilers and emit byte-identical C++, and
+  374 fail with both, with the same error codes.
+- Only `issue_127_constructor_temporary_field.gti` changes status: it now
+  builds. No other program is newly accepted.
 
 ## Returning borrowed enum parameters (0.459.4)
 
