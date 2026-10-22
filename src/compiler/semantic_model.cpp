@@ -2123,6 +2123,13 @@ void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
                                       reservedIdentityCeiling);
 }
 
+void SemanticModel::beginSpeculativeDelta(const SemanticModel &baseModel) {
+  beginInstanceDelta(baseModel);
+  semanticAnalysisSeal = baseModel.analysisSeal();
+  retainedLoans = baseModel.retainedLoans;
+  setToolingOccurrencesEnabled(baseModel.semanticDatabase.toolingOccurrences);
+}
+
 // Re-points an instance delta at a relocated base (the analyzer restores
 // its model after each instance analysis; the delta must follow it).
 void SemanticModel::rebase(const SemanticModel *baseModel) {

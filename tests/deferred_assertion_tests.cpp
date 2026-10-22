@@ -44,6 +44,8 @@ int main() {
   std::string owner{"owned"};
   if (policy::enabled) { std::string consumed = std::move(owner); }
   std::assert(!owner.empty());
+  std::string_view held = owner.view();
+  std::assert(held == "owned");
   return 0;
 }
 )");

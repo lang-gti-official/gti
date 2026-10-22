@@ -5885,7 +5885,10 @@ private:
   // R-STRUCT-02 moves catalog and flow algorithms behind narrower services.
   // They do not introduce another owner: every binding refers into this one
   // object, and resetRequestState() is its only public-entry reset operation.
-  struct RequestSessionState {
+  // Mutable request context can be forked independently of the persistent
+  // semantic facts. Speculative expression checks use a model delta rather
+  // than copying every earlier expression in the caller's program.
+  struct RequestSessionContext {
     struct OwnerlessTextCallUse {
       const FunctionDecl *caller = nullptr;
       FunctionId callee = 0;
@@ -5953,7 +5956,6 @@ private:
     };
 
     std::vector<SemanticDiagnostic> diagnostics;
-    SemanticModel semanticModel;
     SemanticCatalog catalog;
     std::vector<OwnerlessTextCallUse> ownerlessTextCallUses;
     std::vector<OwnerlessTextCallableUse> ownerlessTextCallableUses;
@@ -6159,6 +6161,9 @@ private:
     std::vector<std::uint8_t> cAbiRecordStates;
     std::vector<bool> unionShapes;
     std::vector<std::uint8_t> unionStates;
+  };
+  struct RequestSessionState : RequestSessionContext {
+    SemanticModel semanticModel;
   } requestSession;
 
   std::vector<SemanticDiagnostic> &diagnostics = requestSession.diagnostics;

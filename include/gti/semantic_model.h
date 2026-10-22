@@ -2664,6 +2664,11 @@ private:
   void beginInstanceDelta(const SemanticModel &baseModel,
                           SymbolId reservedIdentityCeiling = 0);
 
+  // Speculative expression analysis stays in the caller's body: preserve its
+  // loan identities locally instead of restarting them as an instance does.
+  // Other facts are read through the immutable base; all writes stay local.
+  void beginSpeculativeDelta(const SemanticModel &baseModel);
+
   // Re-points an instance delta at a relocated base (the analyzer restores
   // its model after each instance analysis; the delta must follow it).
   void rebase(const SemanticModel *baseModel);

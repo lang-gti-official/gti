@@ -7,7 +7,11 @@ Status: Current implementation.
 `semantic_deferred.cpp` owns `[[deferred]]` helpers independently of public
 library names. Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
-execution. The source signature is retained for tooling. The actual body is
+execution. The probe forks request context separately from semantic facts,
+reads existing facts through a model delta and owns a copy of active loan
+identities; it does not deep-copy the growing whole-program expression model.
+The source signature is retained only as a tooling occurrence, not an eager
+call in executable effect/transport inventories. The actual body is
 cloned with compiler-owned argument/pack substitutions and separate expansion
 lookup contexts, then analyzed in the caller's ordinary place/ownership/loan
 flow. Definition and invocation namespace/source/class domains stay distinct.
