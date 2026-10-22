@@ -10236,6 +10236,38 @@ private:
           scopes.back().loans.push_back(loan);
       }
     }
+    // A published text payload (L-OWN-02) holds its argument's owner, as a
+    // constructor's published text field holds it; the retained loan, not a
+    // complete set, carries it. The value cannot be reassigned, so the
+    // payload symbol alone fixes its alternative.
+    if (value->kind == HirValueKind::PayloadConstruction &&
+        instruction.result && value->dependentTextPublication) {
+      // The text argument's own loan names its owner place.
+      const std::size_t parameter = value->borrowFields.empty()
+                                        ? 0
+                                        : value->borrowFields.front().parameter;
+      const MirLoan *argumentLoan =
+          value->borrowFields.size() == 1 && value->enumVariant &&
+                  parameter < value->operands.size()
+              ? output.findLoan(loanForValue(value->operands[parameter]))
+              : nullptr;
+      const MirPlaceId origin = argumentLoan ? argumentLoan->source : 0;
+      if (origin == 0) {
+        valid = false;
+        return;
+      }
+      const auto loan = createLoan(MirLoanKind::Stored, origin,
+                                   AccessMode::ReadOnly, value->id);
+      output.loans[loan - 1].designatedFields =
+          value->borrowFields.front().resultFields;
+      // The loan names the payload; a payload construct carries no
+      // call-style borrow summary.
+      instruction.dependentTextPublication = true;
+      instruction.loan = loan;
+      valueLoans.insert_or_assign(value->id, loan);
+      if (!scopes.empty())
+        scopes.back().loans.push_back(loan);
+    }
     if (value->kind == HirValueKind::ArrayInitializer ||
         (value->kind == HirValueKind::PayloadConstruction && !stagedPayload) ||
         value->kind == HirValueKind::Lambda) {

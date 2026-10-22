@@ -1862,6 +1862,18 @@ requirement MIR does not derive only rejects more relays. A `CallInput` whose
 operand is a dependent carrier must feed an in-scope callee that requires
 none of its designated fields.
 
+A payload construction that publishes dynamic text (`dependentTextPublication`
+on its `PayloadConstruct`) is staged like a borrowed-field construction. Its
+own read-only `Stored` loan names the text argument's owner and designates
+the payload symbol, with no variant condition.
+- `dependentTextPayloadPublication` admits it in the variant-table check.
+  The result value has the enum's traits as a dependent value has them, and
+  it carries no complete dependency set.
+- `TextContracts` exempts the published operand from the ownerless payload
+  requirement. A `PayloadExtract` of a text payload is ownerless unless
+  `dependentDesignation` finds the subject's loan designating that payload
+  (`directTextPayload`).
+
 A text field result (`textFieldResult`: one `returnBorrowFields` mapping of an
 Argument or Receiver origin to one source field, no result fields) carries the
 dependency the caller's value holds in that field:
