@@ -9,19 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.460.0 — Reference accessors on values that view an owner
+## 0.461.0 — Reference accessors and generic methods on values that view an owner
 
-- A method that returns a reference to one of its text fields, such as
-  `std::string_view& ref() { return this.text; }`, can now be called on a
-  value that views a local owner. For `Token token = Token(input.view(), 1);`,
-  `std::println(token.ref());` and `std::string_view copy = token.ref();`
-  used to report `error[GTI-S2045]`; the result is now a view of `input`, as
-  `token.text` is. The copy keeps `input` borrowed while it lives, and so
-  keeps `token`.
+- A method that returns a reference to a text field, such as
+  `std::string_view& ref() { return this.text; }`, used to report
+  `error[GTI-B0001]` (an internal compiler error) wherever it was called. It
+  now works. On a value that views a local owner, such as `Token token =
+  Token(input.view(), 1);`, `std::println(token.ref());` and
+  `std::string_view copy = token.ref();` give views of `input`, as
+  `token.text` does. The copy keeps `input` borrowed while it lives, and so
+  keeps `token`. On a value over literal text, `kept = literal.ref();` may
+  store the result.
 - A function that only reads through such an accessor, such as
-  `uint64_t width(Token& t) { return t.ref().size(); }`, now accepts such a
-  value. Storing the text, as in `kept = token.ref();`, or passing the value
-  to a function that stores it, still reports `error[GTI-S2045]`.
+  `uint64_t width(Token& t) { return t.ref().size(); }`, accepts such a value.
+  Storing the text, as in `kept = token.ref();`, or passing the value to a
+  function that stores it, reports `error[GTI-S2045]`. Calling the accessor on
+  a temporary, as in `Token("literal", 1).ref()`, reports `error[GTI-S2081]`.
 - The methods of a generic class can now be called on such a value too. For
   `class Box<T>` with a `T value` field, `Box<std::string_view> box =
   Box<std::string_view>(input.view());` could not call any method: even
@@ -31,19 +34,8 @@ for what minor and patch releases mean.
   are views of `input`. A method that stores the field, such as
   `void save(mut T& out) { out = this.value; }`, reports `error[GTI-S2045]`
   for such a value and is unaffected for `Box<int>`.
-
-## 0.458.5 — Reading text through returned references
-
-- A method that returns a reference to a text field, such as
-  `std::string_view& ref() { return this.text; }`, used to report
-  `error[GTI-B0001]` (an internal compiler error) wherever it was called. It
-  now works, and text read through it can be stored when the value holds
-  ownerless text, as in `kept = literal.ref();` for
-  `Token literal = Token("literal", 1);`. Calling it on a temporary, as in
-  `Token("literal", 1).ref()`, reports `error[GTI-S2081]` instead of an
-  internal compiler error.
-- Storing text read through a generic accessor, such as `kept = box.get();`
-  for `T& get()` on a `Box<std::string_view>`, or `kept = r.error();` for
+- Storing text read through a generic accessor over ownerless text, such as
+  `kept = box.get();`, or `kept = r.error();` for
   `expected<int, std::string_view> r = unexpected("literal");`, used to report
   `error[GTI-B0001]`; it now compiles.
 - A method that returns another method's reference, such as
@@ -51,12 +43,8 @@ for what minor and patch releases mean.
   `std::string_view& alias() { return this.ref(); }`, used to report
   `error[GTI-B0001]`; it now compiles. On a value that views a local owner,
   `alias()` still reports `error[GTI-S2045]`.
-- A value that views a local owner, such as `Token(input.view(), 1)`, cannot
-  yet call such a method or be passed to a function that calls one on it.
-  `t.ref()` reports `error[GTI-S2045]`, because a view copied from the
-  reference would not keep `input` borrowed.
 
-## 0.459.0 — Factories that return values over their text
+## 0.460.0 — Factories that return values over their text
 
 - A function that returns a fresh value over one of its text parameters now
   hands the caller a value over the argument's owner. With
@@ -77,6 +65,110 @@ for what minor and patch releases mean.
   recursive call whose result has a text field.
 - `unexpected(input.view())` gives an `unexpected_value`; converting it into
   an `expected`, and `optional<std::string_view>`, are still to come.
+
+## 0.459.7 — Field reads of conditionals whose arms take a class by value
+
+- A field of a conditional temporary can now be read when its arms pass a
+  class by value to their constructor, as in
+  `(left ? Segment(Point(1)) : Segment(Point(2))).flat`, including nested
+  reads such as `.low.x` and reads inside loops. It used to report
+  `error[GTI-B0001]` (an internal compiler error).
+
+## 0.459.6 — Consuming a borrowed wrapper on only some paths
+
+- A consuming method of a borrowed wrapper can now run on only some paths:
+  in the right operand of `||` or `&&`, in one arm of `?:`, or in one branch
+  of an `if`. For a class holding `enum Slot { ready(int& value), empty }`
+  with `int& take() &&`, `if (!h.has_value() || std::move(h).take() != owner)`
+  used to report `error[GTI-B0001]` (an internal compiler error); it now
+  works. Using the wrapper afterwards still reports `error[GTI-S2018]`. A
+  wrapper with a destructor consumed this way still reports
+
+## 0.459.5 — Borrowed fields copied through references
+
+- A constructor that copies a borrowed payload enum out of a reference
+  parameter into a field, such as
+  `Shelf(Slot& slot) : slot(slot) {}` for
+  `enum Slot { ready(int32_t& value), empty }`, used to report
+  `error[GTI-B0001]` (an internal compiler error). It now reports
+  `error[GTI-S2045]` at the argument, as the same copy of a class with a
+  reference field already does. Taking the enum by value,
+  `Shelf(Slot slot) : slot(slot) {}`, works.
+
+## 0.459.4 — Returning borrowed enum parameters
+
+- A function can return a borrowed payload enum that it takes by value. For
+  `enum Slot { ready(int32_t& value), empty }`,
+  `Slot relay(Slot slot) { return std::move(slot); }`, the copy
+  `return slot;` and the `[[borrowed_from(slot)]]` form used to report
+  `error[GTI-B0001]` (an internal compiler error); they now work. So does
+  returning a class whose borrowed state is such an enum, and a concrete
+  generic enum such as `Outcome<int&, std::string>`. The result keeps the
+  caller's owner: relaying a slot of a local reports `error[GTI-S2045]`, and
+  assigning to the owner while the result is live reports `error[GTI-S2017]`.
+- Returning another relay's result, `return relay(std::move(slot));`, still
+  reports `error[GTI-B0001]`.
+
+## 0.459.3 — Reading fields of assignment results
+
+- A field of a class assignment's result can now be read. For a struct
+  `Point`, `return (p = q).x;` and a constructor initializer such as
+  `first((p = q).x)` used to report `error[GTI-B0001]` (an internal compiler
+  error); they now read the assigned value, and `p` holds `q` afterwards.
+  Nested reads such as `(s = t).start.y`, and destinations that are a field
+  or a reference parameter, as in `(h.point = q).x`, work too.
+- The result is the assigned value, not the destination: in
+  `combine((p = q).x, (p = r).x)` the first argument is still `q.x`.
+- Using the whole result of a class assignment, as in `Point r = (p = q);`,
+  and reading a field of a move-only class's assignment result still report
+  `error[GTI-B0001]`.
+
+## 0.459.2 — Native C-string ownership and conditional call results
+
+- An untracked `c_string` returned by an external C function can again be
+  retained in an ordinary native-resource wrapper. MIR recognizes the exact
+  native producer instead of reporting `GTI-B0001`; GTI owner-dependent strings
+  retain their existing lifetime checks and native pointer validity remains
+  the binding's obligation.
+- A conditional can bind a class result returned by either of two fallible
+  calls with borrowed text inputs. The backend preserves each arm's input-loan
+  ending after result publication, including cleanup-free records without a
+  default constructor. This repairs the editor's conditional stdout/stderr
+  logging path.
+
+## 0.459.1 — Moving classes that hold text views
+
+- A class with a `std::string_view` field can now be moved into another
+  class's field after an initializer that can fail, when it has no destructor
+  and its other fields are text views, C strings, scalars, enums, pointers,
+  fixed arrays or classes of the same kind. For `class Name { public:
+  std::string_view text; ... }`, `shelf(Name name) :
+  v(std::vector<int32_t>()), name(std::move(name))` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. If a later
+  initializer or the constructor body fails, each field already built is
+  dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Name chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field, as in `holder.name = other;`. Each used to
+  report `error[GTI-B0001]`.
+
+## 0.459.0 — Reference bindings from payload enums inside loops
+
+- A `switch` inside a loop can now bind `auto&` to a reference payload of an
+  enum the loop cannot change. With `auto slot = borrow_slot(local, true);`
+  declared before a `for`, `while` or `do` loop, `case Slot::item(auto&
+  value):` inside the loop used to report `error[GTI-S2067]`; it now works.
+  The same holds for a read-only reference parameter such as `Slot& slot`, an
+  enum field of such a local, and generic enums.
+- An enum declared `mut` is still not carried into a loop. Its
+  `error[GTI-S2067]` now says that the subject's dependency set is missing,
+  rather than mentioning a "consuming handoff", and a hint suggests a binding
+  without `mut` or selecting before the loop.
+- `case Edit::item(mut auto& value):` over an enum that is not mutable, where
+  `Edit` holds a `mut int&`, used to report `error[GTI-B0001]` (an internal
+  compiler error) for a local declared without `mut`. It now reports
+  `error[GTI-S2067]` ("A mutable payload pattern requires a mutable enum
+  receiver"), as other mutable payload bindings do.
 
 ## 0.458.4 — Borrowed enum parameters stored in fields
 

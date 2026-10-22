@@ -4835,6 +4835,25 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   // moves or replacement can change the source binding's current value fact.
   const auto subjectDependencies =
       completeBorrowDependencySet(stmt.expression());
+  // Diagnostic provenance only: an active loop's entry dropped this writable
+  // subject binding's complete set. Resolve it before arm bindings can
+  // shadow the subject's name.
+  bool loopDroppedSubjectSet = false;
+  if (payloadEnum != nullptr && !consumedSubject && !subjectDependencies &&
+      !loanFlow.activeLoops.empty()) {
+    const SemanticPlace place = semanticPlace(stmt.expression());
+    const SymbolId binding =
+        place.root ? symbolForDeclaration(place.root->declaration) : 0;
+    loopDroppedSubjectSet =
+        binding != 0 &&
+        std::any_of(loanFlow.activeLoops.begin(), loanFlow.activeLoops.end(),
+                    [&](std::size_t index) {
+                      const auto &dropped =
+                          loanFlow.loops[index].droppedBorrowSets;
+                      return std::find(dropped.begin(), dropped.end(),
+                                       binding) != dropped.end();
+                    });
+  }
   const auto subjectSource = retainedLoanSource(stmt.expression());
   SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
   if (const auto *loan = semanticModel.findLoan(subjectDependency);
@@ -5125,14 +5144,43 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                          ? selectedPayloadReferenceDependencies(
                                pattern, payload, *subjectDependencies)
                          : std::nullopt);
-          if (!dependencies || (payload.extractionKind ==
-                                    PayloadExtractionKind::ReborrowReference &&
-                                subjectDependency == 0)) {
-            report(*payload.name,
-                   "A stored reference selection requires a complete checked "
-                   "external dependency set and its exact active carrier "
-                   "authority; consuming handoff is not yet verified.",
-                   "GTI-S2067");
+          // An exclusive reborrow of a stored reference needs mutable enum
+          // storage, as a mutable payload borrow does.
+          const bool mutableReborrow =
+              payload.extractionKind ==
+                  PayloadExtractionKind::ReborrowReference &&
+              payload.binding.type.referenceAccess == AccessMode::Mutable;
+          if (mutableReborrow && (subjectInfo == nullptr ||
+                                  subjectInfo->access != AccessMode::Mutable)) {
+            report(
+                *payload.name,
+                "A mutable payload pattern requires a mutable enum receiver.",
+                "GTI-S2067");
+          } else if (!dependencies ||
+                     (payload.extractionKind ==
+                          PayloadExtractionKind::ReborrowReference &&
+                      subjectDependency == 0)) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2067", DiagnosticPhase::Semantics, *payload.name,
+                consumedSubject
+                    ? "A stored reference selection requires a complete "
+                      "checked external dependency set and its exact active "
+                      "carrier authority; consuming handoff is not yet "
+                      "verified."
+                    : "A stored reference selection requires the subject's "
+                      "complete checked external dependency set and its "
+                      "exact active carrier authority.");
+            if (!dependencies && loopDroppedSubjectSet)
+              diagnostic.hints.emplace_back(
+                  mutableReborrow
+                      ? "A loop does not carry a writable binding's "
+                        "dependency set into its body; select the mutable "
+                        "reference before the loop and use it inside."
+                      : "A loop does not carry a writable binding's "
+                        "dependency set into its body; select from a binding "
+                        "the loop cannot write, such as one declared without "
+                        "'mut', or select before the loop.");
+            diagnostics.emplace_back(std::move(diagnostic));
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
             // The extraction observes incoming authority before handoff.
             // Its value fact is distinct from the successor loan published

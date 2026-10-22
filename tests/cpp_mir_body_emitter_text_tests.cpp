@@ -1942,6 +1942,223 @@ int main() {
          "only the failure form is defined for the reading constructor");
 }
 
+void testPassiveTextViewClassAfterFallibleSibling() {
+  // A user-defined class whose only field is a text view is a passive
+  // generated class: the view copies bitwise and destroying it runs no
+  // source cleanup. A by-value text field holds ownerless text, so MIR
+  // records no loan for the class formal and, as for a class of scalar
+  // fields, neither a value nor a rollback obligation for its move. Moved
+  // after a fallible field, it publishes from the field's empty state in the
+  // verified failure-form body; copied, through the native parameter copy.
+  const auto program = [](std::string_view initializer) {
+    return std::string(R"(
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+class Name {
+public:
+  std::string_view text;
+  Name(std::string_view text) : text(text) {}
+};
+
+class shelf {
+  std::vector<int32_t> v;
+  Name name;
+public:
+  shelf(Name name) : v(std::vector<int32_t>()), )") +
+           std::string(initializer) + R"( {}
+  int32_t get() { return name.text.size() == 3 ? 7 : 1; }
+};
+
+int main() {
+  shelf s = shelf(Name("abc"));
+  return s.get();
+}
+)";
+  };
+  const auto named = [](const lang::FrontendResult &frontend,
+                        const lang::SemanticType &type, std::string_view name) {
+    const auto *info = type.kind == lang::SemanticType::Class
+                           ? frontend.semantics.findClassType(type.classId)
+                           : nullptr;
+    return info != nullptr && info->declaration != nullptr &&
+           info->declaration->name().lexeme == name;
+  };
+  const auto shelfConstructor = [&](const lang::FrontendResult &frontend) {
+    const lang::MirConstructorInstance *found = nullptr;
+    for (const lang::MirConstructorInstance &constructor :
+         frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+      if (owner != nullptr && named(frontend, owner->type, "shelf") &&
+          constructor.parameterTypes.size() == 1) {
+        found = &constructor;
+      }
+    }
+    return found;
+  };
+  // A copy of the program whose Name instance is forged.
+  const auto forgedName = [&](const lang::FrontendResult &frontend,
+                              const auto &forge) {
+    lang::MirProgram mutated = frontend.mir;
+    auto &instances = const_cast<std::vector<lang::MirClassInstance> &>(
+        mutated.classInstances());
+    bool forged = false;
+    for (lang::MirClassInstance &instance : instances) {
+      if (named(frontend, instance.type, "Name") &&
+          instance.declaredFields.size() == 1) {
+        forge(instance);
+        forged = true;
+      }
+    }
+    return std::pair{std::move(mutated), forged};
+  };
+  const auto failureBody = [](const std::string &text) {
+    const std::size_t start = text.find("shelf::shelf(::gti_internal::backend::"
+                                        "mir_failure_constructor_tag_v1<");
+    const std::size_t end =
+        start == std::string::npos ? start : text.find("\n  }\n", start);
+    return end == std::string::npos ? std::string()
+                                    : text.substr(start, end - start);
+  };
+  const auto count = [](const std::string &body, std::string_view needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = body.find(needle); at != std::string::npos;
+         at = body.find(needle, at + needle.size())) {
+      ++occurrences;
+    }
+    return occurrences;
+  };
+
+  const lang::FrontendResult moved =
+      analyzeWithStandardLibrary("cpp-mir-passive-text-view-class-move.gti",
+                                 program("name(std::move(name))"));
+  expect(moved.canGenerateCode(),
+         "the moved text-view class fixture should pass the frontend");
+  if (!moved.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *move = shelfConstructor(moved);
+  expect(move != nullptr && move->mayRaiseDefinedFailure &&
+             !move->body.failureRecords.empty() &&
+             !lang::cppMirOwnedParameterFieldBindings(moved.mir, *move),
+         "a class move recorded after fallible work is not a native "
+         "publication");
+  if (move == nullptr) {
+    return;
+  }
+  const lang::SemanticType &nameType = move->parameterTypes.front();
+  const bool passiveRecords =
+      move->body.loans.empty() &&
+      std::none_of(
+          move->body.dropObligations.begin(), move->body.dropObligations.end(),
+          [&](const lang::MirDropObligation &drop) {
+            return drop.dropType.type == nameType &&
+                   (drop.kind != lang::MirDropObligationKind::Binding ||
+                    drop.dropType.requiresActiveCleanup);
+          });
+  bool lifecycleFree = true;
+  for (const lang::MirBlock &block : move->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if ((instruction.kind == lang::MirInstructionKind::Move ||
+           instruction.kind == lang::MirInstructionKind::Initialize) &&
+          instruction.info.type == nameType) {
+        lifecycleFree = lifecycleFree && instruction.lifecycle.empty();
+      }
+    }
+  }
+  expect(passiveRecords && lifecycleFree,
+         "MIR records no loan, value or rollback obligation and no lifecycle "
+         "event for the moved text-view class, only its inert formal drop");
+
+  const lang::CppMirBodyEmissionMap movedMap(buildRows(moved, moved.mir));
+  const lang::MirBodyAddress moveAddress{.kind = lang::MirBodyKind::Constructor,
+                                         .owner = move->id};
+  expect(lang::CppMirBodyEmitter(moved.mir, movedMap)
+             .supportsFailureBodyText(moveAddress),
+         "the failure form keeps the passive class move in its verified body");
+  std::string movedText;
+  try {
+    movedText = gti_test::emitCpp(moved).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a text-view class moved after a fallible "
+                              "sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::string moveBody = failureBody(movedText);
+  const std::size_t vector = moveBody.find(
+      "vector<std::int32_t>(::gti_internal::backend::mir_failure_constructor_"
+      "tag_v1<");
+  const std::size_t publication = moveBody.find(" = std::move(__gti_mir_v_");
+  expect(count(moveBody, "name(::gti_internal::backend::mir_empty_state_v1<"
+                         "std::remove_cv_t<decltype(name)>>())") == 1 &&
+             count(moveBody, " = std::move(__gti_mir_v_") == 1 &&
+             vector != std::string::npos && publication != std::string::npos &&
+             vector < publication,
+         "the moved class field starts empty and is published once, after "
+         "the fallible vector");
+
+  // Borrowed state and active cleanup each leave the passive route.
+  const auto refuses = [&](const auto &forge) {
+    auto [mutated, forged] = forgedName(moved, forge);
+    return forged && !lang::CppMirBodyEmitter(mutated, movedMap)
+                          .supportsFailureBodyText(moveAddress);
+  };
+  expect(refuses([](lang::MirClassInstance &instance) {
+           instance.traits.containsBorrowedState = true;
+         }),
+         "a class carrying borrowed state is not moved by the passive route");
+  expect(refuses([](lang::MirClassInstance &instance) {
+           instance.declaredFields.front().requiresActiveCleanup = true;
+         }),
+         "a field with active cleanup makes the class non-passive");
+
+  const lang::FrontendResult copied = analyzeWithStandardLibrary(
+      "cpp-mir-passive-text-view-class-copy.gti", program("name(name)"));
+  expect(copied.canGenerateCode(),
+         "the copied text-view class fixture should pass the frontend");
+  if (!copied.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *copy = shelfConstructor(copied);
+  const auto copiesName = [&](const lang::MirProgram &mir) {
+    const auto bindings = lang::cppMirCopyParameterFieldBindings(mir, *copy);
+    return bindings &&
+           std::any_of(
+               bindings->begin(), bindings->end(),
+               [](const lang::CppMirCopyParameterFieldBinding &binding) {
+                 return binding.initializer == 1;
+               });
+  };
+  expect(copy != nullptr && copy->mayRaiseDefinedFailure &&
+             copiesName(copied.mir),
+         "the passive text-view class copy is an exact parameter copy");
+  if (copy == nullptr) {
+    return;
+  }
+  std::string copiedText;
+  try {
+    copiedText = gti_test::emitCpp(copied).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a text-view class copied after a fallible "
+                              "sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::string copyBody = failureBody(copiedText);
+  expect(count(copyBody, "name(__gti_mir_arg_0)") == 1 &&
+             copyBody.find("mir_lifetime_slot<::__gti_program::Name>") ==
+                 std::string::npos,
+         "the copied class field publishes through the native parameter copy");
+  auto [uncopyable, forged] =
+      forgedName(copied, [](lang::MirClassInstance &instance) {
+        instance.declaredFields.front().requiresActiveCleanup = true;
+      });
+  expect(forged && !copiesName(uncopyable),
+         "a class with an actively cleaned field is not a passive copy");
+}
+
 void testMovedChainReturnConstruction() {
   // A failure-free body returns a class constructed from a moved scalar. The
   // Move and its call input stage into the construction and never
@@ -7717,6 +7934,73 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
          "no join value or storage should value-initialize an ordinary local");
 }
 
+void testClassConditionalJoinBorrowedInputs() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "cpp-mir-conditional-borrowed-input.gti", R"gti(
+#include <std/string>
+struct Packet {
+  int value;
+  Packet(int value) : value(value) {}
+};
+Packet first(std::string_view text) { return Packet(text[0] == 'a' ? 1 : 2); }
+int choose(bool left) {
+  std::string a{"a"};
+  std::string b{"b"};
+  Packet result = left ? first(a.view()) : first(b.view());
+  return result.value;
+}
+int main() { return choose(true) + choose(false) - 3; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "conditional class calls with borrowed inputs pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto *function = namedFunction(frontend, "choose");
+  expect(function != nullptr,
+         "the borrowed-input conditional has its own body");
+  if (function == nullptr)
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{lang::MirBodyKind::Function, function->id};
+  const auto supported = [&](const lang::MirProgram &program) {
+    return lang::CppMirBodyEmitter(program, rows)
+        .supportsFailureBodyText(address);
+  };
+  expect(supported(frontend.mir),
+         "the arm may end its input loan after publishing its class result");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "the complete backend emits conditional borrowed-input calls");
+  std::vector<lang::MirBlockId> publications;
+  for (const auto &block : function->body.blocks)
+    if (block.instructions.size() == 2 &&
+        block.instructions.front().kind ==
+            lang::MirInstructionKind::Initialize &&
+        block.instructions.back().kind == lang::MirInstructionKind::EndBorrow)
+      publications.push_back(block.id);
+  expect(
+      publications.size() == 2,
+      "each conditional arm has a publication followed by its input loan end");
+  if (publications.size() != 2)
+    return;
+  for (int mutation = 0; mutation < 2; ++mutation) {
+    auto changed = frontend.mir;
+    auto *target = const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(function->id));
+    auto *block = const_cast<lang::MirBlock *>(
+        target->body.findBlock(publications.front()));
+    if (mutation == 0) {
+      std::swap(block->instructions.front(), block->instructions.back());
+      expect(!supported(changed),
+             "loan-only tails do not permit work before the publication");
+    } else {
+      block->instructions.back().loan =
+          target->body.findBlock(publications.back())->instructions.back().loan;
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "ending the other arm's loan remains invalid MIR");
+    }
+  }
+}
+
 void testNestedCleanupFreeJoinMove() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-nested-cleanup-free-join.gti", R"(
@@ -7789,6 +8073,153 @@ int main() { return bound(false, 1) + viewed(true, 1) - 4; }
   expect(text.find(".destroy(); // end passive conditional representation\n") !=
              std::string::npos,
          "the bound outer join should end its storage at the binding");
+}
+
+// A cleanup-free conditional's constructor arm may hand a by-value class
+// argument to its constructor: that prepared argument's transfer is the arm's
+// only lifecycle event, as it is for a call arm. A class that holds a text
+// view is cleanup-free too, since the view is a passive descriptor. Both joins
+// publish their arms into representation-only storage, and the joined value
+// moves into its field-read slot. Forged transfers and a borrowed-state text
+// arm stay out.
+void testCleanupFreeJoinTransferAndTextArms() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-cleanup-free-join-transfer-text.gti", R"(
+class point_t {
+public:
+  int32_t x;
+  point_t(int32_t x) : x(x) {}
+};
+class segment_t {
+public:
+  point_t low;
+  segment_t(point_t low) : low(low) {}
+};
+class word_t {
+public:
+  std::string_view text;
+  int32_t kind;
+  word_t(std::string_view text, int32_t kind) : text(text), kind(kind) {}
+};
+int32_t transferred(bool left) {
+  return (left ? segment_t(point_t(1)) : segment_t(point_t(2))).low.x;
+}
+int32_t texted(bool left) {
+  return (left ? word_t("left", 1) : word_t("right", 2)).kind;
+}
+int main() { return transferred(true) + texted(false) - 3; }
+)");
+  expect(frontend.canGenerateCode(),
+         "the transfer and text join fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const std::string retire = ".destroy(); // end moved join representation\n";
+  const auto count = [](const std::string &text, const std::string &needle) {
+    std::size_t occurrences = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size()))
+      ++occurrences;
+    return occurrences;
+  };
+  std::size_t transferBodies = 0;
+  std::size_t textBodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    // The two arms are the constructions published into one join storage.
+    std::vector<const lang::MirInstruction *> arms;
+    bool transfer = false;
+    bool text = false;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct ||
+            !instruction.result)
+          continue;
+        const auto uses = function.body.usesOf(*instruction.result);
+        const lang::MirInstruction *initialize = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &candidate : candidateBlock.instructions)
+            if (uses.size() == 1 && candidate.id == uses.front().instruction)
+              initialize = &candidate;
+        const auto *storage =
+            initialize != nullptr &&
+                    initialize->kind == lang::MirInstructionKind::Initialize &&
+                    initialize->destination
+                ? function.body.findPlace(*initialize->destination)
+                : nullptr;
+        if (storage == nullptr ||
+            storage->root != lang::MirPlaceRootKind::Temporary)
+          continue;
+        arms.push_back(&instruction);
+        for (const auto &parameter : instruction.parameterTypes) {
+          transfer |= parameter.kind == lang::SemanticType::Class;
+          text |= parameter.kind == lang::SemanticType::StringView;
+        }
+      }
+    if (arms.size() != 2 || transfer == text)
+      continue;
+    transferBodies += transfer;
+    textBodies += text;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function.id};
+    const bool supported =
+        supportsSelectedBodyText(frontend.mir, map, function.id);
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const std::string body =
+        !supported ? std::string()
+        : function.mayRaiseDefinedFailure
+            ? emitter.emitFailureBodyText(address, "join-arms", 1).text
+            : emitter.emitBodyText(address, "join-arms", 1).text;
+    const std::size_t retired = body.find(retire);
+    const std::size_t joinStart = retired == std::string::npos
+                                      ? std::string::npos
+                                      : body.rfind("__gti_mir_p_", retired);
+    const std::string join = joinStart == std::string::npos
+                                 ? std::string()
+                                 : body.substr(joinStart, retired - joinStart);
+    expect(supported && !join.empty() && count(body, retire) == 1 &&
+               count(body, join + ".mark_constructed()") == 2 &&
+               body.rfind(".construct(std::move(" + join + ".get()));",
+                          retired) != std::string::npos &&
+               count(body, ".take()") == (transfer ? 2u : 0u),
+           std::string(transfer ? "by-value argument" : "text view") +
+               " arms should publish into one join storage, which the "
+               "joined value's move empties and retires");
+
+    for (int mutation = 0; mutation != (transfer ? 3 : 1); ++mutation) {
+      auto malformed = frontend.mir;
+      auto *mutable_body = lang::findMirBody(malformed, address);
+      for (auto &block : mutable_body->blocks)
+        for (auto &instruction : block.instructions) {
+          if (instruction.id != arms.front()->id)
+            continue;
+          if (!transfer) {
+            // The arm value holds borrowed state the class does not.
+            instruction.info.traits.containsBorrowedState = true;
+            for (auto &value : mutable_body->values)
+              if (value.id == *instruction.result)
+                value.info.traits.containsBorrowedState = true;
+          } else if (!instruction.lifecycle.empty()) {
+            const auto transferOut = instruction.lifecycle.front();
+            if (mutation == 0)
+              instruction.lifecycle.push_back(transferOut);
+            else if (mutation == 1)
+              instruction.lifecycle.front().conditional = true;
+            else
+              instruction.lifecycle.front().kind =
+                  lang::MirLifecycleEventKind::Initialize;
+          }
+        }
+      expect(!supportsSelectedBodyText(malformed, map, function.id),
+             std::string(transfer ? "a forged arm transfer "
+                                  : "a borrowed-state text arm ") +
+                 std::to_string(mutation) +
+                 " should keep the join out of representation-only storage");
+    }
+  }
+  expect(transferBodies == 1 && textBodies == 1,
+         "the fixture should have one by-value argument join and one text "
+         "join");
 }
 
 // Each arm of a cleanup-free conditional may evaluate its inputs before the
@@ -8701,6 +9132,8 @@ constexpr NamedTest kTests[] = {
     {"testMovedBorrowedPayloadAfterFallibleSibling",
      testMovedBorrowedPayloadAfterFallibleSibling},
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
+    {"testPassiveTextViewClassAfterFallibleSibling",
+     testPassiveTextViewClassAfterFallibleSibling},
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
     {"testMovedPassiveFieldInPlainConstructor",
      testMovedPassiveFieldInPlainConstructor},
@@ -8773,8 +9206,12 @@ constexpr NamedTest kTests[] = {
      testBranchTemporaryCallResultIsNotDiscarded},
     {"testPlainCallMemberInitializer", testPlainCallMemberInitializer},
     {"testClassConditionalJoinConsumers", testClassConditionalJoinConsumers},
+    {"testClassConditionalJoinBorrowedInputs",
+     testClassConditionalJoinBorrowedInputs},
     {"testCheckedConditionalArmInputs", testCheckedConditionalArmInputs},
     {"testNestedCleanupFreeJoinMove", testNestedCleanupFreeJoinMove},
+    {"testCleanupFreeJoinTransferAndTextArms",
+     testCleanupFreeJoinTransferAndTextArms},
     {"testShortCircuitOwnedFieldView", testShortCircuitOwnedFieldView},
     {"testOwningConditionalJoinConsumers", testOwningConditionalJoinConsumers},
     {"testCleanupFreeExpectedClassCopiedArgumentSlot",

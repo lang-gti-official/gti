@@ -314,6 +314,10 @@
       "suite": "text"
     },
     {
+      "name": "testPassiveTextViewClassAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedChainReturnConstruction",
       "suite": "text"
     },
@@ -494,11 +498,19 @@
       "suite": "text"
     },
     {
+      "name": "testClassConditionalJoinBorrowedInputs",
+      "suite": "text"
+    },
+    {
       "name": "testCheckedConditionalArmInputs",
       "suite": "text"
     },
     {
       "name": "testNestedCleanupFreeJoinMove",
+      "suite": "text"
+    },
+    {
+      "name": "testCleanupFreeJoinTransferAndTextArms",
       "suite": "text"
     },
     {
@@ -775,6 +787,14 @@
     },
     {
       "name": "testMovedPlaceFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testAssignmentResultFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedClassResultFieldView",
       "suite": "lifecycle"
     },
     {

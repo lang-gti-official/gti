@@ -675,10 +675,94 @@ int main() {
   }
 }
 
+void testNativeCStringProducer() {
+  const auto result = analyzeText(R"gti(
+extern "C" {
+  c_string native_text(int32_t kind);
+  void native_release(c_string text);
+}
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  NativeText(NativeText&) = delete;
+  NativeText(NativeText&&) = default;
+  ~NativeText() { native_release(this.text); }
+};
+void retain(int32_t kind) {
+  unsafe { auto text = NativeText(native_text(kind)); }
+}
+int main() { retain(0); return 0; }
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "native C-string results can enter an externally managed owner");
+  if (!result.canGenerateCode())
+    return;
+  const auto producer = std::find_if(
+      result.mir.functionInstances().begin(),
+      result.mir.functionInstances().end(), [](const auto &function) {
+        return function.linkage == lang::LanguageLinkage::C &&
+               function.returnType.kind == lang::SemanticType::CString;
+      });
+  expect(producer != result.mir.functionInstances().end(),
+         "the regression retains its native C-string producer");
+  if (producer == result.mir.functionInstances().end())
+    return;
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto changed = result.mir;
+    auto *target = const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(producer->id));
+    if (mutation == 0)
+      target->linkage = lang::LanguageLinkage::Gti;
+    else if (mutation == 1)
+      target->definitionKind = lang::MirDefinitionKind::Source;
+    else
+      target->returnBorrowOrigin = lang::BorrowOriginKind::Argument;
+    const auto verification = lang::verifyMirProgram(changed);
+    expect(std::any_of(verification.errors.begin(), verification.errors.end(),
+                       [](const auto &error) {
+                         return error.message ==
+                                "ownerless text storage or call lacks exact "
+                                "producer evidence";
+                       }),
+           "native text evidence requires the exact external untracked C "
+           "producer contract");
+  }
+
+  const auto dependent = analyzeText(R"gti(
+#include <std/string>
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  ~NativeText() {}
+};
+int main() {
+  std::string owner{"dynamic"};
+  unsafe { auto text = NativeText(owner.c_string()); }
+  return 0;
+}
+)gti");
+  expect(!dependent.canGenerateCode() &&
+             std::any_of(
+                 dependent.diagnostics.begin(), dependent.diagnostics.end(),
+                 [](const auto &error) { return error.code == "GTI-S2045"; }) &&
+             std::none_of(dependent.diagnostics.begin(),
+                          dependent.diagnostics.end(),
+                          [](const auto &error) {
+                            return error.code.starts_with("GTI-B");
+                          }),
+         "GTI owner-dependent C strings still fail at source, including "
+         "inside unsafe code");
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testTextReferenceAccessors", testTextReferenceAccessors},
     {"testTextReferenceRelays", testTextReferenceRelays},
+    {"testNativeCStringProducer", testNativeCStringProducer},
     {"testOwnerlessTextAliasWrites", testOwnerlessTextAliasWrites},
     {"testRecursiveOwnerlessReturns", testRecursiveOwnerlessReturns},
     {"testPermutingRecursiveFieldContracts",

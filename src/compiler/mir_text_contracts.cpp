@@ -542,8 +542,21 @@ private:
                instruction->functionTarget) {
       const auto *target =
           program.findFunctionInstance(*instruction->functionTarget);
-      if (target && textType(target->returnType))
+      // An untracked C-string result at a native C boundary has external
+      // validity obligations, not a GTI owner to reconstruct from a body.
+      // Keep annotated results on the ordinary dependency path.
+      if (target && target->returnType.kind == SemanticType::CString &&
+          target->linkage == LanguageLinkage::C &&
+          target->definitionKind != MirDefinitionKind::Source &&
+          target->returnBorrowOrigin == BorrowOriginKind::None &&
+          target->returnBorrowFields.empty() && !target->completeReturnBorrow &&
+          !instruction->loan &&
+          instruction->borrowOrigin == BorrowOriginKind::None &&
+          instruction->borrowFields.empty()) {
+        answer.known = true;
+      } else if (target && textType(target->returnType)) {
         answer = callResultSources(context, *instruction, active);
+      }
     } else if (!instruction) {
       answer = joinSources(context, operand.value, active);
     }
