@@ -2670,6 +2670,23 @@ constructed. Moving, copying or constructing such a carrier after work that
 can fail therefore stays outside the failure form; only the first-field prefix
 routes below publish one.
 
+A borrowed payload enum, such as `enum Slot { ready(int32_t& value), empty }`,
+also retains its caller's dependency in the field, but its native value has a
+passive empty state. Moving the formal into the field initializes it and then
+hands the formal's guarded entry group to the field's escaping `Stored` loan
+through one `Borrow` from that group, followed directly by the group's
+`EndBorrow`. The enum value already holds the reference, so that publication
+is proof-only (`storedFieldValueLoanProducer`), as for an in-place payload
+construction, and the move takes the drop-free route above in MIR order: after
+work that can fail, as in `Gauge(Slot slot, int32_t divisor) :
+ledger(Ledger(1, divisor)), slot(std::move(slot))`, or after an earlier read of
+the formal. The proof (`formalEntryGroupPayloadMove`) admits borrowed state in
+only that shape: the transfer of the exact moved value is the field's only
+publication, no other loan derives from or protects the formal's group, and
+every other record naming the group is a comment-only `EndBorrow`, such as the
+one on a failure route. A copy, `slot(slot)`, uses the native copy route
+below.
+
 Such a move is itself failure-free (see the MIR failure summary), so a
 constructor whose other work cannot fail, as in
 `Gauge(int32_t tag) : odd((tag & 1) == 1), flagged(is_odd(tag)),
