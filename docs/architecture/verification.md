@@ -1,5 +1,29 @@
 # Compiler Verification
 
+## Returning borrowed enum parameters (0.459.4)
+
+`complete_borrow_summaries` covers the new fixture,
+`borrowed_enum_relay_returns`.
+- Seven functions return a by-value borrowed carrier formal whole: a payload
+  enum moved, copied and under `borrowed_from`, a class whose borrowed state
+  is such an enum, a concrete generic `Outcome<int&, E>` with plain and owning
+  errors, and a `mut` reference enum. All verify.
+- Six MIR mutations per relay are rejected: a `Return` borrow from itself, a
+  removed retirement of the entry group, a guard cleared from the group, a
+  path cleared from the `Return` loan, a group that is no longer an entry, and
+  a moved `Return` source.
+- Source rejections, with no backend error: relaying a moved or a copied slot
+  of a local (`GTI-S2045`) and writing the owner while a relayed result is
+  live (`GTI-S2017`).
+
+`borrow_origin_runtime` runs the fixture in all eight native modes, including
+the sanitized one. `tryable_propagation_runtime` runs example 165, which now
+also hands a slot back by value, in nine modes.
+
+The change only widens what the program verifier accepts; the backend emits
+from the same MIR, so programs accepted before produce the same C++. The
+census changes only for example 165: one more function body and declaration.
+
 ## Assignment result field reads (0.459.3)
 
 `assignment_result_projection_runtime` runs `assignment_result_projection.gti`.

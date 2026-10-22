@@ -1797,7 +1797,10 @@ establish the result from their exact field initializers, including a proved
 reference-free alternative. The initializer may construct the enum in place or
 move or copy a by-value enum parameter into the field, as in
 `Shelf(Slot slot) : slot(std::move(slot))`; the object then keeps that
-argument's external owners. A missing proof is not an empty alternative.
+argument's external owners. A function may likewise return a by-value carrier
+parameter whole, moved or copied, as in `Slot relay(Slot slot) { return
+std::move(slot); }`, and the result keeps the argument's owners. A missing
+proof is not an empty alternative.
 Implicit copying remains conditional on all fields being copyable; copying a
 shared-reference wrapper retains the same external owners, while moving a
 wrapper does not move those owners. A consuming method may return a selected
