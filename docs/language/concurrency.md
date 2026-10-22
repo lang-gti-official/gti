@@ -82,9 +82,10 @@ returns, subject to the ordinary checked origin and access rules.
 
 Initialization is lazy at the first evaluated use on each thread. A block
 declaration also performs that first-use check when execution reaches it.
-Initializers use ordinary GTI construction and rollback. Eligible primitive literal/zero
-initialization has no user code, cleanup registration, added GTI heap allocation or dynamic
-guard. Other initializers use an explicit per-thread state transition; recursive
+Initializers use ordinary GTI construction and rollback. Eligible primitive
+literal/zero initialization has no user code, cleanup registration, added GTI
+heap allocation or dynamic guard. Other initializers use an explicit per-thread
+state transition; recursive
 initialization is defined failure `GTI-R0013`, not an implicit C++ rule.
 The passive fast path is currently literal-based; an integral-enum constant or
 a computed/aggregate constant still uses the ordinary lazy initializer. This is
