@@ -346,6 +346,15 @@ Namespace raw storage also receives loop-input symbols. Source write effects
 through loop-carried aliases defer their destination substitution and weakly
 close projected writes over backedge symbol facts before checking deferred uses.
 
+Loop entry also drops the complete borrow dependency set of every writable
+binding in scope. The single body visit cannot prove an incoming alternative
+for every backedge iteration; a dominating construction inside the body can
+establish a fresh set. A binding nothing can write keeps its set: only a move
+ends it, after which value flow rejects any read reached through the backedge,
+and loan flow keeps a read-only reference's referent unwritable while a later
+iteration reads it. Each loop records the bindings it dropped, so a selection
+that needs a missing set names the loop boundary in its `GTI-S2067` hint.
+
 Source calls query normalized raw-result origins before caller memory uses and
 alias writes. A request-local cache keys the selected function or constructor
 and concrete owner/function type and value arguments. An isolated ordinary

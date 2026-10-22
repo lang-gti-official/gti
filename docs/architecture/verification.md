@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Returning borrowed enum parameters (0.458.5)
+## Returning borrowed enum parameters (0.459.1)
 
 `complete_borrow_summaries` covers the new fixture,
 `borrowed_enum_relay_returns`.
