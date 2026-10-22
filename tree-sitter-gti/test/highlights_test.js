@@ -735,6 +735,12 @@ requireCapture(conceptExplanationRow, "unsatisfied", "attribute");
 requireCapture(conceptExplanationRow, '"A gauge reads."', "string");
 requireCapture(conceptExplanationRow, "explained_highlight", "type.definition");
 
+const threadLocalRow = fixtureLines.findIndex((line) =>
+  line.includes("thread_counter_highlight = 0"),
+);
+requireCapture(threadLocalRow, "thread_local", "keyword.modifier");
+requireCapture(threadLocalRow, "thread_counter_highlight", "variable");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

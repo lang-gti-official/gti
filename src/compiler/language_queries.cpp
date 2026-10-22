@@ -427,6 +427,8 @@ SignaturePrinter::binding(const SemanticOccurrence &occurrence) const {
       occurrence.type.kind == SemanticType::Reference &&
       occurrence.type.referenceAccess == AccessMode::Mutable;
   std::string prefix = occurrence.staticMember ? "static " : "";
+  if (occurrence.threadLocal)
+    prefix += "thread_local ";
   if (occurrence.mutableBinding && !typeCarriesMutability) {
     prefix += "mut ";
   }
@@ -2159,6 +2161,8 @@ private:
         record.type.kind == SemanticType::Reference &&
         record.type.referenceAccess == AccessMode::Mutable;
     std::string prefix = record.staticMember ? "static " : "";
+    if (record.threadLocal)
+      prefix += "thread_local ";
     if (record.mutableBinding && !typeCarriesMutability) {
       prefix += "mut ";
     }

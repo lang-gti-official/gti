@@ -563,6 +563,7 @@ SymbolId SemanticDatabase::recordSymbol(SymbolRecord symbol) {
     existing.mutableBinding = symbol.mutableBinding;
     existing.defaultLibrary = existing.defaultLibrary || symbol.defaultLibrary;
     existing.staticMember = existing.staticMember || symbol.staticMember;
+    existing.threadLocal = existing.threadLocal || symbol.threadLocal;
     existing.internalLinkage =
         existing.internalLinkage || symbol.internalLinkage;
     existing.compilerPrivate =
@@ -777,6 +778,14 @@ SemanticModel::programInitializationPlan() const {
                  programInitialization.unitOrder.empty()
              ? base->programInitializationPlan()
              : programInitialization;
+}
+
+const ProgramInitializationPlan &
+SemanticModel::threadLocalInitializationPlan() const {
+  return base != nullptr && threadLocalInitialization.steps.empty() &&
+                 threadLocalInitialization.unitOrder.empty()
+             ? base->threadLocalInitializationPlan()
+             : threadLocalInitialization;
 }
 
 const std::optional<HostedProgramEntryPlan> &
@@ -1967,6 +1976,7 @@ void SemanticModel::clear() {
   definedFailures.clear();
   callerLocations.clear();
   programInitialization = {};
+  threadLocalInitialization = {};
   hostedProgramEntry.reset();
   programKind_ = ProgramKind::Executable;
   embeddingPlan_.reset();
@@ -2061,6 +2071,11 @@ void SemanticModel::setAnalysisSeal(SemanticAnalysisSeal seal) {
 void SemanticModel::setProgramInitializationPlan(
     ProgramInitializationPlan plan) {
   programInitialization = std::move(plan);
+}
+
+void SemanticModel::setThreadLocalInitializationPlan(
+    ProgramInitializationPlan plan) {
+  threadLocalInitialization = std::move(plan);
 }
 
 void SemanticModel::setHostedProgramEntryPlan(
@@ -3050,6 +3065,8 @@ void SemanticModel::adoptExpansionArena(
 }
 
 void SemanticModel::recordOccurrence(SemanticOccurrence occurrence) {
+  if (const auto *symbol = semanticDatabase.findSymbol(occurrence.symbol))
+    occurrence.threadLocal = symbol->threadLocal;
   noteConstruction(occurrence.constructor);
   if (occurrence.selectedConstruction)
     noteConstruction(occurrence.selectedConstruction->declaration);
@@ -3066,6 +3083,9 @@ void SemanticModel::setToolingOccurrencesEnabled(bool enabled) {
 }
 
 void SemanticModel::recordCompletion(SemanticCompletionContext context) {
+  for (auto &candidate : context.candidates)
+    if (const auto *symbol = semanticDatabase.findSymbol(candidate.symbol))
+      candidate.threadLocal = symbol->threadLocal;
   completion = std::move(context);
 }
 

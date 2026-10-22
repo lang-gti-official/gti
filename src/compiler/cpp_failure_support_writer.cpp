@@ -131,6 +131,8 @@ public:
       return "GTI_FAILURE_DETAIL_NEGATIVE_ARGUMENT_COUNT_V1";
     case DefinedFailureDetail::RecursiveThreadLocalInitialization:
       return "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1";
+    case DefinedFailureDetail::ThreadLocalInitializationDuringShutdown:
+      return "GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2";
     case DefinedFailureDetail::MutexLock:
       return "GTI_FAILURE_DETAIL_MUTEX_LOCK_V1";
     case DefinedFailureDetail::KeyLookup:

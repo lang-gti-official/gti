@@ -110,6 +110,7 @@ public:
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
         .cThreads = mir.requiresCThreadRuntime(),
+        .threadLocalStorage = !mir.threadLocalStorage().empty(),
         .sharedOwnerDeclared = loweredProgramDeclaresCapability(
             CompilerCapabilityTypeKind::SharedOwner),
         .atomicStorageDeclared = loweredProgramDeclaresCapability(
@@ -2240,7 +2241,8 @@ public:
       }
       const auto *storage =
           std::get_if<LoweredStorageDeclaration>(&declaration->payload);
-      if (storage == nullptr || storage->ownerClass != 0) {
+      if (storage == nullptr || storage->ownerClass != 0 ||
+          storage->threadLocalStorage) {
         continue;
       }
       writeIndent();
@@ -2527,6 +2529,8 @@ public:
       const LoweredDeclaration &row, const LoweredStorageDeclaration &storage,
       bool insideClass, const LoweredClassDeclaration *owner = nullptr,
       const LoweredClassInitializerSelection *classInitializers = nullptr) {
+    if (storage.threadLocalStorage)
+      return;
     if (!storage.externalSymbol.empty()) {
       throw std::logic_error("foreign storage cannot emit a GTI definition");
     }
@@ -7769,6 +7773,104 @@ public:
     }
   }
 
+  void emitThreadLocalForwardDeclarations() {
+    for (const auto &storage : mir.threadLocalStorage()) {
+      writeIndent();
+      emitSemanticType(storage.type);
+      output << " &__gti_tls_value_" << storage.symbol << "();\n";
+      writeIndent();
+      output << "bool __gti_tls_ensure_" << storage.symbol
+             << "(::gti_failure_record_v2 *, std::uint32_t);\n";
+    }
+  }
+
+  void emitThreadLocalDefinitions() {
+    for (const auto &storage : mir.threadLocalStorage()) {
+      const std::string id = std::to_string(storage.symbol);
+      const std::string type =
+          cppNativeTypeSpelling(loweredProgram, standard, storage.type);
+      const MirBodyAddress address{
+          .kind = MirBodyKind::ThreadLocalInitializer,
+          .owner = storage.symbol};
+      const auto body = generalMirBodyEmitter().emitFailureBodyText(
+          address, "thread-local-initializer-v1", indentation + 1);
+      if (!body.emitted())
+        throw std::logic_error("thread-local initializer lost verified MIR text");
+      writeIndent();
+      output << "bool __gti_tls_init_" << id << "(" << type
+             << " *__gti_mir_out_result, "
+                "::gti_failure_record_v2 *__gti_mir_failure_record) {\n"
+             << body.text;
+      writeIndent();
+      output << "}\n";
+      if (storage.dataInitializer) {
+        writeIndent();
+        output << "thread_local " << type << " __gti_tls_data_" << id << " = ";
+        emitMirLiteral(*storage.dataInitializer, storage.type);
+        output << ";\n";
+        writeIndent();
+        output << type << " &__gti_tls_value_" << id
+               << "() { return __gti_tls_data_" << id << "; }\n";
+        writeIndent();
+        output << "bool __gti_tls_ensure_" << id
+               << "(::gti_failure_record_v2 *, std::uint32_t) { return true; }\n";
+        continue;
+      }
+      writeIndent();
+      output << "struct __gti_tls_slot_type_" << id << " {\n"
+             << "  alignas(" << type << ") std::byte bytes[sizeof(" << type
+             << ")];\n  unsigned state = 0;\n"
+                "  ::gti_runtime_detail::thread_local_cleanup_entry entry{};\n"
+             << "  " << type << " *address() { return std::launder("
+             << "reinterpret_cast<" << type << " *>(bytes)); }\n};\n";
+      writeIndent();
+      output << "thread_local __gti_tls_slot_type_" << id
+             << " __gti_tls_slot_" << id << ";\n";
+      writeIndent();
+      output << type << " &__gti_tls_value_" << id
+             << "() { return *__gti_tls_slot_" << id << ".address(); }\n";
+      writeIndent();
+      output << "bool __gti_tls_cleanup_" << id
+             << "(void *raw, ::gti_failure_record_v2 *record, bool unwinding) {\n"
+             << "  auto &slot = *static_cast<__gti_tls_slot_type_" << id
+             << " *>(raw);\n  slot.state = 3;\n  return "
+             << cppMirCleanupValueExpression(mir, storage.cleanup,
+                                             "*slot.address()", "record",
+                                             "unwinding")
+             << ";\n}\n";
+      writeIndent();
+      output << "bool __gti_tls_ensure_" << id
+             << "(::gti_failure_record_v2 *record, std::uint32_t site) {\n"
+             << "  auto &slot = __gti_tls_slot_" << id << ";\n"
+                "  if (slot.state == 2) return true;\n"
+                "  if (slot.state == 1 || slot.state == 3 ||\n"
+                "      ::gti_runtime_detail::thread_local_cleanup_active()) {\n"
+                "    *record = ::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2,\n"
+                "      GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1,\n"
+                "      slot.state == 1 ? GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1\n"
+                "        : GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_SHUTDOWN_V2,\n"
+                "      site, 0, {";
+      const auto &identity = mir.failureMetadata().artifactIdentity().bytes;
+      for (std::size_t index = 0; index < identity.size(); ++index) {
+        if (index != 0)
+          output << ", ";
+        output << static_cast<unsigned>(identity[index]);
+      }
+      output << "}};\n    return false;\n  }\n"
+                "  slot.state = 1;\n"
+             << "  if (!__gti_tls_init_" << id << "(reinterpret_cast<" << type
+             << " *>(slot.bytes), record)) {\n"
+                "    slot.state = 0;\n    return false;\n  }\n"
+                "  slot.state = 2;\n"
+                "  slot.entry.storage = &slot;\n"
+             << "  slot.entry.cleanup = &__gti_tls_cleanup_" << id << ";\n"
+                "  slot.entry.artifact = &::gti_internal::backend::"
+                "__gti_failure_artifact_descriptor_v1;\n"
+                "  ::gti_runtime_detail::register_thread_local_cleanup(&slot.entry);\n"
+                "  return true;\n}\n";
+    }
+  }
+
   void buildLoweredProgramTail(CppProgramEmissionPlan &plan) {
     indexLoweredDeclarations();
     prepareLoweredNativePrimaryClasses();
@@ -7789,6 +7891,7 @@ public:
       emitLoweredExactClassSpecializationForwardDeclarations();
       emitLoweredEnumSelectorCatalog();
       emitLoweredAliasForwardDeclarations(0);
+      emitThreadLocalForwardDeclarations();
       emitLoweredFunctionForwardDeclarations(0);
     });
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
@@ -7804,6 +7907,7 @@ public:
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
             [&] { emitNativeCallbackAdapterDefinitions(); });
     capture(plan, CppProgramTextRole::InitializerAndModuleAdapter, [&] {
+      emitThreadLocalDefinitions();
       emitRuntimeModuleInitializer();
       if (!moduleRuntimeEmission) {
         writeIndent();

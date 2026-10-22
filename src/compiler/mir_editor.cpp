@@ -31,8 +31,10 @@ namespace {
     return 5;
   case MirBodyKind::HostedStartup:
     return 6;
+  case MirBodyKind::ThreadLocalInitializer:
+    return 7;
   }
-  return 7;
+  return 8;
 }
 
 [[nodiscard]] auto bodyKey(MirBodyAddress address) {

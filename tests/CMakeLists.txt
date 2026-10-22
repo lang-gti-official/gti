@@ -1,3 +1,16 @@
+add_executable(gti_thread_local_syntax_tests thread_local_syntax_tests.cpp)
+target_link_libraries(gti_thread_local_syntax_tests PRIVATE gti_compiler)
+add_test(NAME thread_local_syntax COMMAND gti_thread_local_syntax_tests)
+add_executable(gti_thread_local_semantic_tests thread_local_semantic_tests.cpp)
+target_link_libraries(gti_thread_local_semantic_tests PRIVATE gti_compiler)
+add_test(NAME thread_local_semantic COMMAND gti_thread_local_semantic_tests)
+if(TARGET gti_lsp)
+  add_test(NAME thread_local_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/thread_local_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(thread_local_lsp PROPERTIES TIMEOUT 90)
+endif()
+
 add_executable(gti_foreign_variable_borrow_tests foreign_variable_borrow_tests.cpp)
 target_link_libraries(gti_foreign_variable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME foreign_variable_borrow COMMAND gti_foreign_variable_borrow_tests)
@@ -276,6 +289,11 @@ target_include_directories(
 target_compile_features("gti_runtime_thread_tests" PRIVATE cxx_std_23)
 target_link_libraries("gti_runtime_thread_tests" PRIVATE gti_runtime)
 add_test(NAME managed_thread_runtime COMMAND gti_runtime_thread_tests)
+
+add_executable(gti_runtime_thread_local_tests runtime_thread_local_tests.cpp)
+target_compile_features(gti_runtime_thread_local_tests PRIVATE cxx_std_23)
+target_link_libraries(gti_runtime_thread_local_tests PRIVATE gti_runtime)
+add_test(NAME thread_local_runtime_registry COMMAND gti_runtime_thread_local_tests)
 
 add_executable(gti_runtime_scoped_thread_tests runtime_scoped_thread_tests.cpp)
 target_include_directories(gti_runtime_scoped_thread_tests PRIVATE

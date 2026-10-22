@@ -1,5 +1,6 @@
 #include "cthread_internal.h"
 #include "gti/cthread.h"
+#include "gti/runtime_thread.hpp"
 
 #include <atomic>
 #include <limits>
@@ -324,6 +325,7 @@ bool leaveCThreadCallback(CThreadEntry entry) noexcept {
       attachment.phase != EntryPhase::Entered) {
     return false;
   }
+  gti_runtime_detail::drain_thread_local_cleanup();
   attachment.phase = EntryPhase::Left;
   return true;
 }

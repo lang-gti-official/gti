@@ -66,7 +66,8 @@ int main(int argc, char **argv) {
         std::filesystem::path(argv[index]).filename().string();
     const std::filesystem::path source = root / "examples" / name;
     lang::TargetInfo target = lang::TargetInfo::host();
-    if (name == "066-managed-threads.gti" || name == "076-scalar-atomics.gti") {
+    if (name == "066-managed-threads.gti" || name == "076-scalar-atomics.gti" ||
+        name == "171-thread-local-storage.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }

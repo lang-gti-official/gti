@@ -900,6 +900,7 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
   case MirBodyKind::FieldInitializers:
   case MirBodyKind::StaticFieldInitializers:
   case MirBodyKind::HostedStartup:
+  case MirBodyKind::ThreadLocalInitializer:
     return false;
   }
   return false;
@@ -946,6 +947,8 @@ cppBodyDefinition(LoweredBodyDefinitionKind definition) {
   switch (kind) {
   case LoweredGeneratedItemKind::ProgramInitialization:
     return CppMirThunkKind::ProgramInitialization;
+  case LoweredGeneratedItemKind::ThreadLocalStorage:
+    return CppMirThunkKind::ThreadLocalStorage;
   case LoweredGeneratedItemKind::HostedEntry:
     return CppMirThunkKind::HostedEntry;
   case LoweredGeneratedItemKind::StructuralOperatorAdapter:
@@ -2485,6 +2488,26 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     }
   }
 
+  for (const auto &storage : mir.threadLocalStorage()) {
+    builder.addType(storage.type);
+    const std::string spelling =
+        "::__gti_program::__gti_tls_value_" + std::to_string(storage.symbol) + "()";
+    bool found = false;
+    for (auto &row : builder.rows.symbols) {
+      if (row.kind == CppMirSymbolRepresentationKind::Storage &&
+          row.symbol == storage.symbol && row.ordinal == 0) {
+        row.spelling = spelling;
+        row.runtimeLifetimeSlot = false;
+        found = true;
+      }
+    }
+    if (!found)
+      builder.rows.symbols.push_back(
+          {.kind = CppMirSymbolRepresentationKind::Storage,
+           .symbol = storage.symbol,
+           .type = storage.type,
+           .spelling = spelling});
+  }
   return builder.rows;
 }
 

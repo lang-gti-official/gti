@@ -84,8 +84,28 @@ public:
     std::string reason;
   };
 
+  struct ProgramBorrowStorageUse {
+    BorrowOriginPlace place;
+    AccessMode access = AccessMode::ReadOnly;
+    SourceSpan span;
+  };
+
+  struct ProgramStorageBorrowProtection {
+    SemanticLoanPlace place;
+    AccessMode access = AccessMode::ReadOnly;
+    SourceSpan origin;
+  };
+
+  struct ProgramStorageBorrowCheck {
+    SourceSpan site;
+    std::vector<ProgramStorageBorrowProtection> protections;
+    std::vector<ProgramEffectOwner> targets;
+    std::vector<ProgramUnknownEffect> unknown;
+  };
+
   struct ProgramEffectSummary {
     std::vector<ProgramStorageEffectUse> uses;
+    std::vector<ProgramBorrowStorageUse> borrowUses;
     std::vector<ProgramEffectEdge> edges;
     std::vector<ProgramUnknownEffect> unknown;
   };
@@ -4391,6 +4411,11 @@ private:
   void recordProgramStorageEffect(const Expr &expression,
                                   SemanticBindingKind bindingKind,
                                   SymbolId symbol, OccurrenceRole roles);
+  void recordProgramBorrowStorageEffect(const Expr &expression,
+                                       OccurrenceRole roles);
+  void recordProgramCallEffectTargets(const Expr &expression);
+  void validateProgramStorageBorrowEffects();
+  [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;
 
   void addProgramEffectEdge(ProgramEffectOwner target, const Expr &expression);
 
@@ -4871,7 +4896,16 @@ private:
                                    SemanticBindingKind bindingKind,
                                    bool staticMember = false,
                                    bool internalLinkage = false,
-                                   bool instanceDependentType = false);
+                                   bool instanceDependentType = false,
+                                   bool threadLocal = false);
+
+  [[nodiscard]] bool validateThreadLocalDeclaration(const VariableDecl &declaration);
+  void recordThreadLocalDeclaration(const VariableDecl &declaration);
+  [[nodiscard]] bool isThreadLocalStorage(SymbolId symbol) const;
+  [[nodiscard]] bool isThreadLocalDataOnly(const VariableDecl &declaration,
+                                          const SemanticType &type) const;
+  [[nodiscard]] DefinedFailureOperation threadLocalEnsureFailure(
+      SymbolId symbol, const Token &site) const;
 
   SymbolId recordParameterBinding(const Parameter &parameter,
                                   const SemanticType &type);
@@ -6083,6 +6117,9 @@ private:
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;
+    std::vector<ProgramInitializationStep> threadLocalSteps;
+    std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
+    std::vector<ProgramStorageBorrowCheck> programStorageBorrowChecks;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
     std::vector<const Expr *> foreignAddressPlaces;

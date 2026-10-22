@@ -35,6 +35,11 @@ thread_local gti_thread_state_v1 *activeWorker = nullptr;
 thread_local bool activeTaskObjectCleanup = false;
 thread_local gti_thread_state_v1 *emergencyHandoffWorker = nullptr;
 thread_local uint64_t scopedTestFailureAfter = UINT64_MAX;
+enum class ThreadLocalCleanupPhase { Open, Draining, Complete };
+thread_local ThreadLocalCleanupPhase threadLocalCleanupPhase =
+    ThreadLocalCleanupPhase::Open;
+thread_local gti_runtime_detail::thread_local_cleanup_entry *threadLocalCleanup =
+    nullptr;
 std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
 std::mutex quarantineMutex;
@@ -263,9 +268,163 @@ void releaseTaskContext(void *context,
   }
 }
 
+class ThreadLocalExitScope final {
+public:
+  explicit ThreadLocalExitScope(gti_thread_state_v1 &owner) noexcept
+      : state(owner) {}
+  ~ThreadLocalExitScope() {
+    gti_runtime_detail::drain_thread_local_cleanup();
+    if (!workerFailed(state) || state.resultContext == nullptr)
+      return;
+    // A result is not published by join if thread-exit cleanup failed. Retire
+    // its pending ownership on the producing thread, once, through the same
+    // failure-aware callback used for task-result abandonment.
+    void *context = std::exchange(state.resultContext, nullptr);
+    auto abandon = std::exchange(state.abandonResult, nullptr);
+    state.takeResult = nullptr;
+    if (abandon == nullptr)
+      std::terminate();
+    try {
+      ActiveTaskObjectCleanupScope cleanup;
+      abandon(context);
+    } catch (const gti_runtime_detail::worker_failure_handoff &) {
+      gti_runtime_detail::clear_managed_failure_handoff();
+    } catch (...) {
+      std::terminate();
+    }
+  }
+  ThreadLocalExitScope(const ThreadLocalExitScope &) = delete;
+  ThreadLocalExitScope &operator=(const ThreadLocalExitScope &) = delete;
+
+private:
+  gti_thread_state_v1 &state;
+};
+
 } // namespace
 
 namespace gti_runtime_detail {
+
+void register_thread_local_cleanup(thread_local_cleanup_entry *entry) noexcept {
+  if (threadLocalCleanupPhase != ThreadLocalCleanupPhase::Open ||
+      entry == nullptr || entry->registered || entry->storage == nullptr ||
+      entry->cleanup == nullptr)
+    std::terminate();
+  entry->previous = threadLocalCleanup;
+  entry->registered = true;
+  threadLocalCleanup = entry;
+}
+
+bool thread_local_cleanup_active() noexcept {
+  return threadLocalCleanupPhase != ThreadLocalCleanupPhase::Open;
+}
+
+void drain_thread_local_cleanup_legacy(
+    const gti_failure_record_v1 *primary,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept {
+  if (primary == nullptr) {
+    drain_thread_local_cleanup(nullptr, primaryArtifact);
+    return;
+  }
+  const auto promoted = promoteFailure(*primary);
+  drain_thread_local_cleanup(&promoted, primaryArtifact);
+}
+
+void drain_thread_local_cleanup(
+    const gti_failure_record_v2 *primary,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact) noexcept {
+  if (threadLocalCleanupPhase == ThreadLocalCleanupPhase::Complete)
+    return;
+  if (threadLocalCleanupPhase == ThreadLocalCleanupPhase::Draining)
+    std::terminate();
+  threadLocalCleanupPhase = ThreadLocalCleanupPhase::Draining;
+  gti_failure_record_v2 pending{};
+  bool hasPrimary = primary != nullptr;
+  if (hasPrimary)
+    pending = *primary;
+  bool emergency = false;
+  if (activeWorker != nullptr) {
+    const std::lock_guard lock(activeWorker->failureMutex);
+    emergency = activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
+    if (activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
+      pending = activeWorker->failure;
+      primaryArtifact = activeWorker->primaryArtifact;
+      hasPrimary = true;
+    }
+  }
+  while (threadLocalCleanup != nullptr && !emergency) {
+    auto *entry = threadLocalCleanup;
+    threadLocalCleanup = entry->previous;
+    entry->previous = nullptr;
+    entry->registered = false;
+    gti_failure_record_v2 failure{};
+    bool succeeded = false;
+    try {
+      if (activeWorker != nullptr) {
+        ActiveTaskObjectCleanupScope cleanup;
+        succeeded = entry->cleanup(entry->storage, &failure, hasPrimary);
+      } else {
+        succeeded = entry->cleanup(entry->storage, &failure, hasPrimary);
+      }
+    } catch (const worker_failure_handoff &) {
+      clear_managed_failure_handoff();
+      if (activeWorker == nullptr)
+        std::terminate();
+      const std::lock_guard lock(activeWorker->failureMutex);
+      emergency = activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
+      if (!emergency) {
+        pending = activeWorker->failure;
+        primaryArtifact = activeWorker->primaryArtifact;
+        hasPrimary = true;
+      }
+      continue;
+    } catch (...) {
+      std::terminate();
+    }
+    if (activeWorker != nullptr) {
+      const std::lock_guard lock(activeWorker->failureMutex);
+      if (activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) {
+        emergency = true;
+        continue;
+      }
+      if (!hasPrimary &&
+          activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
+        pending = activeWorker->failure;
+        primaryArtifact = activeWorker->primaryArtifact;
+        hasPrimary = true;
+        // The callback used the failure-aware native destruction boundary;
+        // the ordinary record has already been installed exactly once.
+        continue;
+      }
+    }
+    if (succeeded)
+      continue;
+    if (activeWorker != nullptr) {
+      const std::lock_guard lock(activeWorker->failureMutex);
+      recordWorkerFailure(*activeWorker, failure, entry->artifact);
+      emergency = activeWorker->failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
+    } else if (hasPrimary) {
+      const gti_failure_emergency_v2 combined{
+          .abi_version = GTI_FAILURE_ABI_VERSION_V2,
+          .reserved = 0,
+          .primary = pending,
+          .secondary = failure};
+      threadLocalCleanup = nullptr;
+      threadLocalCleanupPhase = ThreadLocalCleanupPhase::Complete;
+      gti_rt_failure_terminate_cleanup_v2(&combined, primaryArtifact, entry->artifact);
+    }
+    if (!hasPrimary) {
+      pending = failure;
+      primaryArtifact = entry->artifact;
+      hasPrimary = true;
+    }
+  }
+  // A two-record cleanup emergency abandons remaining lifetimes. Generated
+  // TLS slots own byte storage and must not execute implicit native cleanup.
+  threadLocalCleanup = nullptr;
+  threadLocalCleanupPhase = ThreadLocalCleanupPhase::Complete;
+  if (hasPrimary && primary == nullptr && activeWorker == nullptr)
+    gti_rt_failure_terminate_v2(&pending, primaryArtifact, nullptr, nullptr);
+}
 
 bool managed_worker_active() noexcept {
   return activeWorker != nullptr &&
@@ -494,6 +653,7 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
   try {
     state->worker = std::thread([state, entry, task_context, destroy] {
       ActiveWorkerScope scope(*state);
+      ThreadLocalExitScope threadLocals(*state);
       try {
         entry(task_context);
       } catch (const gti_runtime_detail::worker_failure_handoff &) {
@@ -568,6 +728,7 @@ gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
     state->worker = std::thread([state, entry, task_context, complete_task,
                                  abandon_task, take_result, abandon_result] {
       ActiveWorkerScope scope(*state);
+      ThreadLocalExitScope threadLocals(*state);
       try {
         entry(task_context);
       } catch (const gti_runtime_detail::worker_failure_handoff &) {

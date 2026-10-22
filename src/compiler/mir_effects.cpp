@@ -88,6 +88,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .invokesUserCode = true}, // CleanupBeforeAssign.
     MirEffectTraits{.dependsOnLoan = true},   // ParkRangeCursor.
     MirEffectTraits{.dependsOnLoan = true},   // RestoreRangeCursor.
+    unknownEffects(), // EnsureThreadLocal invokes the exact initializer once.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -1161,6 +1162,7 @@ exactInvocationShell(const MirInstruction &instruction,
   switch (instruction.kind) {
   case MirInstructionKind::Call:
   case MirInstructionKind::CallBody:
+  case MirInstructionKind::EnsureThreadLocal:
     result.invokesUserCode = true;
     break;
   case MirInstructionKind::Construct:
@@ -1274,6 +1276,10 @@ summaryForAddress(const MirProgram &program, MirBodyAddress address) {
   case MirBodyKind::StaticFieldInitializers:
   case MirBodyKind::HostedStartup:
     return nullptr;
+  case MirBodyKind::ThreadLocalInitializer: {
+    const auto *storage = program.findThreadLocalStorage(address.owner);
+    return storage == nullptr ? nullptr : &storage->effectSummary;
+  }
   }
   return nullptr;
 }
@@ -1385,7 +1391,8 @@ struct ExactTargets {
     } else {
       result.boundary = true;
     }
-  } else if (instruction.kind == MirInstructionKind::CallBody) {
+  } else if (instruction.kind == MirInstructionKind::CallBody ||
+             instruction.kind == MirInstructionKind::EnsureThreadLocal) {
     if (instruction.bodyTarget) {
       result.addresses.push_back(*instruction.bodyTarget);
     } else {
@@ -2162,6 +2169,13 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
          .exactDefinition = true});
   }
 
+  for (const auto &storage : program.threadLocalStorage())
+    nodes.push_back(
+        {.address = {.kind = MirBodyKind::ThreadLocalInitializer,
+                     .owner = storage.symbol},
+         .body = &storage.initializer,
+         .exactDefinition = true});
+
   for (EffectNode &node : nodes) {
     node.local.traits = harmless();
     node.local.argumentsEscape.assign(node.parameterCount, false);
@@ -2423,6 +2437,8 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
        ++index) {
     result.lambdas.push_back(std::move(summaries[next++]));
   }
+  for (std::size_t index = 0; index < program.threadLocalStorage().size(); ++index)
+    result.threadLocalInitializers.push_back(std::move(summaries[next++]));
   return result;
 }
 
@@ -2438,7 +2454,8 @@ MirVerificationResult verifyMirEffectSummaries(const MirProgram &program) {
   if (required.functions.size() != program.functionInstances().size() ||
       required.constructors.size() != program.constructorInstances().size() ||
       required.destructors.size() != program.destructorInstances().size() ||
-      required.lambdas.size() != program.lambdaInstances().size()) {
+      required.lambdas.size() != program.lambdaInstances().size() ||
+      required.threadLocalInitializers.size() != program.threadLocalStorage().size()) {
     reject({}, "derived MIR effect summary cardinality is invalid");
     return result;
   }

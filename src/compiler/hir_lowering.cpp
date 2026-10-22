@@ -139,6 +139,7 @@ public:
       seedConcreteDeclarationType(storage.type);
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
+    lowerThreadLocalInitializationPlan();
     lowerHostedProgramEntryPlan();
     finalizeLifetimes(output.program.moduleBody, *baseModel, false);
     lowerLoans(*baseModel, output.program.moduleBody);
@@ -1275,6 +1276,75 @@ private:
       lifecycleValid = false;
     }
     output.program.embeddingPlan_ = std::move(plan);
+  }
+
+  void lowerThreadLocalInitializationPlan() {
+    for (const ProgramInitializationStep &step :
+         baseModel->threadLocalInitializationPlan().steps) {
+      const auto *declaration = step.declaration;
+      const auto *binding = declaration == nullptr
+                                ? nullptr
+                                : baseModel->findBinding(*declaration);
+      if (declaration == nullptr || binding == nullptr || step.symbol == 0) {
+        lifecycleValid = false;
+        continue;
+      }
+      HirThreadLocalStorage storage{.symbol = step.symbol,
+                                    .sourceUnit = step.sourceUnit,
+                                    .type = binding->type,
+                                    .traits = binding->traits,
+                                    .access = binding->access,
+                                    .source = declaration,
+                                    .requiresActiveCleanup = step.requiresActiveCleanup,
+                                    .ensureFailure = step.ensureFailure};
+      seedConcreteDeclarationType(storage.type);
+      std::optional<HirValueId> initializer;
+      if (declaration->initializer()) {
+        initializer = lowerExpression(declaration->initializer(),
+                                      *baseModel, {}, {}, storage.initializer);
+      } else {
+        Literal zero{std::uint64_t{0}};
+        if (storage.type.kind == SemanticType::Bool)
+          zero = false;
+        else if (storage.type.kind == SemanticType::Char)
+          zero = CharacterLiteral{};
+        else if (storage.type.kind == SemanticType::Float)
+          zero = BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary32};
+        else if (storage.type.kind == SemanticType::Double)
+          zero = BinaryFloat{.bits = 0, .format = BinaryFloatFormat::Binary64};
+        initializer = nextValueId++;
+        storage.initializer.values.push_back(
+            {.id = *initializer,
+             .kind = HirValueKind::Literal,
+             .info = makeExpressionInfo(storage.type),
+             .literal = std::move(zero)});
+      }
+      if (!initializer) {
+        lifecycleValid = false;
+        continue;
+      }
+      if (step.role == ProgramInitializationStepRole::DataOnly) {
+        const auto *value = storage.initializer.findValue(*initializer);
+        std::unordered_set<HirValueId> visited;
+        while (value != nullptr && visited.insert(value->id).second &&
+               value->kind == HirValueKind::Conversion &&
+               value->operands.size() == 1)
+          value = storage.initializer.findValue(value->operands.front());
+        if (value != nullptr && value->kind == HirValueKind::Literal &&
+            value->literal && !step.requiresActiveCleanup)
+          storage.dataInitializer = value->literal;
+        else
+          lifecycleValid = false;
+      }
+      const auto result = appendStatement({.kind = HirStatementKind::Return,
+                                           .source = declaration,
+                                           .value = initializer},
+                                          storage.initializer);
+      storage.initializer.roots.push_back(result);
+      finalizeLifetimes(storage.initializer, *baseModel, false);
+      lowerLoans(*baseModel, storage.initializer);
+      output.program.threadLocalStorage_.push_back(std::move(storage));
+    }
   }
 
   void lowerProgramInitializationPlan() {
