@@ -25,9 +25,12 @@ struct Label<T> {
 Label<T> forward<T>(T input) { return later(std::move(input)); }
 Label<T> later<T>(T input) { return Label<T>(std::move(input)); }
 Label<std::string_view> uncalled(std::string_view input) { return later(input); }
+mut Label<std::string_view> latest = Label<std::string_view>("initial");
+void remember(std::string_view input) { latest = later(input); }
 int main() {
   auto label = forward("literal");
   auto integer = forward(42);
+  remember("remembered");
   return std::move(label).take() == "literal" && std::move(integer).take() == 42 ? 0 : 1;
 }
 )gti");
@@ -37,8 +40,20 @@ int main() {
          "conditional ownerless forwarding is generic and order independent");
   if (!result.canGenerateCode())
     return;
+  // Returning the fresh label relays the formal (L-OWN-02); storing it in
+  // a global still requires ownerless text.
   std::size_t contracts = 0;
+  std::size_t relays = 0;
   for (const auto &function : result.mir.functionInstances()) {
+    if (!function.publishedTextFields.empty()) {
+      ++relays;
+      auto changed = result.mir;
+      const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(function.id))
+          ->publishedTextFields.clear();
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "omitted published text relay is rejected");
+    }
     if (function.ownerlessTextParameters.empty())
       continue;
     ++contracts;
@@ -49,10 +64,11 @@ int main() {
     expect(!lang::verifyMirProgram(changed).valid(),
            "omitted ownerless formal contract is rejected");
   }
-  expect(contracts >= 2,
-         "forwarding and storing functions retain requirements");
+  expect(relays >= 2, "forwarding functions relay their text formal");
+  expect(contracts >= 1, "a storing function retains its requirement");
   for (const auto &function : result.hir.functionInstances()) {
-    if (function.ownerlessTextParameters.empty())
+    if (function.ownerlessTextParameters.empty() &&
+        function.publishedTextFields.empty())
       continue;
     auto changed = result.hir;
     auto *target = const_cast<lang::HirFunctionInstance *>(
@@ -459,8 +475,302 @@ void testRecursiveTextSummaryScaling() {
          "all call each other return ownerless text");
 }
 
+const std::string kReferenceAccessors = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
+  int& kindOf() { return this.kindRef(); }
+  std::string_view& alias() { return this.ref(); }
+};
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+)gti";
+
+// Text read through a returned reference is the text that the reference
+// designates: the receiver's direct text field, or an enum payload. Values
+// holding ownerless text may store it.
+void testTextReferenceAccessors() {
+  const auto result = analyzeText(kReferenceAccessors + R"gti(
+int main() {
+  Token token = Token("token", 1);
+  kept = token.ref();
+  kept = token.alias();
+  keep(token);
+  Box<std::string_view> box = Box<std::string_view>("boxed");
+  kept = box.get();
+  expected<int, std::string_view> failed = unexpected("failure");
+  kept = failed.error();
+  return width(token) == 5 && token.kindOf() == 1 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "text that ownerless values return by reference may be stored");
+  if (!result.canGenerateCode())
+    return;
+  // Storing a formal's text through its accessor requires that field, which
+  // MIR derives through the returned reference by itself.
+  const lang::MirFunctionInstance *keep = nullptr;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        function.returnType.kind == lang::SemanticType::Void &&
+        function.parameterTypes.size() == 1 &&
+        function.ownerlessTextFields.size() == 1)
+      keep = &function;
+  expect(keep != nullptr,
+         "storing text through a formal's accessor requires its field");
+  if (keep != nullptr) {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(keep->id))
+        ->ownerlessTextFields.clear();
+    expect(functionError(lang::verifyMirProgram(changed), keep->id,
+                         "ownerless text field contract omits an "
+                         "independently derived requirement"),
+           "MIR derives the field requirement through the accessor");
+  }
+  // A returned reference that a call borrowed from the receiver lets the
+  // whole receiver escape, so `kindOf` requires each of its text fields.
+  const lang::MirFunctionInstance *kindOf = nullptr;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        function.returnType.kind == lang::SemanticType::Reference &&
+        function.returnType.arguments.size() == 1 &&
+        function.returnType.arguments.front().kind ==
+            lang::SemanticType::Int32 &&
+        !function.ownerlessTextFields.empty())
+      kindOf = &function;
+  expect(kindOf != nullptr,
+         "returning a reference borrowed through a call is a whole use");
+  if (kindOf != nullptr) {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(kindOf->id))
+        ->ownerlessTextFields.clear();
+    expect(functionError(lang::verifyMirProgram(changed), kindOf->id,
+                         "ownerless text field contract omits an "
+                         "independently derived requirement"),
+           "MIR derives the whole use of a returned call reference");
+  }
+
+  // A value over a local owner reaches a reference accessor only through a
+  // relay (testTextReferenceRelays), never one that lets its receiver
+  // escape whole or stores what it reads. An accessor returning another
+  // accessor's reference composes its relay.
+  const auto composed =
+      analyzeText(kReferenceAccessors +
+                  "int run() { std::string input{\"input\"}; Token t = "
+                  "Token(input.view(), 1); std::println(t.alias()); return 0; "
+                  "}\nint main() { return run(); }\n");
+  expect(composed.canGenerateCode() &&
+             lang::verifyMirProgram(composed.mir).valid(),
+         "a value over a local owner calls a composed reference relay");
+  for (const char *body : {"kept = t.ref();", "keep(t);",
+                           "std::println(t.kindOf());", "kept = t.alias();"}) {
+    const auto rejected =
+        analyzeText(kReferenceAccessors +
+                    "int run() { std::string input{\"input\"}; Token t = "
+                    "Token(input.view(), 1); " +
+                    body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"),
+           std::string("a value over a local owner reaches no escaping "
+                       "accessor: ") +
+               body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + body);
+  }
+  // A temporary receiver would need a result loan for its text reference.
+  const auto temporary = analyzeText(kReferenceAccessors + R"gti(
+int main() {
+  kept = Token("literal", 1).ref();
+  return kept.size() == 7 ? 0 : 1;
+}
+)gti");
+  expect(hasDiagnosticCode(temporary.diagnostics, "GTI-S2081") &&
+             std::none_of(temporary.diagnostics.begin(),
+                          temporary.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+         "a temporary receiver of a text reference accessor is diagnosed at "
+         "source");
+}
+
+// A method that returns a reference to its receiver's text field relays that
+// field (returnedTextReference): on a value over a local owner its result is
+// a view of the owner, as a read of the field is, and a view copied from it
+// keeps the owner borrowed.
+void testTextReferenceRelays() {
+  const auto result = analyzeText(kReferenceAccessors + R"gti(
+int main() {
+  std::string input{"relayed"};
+  Token t = Token(input.view(), 1);
+  std::println(t.ref());
+  std::string_view v = t.ref();
+  std::println(v);
+  return width(t) == 7 && v.size() == 7 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "a reference relay's result views the receiver's owner");
+  if (!result.canGenerateCode())
+    return;
+  // The copied view carries the relay's result loan, whose stored
+  // dependency is the owner's loan designating the relayed field. Like a view
+  // copied from a field read, its retention is a semantic decision: MIR
+  // checks the loan's shape, not which bindings must carry it.
+  bool carried = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    const auto &loans = function.body.loans;
+    for (const auto &loan : loans)
+      carried =
+          carried ||
+          (loan.kind == lang::MirLoanKind::CallResult &&
+           loan.carriers.size() == 1 && loan.storedDependency != 0 &&
+           loan.storedDependency <= loans.size() &&
+           loans[loan.storedDependency - 1].kind == lang::MirLoanKind::Stored &&
+           loans[loan.storedDependency - 1].designatedFields.size() == 1);
+  }
+  expect(carried, "the copied view carries the relay's loan, which depends "
+                  "on the owner's loan");
+
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  for (const Case &entry : {
+           Case{"kept = t.ref();", "GTI-S2045"},
+           Case{"keep(t);", "GTI-S2045"},
+           Case{"std::string_view v = t.ref(); input.append(\"!\"); "
+                "uint64_t n = v.size();",
+                "GTI-S2017"},
+           Case{"std::string_view& r = t.ref(); Token u = std::move(t); "
+                "uint64_t n = r.size();",
+                "GTI-S2017"},
+       }) {
+    const auto rejected = analyzeText(
+        kReferenceAccessors +
+        "int run() { mut std::string input{\"input\"}; Token t = "
+        "Token(input.view(), 1); " +
+        entry.body + " return 0; }\nint main() { return run(); }\n");
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("a relayed view is checked at source: ") + entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string("diagnosed at source: ") + entry.body);
+  }
+}
+
+void testNativeCStringProducer() {
+  const auto result = analyzeText(R"gti(
+extern "C" {
+  c_string native_text(int32_t kind);
+  void native_release(c_string text);
+}
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  NativeText(NativeText&) = delete;
+  NativeText(NativeText&&) = default;
+  ~NativeText() { native_release(this.text); }
+};
+void retain(int32_t kind) {
+  unsafe { auto text = NativeText(native_text(kind)); }
+}
+int main() { retain(0); return 0; }
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "native C-string results can enter an externally managed owner");
+  if (!result.canGenerateCode())
+    return;
+  const auto producer = std::find_if(
+      result.mir.functionInstances().begin(),
+      result.mir.functionInstances().end(), [](const auto &function) {
+        return function.linkage == lang::LanguageLinkage::C &&
+               function.returnType.kind == lang::SemanticType::CString;
+      });
+  expect(producer != result.mir.functionInstances().end(),
+         "the regression retains its native C-string producer");
+  if (producer == result.mir.functionInstances().end())
+    return;
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto changed = result.mir;
+    auto *target = const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(producer->id));
+    if (mutation == 0)
+      target->linkage = lang::LanguageLinkage::Gti;
+    else if (mutation == 1)
+      target->definitionKind = lang::MirDefinitionKind::Source;
+    else
+      target->returnBorrowOrigin = lang::BorrowOriginKind::Argument;
+    const auto verification = lang::verifyMirProgram(changed);
+    expect(std::any_of(verification.errors.begin(), verification.errors.end(),
+                       [](const auto &error) {
+                         return error.message ==
+                                "ownerless text storage or call lacks exact "
+                                "producer evidence";
+                       }),
+           "native text evidence requires the exact external untracked C "
+           "producer contract");
+  }
+
+  const auto dependent = analyzeText(R"gti(
+#include <std/string>
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  ~NativeText() {}
+};
+int main() {
+  std::string owner{"dynamic"};
+  unsafe { auto text = NativeText(owner.c_string()); }
+  return 0;
+}
+)gti");
+  expect(!dependent.canGenerateCode() &&
+             std::any_of(
+                 dependent.diagnostics.begin(), dependent.diagnostics.end(),
+                 [](const auto &error) { return error.code == "GTI-S2045"; }) &&
+             std::none_of(dependent.diagnostics.begin(),
+                          dependent.diagnostics.end(),
+                          [](const auto &error) {
+                            return error.code.starts_with("GTI-B");
+                          }),
+         "GTI owner-dependent C strings still fail at source, including "
+         "inside unsafe code");
+}
+
 constexpr NamedTest kTests[] = {
     {"testOwnerlessForwarding", testOwnerlessForwarding},
+    {"testTextReferenceAccessors", testTextReferenceAccessors},
+    {"testTextReferenceRelays", testTextReferenceRelays},
+    {"testNativeCStringProducer", testNativeCStringProducer},
     {"testOwnerlessTextAliasWrites", testOwnerlessTextAliasWrites},
     {"testRecursiveOwnerlessReturns", testRecursiveOwnerlessReturns},
     {"testPermutingRecursiveFieldContracts",

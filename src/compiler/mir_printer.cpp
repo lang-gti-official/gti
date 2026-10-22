@@ -632,6 +632,13 @@ public:
           output << field.parameter;
         output << ':' << field.field;
       }
+      output << "] published-text-fields=[";
+      for (std::size_t index = 0; index < instance.publishedTextFields.size();
+           ++index) {
+        separator(index);
+        output << instance.publishedTextFields[index].parameter << ':'
+               << instance.publishedTextFields[index].field;
+      }
       output << "] explicit-return-borrow="
              << instance.explicitReturnBorrowOrigin
              << " return-borrow=" << number(instance.returnBorrowOrigin) << ':'
@@ -1640,6 +1647,7 @@ private:
     output << " borrow-fields=";
     borrowFields(value.borrowFields);
     output << " dependent-text=" << value.dependentTextPublication
+           << " provisional-text-relays=" << value.provisionalTextRelays
            << " restores-reference=" << value.restoresReferenceResult
            << " restored-fields=";
     restoredFields(value.restoredBorrowFields);

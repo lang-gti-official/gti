@@ -2431,8 +2431,8 @@
       }
     },
     "165-borrowed-payload-results.gti": {
-      "declarations": 1657,
-      "bodies": 247,
+      "declarations": 1658,
+      "bodies": 248,
       "generated_items": 142,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2506,9 +2506,24 @@
       }
     },
     "170-view-fields.gti": {
-      "declarations": 1432,
-      "bodies": 147,
-      "generated_items": 101,
+      "declarations": 1486,
+      "bodies": 162,
+      "generated_items": 109,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 58
+      }
+    },
+    "171-recursive-text-relays.gti": {
+      "declarations": 1433,
+      "bodies": 146,
+      "generated_items": 98,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2517,13 +2532,13 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 51
+        "concrete_instance_adapter": 48
       }
     }
   },
   "totals": {
-    "declarations": 174202,
-    "bodies": 23075,
-    "generated_items": 14533
+    "declarations": 175690,
+    "bodies": 23237,
+    "generated_items": 14639
   }
 }

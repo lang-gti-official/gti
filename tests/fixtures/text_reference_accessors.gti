@@ -1,0 +1,58 @@
+// Text read through a returned reference is the text that the reference
+// designates: a direct text field of the receiver, or an enum payload. The
+// first values hold ownerless text, so the reads can be stored.
+#include <std/string>
+
+mut std::string_view kept = "";
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  std::string_view& alias() { return this.ref(); }
+};
+
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+
+// Storing the text that a formal's accessor returns requires that formal's
+// text to be ownerless, as storing the field itself would.
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+
+int main() {
+  Token token = Token("token", 1);
+  kept = token.ref();
+  std::println(kept);
+  kept = token.alias();
+  std::println(kept);
+  keep(token);
+  std::println(kept);
+  std::println(width(token));
+
+  Box<std::string_view> box = Box<std::string_view>("boxed");
+  kept = box.get();
+  std::println(kept);
+
+  expected<int, std::string_view> failed = unexpected("failure");
+  kept = failed.error();
+  std::println(kept);
+  expected<int, std::string_view> fine = 7;
+  std::println(fine.value());
+
+  // A receiver relay on a value over a local owner gives a view of that
+  // owner, which a copy keeps borrowed.
+  std::string input{"relayed"};
+  Token relayed = Token(input.view(), 2);
+  std::println(relayed.ref());
+  std::string_view copied = relayed.ref();
+  std::println(copied);
+  std::println(width(relayed));
+  return 0;
+}
