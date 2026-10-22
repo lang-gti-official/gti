@@ -27,7 +27,7 @@ for what minor and patch releases mean.
   temporary owner and two owners in one value.
 - A function that uses its parameter any other way, for example keeping it in
   a local and returning that, still requires ownerless text, and so does a
-  recursive call.
+  recursive call whose result has a text field.
 - `unexpected(input.view())` gives an `unexpected_value`; converting it into
   an `expected`, and `optional<std::string_view>`, are still to come.
 

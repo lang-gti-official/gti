@@ -9106,12 +9106,13 @@ prerequisite checkpoints as full acceptance.
     constructor publishes (`dependentTextPublication`, `borrowFields`). An
     ownerless argument gives an ownerless result. Generic functions decide the
     relay in their open analysis, where their formal requirements are
-    recorded; a call reads it after the body demand. MIR's `TextContracts`
+    recorded, also through other generic calls; a call reads it after the
+    body demand. MIR's `TextContracts`
     derives each relay independently and the derived set must equal the
     declared one. A call made while its callee's body is still being analyzed
-    (recursion) cannot rely on unfinished relays. Semantics marks it
-    `provisionalTextRelays`, and every text argument of such a call must be
-    ownerless, which MIR checks from the same mark.
+    (recursion) cannot rely on unfinished relays. When its result has a text
+    field, semantics marks it `provisionalTextRelays`, and every text argument
+    of such a call must be ownerless, which MIR checks from the same mark.
   - *2b (next): nested publication.* Generic enums, `[field, payload]`
     designated paths through a class's enum field, reads through reference
     accessors (`value()`, `error()`, `*o`), and the `error()` ICE. Covers

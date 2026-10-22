@@ -1607,8 +1607,9 @@ auto SemanticVisitor::Impl::implicitReceiverTextField(
   return OwnerlessTextField{.receiver = true, .field = field};
 }
 
-auto SemanticVisitor::Impl::directTextFieldSymbols(
-    const SemanticType &type) const -> std::vector<SymbolId> {
+auto SemanticVisitor::Impl::directTextFieldSymbols(const SemanticType &type,
+                                                   bool conditional) const
+    -> std::vector<SymbolId> {
   std::vector<SymbolId> fields;
   const ClassInfo *owner = classInfo(type);
   if (owner == nullptr)
@@ -1621,7 +1622,7 @@ auto SemanticVisitor::Impl::directTextFieldSymbols(
       continue;
     const SymbolId field =
         symbolForDeclaration(member->second.symbol.declaration);
-    if (directTextField(type, field))
+    if (directTextField(type, field, conditional))
       fields.push_back(field);
   }
   std::sort(fields.begin(), fields.end());
@@ -1890,7 +1891,8 @@ auto SemanticVisitor::Impl::constructionKeepsPublishedText(
 }
 
 auto SemanticVisitor::Impl::directTextField(const SemanticType &type,
-                                            SymbolId field) const -> bool {
+                                            SymbolId field,
+                                            bool conditional) const -> bool {
   const ClassInfo *owner = classInfo(type);
   if (owner == nullptr || field == 0 || typeTraits(type).containsBorrowedState)
     return false;
@@ -1907,7 +1909,8 @@ auto SemanticVisitor::Impl::directTextField(const SemanticType &type,
         const auto fieldType =
             substituteType(member->second.symbol.type, classSubstitution(type));
         return fieldType.kind == SemanticType::StringView ||
-               fieldType.kind == SemanticType::CString;
+               fieldType.kind == SemanticType::CString ||
+               (conditional && fieldType.kind == SemanticType::TypeParameter);
       });
 }
 
@@ -2046,9 +2049,12 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
                                                   const FunctionInfo &callee)
     -> void {
   // A callee whose body is still being analyzed may relay a formal it has
-  // not recorded yet, so text passed to it must be ownerless here.
+  // not recorded yet into a text field of its result, so text passed to it
+  // must be ownerless here.
   const FunctionDecl *body = callee.bodyDeclaration();
-  const bool provisional = body != nullptr && bodiesInProgress.contains(body);
+  const bool provisional =
+      body != nullptr && bodiesInProgress.contains(body) &&
+      !directTextFieldSymbols(resolved.returnType, true).empty();
   if ((callee.publishedTextFields.empty() && !provisional) ||
       resolved.returnType.kind != SemanticType::Class ||
       !textPublicationOwner(resolved.returnType))
@@ -2064,23 +2070,28 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
        ++parameter) {
     const auto kind = resolved.parameterTypes[parameter].kind;
     const ExprPtr *argument = resolvedCallArgument(call, &resolved, parameter);
-    if ((kind != SemanticType::StringView && kind != SemanticType::CString) ||
-        argument == nullptr || !isOwnerDependentTextExpression(*argument))
+    // An open formal relays or requires here, so that callers of this generic
+    // function see the composition; its text instances decide publication.
+    const bool conditionalText = kind == SemanticType::TypeParameter;
+    if ((kind != SemanticType::StringView && kind != SemanticType::CString &&
+         !conditionalText) ||
+        argument == nullptr ||
+        (!conditionalText && !isOwnerDependentTextExpression(*argument)))
       continue;
     if (provisional) {
-      if (!requireOwnerlessTextParameter(*argument))
+      if (!requireOwnerlessTextParameter(*argument) && !conditionalText)
         reportOwnerDependentTextStorage(
             *argument, "passed to a recursive call whose result may hold it");
       continue;
     }
     for (const auto &entry : callee.publishedTextFields) {
       if (entry.parameter != parameter ||
-          !directTextField(resolved.returnType, entry.field))
+          !directTextField(resolved.returnType, entry.field, conditionalText))
         continue;
       if (relayReturnedTextFormal(call, resolved.returnType, nullptr, *argument,
                                   entry.field))
         continue;
-      if (requireOwnerlessTextParameter(*argument))
+      if (requireOwnerlessTextParameter(*argument) || conditionalText)
         break;
       if (textFieldOwnerDependency(*argument, entry.field).empty()) {
         reportOwnerDependentTextStorage(

@@ -47,6 +47,15 @@ std::string_view firstOf(Pair pair) { return pair.first; }
 std::string_view secondOf(Pair pair) { return pair.second; }
 // Returning a fresh token over the text parameter relays it to the result.
 Token makeToken(std::string_view text) { return Token(text, 8); }
+// A generic wrapper relays through the generic factory it returns, even when
+// it is declared first.
+class Label<T> {
+public:
+  T text;
+  Label(T text) : text(text) {}
+};
+Label<T> wrapLabel<T>(T text) { return makeLabel(text); }
+Label<T> makeLabel<T>(T text) { return Label<T>(text); }
 
 int main() {
   std::string input{"token text"};
@@ -106,6 +115,8 @@ int main() {
   std::println(made.text);
   std::pair<std::string_view, int> paired = std::make_pair(input.view(), 9);
   std::println(paired.first.size());
+  Label<std::string_view> wrapped = wrapLabel(input.view());
+  std::println(wrapped.text);
 
   // A token over a literal is ownerless and can leave this body.
   Token literal = Token("literal", 1);

@@ -2621,7 +2621,11 @@ summary, so an ownerless call keeps no result borrow.
   its conditional formal requirements today; an instance re-derives it after
   clearing its contract sets. A call reads the callee's relays from the
   body-analyzed declaration and checks the field against the concrete result
-  type with `directTextField`.
+  type with `directTextField`. An open call composes the same way: a
+  type-parameter argument at a type-parameter field (`directTextField` with
+  `conditional`) relays or requires there and publishes nothing. Otherwise a
+  generic wrapper whose callee is analyzed later would declare fewer relays
+  than MIR derives for its instance.
 - `publishTextCallResult` gives a call whose relayed argument is dynamic the
   constructor's call-site facts: `dependentTextPublication`, `borrowFields`
   and an Argument origin. The result is a `textDependentValueInfo` value, and
@@ -2629,9 +2633,12 @@ summary, so an ownerless call keeps no result borrow.
   as a publishing construction. A temporary owner or a second owner is
   `GTI-S2045`, as for constructors.
 - A callee whose body is in `bodiesInProgress` (recursion) may relay formals
-  it has not recorded yet. The call is marked `provisionalTextRelays`; a
-  formal argument there is required ownerless and a dynamic one is
-  `GTI-S2045`.
+  it has not recorded yet into a text field of its result. When the result has
+  one, possibly open, the call is marked `provisionalTextRelays`; a formal
+  argument there is required ownerless and a dynamic one is `GTI-S2045`. A
+  result with no such field is an ordinary call. An instance analysis puts no
+  body in progress, so a generic instance relays through its own recursive
+  call, while callers are checked against the open declaration's requirement.
 
 A dependent argument or receiver records a `TextDependentRelay` with its
 designated fields, while its scope is live. The request's own finalization

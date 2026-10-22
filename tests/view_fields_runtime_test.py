@@ -6,5 +6,5 @@ if __name__ == "__main__":
     output = ("token text\n3\ntoken text\n2\ntoken text\n10\n50\n"
               "token text\nfixed\ntoken text\n10\nfixed\n10\n"
               "token text\n10\n20\ntemporary\ntoken text\n10\n"
-              "literal\n7\n")
+              "token text\nliteral\n7\n")
     main(names=("view_fields",), cases={"view_fields": [((), (0, output, ""))]})
