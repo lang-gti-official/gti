@@ -31,6 +31,7 @@ void positive() {
 #include <std/string>
 struct Value { int number = 7; };
 namespace policy { constexpr bool enabled = false; }
+int impossible() { std::assert(false); }
 namespace app {
   void sink(Value& value) { std::assert(value.number == 7); }
   [[deferred]] void conditional(bool enabled, Value value) {

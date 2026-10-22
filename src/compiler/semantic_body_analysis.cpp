@@ -6,6 +6,7 @@ namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   deferredLookup.clear();
+  deferredLookupBase = nullptr;
   deferredExpansionDepth = 0;
   deferredExpandedBodies = 0;
   deferredActiveBodies.clear();
@@ -13663,6 +13664,12 @@ auto SemanticVisitor::Impl::constantBoolean(const ExprPtr &expression) const
   }
   if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     return constantBoolean(grouping->expression());
+  }
+  if (const auto *unary = exprAs<Unary>(expression.get());
+      unary && unary->oper().kind == TokenKind::BANG &&
+      semanticModel.findOperator(*unary) == nullptr) {
+    if (const auto value = constantBoolean(unary->right()))
+      return !*value;
   }
   return std::nullopt;
 }

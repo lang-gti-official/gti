@@ -4815,6 +4815,10 @@ private:
     std::unordered_map<std::string, CompileTimeValue> values;
   };
   std::unordered_map<std::uint32_t, DeferredLookupContext> deferredLookup;
+  // A speculative worker is confined to the lifetime of its caller. Read
+  // earlier expansion domains through that caller instead of repeatedly
+  // copying the growing domain map; newly expanded syntax stays local.
+  const Impl *deferredLookupBase = nullptr;
   struct DeferredLookupScope {
     Impl &owner;
     std::vector<std::string> namespaceScope;
