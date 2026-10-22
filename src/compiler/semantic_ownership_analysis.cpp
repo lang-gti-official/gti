@@ -1761,13 +1761,17 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
   const auto [entry, inserted] =
       requestSession.conditionalRelayReturns.try_emplace(
           function.bodyDeclaration());
+  // References to unordered-map values survive recursive cache insertion;
+  // retaining its iterator across conditionalTextField queries would not.
+  auto &result = entry->second;
   if (!inserted || function.bodyDeclaration()->body() == nullptr)
-    return entry->second;
+    return result;
   std::vector<const ExprPtr *> returns;
   collectBorrowReturnExpressions(function.bodyDeclaration()->body().get(),
                                  returns);
   std::optional<SymbolId> relayed;
-  std::unordered_set<const Expr *> found;
+  std::vector<const Expr *> found;
+  found.reserve(returns.size());
   for (const ExprPtr *returned : returns) {
     const Expr *current = returned != nullptr ? returned->get() : nullptr;
     while (const auto *group = exprAs<Grouping>(current))
@@ -1775,12 +1779,14 @@ auto SemanticVisitor::Impl::conditionalRelayReturns(
     const auto field =
         current != nullptr ? conditionalTextField(*current) : std::nullopt;
     if (!field || !field->receiver || (relayed && *relayed != field->field))
-      return entry->second;
+      return result;
     relayed = field->field;
-    found.insert(current);
+    found.push_back(current);
   }
-  entry->second = std::move(found);
-  return entry->second;
+  // Publish expression identities into cache-owned storage only after the
+  // complete relay has been proved. No local container storage escapes.
+  result.insert(found.begin(), found.end());
+  return result;
 }
 
 auto SemanticVisitor::Impl::contractPayloadBinding(
