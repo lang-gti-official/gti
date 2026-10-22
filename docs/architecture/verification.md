@@ -1,5 +1,62 @@
 # Compiler Verification
 
+## Classes holding text views (0.458.2)
+
+`passive_text_view_class_runtime` runs `passive_text_view_classes.gti`.
+- The reported program moves a `Name` holding one `std::string_view` into a
+  field after a `std::vector` field; its copy variant copies it. Both return 7.
+- `Shelved` moves a `Tagged` (a view, a C string and a rank) and a nested
+  `Labelled` record after a `Ledger` field that can fail. `Copied` copies a
+  `Tagged` after its own ledger. In each, a later sibling or the body can fail.
+- When the ledger itself fails, before the move or copy, the object has no
+  ledger to drop. When a later sibling or the body fails, the built ledger is
+  rolled back exactly once, and `main`'s live ledgers close once each. Every
+  failure exits with status 70 and the division diagnostic.
+- A conditional join of copies and of moves, and a copy assigned into a
+  mutable field, give the expected values.
+- Each result is checked in C++20/C++23 at O0/O1/O3, no-elide and ASan/UBSan.
+  The main compiler (`d2873bde`) stops the fixture with `GTI-B0001`.
+
+In `cpp_mir_body_emitter_text`, `testPassiveTextViewClassAfterFallibleSibling`:
+- The moved constructor has no loans, only the formal's inert binding drop,
+  and a `Move` and `Initialize` without lifecycle events.
+- The native owned-field proof refuses it. The failure form admits it, starts
+  the field empty and publishes it once after the vector.
+- The copied variant is an exact parameter copy, published as
+  `name(__gti_mir_arg_0)` with no lifetime slot.
+- Forging borrowed state on the class, or active cleanup on its field, fails
+  closed for the move. Forging active cleanup also fails closed for the copy.
+- Mutation checks:
+  - with text views removed from the passive leaf rule (main's behavior), the
+    test fails at failure-form admission;
+  - with the `passiveMove` borrowed-state check removed, only the
+    borrowed-state forgery fails.
+
+An `--emit-cpp` differential against main `d2873bde`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1,812 programs in
+`tests/fixtures`, `tests/coverage` and `examples` at O0 and O3:
+- 3,616 of 3,624 compilations emit byte-identical C++, and failing pairs
+  report identical diagnostics.
+- Only the new fixture changes status, from `GTI-B0001` to success.
+- Three programs change text, all in one family: `examples/008-expected.gti`,
+  `constexpr_results.gti` and `ownerless_text_contracts.gti` build
+  `expected<T, std::string_view>` from `unexpected_value<std::string_view>`,
+  which is now passive. Its formal's failure-route drop is natively trivial, so
+  `ConstructorNoFailureProof` proves the `expected` constructor cannot fail.
+  The caller drops its dead failure-status branch, and an ordinary overload is
+  emitted beside the failure form.
+- Built with both compilers and run at O0 and O3, those three programs give
+  the same exit status, stdout and stderr. Their `__text` is unchanged at O3
+  and up to 140 bytes smaller at O0.
+
+Two shapes stay outside the passive route, on main as for scalar-field
+classes:
+- A constructor that body-stages a passive class move and also copies a
+  passive class after a fallible field is still `GTI-B0001`. Once moves are
+  body-staged, every native copy must be a first-field prefix.
+- A class holding a function item, moved after fallible work, is still
+  `GTI-B0001`: function items are not passive leaves.
+
 ## Dependent text payloads (0.457.0)
 
 `view_fields` covers payloads in `testPayloads`.
