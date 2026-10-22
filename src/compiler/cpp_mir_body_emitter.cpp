@@ -21793,8 +21793,11 @@ loanReferentType(const MirProgram &program, const MirBody &body,
       return source->type.arguments.front();
     }
   }
+  // A reference-typed source protects its referent, never the pointer
+  // carrier: a parameter entry, a return transfer, and a Stored dependency
+  // inherited from a reference binding all name what that binding refers to.
   if ((loan.kind == MirLoanKind::Parameter ||
-       loan.kind == MirLoanKind::Return) &&
+       loan.kind == MirLoanKind::Return || loan.kind == MirLoanKind::Stored) &&
       source->type.kind == SemanticType::Reference &&
       source->type.arguments.size() == 1) {
     return source->type.arguments.front();
@@ -28693,6 +28696,78 @@ loanHasCppPointerCarrier(const MirProgram &program,
          elementBorrowLoanProducer(body, loan) == nullptr;
 }
 
+// A provenance-only place is never evaluated: no instruction, edge, drop or
+// range iteration names it, and every loan it sources obtains its runtime
+// address from one exact producer (a reference-returning call, a
+// PayloadExtract selection or a transferred loan pointer), never from an
+// implicit entry-loan initialization. Stored loans carry no native pointer.
+[[nodiscard]] bool provenanceOnlyLoanSource(const MirProgram &program,
+                                            const MirBody &body,
+                                            const MirPlace &place) {
+  const auto uses = [&](const auto &operand) {
+    return operand.place == place.id;
+  };
+  const auto usesAny = [&](const auto &operands) {
+    return std::any_of(operands.begin(), operands.end(), uses);
+  };
+  for (const auto &block : body.blocks) {
+    const auto &edge = block.terminator;
+    if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
+        usesAny(edge.elseArguments) ||
+        std::any_of(
+            edge.switchTargets.begin(), edge.switchTargets.end(),
+            [&](const auto &target) { return usesAny(target.arguments); }))
+      return false;
+    for (const auto &instruction : block.instructions)
+      if (instruction.destination == place.id ||
+          instruction.successResultDestination == place.id ||
+          instruction.retainedOwnerPlace == place.id ||
+          (instruction.receiver && uses(*instruction.receiver)) ||
+          usesAny(instruction.operands))
+        return false;
+  }
+  for (const auto &drop : body.dropObligations)
+    if (drop.place == place.id)
+      return false;
+  for (const auto &range : body.rangeIterations)
+    if (range.owner == place.id || range.rangeCarrier == place.id ||
+        range.iterator == place.id || range.sentinel == place.id ||
+        range.element == place.id)
+      return false;
+  for (const auto &loan : body.loans) {
+    if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
+      continue;
+    if (loan.entry)
+      return false;
+    std::size_t producers = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.loan == loan.id &&
+            (instruction.kind == MirInstructionKind::Borrow ||
+             instruction.kind == MirInstructionKind::Call)) {
+          const bool returnedAddress =
+              instruction.kind == MirInstructionKind::Call &&
+              loanProducingReferenceCall(program, body, loan) == &instruction;
+          const bool selectedAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.referenceSelection &&
+              borrowedPayloadExtract(body, loan.referenceSelection->value);
+          const bool transferredAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.kind == MirLoanKind::Return &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Loan &&
+              instruction.operands.front().place == 0;
+          if (!returnedAddress && !selectedAddress && !transferredAddress)
+            return false;
+          ++producers;
+        }
+    if (producers != 1)
+      return false;
+  }
+  return true;
+}
+
 // Enum reference inventories include guarded abstract referent paths. Those
 // paths are checked provenance, not unconditional native field reads (the
 // field may belong to an inactive alternative). An actual selection obtains
@@ -28762,70 +28837,24 @@ loanHasCppPointerCarrier(const MirProgram &program,
     type = *field;
     enumField = true;
   }
-  if (!enumField || type != place.type)
-    return false;
-  const auto uses = [&](const auto &operand) {
-    return operand.place == place.id;
-  };
-  const auto usesAny = [&](const auto &operands) {
-    return std::any_of(operands.begin(), operands.end(), uses);
-  };
-  for (const auto &block : body.blocks) {
-    const auto &edge = block.terminator;
-    if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
-        usesAny(edge.elseArguments) ||
-        std::any_of(
-            edge.switchTargets.begin(), edge.switchTargets.end(),
-            [&](const auto &target) { return usesAny(target.arguments); }))
-      return false;
-    for (const auto &instruction : block.instructions)
-      if (instruction.destination == place.id ||
-          instruction.successResultDestination == place.id ||
-          instruction.retainedOwnerPlace == place.id ||
-          (instruction.receiver && uses(*instruction.receiver)) ||
-          usesAny(instruction.operands))
-        return false;
-  }
-  for (const auto &drop : body.dropObligations)
-    if (drop.place == place.id)
-      return false;
-  for (const auto &range : body.rangeIterations)
-    if (range.owner == place.id || range.rangeCarrier == place.id ||
-        range.iterator == place.id || range.sentinel == place.id ||
-        range.element == place.id)
-      return false;
-  for (const auto &loan : body.loans) {
-    if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
-      continue;
-    if (loan.entry)
-      return false;
-    std::size_t producers = 0;
-    for (const auto &block : body.blocks)
-      for (const auto &instruction : block.instructions)
-        if (instruction.loan == loan.id &&
-            (instruction.kind == MirInstructionKind::Borrow ||
-             instruction.kind == MirInstructionKind::Call)) {
-          const bool returnedAddress =
-              instruction.kind == MirInstructionKind::Call &&
-              loanProducingReferenceCall(program, body, loan) == &instruction;
-          const bool selectedAddress =
-              instruction.kind == MirInstructionKind::Borrow &&
-              loan.referenceSelection &&
-              borrowedPayloadExtract(body, loan.referenceSelection->value);
-          const bool transferredAddress =
-              instruction.kind == MirInstructionKind::Borrow &&
-              loan.kind == MirLoanKind::Return &&
-              instruction.operands.size() == 1 &&
-              instruction.operands.front().kind == MirOperandKind::Loan &&
-              instruction.operands.front().place == 0;
-          if (!returnedAddress && !selectedAddress && !transferredAddress)
-            return false;
-          ++producers;
-        }
-    if (producers != 1)
-      return false;
-  }
-  return true;
+  return enumField && type == place.type &&
+         provenanceOnlyLoanSource(program, body, place);
+}
+
+// A field-less Stored loan rides a borrow-carrying object value: the object
+// holds its references internally and the loan owns no pointer local. A place
+// rooted at it names the carried external referent as checked provenance, for
+// example the owner of a reference selected from the carrier's payload. It is
+// representable only while nothing evaluates it.
+[[nodiscard]] bool storedCarrierProvenancePlace(const MirProgram &program,
+                                                const MirBody &body,
+                                                const MirPlace &place) {
+  const MirLoan *loan = place.root == MirPlaceRootKind::Loan
+                            ? body.findLoan(place.loan)
+                            : nullptr;
+  return loan != nullptr && loan->kind == MirLoanKind::Stored &&
+         loan->storedField == 0 &&
+         provenanceOnlyLoanSource(program, body, place);
 }
 
 // A selected accessor may name a private nested receiver path solely as
@@ -49453,16 +49482,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // local exists. A field-less stored loan rides a borrow-carrying
       // object value: the object local holds the borrow internally, no
       // pointer ever binds, and its call-result children bind their own
-      // pointers — admissible exactly when nothing roots a place at it.
+      // pointers. A place rooted at it never spells: it is admissible only
+      // as provenance that nothing evaluates, such as the owner of a
+      // reference selected from the carrier's payload.
       if (loan.storedField == 0 && !storedReferenceBindings) {
-        bool rootedPlace = false;
         for (const MirPlace &place : body.places) {
-          if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id) {
-            rootedPlace = true;
+          if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id &&
+              !storedCarrierProvenancePlace(program_, body, place)) {
+            return false;
           }
-        }
-        if (rootedPlace) {
-          return false;
         }
         continue;
       }
