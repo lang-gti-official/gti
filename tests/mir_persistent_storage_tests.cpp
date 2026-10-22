@@ -1,3 +1,4 @@
+#include "../src/compiler/mir_storage_effects.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
 
@@ -163,6 +164,106 @@ int main() {
            "MIR readiness retains the conditional initializer edge, not a "
            "blanket call exemption");
 }
+void stagedInputBoundaries(std::string_view storage, bool branch) {
+  const std::string source = std::string(storage) + R"( mut int32_t first = 1;
+)" + std::string(storage) + R"( mut int32_t second = 2;
+int32_t change() { second = 9; return 3; }
+int32_t read(int32_t& input, int32_t copied) { return input + copied; }
+int main() { return read(first, )" +
+                             (branch ? "true ? change() : 0" : "change()") +
+                             R"(); }
+)";
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/staged.gti", source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "later input may mutate storage disjoint from an earlier binding");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "independent staged-input proof accepts disjoint later arguments");
+  auto forged = frontend.mir;
+  const auto first = symbol(frontend, "first");
+  const auto second = symbol(frontend, "second");
+  bool changed = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+    auto *body = lang::findMirBody(forged, address);
+    if (address.kind != lang::MirBodyKind::Function)
+      continue;
+    for (auto &place : body->places)
+      if (place.root == lang::MirPlaceRootKind::Symbol &&
+          place.symbol == second) {
+        place.symbol = first;
+        if (place.key && place.key->root == second)
+          place.key->root = first;
+        changed = true;
+      }
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal &&
+            instruction.threadLocalStorage == second) {
+          instruction.threadLocalStorage = first;
+          instruction.bodyTarget = lang::MirBodyAddress{
+              .kind = lang::MirBodyKind::ThreadLocalInitializer,
+              .owner = first};
+        }
+  }
+  expect(changed, "staged-input fixture has an independently mutable callee");
+  const auto proof = lang::verifyMirProgram(forged);
+  expect(!proof.valid() &&
+             std::any_of(proof.errors.begin(), proof.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("persistent call input") !=
+                                  std::string::npos;
+                         }),
+         "independent proof rejects hidden invalidation after input binding");
+}
+void persistentTransferIsIndependentlyRejected() {
+  const auto frontend =
+      lang::Frontend().analyze("/tmp/gti-mir-persistent-storage/move.gti", R"(
+thread_local mut int32_t value = 1;
+int main() { return value; }
+)");
+  expect(frontend.canGenerateCode(), "persistent observation fixture is valid");
+  if (!frontend.canGenerateCode())
+    return;
+  auto forged = frontend.mir;
+  bool changed = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+    auto *body = lang::findMirBody(forged, address);
+    if (address.kind != lang::MirBodyKind::Function)
+      continue;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Load ||
+            instruction.operands.size() != 1)
+          continue;
+        auto &operand = instruction.operands.front();
+        const auto *place = body->findPlace(operand.place);
+        if (operand.kind == lang::MirOperandKind::Copy && place &&
+            place->root == lang::MirPlaceRootKind::Symbol &&
+            place->symbol == symbol(frontend, "value")) {
+          instruction.kind = lang::MirInstructionKind::Move;
+          operand.kind = lang::MirOperandKind::Move;
+          changed = true;
+        }
+      }
+  }
+  expect(changed, "malformed fixture changes an actual persistent load");
+  expect(!lang::verifyMirProgram(forged).valid(),
+         "program verification rejects the malformed persistent move");
+  const auto proof = lang::verifyMirPersistentStorageEffects(forged);
+  expect(!proof.valid() &&
+             std::any_of(proof.errors.begin(), proof.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find(
+                                      "destructively transferred") !=
+                                  std::string::npos;
+                         }),
+         "independent storage proof rejects an unrepresented destructive "
+         "transfer");
+}
 } // namespace
 
 int main() {
@@ -172,5 +273,9 @@ int main() {
   }
   nonLexicalAndFieldBoundaries();
   readySlotThroughNestedCalls();
+  for (const auto storage : {"thread_local", ""})
+    for (const bool branch : {false, true})
+      stagedInputBoundaries(storage, branch);
+  persistentTransferIsIndependentlyRejected();
   return passed ? 0 : 1;
 }
