@@ -77,8 +77,22 @@ def main():
             edited = interface.replace("export int answer", "int answer").replace(
                 "int hidden", "export int hidden")
             api_uri = open_document(session, api_path, edited)
-            assert diagnostics_for(session, api_uri, 1) == []
-            errors = diagnostics_for(session, uri, 3)
+            # Cross-document notifications have no required ordering. Do not
+            # discard the consumer update while awaiting the interface update.
+            versions = {api_uri: 1, uri: 3}
+            publications = {}
+
+            def collect_overlay_diagnostics(message):
+                if message.get("method") == "textDocument/publishDiagnostics":
+                    params = message.get("params", {})
+                    document = params.get("uri")
+                    if document in versions and params.get("version") == versions[document]:
+                        publications[document] = params["diagnostics"]
+                return len(publications) == len(versions)
+
+            session.receive_until(collect_overlay_diagnostics)
+            assert publications[api_uri] == []
+            errors = publications[uri]
             assert any("not exported" in item["message"] for item in errors), errors
             labels = completion(uri, source, "api::")
             assert "hidden" in labels and "answer" not in labels, labels
