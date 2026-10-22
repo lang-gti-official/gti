@@ -41,7 +41,7 @@ def main():
             for disabled in (False, True):
                 flags = ["-D", "NDEBUG"] if disabled else []
                 for source in (fixtures / "deferred_assertions.gti", failures,
-                               root / "examples" / "171-deferred-assertions.gti"):
+                               root / "examples" / "172-deferred-assertions.gti"):
                     binary = pathlib.Path(temporary) / f"{name}-{disabled}-{source.stem}"
                     command = [str(args.compiler.resolve()), str(source),
                                "--std", standard, level, *flags, "--keep-cpp",

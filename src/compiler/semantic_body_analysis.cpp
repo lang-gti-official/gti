@@ -456,15 +456,60 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   concreteFunction.restoresReferenceResult = false;
   concreteFunction.restoredBorrowFields.clear();
   // A generic formal's ownerless-text obligation binds only text-view
-  // instantiations; this concrete body records its own requirements.
+  // instantiations; this concrete body records its own requirements and
+  // relays.
   concreteFunction.ownerlessTextParameters.clear();
   concreteFunction.ownerlessTextFields.clear();
+  concreteFunction.publishedTextFields.clear();
   const GenericSubstitution substitution{.types = instanceTypeSubstitution,
                                          .values = instanceValueSubstitution};
   concreteFunction.returnType =
       substituteType(concreteFunction.returnType, substitution);
   for (SemanticType &parameter : concreteFunction.parameterTypes) {
     parameter = substituteType(parameter, substitution);
+  }
+  // A generic class method's open field requirements bind exactly the fields
+  // that are text in this instance (L-OWN-02).
+  if (function->ownerClass != 0 &&
+      !classInfo(function->ownerClass).genericParameters.empty()) {
+    const SemanticType owner =
+        substituteType(openClassType(function->ownerClass), substitution);
+    for (const OwnerlessTextField &field : function->ownerlessTextFields) {
+      SemanticType type =
+          field.receiver ? owner
+          : field.parameter < concreteFunction.parameterTypes.size()
+              ? concreteFunction.parameterTypes[field.parameter]
+              : SemanticType::Unknown;
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      if (contractTextPath(type, field))
+        concreteFunction.ownerlessTextFields.push_back(field);
+    }
+    // A type-parameter formal is opaque to the open analysis, so any use of
+    // it may let the whole value escape, as storing it in a container does:
+    // every text field and payload of a publishable instance type is
+    // required.
+    for (std::size_t index = 0; index < concreteFunction.parameterTypes.size();
+         ++index) {
+      if (!typeParameterFormal(*function, index) ||
+          function->bodyDeclaration() == nullptr ||
+          !readOnlyTextFieldFormal(*function->bodyDeclaration(),
+                                   concreteFunction.parameterTypes, index))
+        continue;
+      SemanticType type = concreteFunction.parameterTypes[index];
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      if (!textPublicationOwner(type))
+        continue;
+      for (const SymbolId field : directTextFieldSymbols(type))
+        concreteFunction.ownerlessTextFields.push_back(
+            {.parameter = index, .field = field});
+      for (const auto &payload : textPayloadFields(type, {.parameter = index}))
+        concreteFunction.ownerlessTextFields.push_back(payload);
+    }
+    auto &fields = concreteFunction.ownerlessTextFields;
+    std::sort(fields.begin(), fields.end());
+    fields.erase(std::unique(fields.begin(), fields.end()), fields.end());
   }
   for (AppliedConceptRequirement &requirement : concreteFunction.requirements) {
     for (SemanticType &argument : requirement.arguments) {
@@ -475,13 +520,24 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       containsOpenTypeParameter(function->returnType)) {
     resolveGenericReturnBorrowContract(*function, concreteFunction);
   }
+  // A generic class method relays its receiver's fields as this instance's
+  // types make them text (L-OWN-02).
+  const SemanticType concreteOwner =
+      concreteFunction.ownerClass == 0
+          ? SemanticType::Unknown
+          : substituteType(openClassType(concreteFunction.ownerClass),
+                           substitution);
+  concreteFunction.returnedTextReference =
+      textReferenceReturnSummary(concreteFunction, concreteOwner);
   if (!concreteFunction.explicitReturnBorrowOrigin) {
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
-            dynamicTextReturnBorrowSummary(concreteFunction)) {
+            dynamicTextReturnBorrowSummary(concreteFunction, concreteOwner)) {
       concreteFunction.returnBorrowOrigin = dynamicText->origin;
       concreteFunction.returnBorrowParameter = dynamicText->parameter;
       concreteFunction.returnBorrowAccess = dynamicText->access;
       concreteFunction.returnBorrowPlace = dynamicText->place;
+      if (!dynamicText->fields.empty())
+        concreteFunction.returnBorrowFields = dynamicText->fields;
     } else if (concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
       const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
           concreteFunction.returnType, concreteFunction.parameterTypes,
@@ -2177,6 +2233,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     const bool enclosingConstructorInitializer =
         analyzingConstructorInitializer;
     analyzingConstructorInitializer = true;
+    auto enclosingPayloadInputs =
+        std::move(requestSession.constructorTextPayloadArguments);
+    requestSession.constructorTextPayloadArguments.clear();
+    for (const auto &input : ownerlessInputs)
+      if (input.initializer == &initializer && input.payloadArgument != nullptr)
+        requestSession.constructorTextPayloadArguments.push_back(
+            input.payloadArgument);
     const SemanticType fieldType =
         field == nullptr ? SemanticType::Unknown
                          : typeOf(field->type(),
@@ -2205,13 +2268,16 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                             true, fieldType.kind != SemanticType::Reference);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
+    requestSession.constructorTextPayloadArguments =
+        std::move(enclosingPayloadInputs);
     if (field != nullptr && initializer.arguments.size() == 1 &&
         (fieldType.kind == SemanticType::StringView ||
          fieldType.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(initializer.arguments.front()) &&
-        std::none_of(
-            ownerlessInputs.begin(), ownerlessInputs.end(),
-            [&](const auto &input) { return input.second == &initializer; })) {
+        std::none_of(ownerlessInputs.begin(), ownerlessInputs.end(),
+                     [&](const auto &input) {
+                       return input.initializer == &initializer;
+                     })) {
       reportOwnerDependentTextStorage(initializer.arguments.front(),
                                       "stored in a constructor field");
     }
@@ -4691,6 +4757,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    noteReturnedFormalReference(*stmt.value());
     if (expressionNeverReturns(stmt.value().get()))
       return;
     // Snapshot scalar-reference origins at this return point, before arm
@@ -4861,8 +4928,34 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   // moves or replacement can change the source binding's current value fact.
   const auto subjectDependencies =
       completeBorrowDependencySet(stmt.expression());
+  // Diagnostic provenance only: an active loop's entry dropped this writable
+  // subject binding's complete set. Resolve it before arm bindings can
+  // shadow the subject's name.
+  bool loopDroppedSubjectSet = false;
+  if (payloadEnum != nullptr && !consumedSubject && !subjectDependencies &&
+      !loanFlow.activeLoops.empty()) {
+    const SemanticPlace place = semanticPlace(stmt.expression());
+    const SymbolId binding =
+        place.root ? symbolForDeclaration(place.root->declaration) : 0;
+    loopDroppedSubjectSet =
+        binding != 0 &&
+        std::any_of(loanFlow.activeLoops.begin(), loanFlow.activeLoops.end(),
+                    [&](std::size_t index) {
+                      const auto &dropped =
+                          loanFlow.loops[index].droppedBorrowSets;
+                      return std::find(dropped.begin(), dropped.end(),
+                                       binding) != dropped.end();
+                    });
+  }
   const auto subjectSource = retainedLoanSource(stmt.expression());
   SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
+  // A field of the dependency's carrier that the subject names, as in
+  // `switch (line.word)`, prefixes the payload designation.
+  std::vector<SymbolId> subjectFieldPrefix;
+  if (const auto *place = semanticModel.findPlace(*stmt.expression()))
+    for (const auto &projection : place->projections)
+      subjectFieldPrefix.push_back(
+          projection.kind == PlaceProjectionKind::Field ? projection.field : 0);
   if (const auto *loan = semanticModel.findLoan(subjectDependency);
       loan && loan->kind == SemanticLoanKind::Reference)
     subjectDependency = loan->storedDependency;
@@ -5109,14 +5202,36 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         payload.binding.symbol = symbol;
         declare(*payload.name, payload.binding.type, mutableReferent,
                 SemanticBindingKind::LocalVariable);
+        // Binding a contract formal's text payload requires it ownerless at
+        // each call (L-OWN-02).
+        // The binding that a reference relay's whole arm returns designates
+        // the payload to the caller instead.
+        if (const auto entry =
+                contractPayloadBinding(stmt.expression(), pattern, payload)) {
+          const FunctionInfo *scope = textFieldContractScope();
+          const bool conditionalReturn =
+              scope->returnType.kind == SemanticType::Reference &&
+              scope->returnType.arguments.size() == 1 &&
+              scope->returnType.arguments.front().kind ==
+                  SemanticType::TypeParameter;
+          const auto relay = scope->returnedTextReference
+                                 ? payloadReferenceRelayArm(
+                                       stmt, arm, *scope, SemanticType::Unknown,
+                                       conditionalReturn)
+                                 : std::nullopt;
+          if (!relay || *relay != *entry ||
+              *scope->returnedTextReference != *entry)
+            (void)requireOwnerlessTextField(scope->declaration, *entry);
+        }
         // The text payload that an observed subject's owner dependency
         // designates holds that owner's dynamic text (L-OWN-02). A by-value
         // binding of it is a dependent view carrying the subject's loan, as
         // a read of a published class field is.
         if (const auto *textLoan =
-                consumedSubject ? nullptr
-                                : dependentTextPayloadLoan(subjectDependency,
-                                                           pattern, payload)) {
+                consumedSubject
+                    ? nullptr
+                    : dependentTextPayloadLoan(subjectDependency, pattern,
+                                               payload, subjectFieldPrefix)) {
           if (payload.extractionKind == PayloadExtractionKind::BorrowValue)
             report(*payload.name,
                    "A reference cannot yet bind a payload that holds dynamic "
@@ -5151,14 +5266,43 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                          ? selectedPayloadReferenceDependencies(
                                pattern, payload, *subjectDependencies)
                          : std::nullopt);
-          if (!dependencies || (payload.extractionKind ==
-                                    PayloadExtractionKind::ReborrowReference &&
-                                subjectDependency == 0)) {
-            report(*payload.name,
-                   "A stored reference selection requires a complete checked "
-                   "external dependency set and its exact active carrier "
-                   "authority; consuming handoff is not yet verified.",
-                   "GTI-S2067");
+          // An exclusive reborrow of a stored reference needs mutable enum
+          // storage, as a mutable payload borrow does.
+          const bool mutableReborrow =
+              payload.extractionKind ==
+                  PayloadExtractionKind::ReborrowReference &&
+              payload.binding.type.referenceAccess == AccessMode::Mutable;
+          if (mutableReborrow && (subjectInfo == nullptr ||
+                                  subjectInfo->access != AccessMode::Mutable)) {
+            report(
+                *payload.name,
+                "A mutable payload pattern requires a mutable enum receiver.",
+                "GTI-S2067");
+          } else if (!dependencies ||
+                     (payload.extractionKind ==
+                          PayloadExtractionKind::ReborrowReference &&
+                      subjectDependency == 0)) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2067", DiagnosticPhase::Semantics, *payload.name,
+                consumedSubject
+                    ? "A stored reference selection requires a complete "
+                      "checked external dependency set and its exact active "
+                      "carrier authority; consuming handoff is not yet "
+                      "verified."
+                    : "A stored reference selection requires the subject's "
+                      "complete checked external dependency set and its "
+                      "exact active carrier authority.");
+            if (!dependencies && loopDroppedSubjectSet)
+              diagnostic.hints.emplace_back(
+                  mutableReborrow
+                      ? "A loop does not carry a writable binding's "
+                        "dependency set into its body; select the mutable "
+                        "reference before the loop and use it inside."
+                      : "A loop does not carry a writable binding's "
+                        "dependency set into its body; select from a binding "
+                        "the loop cannot write, such as one declared without "
+                        "'mut', or select before the loop.");
+            diagnostics.emplace_back(std::move(diagnostic));
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
             // The extraction observes incoming authority before handoff.
             // Its value fact is distinct from the successor loan published
@@ -5918,7 +6062,27 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                                    initializerInfo != nullptr &&
                                    isTextDependentValue(*initializerInfo) &&
                                    initializerInfo->type == declaredType;
-  if (ownerDependentValue) {
+  // A dependent field of a dependent value has no loan of its own yet: a
+  // switch observes it in place.
+  const Expr *source = initializer.get();
+  while (source != nullptr) {
+    if (const auto *group = exprAs<Grouping>(source))
+      source = group->expression().get();
+    else if (const auto *call = exprAs<Call>(source);
+             call != nullptr && call->arguments().size() == 1 &&
+             resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+      source = call->arguments().front().get();
+    else
+      break;
+  }
+  if (ownerDependentValue && exprAs<Get>(source) != nullptr) {
+    consumeTextDependentValue(initializer);
+    report(expressionToken(initializer),
+           "This field holds dynamic text from a local owner; a switch on "
+           "the field can observe it, but it cannot yet be copied or moved "
+           "out of its value.",
+           "GTI-S2045");
+  } else if (ownerDependentValue) {
     consumeTextDependentValue(initializer);
     if (globalStorage || instanceField) {
       report(stmt.name(),

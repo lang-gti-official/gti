@@ -1,0 +1,90 @@
+// Owner-tracked text through payload-enum fields (L-OWN-02, phase 2b).
+#include <std/optional>
+#include <std/panic>
+#include <std/string>
+
+enum Word { text(std::string_view value), none };
+
+class Line {
+public:
+  Word word;
+  int column;
+  Line(std::string_view text, int column)
+      : word(Word::text(text)), column(column) {}
+  bool hasText() {
+    switch (this.word) {
+    case Word::text: return true;
+    case Word::none: return false;
+    }
+  }
+};
+
+enum Slot<T> { full(T value), empty };
+
+class Holder<T> {
+public:
+  Slot<T> slot;
+  Holder(T value) : slot(Slot<T>::full(std::move(value))) {}
+  T& get() {
+    switch (this.slot) {
+    case Slot<T>::full(auto& value): return value;
+    case Slot<T>::empty: std::panic("empty holder");
+    }
+  }
+  T& again() { return this.get(); }
+};
+
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  std::string_view& alias() { return this.ref(); }
+};
+
+bool present(std::optional<std::string_view>& value) {
+  return value.has_value();
+}
+uint64_t width(std::optional<std::string_view>& value) {
+  return (*value).size();
+}
+std::optional<std::string_view> literal() {
+  return std::optional<std::string_view>("static");
+}
+
+int main() {
+  std::string input{"owned text"};
+  Line line = Line(input.view(), 3);
+  switch (line.word) {
+  case Word::text(value): std::println(value); break;
+  case Word::none: break;
+  }
+  if (line.hasText()) {
+    std::println(line.column);
+  }
+  Holder<std::string_view> holder = Holder<std::string_view>(input.view());
+  std::println(holder.get());
+  std::string_view again = holder.again();
+  std::println(again);
+  Holder<int> number = Holder<int>(7);
+  std::println(number.again());
+  Token token = Token(input.view(), 1);
+  std::println(token.alias());
+  std::optional<std::string_view> maybe =
+      std::optional<std::string_view>(input.view());
+  if (maybe && present(maybe)) {
+    std::println(maybe.value());
+    std::string_view view = *maybe;
+    std::println(view.size());
+    std::println(width(maybe));
+  }
+  expected<std::string_view, int> result =
+      expected<std::string_view, int>(input.view());
+  if (result) {
+    std::println(result.value());
+  }
+  std::optional<std::string_view> fixed = literal();
+  std::println(fixed.value());
+  return 0;
+}

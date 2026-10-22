@@ -2580,6 +2580,32 @@ public:
     output << ";\n";
   }
 
+  // A deferred bound shell lives in an anonymous union so a constructor can
+  // leave it unconstructed until its verified MIR publication. The inert
+  // byte member is active until then and carries no GTI value; the field
+  // keeps its exact name, type, size and alignment. The union never records
+  // which member is active, so the shell's native destruction (and any copy
+  // or move) must be trivial.
+  void emitLoweredDeferredFieldDeclaration(
+      const LoweredDeclaration &row, const LoweredStorageDeclaration &storage,
+      const LoweredClassInitializerSelection *classInitializers) {
+    if (classInitializers != nullptr) {
+      const auto found = classInitializers->fields.find(storage.symbol);
+      if (found != classInitializers->fields.end() && !found->second.empty())
+        throw std::logic_error(
+            "deferred field storage cannot carry a native default initializer");
+    }
+    writeIndent();
+    output << "union { unsigned char __gti_deferred_" << row.name << "{}; ";
+    emitLoweredStorageRepresentationType(storage);
+    output << ' ' << row.name << "; };\n";
+    writeIndent();
+    output << "static_assert(std::is_trivially_destructible_v<";
+    emitLoweredStorageRepresentationType(storage);
+    output << ">, \"GTI deferred field storage requires an observation-free "
+              "native shell\");\n";
+  }
+
   void emitLoweredStructuralOperatorAdapter(
       const LoweredDeclaration &row, const LoweredFunctionDeclaration &function,
       const LoweredDeclaration &classRow) {
@@ -4385,6 +4411,21 @@ public:
     }
     emitLoweredConstexprAggregateFactory(classRow, declaration, access,
                                          concreteInstance);
+    // Deferred field storage is a property of one exact MIR class instance:
+    // a concrete instance, or the only instance of a non-generic class.
+    const MirClassInstance *deferralOwner = concreteInstance;
+    if (deferralOwner == nullptr && declaration.genericParameters.empty() &&
+        declaration.exactSpecializationPrimary == 0) {
+      for (const MirClassInstance &instance : mir.classInstances()) {
+        if (instance.declaration != declaration.id)
+          continue;
+        if (deferralOwner != nullptr) {
+          deferralOwner = nullptr;
+          break;
+        }
+        deferralOwner = &instance;
+      }
+    }
     for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
       if (const auto *value =
               std::get_if<LoweredAccessDeclaration>(&member->payload)) {
@@ -4414,6 +4455,14 @@ public:
                 "concrete generic class lost a declared field type");
           }
           concreteStorage.type = field->type;
+        }
+        if (!storage->staticStorage && deferralOwner != nullptr &&
+            cppMirDeferredFieldStorage(mir, deferralOwner->id,
+                                       storage->symbol)) {
+          emitLoweredDeferredFieldDeclaration(*member, concreteStorage,
+                                              initializers ? &*initializers
+                                                           : nullptr);
+          continue;
         }
         emitLoweredStorageDeclaration(*member, concreteStorage, true,
                                       &declaration,

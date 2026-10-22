@@ -2,6 +2,9 @@
 #include "compiler_test_fixture.h"
 #include "gti/mir_printer.h"
 
+#include <unordered_map>
+#include <unordered_set>
+
 void checkConsumingLambda(const std::string &name, bool pack) {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + name + ".gti");
@@ -1206,7 +1209,58 @@ int main() {
   }
 }
 
+void checkConditionalCarrierConsumption() {
+  // A borrowed carrier consumed in only one arm of ||, &&, ?: or if retires
+  // its group on the arm that skips the consuming call, so every edge into the
+  // join agrees. Each retirement is required: dropping any one leaves the
+  // group live on its path and verification rejects the program.
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/conditional_carrier_consume.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend =
+      analyzeTrustedPreludeFixture("conditional-carrier-consume.gti", source);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "conditionally consumed carriers reach verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "conditionally consumed carriers emit C++");
+  std::size_t retirements = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    std::unordered_map<lang::MirLoanId, std::unordered_set<lang::MirBlockId>>
+        endings;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+            instruction.loan)
+          endings[*instruction.loan].insert(block.id);
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+            !instruction.loan || endings[*instruction.loan].size() < 2 ||
+            function.body.findLoan(*instruction.loan)->kind !=
+                lang::MirLoanKind::Stored)
+          continue;
+        ++retirements;
+        auto forged = frontend.mir;
+        auto *body = lang::findMirBody(
+            forged, {lang::MirBodyKind::Function, function.id});
+        for (auto &candidateBlock : body->blocks)
+          for (auto &candidate : candidateBlock.instructions)
+            if (candidate.id == instruction.id)
+              candidate.tombstone = true;
+        expect(!lang::verifyMirProgram(forged).valid(),
+               "every path retires a conditionally consumed carrier group");
+      }
+  }
+  expect(retirements >= 8,
+         "the fixture retires consumed groups on both sides of each join");
+}
+
 int main() {
+  checkConditionalCarrierConsumption();
   checkLambdaBaseReferenceArguments();
   checkRetainedLambdaFieldReceiver();
   checkRetainedConsumingFieldReceiver();

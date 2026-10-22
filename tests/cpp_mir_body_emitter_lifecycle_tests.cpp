@@ -1,6 +1,8 @@
 #include "../src/compiler/cpp_representation.h"
 #include "cpp_mir_body_emitter_test_fixture.h"
 
+#include <cctype>
+
 namespace {
 
 // expected<T, E> is the prelude's ordinary source class.
@@ -12557,6 +12559,23 @@ void testPassiveBorrowedConstructedFieldPrefix() {
 }
 
 void testNestedConstructorArgumentPublication() {
+  // A forged native tree must be refused. When the owner declares the field
+  // in deferred storage, the verified body may publish it in MIR order
+  // instead; that route trusts verified MIR, so MIR verification must then
+  // reject the forgery before emission.
+  const auto refusedOrUnverified = [](const lang::MirProgram &malformed,
+                                      const lang::CppMirBodyEmissionMap &map,
+                                      lang::MirBodyAddress address,
+                                      lang::SymbolId field) {
+    const auto *constructor = malformed.findConstructorInstance(address.owner);
+    if (!lang::CppMirBodyEmitter(malformed, map)
+             .supportsFailureBodyText(address))
+      return true;
+    return constructor != nullptr &&
+           lang::cppMirDeferredFieldStorage(malformed, constructor->owner,
+                                            field) &&
+           !lang::verifyMirProgram(malformed).valid();
+  };
   std::size_t checked = 0;
   std::size_t nested = 0;
   std::size_t movedFormals = 0;
@@ -12675,8 +12694,7 @@ void testNestedConstructorArgumentPublication() {
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  *changed)
                          .empty() &&
-                     !lang::CppMirBodyEmitter(malformed, map)
-                          .supportsFailureBodyText(address),
+                     refusedOrUnverified(malformed, map, address, field.field),
                  "nested tree rejects lost types, input order, transfer, "
                  "publication, "
                  "rollback and lifetime activation " +
@@ -12743,8 +12761,7 @@ void testNestedConstructorArgumentPublication() {
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  *changed)
                          .empty() &&
-                     !lang::CppMirBodyEmitter(malformed, map)
-                          .supportsFailureBodyText(address),
+                     refusedOrUnverified(malformed, map, address, field.field),
                  "cleanup-free moved formal rejects a lost Move event, "
                  "cleanup-bearing formal, invented handoff or foreign "
                  "binding " +
@@ -15297,6 +15314,437 @@ int main() {
   }
 }
 
+// A field read of a class assignment's result reads one copy of the committed
+// destination. MIR places that copy Load directly after the Assign, whose own
+// result stays unused, and roots the projection at the copy, so a later write
+// of the destination cannot reach the read. The copy is a cleanup-free slot
+// the read observes and then ends. A move-only destination has no copy.
+void testAssignmentResultFieldView() {
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-assignment-result-field-view.gti", R"(
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+};
+struct Segment {
+  Point start;
+  int32_t tag;
+  Segment(Point start, int32_t tag) : start(start), tag(tag) {}
+};
+struct Holder {
+  mut Point point;
+  Holder(Point point) : point(point) {}
+};
+int32_t whole(mut Point p, Point q) { return (p = q).x; }
+int32_t nested(mut Segment s, Segment t) { return (s = t).start.y; }
+int32_t member(mut Holder h, Point q) { return (h.point = q).y; }
+int32_t twice(mut Point p, Point q, Point r) {
+  return (p = q).x * 10 + (p = r).x;
+}
+class Line {
+public:
+  int32_t first;
+  int32_t second;
+  Line(mut Point p, Point q) : first((p = q).x), second(p.y) {}
+};
+int main() {
+  Line line = Line(Point(1, 2), Point(5, 4));
+  return whole(Point(1, 2), Point(5, 4)) +
+         nested(Segment(Point(1, 2), 3), Segment(Point(5, 6), 7)) +
+         member(Holder(Point(1, 2)), Point(5, 4)) +
+         twice(Point(1, 2), Point(5, 4), Point(7, 8)) + line.first - 77;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "assignment result field reads should construct valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto idOf = [&](std::string_view name) {
+    for (const auto &function : frontend.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  const lang::MirConstructorInstance *line = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : frontend.semantics.findClassType(owner->declaration);
+    if (info && info->declaration && info->declaration->name().lexeme == "Line")
+      line = &constructor;
+  }
+  const std::vector<std::string> names{"whole", "nested", "member", "twice"};
+  const bool lowered =
+      line != nullptr &&
+      std::all_of(names.begin(), names.end(),
+                  [&](const std::string &name) { return idOf(name) != 0; });
+  expect(lowered, "the fixture should lower every assignment-result reader");
+  if (!lowered)
+    return;
+
+  // MIR: the copy Load of the Assign's destination directly follows it, the
+  // Assign's own result has no use, and the read's place is rooted at the
+  // copy.
+  struct ResultCopy {
+    const lang::MirInstruction *copy = nullptr;
+    const lang::MirPlace *read = nullptr;
+  };
+  const auto resultCopies = [](const lang::MirBody &body) {
+    std::vector<ResultCopy> copies;
+    for (const lang::MirBlock &block : body.blocks)
+      for (std::size_t index = 0; index + 1 < block.instructions.size();
+           ++index) {
+        const lang::MirInstruction &assign = block.instructions[index];
+        const lang::MirInstruction &copy = block.instructions[index + 1];
+        if (assign.kind != lang::MirInstructionKind::Assign ||
+            !assign.destination || !assign.result ||
+            !body.usesOf(*assign.result).empty() ||
+            copy.kind != lang::MirInstructionKind::Load || !copy.result ||
+            copy.operands.size() != 1 ||
+            copy.operands.front().kind != lang::MirOperandKind::Copy ||
+            copy.operands.front().place != *assign.destination)
+          continue;
+        ResultCopy found{.copy = &copy};
+        for (const lang::MirBlock &readBlock : body.blocks)
+          for (const lang::MirInstruction &read : readBlock.instructions) {
+            const lang::MirPlace *place =
+                read.kind == lang::MirInstructionKind::Load &&
+                        read.operands.size() == 1
+                    ? body.findPlace(read.operands.front().place)
+                    : nullptr;
+            if (place != nullptr &&
+                place->root == lang::MirPlaceRootKind::Value &&
+                place->value == *copy.result && !place->projections.empty())
+              found.read = place;
+          }
+        copies.push_back(found);
+      }
+    return copies;
+  };
+  const auto copiesOf = [&](const lang::MirProgram &program,
+                            const std::string &name) {
+    const auto *function = program.findFunctionInstance(idOf(name));
+    return function == nullptr ? std::vector<ResultCopy>{}
+                               : resultCopies(function->body);
+  };
+  for (const std::string &name : names) {
+    const auto copies = copiesOf(frontend.mir, name);
+    expect(copies.size() == (name == "twice" ? 2U : 1U) &&
+               std::all_of(
+                   copies.begin(), copies.end(),
+                   [](const ResultCopy &copy) { return copy.read != nullptr; }),
+           name + " should read its field through a copy Load placed "
+                  "directly after the Assign");
+  }
+  const auto lineCopies = resultCopies(line->body);
+  expect(lineCopies.size() == 1 && lineCopies.front().read != nullptr,
+         "the constructor initializer should read through the same copy");
+  const auto nestedCopies = copiesOf(frontend.mir, "nested");
+  expect(nestedCopies.size() == 1 && nestedCopies.front().read != nullptr &&
+             nestedCopies.front().read->projections.size() == 2,
+         "the nested read should project two fields from the copy");
+  expect(!frontend.mir.findFunctionInstance(idOf("whole"))
+                 ->mayRaiseDefinedFailure &&
+             frontend.mir.findFunctionInstance(idOf("twice"))
+                 ->mayRaiseDefinedFailure,
+         "the fixture should exercise both plain and failure-form bodies");
+
+  // Emission: the copy constructs a cleanup-free slot from the destination,
+  // the read observes that slot, and the slot ends after the read.
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto textOf = [&](const lang::MirProgram &program,
+                          const lang::MirBodyAddress &address, bool mayRaise) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    if (mayRaise)
+      return emitter.supportsFailureBodyText(address)
+                 ? emitter
+                       .emitFailureBodyText(address, "assignment-result-v0", 1)
+                       .text
+                 : std::string();
+    return emitter.supportsBodyText(address)
+               ? emitter.emitBodyText(address, "assignment-result-v0", 1).text
+               : std::string();
+  };
+  const auto functionText = [&](const lang::MirProgram &program,
+                                const std::string &name) {
+    const auto *function = program.findFunctionInstance(idOf(name));
+    return function == nullptr ? std::string()
+                               : textOf(program,
+                                        {.kind = lang::MirBodyKind::Function,
+                                         .owner = idOf(name)},
+                                        function->mayRaiseDefinedFailure);
+  };
+  const auto slotOf = [](const ResultCopy &copy) {
+    return "__gti_mir_v_" + std::to_string(*copy.copy->result);
+  };
+  const auto readsSlot = [](const std::string &text, const std::string &slot,
+                            const std::string &field) {
+    const std::size_t constructed = text.find(slot + ".construct(");
+    const std::size_t read = text.find(slot + ".get()" + field + ";");
+    return text.find(", true> " + slot + ";") != std::string::npos &&
+           constructed != std::string::npos && read != std::string::npos &&
+           constructed < read &&
+           text.find(slot + ".destroy();", read) != std::string::npos;
+  };
+  expect(readsSlot(functionText(frontend.mir, "whole"),
+                   slotOf(copiesOf(frontend.mir, "whole").front()), ".x"),
+         "a whole-parameter destination should be read through its copy");
+  expect(readsSlot(functionText(frontend.mir, "nested"),
+                   slotOf(nestedCopies.front()), ".start.y"),
+         "a nested read should project both fields from the copy's slot");
+  expect(readsSlot(functionText(frontend.mir, "member"),
+                   slotOf(copiesOf(frontend.mir, "member").front()), ".y"),
+         "a field destination should be read through its copy");
+  const auto twiceCopies = copiesOf(frontend.mir, "twice");
+  const std::string twiceText = functionText(frontend.mir, "twice");
+  const std::size_t firstRead =
+      twiceText.find(slotOf(twiceCopies.front()) + ".get().x;");
+  const std::size_t secondCopy =
+      twiceText.find(slotOf(twiceCopies.back()) + ".construct(");
+  expect(readsSlot(twiceText, slotOf(twiceCopies.front()), ".x") &&
+             readsSlot(twiceText, slotOf(twiceCopies.back()), ".x") &&
+             firstRead < secondCopy,
+         "the first read should precede the second assignment's copy");
+  expect(readsSlot(
+             textOf(frontend.mir,
+                    {.kind = lang::MirBodyKind::Constructor, .owner = line->id},
+                    line->mayRaiseDefinedFailure),
+             slotOf(lineCopies.front()), ".x"),
+         "a constructor initializer should read through its copy's slot");
+
+  // A moved-out copy is no longer a copy of the destination, and a nested
+  // intermediate place that does not prefix the read is a place of its own;
+  // neither may use the copy's slot.
+  for (int mutation = 0; mutation != 2; ++mutation) {
+    const std::string name = mutation == 0 ? "whole" : "nested";
+    lang::MirProgram malformed = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        malformed.functionInstances());
+    bool changed = false;
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != idOf(name))
+        continue;
+      const auto copies = resultCopies(function.body);
+      if (copies.size() != 1 || copies.front().read == nullptr)
+        continue;
+      const lang::MirValueId copied = *copies.front().copy->result;
+      const lang::SymbolId readField =
+          copies.front().read->projections.back().field;
+      for (lang::MirBlock &block : function.body.blocks)
+        for (lang::MirInstruction &instruction : block.instructions)
+          if (mutation == 0 && &instruction == copies.front().copy) {
+            instruction.operands.front().kind = lang::MirOperandKind::Move;
+            changed = true;
+          }
+      for (lang::MirPlace &place : function.body.places)
+        if (mutation == 1 && place.root == lang::MirPlaceRootKind::Value &&
+            place.value == copied && place.projections.size() == 1) {
+          place.projections.front().field = readField;
+          changed = true;
+        }
+      (void)lang::rebuildMirValueUses(function.body);
+    }
+    expect(changed && functionText(malformed, name).empty(),
+           mutation == 0 ? "a moved destination is not a copy the read may "
+                           "observe"
+                         : "a non-prefix intermediate place must keep the "
+                           "nested read outside the copy's slot");
+  }
+
+  const lang::FrontendResult moveOnly =
+      analyzeWithStandardLibrary("cpp-mir-assignment-result-move-only.gti", R"(
+#include <std/utility>
+class Tracked {
+public:
+  int32_t x;
+  Tracked(int32_t x) : x(x) {}
+  ~Tracked() {}
+};
+int32_t pick(mut Tracked p, Tracked q) { return (p = std::move(q)).x; }
+int main() { return pick(Tracked(1), Tracked(5)) - 5; }
+)");
+  expect(!moveOnly.canGenerateCode() &&
+             std::any_of(moveOnly.diagnostics.begin(),
+                         moveOnly.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.message.find(
+                                      "assignment result has no copy of its "
+                                      "destination") != std::string::npos;
+                         }),
+         "a move-only destination has no copy for its result to read");
+}
+
+// A nested field read of a cleanup-free class value also records the
+// unreferenced intermediate places (`build(1).inner` for `build(1).inner.id`).
+// Those records spell nothing, so the read still uses the value's FieldRead
+// slot, for call, callable, moved, conditional and construction producers.
+void testNestedClassResultFieldView() {
+  const lang::FrontendResult frontend = analyzeWithStandardLibrary(
+      "cpp-mir-nested-class-result-field-view.gti", R"(
+#include <std/utility>
+struct Inner {
+  int32_t id;
+  Inner(int32_t raw) : id(raw) {}
+};
+struct Outer {
+  Inner inner;
+  int32_t tag;
+  Outer(int32_t raw) : inner(Inner(raw)), tag(raw) {}
+};
+struct Wrap {
+  Outer outer;
+  Wrap(Outer outer) : outer(outer) {}
+};
+Outer build(int32_t raw) { return Outer(raw); }
+int32_t called(int32_t raw) { return build(raw).inner.id; }
+int32_t invoked(int32_t raw) {
+  auto make = [](int32_t value) -> Outer { return Outer(value); };
+  return make(raw).inner.id;
+}
+int32_t moved(mut Outer o) { return std::move(o).inner.id; }
+int32_t chosen(bool flag, Outer a, Outer b) { return (flag ? a : b).inner.id; }
+int32_t wrapped(int32_t raw) { return Wrap(build(raw)).outer.inner.id; }
+int32_t wrapped_invoked(int32_t raw) {
+  auto make = [](int32_t value) -> Outer { return Outer(value); };
+  return Wrap(make(raw)).outer.inner.id;
+}
+int main() {
+  return called(1) + invoked(2) + moved(Outer(3)) +
+         chosen(false, Outer(4), Outer(5)) + wrapped(6) + wrapped_invoked(7) -
+         24;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "nested class result field reads should construct valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto idOf = [&](std::string_view name) {
+    for (const auto &function : frontend.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return lang::HirFunctionInstanceId{0};
+  };
+  // Each reader and the field chain its read spells.
+  const std::vector<std::pair<std::string, std::string>> readers{
+      {"called", ".inner.id"},        {"invoked", ".inner.id"},
+      {"moved", ".inner.id"},         {"chosen", ".inner.id"},
+      {"wrapped", ".outer.inner.id"}, {"wrapped_invoked", ".outer.inner.id"}};
+  const bool lowered =
+      std::all_of(readers.begin(), readers.end(),
+                  [&](const auto &reader) { return idOf(reader.first) != 0; });
+  expect(lowered, "the fixture should lower every nested reader");
+  if (!lowered)
+    return;
+
+  // MIR: the read's place projects a field chain from the value, and every
+  // other place rooted at the value is an unreferenced prefix of that chain.
+  struct NestedRead {
+    const lang::MirPlace *read = nullptr;
+    std::vector<const lang::MirPlace *> intermediates;
+  };
+  const auto nestedRead = [](const lang::MirBody &body) {
+    NestedRead found;
+    for (const lang::MirBlock &block : body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirPlace *place =
+            instruction.kind == lang::MirInstructionKind::Load &&
+                    instruction.operands.size() == 1
+                ? body.findPlace(instruction.operands.front().place)
+                : nullptr;
+        if (place != nullptr && place->root == lang::MirPlaceRootKind::Value &&
+            place->projections.size() >= 2)
+          found.read = place;
+      }
+    if (found.read != nullptr)
+      for (const lang::MirPlace &place : body.places)
+        if (place.root == lang::MirPlaceRootKind::Value &&
+            place.value == found.read->value && place.id != found.read->id &&
+            place.projections.size() < found.read->projections.size() &&
+            std::equal(place.projections.begin(), place.projections.end(),
+                       found.read->projections.begin()))
+          found.intermediates.push_back(&place);
+    return found;
+  };
+  const lang::CppMirBodyEmissionMap map(
+      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  const auto bodyText = [&](const lang::MirProgram &program,
+                            const std::string &name) {
+    const lang::CppMirBodyEmitter emitter(program, map);
+    const lang::MirFunctionInstance *function =
+        program.findFunctionInstance(idOf(name));
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = idOf(name)};
+    if (function == nullptr)
+      return std::string();
+    if (function->mayRaiseDefinedFailure)
+      return emitter.supportsFailureBodyText(address)
+                 ? emitter.emitFailureBodyText(address, "nested-field-v0", 1)
+                       .text
+                 : std::string();
+    return emitter.supportsBodyText(address)
+               ? emitter.emitBodyText(address, "nested-field-v0", 1).text
+               : std::string();
+  };
+  // The whole identifier, not a prefix of a longer place number.
+  const auto mentions = [](const std::string &text, const std::string &name) {
+    for (std::size_t at = text.find(name); at != std::string::npos;
+         at = text.find(name, at + 1)) {
+      const std::size_t end = at + name.size();
+      if (end == text.size() ||
+          !std::isdigit(static_cast<unsigned char>(text[end])))
+        return true;
+    }
+    return false;
+  };
+  // Emission reads the whole chain from the value's slot and spells nothing
+  // for an intermediate place.
+  for (const auto &[name, chain] : readers) {
+    const lang::MirFunctionInstance *function =
+        frontend.mir.findFunctionInstance(idOf(name));
+    const NestedRead found =
+        function == nullptr ? NestedRead{} : nestedRead(function->body);
+    const std::string text = bodyText(frontend.mir, name);
+    expect(
+        found.read != nullptr && !found.intermediates.empty() &&
+            text.find("__gti_mir_v_" + std::to_string(found.read->value) +
+                      ".get()" + chain + ";") != std::string::npos &&
+            std::none_of(found.intermediates.begin(), found.intermediates.end(),
+                         [&](const lang::MirPlace *place) {
+                           return mentions(text, "__gti_mir_p_" +
+                                                     std::to_string(place->id));
+                         }),
+        name + " should read the nested field from its value's slot "
+               "without storage for an intermediate place");
+  }
+
+  // An intermediate place that does not prefix the read is not a record of
+  // that read, so the value keeps no FieldRead slot.
+  lang::MirProgram malformed = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      malformed.functionInstances());
+  bool changed = false;
+  for (lang::MirFunctionInstance &function : functions) {
+    if (function.id != idOf("called"))
+      continue;
+    const NestedRead found = nestedRead(function.body);
+    if (found.read == nullptr || found.intermediates.size() != 1)
+      continue;
+    const lang::SymbolId readField = found.read->projections.back().field;
+    for (lang::MirPlace &place : function.body.places)
+      if (place.id == found.intermediates.front()->id) {
+        place.projections.front().field = readField;
+        changed = true;
+      }
+    (void)lang::rebuildMirValueUses(function.body);
+  }
+  expect(changed && bodyText(malformed, "called").empty(),
+         "a non-prefix intermediate place must keep the nested read outside "
+         "the value's slot");
+}
+
 // A generated constructor with two or more owned-parameter fields, one of
 // them a text view, keeps that parameter's entry loan and ends it in the
 // prologue. The record has no runtime effect, so the member-initializer
@@ -15522,6 +15970,8 @@ constexpr NamedTest kTests[] = {
      testCleanupFreeConstructorTemporaryFieldRead},
     {"testOwningConstructionFieldView", testOwningConstructionFieldView},
     {"testMovedPlaceFieldView", testMovedPlaceFieldView},
+    {"testAssignmentResultFieldView", testAssignmentResultFieldView},
+    {"testNestedClassResultFieldView", testNestedClassResultFieldView},
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},
