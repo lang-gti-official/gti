@@ -249,6 +249,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
           worker->deferredLookup = deferredLookup;
+          worker->deferredLookupBase = deferredLookupBase;
           worker->nextExpansion = nextExpansion;
           worker->valueFlow = valueFlow;
           // Initializer effects close over the completed program, so every
@@ -8922,6 +8923,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   }
   worker->semanticModel = semanticModel;
   worker->deferredLookup = deferredLookup;
+  worker->deferredLookupBase = deferredLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   // Cached summaries must describe global pointer inputs, not freeze the

@@ -44,7 +44,10 @@ auto SemanticVisitor::Impl::analyzeDeferredSelection(
 auto SemanticVisitor::Impl::deferredContext(const Token &token) const
     -> const DeferredLookupContext * {
   const auto found = deferredLookup.find(token.expansion);
-  return found == deferredLookup.end() ? nullptr : &found->second;
+  if (found != deferredLookup.end())
+    return &found->second;
+  return deferredLookupBase ? deferredLookupBase->deferredContext(token)
+                            : nullptr;
 }
 
 SemanticVisitor::Impl::DeferredLookupScope::DeferredLookupScope(
@@ -231,7 +234,7 @@ auto SemanticVisitor::Impl::analyzeDeferredStatement(
   probe.deferredProbeCall = call;
   for (const auto &argument : call->arguments())
     probe.deferredProbeArguments.insert(argument.get());
-  probe.deferredLookup = deferredLookup;
+  probe.deferredLookupBase = this;
   probe.nextExpansion = nextExpansion;
   probe.deferredExpansionDepth = deferredExpansionDepth;
   probe.deferredExpandedBodies = deferredExpandedBodies;

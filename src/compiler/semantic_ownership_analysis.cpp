@@ -2816,6 +2816,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   }
   worker->semanticModel = semanticModel;
   worker->deferredLookup = deferredLookup;
+  worker->deferredLookupBase = deferredLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
   for (const auto *definition : constexprDefinitionsAnalyzed)
