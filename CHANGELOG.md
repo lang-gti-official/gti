@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.458.2 — Moving classes that hold text views
+## 0.458.4 — Moving classes that hold text views
 
 - A class with a `std::string_view` field can now be moved into another
   class's field after an initializer that can fail, when it has no destructor
@@ -24,6 +24,39 @@ for what minor and patch releases mean.
   pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
   can be assigned into a field, as in `holder.name = other;`. Each used to
   report `error[GTI-B0001]`.
+
+## 0.458.3 — Nested field reads of temporaries
+
+- A field can now be read through a nested chain of a temporary whose class
+  has no destructor. With an `Outer` class that holds a `Token token`,
+  `int k = Outer(Token("literal", 1)).token.kind;` and
+  `std::string_view v = Outer(Token("literal", 2)).token.text;` used to
+  report `error[GTI-B0001]` (an internal compiler error); they now work.
+- The same holds for a nested read of a call or lambda result
+  (`make_outer(1).token.kind`) and of a moved value
+  (`std::move(outer).token.kind`), for `.size()` or a read-only method on the
+  nested field, and for a conditional such as
+  `(left ? Segment(1) : Segment(2)).start.x`.
+
+## 0.458.2 — Recursive functions that return text
+
+- A recursive function returning `std::string_view` or `c_string`, such as
+  `std::string_view loop(std::string_view s, int n) { if (n == 0) { return
+  "done"; } return loop(s, n - 1); }`, used to report `error[GTI-B0001]` (an
+  internal compiler error); it now compiles. So do mutually recursive
+  functions, a recursive call inside `?:`, a recursive result stored in a
+  text field, and a call nested in another call to the same function, such
+  as `id(id("literal"))`. A recursive result is ownerless when the function's
+  other returns are, so it can be stored or returned.
+- A recursion over values with text fields also compiles. For
+  `std::string_view pick(Token a, Token b, int n)` returning `a.text` or
+  `pick(b, a, n - 1)`, some depth of the recursion returns each argument's
+  `text`, so both arguments need ownerless text there. Passing a `Token` that
+  views a local string as either argument reports `error[GTI-S2045]`.
+- Compiling calls between functions that return text no longer takes time
+  exponential in the depth of the call chain. A chain of 20 such functions
+  whose two returns each call the next took about 16 seconds and now takes a
+  fraction of a second.
 
 ## 0.458.1 — Reference bindings from a local payload enum
 
