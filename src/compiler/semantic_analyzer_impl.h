@@ -996,6 +996,9 @@ private:
     // IDs below this boundary existed before loop entry and may be projected
     // to its unified exit. Newer loans belong to initializer/body cleanup.
     SemanticLoanId firstNestedLoan = 0;
+    // Writable bindings whose complete borrow dependency set this loop's entry
+    // dropped. Diagnostic provenance only; never an ownership fact.
+    std::vector<SymbolId> droppedBorrowSets;
   };
 
   struct LoanFlowConditionalArm {
