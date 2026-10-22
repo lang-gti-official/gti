@@ -1,5 +1,71 @@
 # Compiler Verification
 
+## Borrowed carriers stored after other fields (0.461.1)
+
+Deferred field storage (backend: a passive bound shell after other fields
+lives in an anonymous union and is published at its MIR point) is covered at
+three layers.
+
+`cpp_mir_body_emitter_text`:
+- `testMovedPassiveFieldAfterFallibleSibling` now requires the moved `Cursor`
+  after a fallible ledger to use deferred storage, to be refused by the
+  native owned-field proof, and to be admitted by the failure form.
+- `testDeferredBoundShellFields` moves a carrier, and builds one whose
+  constructor can fail, after a fallible ledger. Both fields are declared
+  `union { unsigned char __gti_deferred_<name>{}; T <name>; }`, stay out of
+  the member-initializer list, and are published after the ledger: the move
+  by `std::construct_at` with no rollback, the fallible constructor in place
+  through its status overload with no `std::destroy_at` of its field. A
+  first-field carrier keeps its native member, and a carrier holding a
+  payload enum is neither deferred nor admitted. A `Stored` dependency that
+  does not name the moved formal, and a carrier whose destructor runs source
+  code, are both refused.
+
+`deferred_bound_field_runtime` runs `deferred_bound_fields.gti` in all eight
+native modes (C++20/C++23 at O0/O1/O3, no-elide, ASan/UBSan) with eight
+observations. The fixture moves, copies and constructs carriers after a
+fallible ledger, including a carrier constructor that checks its input and
+one that prints, a ledger after the published carrier, two carriers around
+a vector, an exclusive carrier, a copy after the formal is mutably borrowed,
+and a copyable holder that is copied and moved. Each failure stage checks the
+exit status, standard output and the `GTI-R0002` site: a ledger failure
+before a carrier never runs the carrier constructor (no `loud cursor`), and
+every ledger already built is closed exactly once.
+
+Two forgery suites now distinguish native publication from the body route.
+For a class with deferred storage, `cpp_mir_body_emitter_lifecycle`'s nested
+argument trees and `user_dual_range_backend`'s mixed prefixes must still fail
+the native proof, and MIR verification must reject each forgery that the
+body route would admit, since that route trusts verified MIR. All of them are
+rejected. The emitter census lists the new test and
+`testMovedBorrowedPayloadAfterFallibleSibling`, which the manifest lacked.
+
+An `--emit-cpp` differential at -O0 and -O3 over the 1,817 programs in
+`tests/fixtures`, `tests/coverage` and `examples`, against main's compiler
+(`c973f7cf2`) with one `GTI_STDLIB_PATH`:
+- Only `deferred_bound_fields.gti` changes status, from `GTI-B0001` to
+  success; the 738 other failing runs report identical diagnostics.
+- Nine programs change text. Eight gain deferred storage for carrier fields
+  that follow other fields, with the stored-loan comment reworded; their
+  constructors still publish those fields natively. In
+  `stored_borrow_aggregates.gti` two constructors (a reference field, then a
+  moved or copied carrier) also pass the failure-form proof now, so callers
+  use their status overloads.
+- Built with both compilers, the six of these that run standalone produce
+  identical exit status and output at -O0 and -O3; the three
+  `user_dual_range_*` fixtures pass their `user_dual_range_lifetime` harness.
+- Main then gained #267, a conditional-join admission change. Against its
+  compiler (`d3a966bbd`), the ten changed programs, #267's fixture and
+  `conditional_carrier_consume.gti` emit exactly as above at -O0 and -O3.
+
+The full local suite passed on that head (`0d860401b`, 808 tests). Main
+then gained #258 and #266 (generic view fields and recursive text relays:
+semantics, MIR and verifier, no backend change). Against main's compiler
+(`c21e3f7fd`), the ten changed programs, `view_fields.gti`,
+`recursive_text_relays.gti` and examples 170 and 171 emit as above, and the
+recorded verify reran the emitter, carrier, view-field, text-relay, census
+and corpus tests.
+
 ## Recursive text relays (0.461.0)
 
 `view_fields` covers recursion in `testRecursiveRelays`.

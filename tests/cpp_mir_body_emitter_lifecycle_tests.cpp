@@ -12559,6 +12559,23 @@ void testPassiveBorrowedConstructedFieldPrefix() {
 }
 
 void testNestedConstructorArgumentPublication() {
+  // A forged native tree must be refused. When the owner declares the field
+  // in deferred storage, the verified body may publish it in MIR order
+  // instead; that route trusts verified MIR, so MIR verification must then
+  // reject the forgery before emission.
+  const auto refusedOrUnverified = [](const lang::MirProgram &malformed,
+                                      const lang::CppMirBodyEmissionMap &map,
+                                      lang::MirBodyAddress address,
+                                      lang::SymbolId field) {
+    const auto *constructor = malformed.findConstructorInstance(address.owner);
+    if (!lang::CppMirBodyEmitter(malformed, map)
+             .supportsFailureBodyText(address))
+      return true;
+    return constructor != nullptr &&
+           lang::cppMirDeferredFieldStorage(malformed, constructor->owner,
+                                            field) &&
+           !lang::verifyMirProgram(malformed).valid();
+  };
   std::size_t checked = 0;
   std::size_t nested = 0;
   std::size_t movedFormals = 0;
@@ -12677,8 +12694,7 @@ void testNestedConstructorArgumentPublication() {
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  *changed)
                          .empty() &&
-                     !lang::CppMirBodyEmitter(malformed, map)
-                          .supportsFailureBodyText(address),
+                     refusedOrUnverified(malformed, map, address, field.field),
                  "nested tree rejects lost types, input order, transfer, "
                  "publication, "
                  "rollback and lifetime activation " +
@@ -12745,8 +12761,7 @@ void testNestedConstructorArgumentPublication() {
           expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
                                                                  *changed)
                          .empty() &&
-                     !lang::CppMirBodyEmitter(malformed, map)
-                          .supportsFailureBodyText(address),
+                     refusedOrUnverified(malformed, map, address, field.field),
                  "cleanup-free moved formal rejects a lost Move event, "
                  "cleanup-bearing formal, invented handoff or foreign "
                  "binding " +

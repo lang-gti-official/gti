@@ -11,6 +11,26 @@ lang::MirInstruction *instruction(lang::MirBody &body,
   return nullptr;
 }
 
+// A forged prefix must not reach native publication. When the owner keeps a
+// carrier in deferred storage, the verified body may still publish it in MIR
+// order; that route trusts verified MIR, whose rejection each check asserts.
+bool refusedOrDeferred(const lang::MirProgram &malformed,
+                       const lang::CppMirBodyEmissionMap &map,
+                       lang::MirBodyAddress address) {
+  if (!lang::CppMirBodyEmitter(malformed, map).supportsFailureBodyText(address))
+    return true;
+  const auto *constructor = malformed.findConstructorInstance(address.owner);
+  const auto *owner = constructor == nullptr
+                          ? nullptr
+                          : malformed.findClassInstance(constructor->owner);
+  return owner != nullptr &&
+         std::any_of(owner->declaredFields.begin(), owner->declaredFields.end(),
+                     [&](const lang::MirClassFieldInfo &field) {
+                       return lang::cppMirDeferredFieldStorage(
+                           malformed, owner->id, field.symbol);
+                     });
+}
+
 void testMixedCarrierParameterPrefix() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/user_dual_range_direct.gti";
@@ -86,8 +106,7 @@ void testMixedCarrierParameterPrefix() {
              reason);
       expect(!lang::verifyMirProgram(malformed).valid(),
              "independent MIR verification rejects the forged publication");
-      const lang::CppMirBodyEmitter changedEmitter(malformed, map);
-      expect(!changedEmitter.supportsFailureBodyText(address),
+      expect(refusedOrDeferred(malformed, map, address),
              "backend admission rejects the forged mixed prefix");
     };
     reject(
@@ -546,8 +565,8 @@ void testSourceLiteralScalarSiblings() {
       expect(!lang::verifyMirProgram(malformed).valid(),
              "independent MIR verification rejects forged scalar literal "
              "publication");
-      const lang::CppMirBodyEmitter changedEmitter(malformed, map);
-      expect(!changedEmitter.supportsFailureBodyText(
+      expect(refusedOrDeferred(
+                 malformed, map,
                  {.kind = lang::MirBodyKind::Constructor, .owner = mixed->id}),
              "backend scalar prefix gate rejects malformed literal siblings");
     };
