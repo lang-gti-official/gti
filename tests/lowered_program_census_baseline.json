@@ -2431,8 +2431,8 @@
       }
     },
     "165-borrowed-payload-results.gti": {
-      "declarations": 1656,
-      "bodies": 246,
+      "declarations": 1657,
+      "bodies": 247,
       "generated_items": 142,
       "generated_kinds": {
         "program_initialization": 1,
