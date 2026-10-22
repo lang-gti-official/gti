@@ -7290,12 +7290,109 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
           read->type.kind == SemanticType::CString);
 }
 
+auto SemanticVisitor::Impl::predeclaredTextFieldSource(
+    const ExprPtr &expression, const FunctionInfo &function, SymbolId given)
+    -> std::optional<PredeclaredTextBorrowSource> {
+  if (!expression || !textFieldContractFunction(
+                         function.declaration, function.bodyDeclaration(),
+                         function.virtualMethod || function.overrideMethod,
+                         function.ownerClass))
+    return std::nullopt;
+  const auto unwrap = [](const Expr *current) {
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression() ? group->expression().get() : nullptr;
+    return current;
+  };
+  const FunctionDecl &declaration = *function.bodyDeclaration();
+  const auto &parameters = declaration.parameters();
+  const auto formal =
+      [&](const Variable &variable) -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < parameters.size(); ++index)
+      if (parameters[index].name.lexeme == variable.name().lexeme)
+        return index;
+    return std::nullopt;
+  };
+  // Only a read-only receiver or formal takes a relayed value, so only its
+  // fields can hold a caller's dynamic text.
+  const bool receiver =
+      function.ownerClass != 0 && !function.staticMember &&
+      declaration.receiverMutability() == ReceiverMutability::ReadOnly;
+  struct Origin {
+    PredeclaredTextBorrowSource source;
+    SemanticType type;
+  };
+  const auto receiverOrigin = [&]() -> std::optional<Origin> {
+    if (!receiver)
+      return std::nullopt;
+    return Origin{.source = {.known = true,
+                             .ownerDependent = true,
+                             .origin = BorrowOriginKind::Receiver},
+                  .type = openClassType(function.ownerClass)};
+  };
+  const auto origin = [&](const Expr *object) -> std::optional<Origin> {
+    object = unwrap(object);
+    if (exprAs<This>(object) != nullptr)
+      return receiverOrigin();
+    const auto *variable = exprAs<Variable>(object);
+    const auto index = variable == nullptr ? std::nullopt : formal(*variable);
+    if (!index || parameters[*index].pack ||
+        *index >= function.parameterTypes.size() ||
+        !readOnlyTextFieldFormal(declaration, function.parameterTypes, *index))
+      return std::nullopt;
+    SemanticType type = function.parameterTypes[*index];
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    return Origin{.source = {.known = true,
+                             .ownerDependent = true,
+                             .origin = BorrowOriginKind::Argument,
+                             .parameter = *index},
+                  .type = std::move(type)};
+  };
+  // The origin's direct text field, named or given.
+  const auto withField =
+      [&](std::optional<Origin> found,
+          const Token *name) -> std::optional<PredeclaredTextBorrowSource> {
+    if (!found || !textPublicationOwner(found->type))
+      return std::nullopt;
+    SymbolId field = given;
+    if (name != nullptr) {
+      const MemberInfo *member = findMember(found->type, *name);
+      if (member == nullptr || member->symbol.variableDeclaration == nullptr ||
+          member->symbol.staticMember)
+        return std::nullopt;
+      field = symbolForDeclaration(member->symbol.declaration);
+    }
+    if (field == 0 || !directTextField(found->type, field))
+      return std::nullopt;
+    found->source.field = field;
+    return found->source;
+  };
+  const Expr *current = unwrap(expression.get());
+  if (given != 0)
+    return withField(origin(current), nullptr);
+  // An implicit member read names the receiver's field; a parameter of the
+  // same name takes precedence, as in predeclaredTextBorrowSource.
+  if (const auto *variable = exprAs<Variable>(current))
+    return formal(*variable) ? std::nullopt
+                             : withField(receiverOrigin(), &variable->name());
+  const auto *get = exprAs<Get>(current);
+  if (get == nullptr || get->access().kind == TokenKind::ARROW ||
+      !get->object())
+    return std::nullopt;
+  return withField(origin(get->object().get()), &get->name());
+}
+
 auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     const ExprPtr &expression, const FunctionInfo &function,
     const SemanticType &ownerType) -> PredeclaredTextBorrowSource {
   if (!expression) {
     return {};
   }
+  // A contract formal's text field may hold the caller's dynamic text
+  // (L-OWN-02), so reading it relays that field's dependency. Any other
+  // stored view holds ownerless text.
+  if (auto field = predeclaredTextFieldSource(expression, function))
+    return *field;
   if (storedTextViewRead(expression, function, ownerType)) {
     return {.known = true};
   }
@@ -7360,7 +7457,73 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (call == nullptr) {
     return {};
   }
+  // A helper or method that returns one text field of an argument or of its
+  // receiver (L-OWN-02) returns that field of what it is applied to: a
+  // contract formal's field here, or provenance this contract cannot name.
+  const auto fieldRelay =
+      [&](const FunctionInfo *target,
+          const ExprPtr &origin) -> std::optional<PredeclaredTextBorrowSource> {
+    const auto summary =
+        target ? dynamicTextReturnBorrowSummary(*target) : std::nullopt;
+    if (!summary || summary->fields.size() != 1 ||
+        summary->fields.front().sourceFields.size() != 1)
+      return std::nullopt;
+    const SymbolId field = summary->fields.front().sourceFields.front();
+    if (summary->origin == BorrowOriginKind::Receiver && !origin) {
+      // An implicit receiver call relays this method's own receiver.
+      const SemanticType owner = function.ownerClass == 0
+                                     ? SemanticType(SemanticType::Unknown)
+                                     : openClassType(function.ownerClass);
+      if (function.ownerClass == target->ownerClass && !function.staticMember &&
+          textFieldContractFunction(
+              function.declaration, function.bodyDeclaration(),
+              function.virtualMethod || function.overrideMethod,
+              function.ownerClass) &&
+          function.bodyDeclaration()->receiverMutability() ==
+              ReceiverMutability::ReadOnly &&
+          textPublicationOwner(owner) && directTextField(owner, field))
+        return PredeclaredTextBorrowSource{.known = true,
+                                           .ownerDependent = true,
+                                           .origin = BorrowOriginKind::Receiver,
+                                           .field = field};
+      return PredeclaredTextBorrowSource{};
+    }
+    if (!origin)
+      return PredeclaredTextBorrowSource{};
+    return predeclaredTextFieldSource(origin, function, field)
+        .value_or(PredeclaredTextBorrowSource{});
+  };
   if (const auto *member = exprAs<Get>(call->callee().get())) {
+    // A method of a contract formal's class resolves by its declared name;
+    // the selected call's body analysis validates the actual return.
+    if (const Expr *object = member->object().get()) {
+      while (const auto *group = exprAs<Grouping>(object))
+        object = group->expression() ? group->expression().get() : nullptr;
+      SemanticType receiverType = SemanticType::Unknown;
+      if (exprAs<This>(object) != nullptr && function.ownerClass != 0)
+        receiverType = openClassType(function.ownerClass);
+      else if (const auto *variable = exprAs<Variable>(object))
+        for (std::size_t index = 0;
+             index < function.bodyDeclaration()->parameters().size() &&
+             index < function.parameterTypes.size();
+             ++index)
+          if (function.bodyDeclaration()->parameters()[index].name.lexeme ==
+              variable->name().lexeme)
+            receiverType = function.parameterTypes[index];
+      if (receiverType.kind == SemanticType::Reference &&
+          receiverType.arguments.size() == 1)
+        receiverType = SemanticType(receiverType.arguments.front());
+      const MemberInfo *method = receiverType.kind == SemanticType::Class
+                                     ? findMember(receiverType, member->name())
+                                     : nullptr;
+      if (method != nullptr && method->symbol.overloads.size() == 1 &&
+          method->symbol.overloads.front().declaration != nullptr)
+        if (const auto relayed =
+                fieldRelay(semanticModel.findFunction(
+                               *method->symbol.overloads.front().declaration),
+                           member->object()))
+          return *relayed;
+    }
     // Predeclare a receiver-rooted relay contract, not a proof that an
     // arbitrary member call borrows its receiver. Body analysis checks the
     // selected call's actual dependency against this contract before HIR.
@@ -7382,6 +7545,22 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     }
     return source;
   }
+  // An implicit receiver call to a method of this class resolves by name in
+  // the class, as an explicit `this.method()` does above.
+  if (const auto *callee = exprAs<Variable>(call->callee().get());
+      callee != nullptr && function.ownerClass != 0 && !function.staticMember)
+    if (const MemberInfo *method =
+            findMember(openClassType(function.ownerClass), callee->name());
+        method != nullptr && method->symbol.overloads.size() == 1 &&
+        method->symbol.overloads.front().declaration != nullptr &&
+        !method->symbol.staticMember) {
+      static const ExprPtr implicitReceiver;
+      if (const auto relayed =
+              fieldRelay(semanticModel.findFunction(
+                             *method->symbol.overloads.front().declaration),
+                         implicitReceiver))
+        return *relayed;
+    }
   const std::optional<CallableCandidate> intrinsic =
       intrinsicCandidate(call->callee());
   if (intrinsic) {
@@ -7408,6 +7587,16 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
               : nullptr;
       const auto summary =
           target ? dynamicTextReturnBorrowSummary(*target) : std::nullopt;
+      if (summary && !summary->fields.empty()) {
+        static const ExprPtr implicitReceiver;
+        const ExprPtr &origin =
+            summary->origin == BorrowOriginKind::Argument &&
+                    summary->parameter < call->arguments().size()
+                ? call->arguments()[summary->parameter]
+                : implicitReceiver;
+        return fieldRelay(target, origin)
+            .value_or(PredeclaredTextBorrowSource{});
+      }
       if (summary && summary->origin == BorrowOriginKind::Argument &&
           summary->parameters.empty() &&
           summary->parameter < call->arguments().size())
@@ -7458,6 +7647,11 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
                      : std::optional<ClassId>{function.ownerClass};
 
   std::optional<FunctionReturnBorrowSummary> result;
+  // A contract formal's text field relays that field's dependency only when
+  // every dependent return reads it (L-OWN-02). Beside another source it is an
+  // ownerless alternative, under a field requirement on the function.
+  std::optional<PredeclaredTextBorrowSource> field;
+  bool fieldsAgree = true;
   bool valid = true;
   for (const ExprPtr *returned : returns) {
     const PredeclaredTextBorrowSource source =
@@ -7471,6 +7665,14 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     if (!source.ownerDependent) {
       continue;
     }
+    if (source.field != 0) {
+      fieldsAgree =
+          fieldsAgree && (!field || (field->origin == source.origin &&
+                                     field->parameter == source.parameter &&
+                                     field->field == source.field));
+      field = source;
+      continue;
+    }
     FunctionReturnBorrowSummary candidate{.origin = source.origin,
                                           .parameter = source.parameter,
                                           .access = AccessMode::ReadOnly};
@@ -7481,6 +7683,14 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     }
     result = candidate;
   }
+  if (valid && !result && field && fieldsAgree)
+    result = FunctionReturnBorrowSummary{
+        .origin = field->origin,
+        .parameter = field->parameter,
+        .access = AccessMode::ReadOnly,
+        .fields = {{.origin = field->origin,
+                    .parameter = field->parameter,
+                    .sourceFields = {field->field}}}};
 
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;

@@ -7103,7 +7103,21 @@ private:
     call.borrowPlace = value.borrowPlace;
     call.restoresReferenceResult = value.restoresReferenceResult;
     call.restoredBorrowFields = value.restoredBorrowFields;
+    // A text field result (L-OWN-02) holds what its origin holds in that
+    // field: the retained loan of a dependent carrier that designates it, or
+    // no dependency here at all (ownerless text, another field's owner, or a
+    // formal's field whose text is the caller's).
+    const bool textFieldResult =
+        mir_detail::textFieldResult(value.info.type, value.borrowOrigin,
+                                    value.borrowArgument, value.borrowFields);
+    const bool heldTextField =
+        textFieldResult && originLoan != 0 &&
+        originLoan <= output.loans.size() &&
+        output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
+        output.loans[originLoan - 1].designatedFields ==
+            value.borrowFields.front().sourceFields;
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0 &&
+        (!textFieldResult || heldTextField) &&
         (!value.borrowDependencies ||
          !value.borrowDependencies->dependencies.empty())) {
       const bool shellReference = borrowsCarrierStorage(value);
@@ -8769,6 +8783,11 @@ private:
   [[nodiscard]] std::optional<mir_detail::MirReturnOriginFormal>
   returnBorrowOriginFormal() const {
     if (function != nullptr) {
+      // A text field result borrows nothing of its formal in this body.
+      if (mir_detail::textFieldResult(
+              function->returnType, function->returnBorrowOrigin,
+              function->returnBorrowParameter, function->returnBorrowFields))
+        return std::nullopt;
       return function->returnBorrowOrigin == BorrowOriginKind::Argument
                  ? mir_detail::returnOriginFormal(
                        function->parameterTypes, function->parameterBindings,

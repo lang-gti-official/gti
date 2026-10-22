@@ -2551,13 +2551,32 @@ Inside it:
 - A text-field read through a formal, `this` or an implicit member of a
   publishable class is an owner-dependent view.
 - A sink that already requires ownerless text records (formal or receiver,
-  field) through `requireOwnerlessTextParameter`. So does a `None`-summary
-  return, which then re-records the read as ownerless.
+  field) through `requireOwnerlessTextParameter`. So does a return that the
+  function's field-sourced result does not name; the read is then re-recorded
+  as ownerless.
 - Each other use of such a formal is noted like a dependent value. A field
   read consumes it. `recordTextFieldCall` forwards a formal that is passed to
   an in-scope callee's formal or receiver of the same class.
 - `finalizeTextFieldContracts` turns each unconsumed use into requirements on
   every text field, then closes forwarding to a fixpoint.
+
+A return of one such field publishes a field-sourced result in the shared
+summary instead of a requirement: `returnBorrowOrigin` is Argument or
+Receiver and `returnBorrowFields` holds one `BorrowedFieldOrigin` whose
+`sourceFields` is that field, the shape of a returned `T&` field.
+- `predeclaredTextFieldSource` proposes it before bodies, beside
+  `storedTextViewRead`. It follows a helper or method that returns a field of
+  a formal it is applied to, so `return first(t);` composes.
+- `dynamicTextReturnBorrowSummary` publishes it only when every dependent
+  return names the same field. Beside a whole-origin source or another field,
+  the read stays an ownerless alternative under a requirement, as before.
+- At a call (`fieldSourcedTextResult`), the result is dependent when the origin
+  argument or receiver is a dependent value designating the field, or a
+  contract formal of the caller; `storedBorrowDependencies` maps the
+  designated retained loan onto the result. Otherwise it is ownerless.
+- `ownerlessTextForwardingField` treats such a call on a caller's contract
+  formal as a read of that formal's field, so sinks, relays and returns
+  compose through it.
 
 A dependent argument or receiver records a `TextDependentRelay` with its
 designated fields, while its scope is live. The request's own finalization

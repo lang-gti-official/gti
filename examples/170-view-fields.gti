@@ -2,7 +2,8 @@
 // carries that owner's read-only dependency, much as a reference field
 // carries its referent's, so no text is copied or allocated. Such a value can
 // be copied, moved and read, and passed to functions and methods that keep
-// its text within the call. It cannot be returned, captured or stored.
+// its text within the call or return it. It cannot be returned, captured or
+// stored itself.
 #include <std/string>
 
 // A token views its input; it owns no text.
@@ -12,6 +13,9 @@ public:
   int kind;
   Token(std::string_view text, int kind) : text(text), kind(kind) {}
   uint64_t width() { return this.text.size(); }
+  // Returning the text field hands the caller a view of whatever the token
+  // views.
+  std::string_view spelling() { return this.text; }
 };
 
 struct Note {
@@ -36,6 +40,9 @@ int main() {
   std::println(text);
   std::println(note.column);
   std::println(measure(copy) + name.width());
+  // The returned view depends on `line`, as the token does.
+  std::string_view spelled = name.spelling();
+  std::println(spelled);
 
   // While any of these values is live, `line` cannot be mutated, moved or
   // destroyed; for example `line.append("!")` here is rejected.

@@ -3888,7 +3888,122 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             argumentInput->callInputKind == HirCallInputKind::Value &&
             argumentInput->info.type == instruction.info.type &&
             !argumentInput->info.traits.containsBorrowedState;
-        if (ownerlessTextResult) {
+        // A text field result (L-OWN-02) of an argument or receiver that
+        // holds no dependency is ownerless. TextContracts derives the
+        // field's dependency independently.
+        // An input value carries no dependency, or a place operand (a
+        // reference argument or a borrowed receiver) names storage without
+        // borrowed state.
+        // The mapped field of a text field result. A dependent carrier holds
+        // an owner's text only in the field its retained loan designates.
+        const std::vector<SymbolId> *mappedField =
+            instruction.borrowFields.size() == 1
+                ? &instruction.borrowFields.front().sourceFields
+                : nullptr;
+        const auto carriesField = [&](const MirPlace &place) {
+          return mappedField != nullptr &&
+                 place.root == MirPlaceRootKind::Binding &&
+                 place.projections.empty() &&
+                 std::any_of(body.loans.begin(), body.loans.end(),
+                             [&](const MirLoan &loan) {
+                               return loan.kind == MirLoanKind::Stored &&
+                                      loan.designatedFields == *mappedField &&
+                                      std::find(loan.carriers.begin(),
+                                                loan.carriers.end(),
+                                                place.binding) !=
+                                          loan.carriers.end();
+                             });
+        };
+        const auto ownerlessPlace = [&](const MirOperand &operand) -> bool {
+          const MirLoan *loan = operand.kind == MirOperandKind::Loan
+                                    ? body.findLoan(operand.loan)
+                                    : nullptr;
+          const MirPlace *place =
+              body.findPlace(loan ? loan->source : operand.place);
+          return place != nullptr && (!place->traits.containsBorrowedState ||
+                                      !carriesField(*place));
+        };
+        const auto ownerlessInput = [&](const MirOperand &operand,
+                                        MirCallInputRole role) -> bool {
+          if (operand.kind != MirOperandKind::Value)
+            return ownerlessPlace(operand);
+          const MirInstruction *input = definitionFor(body, operand.value);
+          if (input == nullptr ||
+              input->kind != MirInstructionKind::CallInput ||
+              input->callInputRole != role)
+            return false;
+          // A reference input is borrowed state itself; what it names is
+          // the class value whose field is read.
+          if (input->info.type.kind == SemanticType::Reference)
+            return input->operands.size() == 1 &&
+                   input->operands.front().kind != MirOperandKind::Value &&
+                   ownerlessPlace(input->operands.front());
+          return !input->info.traits.containsBorrowedState ||
+                 (input->operands.size() == 1 &&
+                  input->operands.front().kind != MirOperandKind::Value &&
+                  ownerlessPlace(input->operands.front()));
+        };
+        // A formal or the receiver of this function: its field holds the
+        // caller's text, so no loan names it here.
+        const auto formalInput = [&](const MirOperand &operand,
+                                     MirCallInputRole role) -> bool {
+          const MirOperand *held = &operand;
+          if (held->kind == MirOperandKind::Value) {
+            const MirInstruction *input = definitionFor(body, held->value);
+            if (input == nullptr ||
+                input->kind != MirInstructionKind::CallInput ||
+                input->callInputRole != role || input->operands.size() != 1)
+              return false;
+            held = &input->operands.front();
+          }
+          const MirLoan *loan = held->kind == MirOperandKind::Loan
+                                    ? body.findLoan(held->loan)
+                                    : nullptr;
+          const MirPlace *place =
+              held->kind == MirOperandKind::Value
+                  ? nullptr
+                  : body.findPlace(loan ? loan->source : held->place);
+          if (place == nullptr || !(place->projections.empty() ||
+                                    (place->projections.size() == 1 &&
+                                     place->projections.front().kind ==
+                                         MirProjectionKind::Dereference)))
+            return false;
+          if (place->root == MirPlaceRootKind::This)
+            return place->projections.empty();
+          const MirFunctionInstance *function =
+              body.kind == MirBodyKind::Function
+                  ? program.findFunctionInstance(
+                        static_cast<HirFunctionInstanceId>(owner))
+                  : nullptr;
+          return place->root == MirPlaceRootKind::Binding &&
+                 function != nullptr &&
+                 std::find(function->parameterBindings.begin(),
+                           function->parameterBindings.end(),
+                           place->binding) != function->parameterBindings.end();
+        };
+        const auto originInput = [&](const auto &accepts) -> bool {
+          if (instruction.borrowOrigin == BorrowOriginKind::Argument)
+            return instruction.borrowArgument < instruction.operands.size() &&
+                   accepts(instruction.operands[instruction.borrowArgument],
+                           MirCallInputRole::Argument);
+          return instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                 instruction.receiver &&
+                 accepts(*instruction.receiver, MirCallInputRole::Receiver);
+        };
+        const bool fieldResult =
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.borrowAccess == AccessMode::ReadOnly &&
+            !instruction.borrowPlace &&
+            (instruction.info.type.kind == SemanticType::StringView ||
+             instruction.info.type.kind == SemanticType::CString) &&
+            instruction.borrowFields.size() == 1 &&
+            instruction.borrowFields.front().sourceFields.size() == 1 &&
+            instruction.borrowFields.front().resultFields.empty();
+        const bool ownerlessFieldResult =
+            fieldResult && !instruction.info.traits.containsBorrowedState &&
+            originInput(ownerlessInput);
+        const bool formalFieldResult = fieldResult && originInput(formalInput);
+        if (ownerlessTextResult || ownerlessFieldResult || formalFieldResult) {
           continue;
         }
         return verificationFailure(
@@ -5893,8 +6008,14 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     return invalidSummary(
         "ordinary reference summary carries unproved restored fields");
   }
+  // A text result may return one direct text field of its origin formal or
+  // receiver (L-OWN-02), carrying the caller's dependency in that field.
+  // TextContracts proves that every return reads exactly that field.
+  const bool textFieldResult = mir_detail::textFieldResult(
+      instance.returnType, instance.returnBorrowOrigin,
+      instance.returnBorrowParameter, instance.returnBorrowFields);
   if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
-      !completeConditionalResult) {
+      !completeConditionalResult && !textFieldResult) {
     const auto paths =
         findStoredCarrierReferences(program, instance.returnType);
     const bool reference = instance.returnType.kind == SemanticType::Reference;
@@ -5981,6 +6102,19 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     {
       const SemanticType &parameter =
           instance.parameterTypes[instance.returnBorrowParameter];
+      if (textFieldResult) {
+        // A field of a class formal holds the caller's text, so the callee
+        // has no entry loan for it.
+        const bool reference = parameter.kind == SemanticType::Reference &&
+                               parameter.arguments.size() == 1;
+        const SemanticType &formal =
+            reference ? parameter.arguments.front() : parameter;
+        if (formal.kind != SemanticType::Class ||
+            (reference && parameter.referenceAccess != AccessMode::ReadOnly))
+          return invalidSummary(
+              "text field result does not name a read-only class formal");
+        break;
+      }
       const bool abstractValueCarrier =
           parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1 &&
@@ -6170,7 +6304,27 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !definition->info.traits.containsBorrowedState && !definition->loan &&
           !definition->destination && !definition->receiver &&
           definition->lifecycle.empty();
+      // Under a text field result the callee's own view of the field is
+      // ownerless; the caller's dependency is the contract (TextContracts).
+      // Besides the exact stored load above, that view may come from another
+      // text field result applied to the same field's owner.
+      const MirFunctionInstance *relayed =
+          textFieldResult && definition &&
+                  definition->kind == MirInstructionKind::Call &&
+                  definition->functionTarget
+              ? program.findFunctionInstance(*definition->functionTarget)
+              : nullptr;
+      const bool ownerlessFieldText =
+          relayed != nullptr &&
+          mir_detail::textFieldResult(
+              relayed->returnType, relayed->returnBorrowOrigin,
+              relayed->returnBorrowParameter, relayed->returnBorrowFields) &&
+          returned->info.type == instance.returnType &&
+          !returned->info.traits.containsBorrowedState &&
+          definition->result == returned->id && !definition->loan &&
+          !definition->info.traits.containsBorrowedState;
       if (independentTextLiteral || independentStoredText ||
+          ownerlessFieldText ||
           ((instance.returnType.kind == SemanticType::Enum ||
             instance.returnType.kind == SemanticType::Class) &&
            emptyReturn && emptyReturn(block.id))) {

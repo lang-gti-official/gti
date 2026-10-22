@@ -1,5 +1,7 @@
 #include "mir_text_contracts.h"
 
+#include "mir_verification_queries.h"
+
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -245,6 +247,37 @@ private:
     return std::nullopt;
   }
 
+  // What a call's argument or receiver holds in one of its direct text
+  // fields: that field of a formal or the receiver here, unknown text where a
+  // dependent carrier designates the field, and ownerless text otherwise.
+  TextSources heldFieldSources(const TextBody &context,
+                               const MirOperand &operand,
+                               SymbolId field) const {
+    const MirOperand *held = &operand;
+    if (held->kind == MirOperandKind::Value)
+      if (const auto *input = definition(context.body, held->value);
+          input != nullptr && input->kind == MirInstructionKind::CallInput &&
+          input->operands.size() == 1)
+        held = &input->operands.front();
+    if (const auto designated = dependentDesignation(context.body, *held))
+      return *designated == field ? TextSources{} : TextSources{.known = true};
+    const auto *loan = held->kind == MirOperandKind::Loan
+                           ? context.body.findLoan(held->loan)
+                           : nullptr;
+    const auto *place =
+        held->kind == MirOperandKind::Value
+            ? nullptr
+            : context.body.findPlace(loan ? loan->source : held->place);
+    if (const auto formal =
+            place ? contractPlace(context, *place) : std::nullopt;
+        formal && formal->field == 0)
+      return {.known = true,
+              .fields = {{.receiver = formal->receiver,
+                          .parameter = formal->parameter,
+                          .field = field}}};
+    return {.known = true};
+  }
+
   void fail(const TextBody &context, std::size_t owner,
             const MirInstruction *instruction, std::string message) {
     result.errors.push_back({.bodyKind = context.body.kind,
@@ -361,8 +394,15 @@ private:
       if (target && textType(target->returnType) &&
           target->definitionKind == MirDefinitionKind::Source &&
           activeReturns.insert(target->id).second) {
-        const TextBody callee{target->body, target->parameterTypes,
-                              target->parameterBindings};
+        // Under its field contracts a callee may return a formal's or the
+        // receiver's text field (L-OWN-02): the result holds what this call's
+        // argument or receiver holds there.
+        const TextBody callee{
+            .body = target->body,
+            .types = target->parameterTypes,
+            .bindings = target->parameterBindings,
+            .fieldContracts =
+                fieldContractFunction(program, *target) ? target : nullptr};
         bool sawReturn = false;
         answer.known = true;
         for (const auto &block : target->body.blocks) {
@@ -385,6 +425,24 @@ private:
             answer.parameters.insert(mapped.parameters.begin(),
                                      mapped.parameters.end());
             answer.fields.insert(mapped.fields.begin(), mapped.fields.end());
+          }
+          for (const auto &field : returned.fields) {
+            const MirOperand *origin =
+                field.receiver
+                    ? (instruction->receiver ? &*instruction->receiver
+                                             : nullptr)
+                : field.parameter < instruction->operands.size()
+                    ? &instruction->operands[field.parameter]
+                    : nullptr;
+            if (origin == nullptr) {
+              answer.known = false;
+              continue;
+            }
+            const auto held = heldFieldSources(context, *origin, field.field);
+            answer.known = answer.known && held.known;
+            answer.parameters.insert(held.parameters.begin(),
+                                     held.parameters.end());
+            answer.fields.insert(held.fields.begin(), held.fields.end());
           }
         }
         answer.known = answer.known && sawReturn;
@@ -914,6 +972,36 @@ MirVerificationResult TextContracts::verify() {
             fail(context, function.id, nullptr,
                  "ownerless text return has no independent result proof");
         }
+    // A text field result (L-OWN-02) relays one formal's or the receiver's
+    // field: each return reads exactly that field, or ownerless text.
+    if (function.definitionKind == MirDefinitionKind::Source &&
+        textFieldResult(function.returnType, function.returnBorrowOrigin,
+                        function.returnBorrowParameter,
+                        function.returnBorrowFields)) {
+      const bool receiver =
+          function.returnBorrowOrigin == BorrowOriginKind::Receiver;
+      const OwnerlessTextField declared{
+          .receiver = receiver,
+          .parameter = receiver ? 0 : function.returnBorrowParameter,
+          .field = function.returnBorrowFields.front().sourceFields.front()};
+      if (!context.fieldContracts)
+        fail(context, function.id, nullptr,
+             "a text field result is declared on a function that cannot "
+             "carry field contracts");
+      else
+        for (const auto &block : function.body.blocks)
+          if (block.terminator.kind == MirTerminatorKind::Return &&
+              block.terminator.value) {
+            const auto returned = sources(context, *block.terminator.value);
+            if (!returned.known || !returned.parameters.empty() ||
+                std::any_of(
+                    returned.fields.begin(), returned.fields.end(),
+                    [&](const auto &field) { return field != declared; }))
+              fail(context, function.id, nullptr,
+                   "text field result returns other text than its declared "
+                   "field");
+          }
+    }
   }
   (void)scan({program.module(), {}, {}}, 0, true);
   for (const auto &instance : program.classInstances()) {
