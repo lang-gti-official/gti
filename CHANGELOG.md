@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.5 — Consuming a borrowed wrapper on only some paths
+## 0.459.6 — Consuming a borrowed wrapper on only some paths
 
 - A consuming method of a borrowed wrapper can now run on only some paths:
   in the right operand of `||` or `&&`, in one arm of `?:`, or in one branch
@@ -18,6 +18,17 @@ for what minor and patch releases mean.
   used to report `error[GTI-B0001]` (an internal compiler error); it now
   works. Using the wrapper afterwards still reports `error[GTI-S2018]`. A
   wrapper with a destructor consumed this way still reports
+
+## 0.459.5 — Borrowed fields copied through references
+
+- A constructor that copies a borrowed payload enum out of a reference
+  parameter into a field, such as
+  `Shelf(Slot& slot) : slot(slot) {}` for
+  `enum Slot { ready(int32_t& value), empty }`, used to report
+  `error[GTI-B0001]` (an internal compiler error). It now reports
+  `error[GTI-S2045]` at the argument, as the same copy of a class with a
+  reference field already does. Taking the enum by value,
+  `Shelf(Slot slot) : slot(slot) {}`, works.
 
 ## 0.459.4 — Returning borrowed enum parameters
 
