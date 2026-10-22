@@ -414,9 +414,21 @@ private:
                instruction->functionTarget) {
       const auto *target =
           program.findFunctionInstance(*instruction->functionTarget);
-      if (target && textType(target->returnType) &&
-          target->definitionKind == MirDefinitionKind::Source &&
-          activeReturns.insert(target->id).second) {
+      // An untracked C-string result at a native C boundary has external
+      // validity obligations, not a GTI owner to reconstruct from a body.
+      // Keep annotated results on the ordinary dependency path.
+      if (target && target->returnType.kind == SemanticType::CString &&
+          target->linkage == LanguageLinkage::C &&
+          target->definitionKind != MirDefinitionKind::Source &&
+          target->returnBorrowOrigin == BorrowOriginKind::None &&
+          target->returnBorrowFields.empty() && !target->completeReturnBorrow &&
+          !instruction->loan &&
+          instruction->borrowOrigin == BorrowOriginKind::None &&
+          instruction->borrowFields.empty()) {
+        answer.known = true;
+      } else if (target && textType(target->returnType) &&
+                 target->definitionKind == MirDefinitionKind::Source &&
+                 activeReturns.insert(target->id).second) {
         // Under its field contracts a callee may return a formal's or the
         // receiver's text field (L-OWN-02): the result holds what this call's
         // argument or receiver holds there.
