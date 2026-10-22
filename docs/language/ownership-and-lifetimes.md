@@ -1794,7 +1794,10 @@ whose carrier result could borrow from more than one eligible parameter is
 ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
 reference return. Empty-body constructors
 establish the result from their exact field initializers, including a proved
-reference-free alternative. A missing proof is not an empty alternative.
+reference-free alternative. The initializer may construct the enum in place or
+move or copy a by-value enum parameter into the field, as in
+`Shelf(Slot slot) : slot(std::move(slot))`; the object then keeps that
+argument's external owners. A missing proof is not an empty alternative.
 Implicit copying remains conditional on all fields being copyable; copying a
 shared-reference wrapper retains the same external owners, while moving a
 wrapper does not move those owners. A consuming method may return a selected
