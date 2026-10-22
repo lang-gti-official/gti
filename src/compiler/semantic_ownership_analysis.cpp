@@ -3514,12 +3514,13 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
   const bool directReference =
       function.returnType.kind == SemanticType::Reference &&
       function.returnType.arguments.size() == 1;
-  const auto inventory =
-      directReference
-          ? std::optional<
-                std::vector<StoredReferencePath>>{{{.reference =
-                                                        function.returnType}}}
-          : storedReferenceInventory(function.returnType);
+  std::optional<std::vector<StoredReferencePath>> inventory;
+  if (directReference) {
+    inventory.emplace();
+    inventory->push_back({.reference = function.returnType});
+  } else {
+    inventory = storedReferenceInventory(function.returnType);
+  }
   if (!inventory)
     return std::nullopt;
   const auto alternatives =
