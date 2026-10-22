@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.458.7 — Consuming a borrowed wrapper on only some paths
+## 0.459.4 — Consuming a borrowed wrapper on only some paths
 
 - A consuming method of a borrowed wrapper can now run on only some paths:
   in the right operand of `||` or `&&`, in one arm of `?:`, or in one branch
@@ -19,6 +19,40 @@ for what minor and patch releases mean.
   works. Using the wrapper afterwards still reports `error[GTI-S2018]`. A
   wrapper with a destructor consumed this way still reports
   `error[GTI-B0001]`.
+
+## 0.459.1 — Moving classes that hold text views
+
+- A class with a `std::string_view` field can now be moved into another
+  class's field after an initializer that can fail, when it has no destructor
+  and its other fields are text views, C strings, scalars, enums, pointers,
+  fixed arrays or classes of the same kind. For `class Name { public:
+  std::string_view text; ... }`, `shelf(Name name) :
+  v(std::vector<int32_t>()), name(std::move(name))` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. If a later
+  initializer or the constructor body fails, each field already built is
+  dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Name chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field, as in `holder.name = other;`. Each used to
+  report `error[GTI-B0001]`.
+
+## 0.459.0 — Reference bindings from payload enums inside loops
+
+- A `switch` inside a loop can now bind `auto&` to a reference payload of an
+  enum the loop cannot change. With `auto slot = borrow_slot(local, true);`
+  declared before a `for`, `while` or `do` loop, `case Slot::item(auto&
+  value):` inside the loop used to report `error[GTI-S2067]`; it now works.
+  The same holds for a read-only reference parameter such as `Slot& slot`, an
+  enum field of such a local, and generic enums.
+- An enum declared `mut` is still not carried into a loop. Its
+  `error[GTI-S2067]` now says that the subject's dependency set is missing,
+  rather than mentioning a "consuming handoff", and a hint suggests a binding
+  without `mut` or selecting before the loop.
+- `case Edit::item(mut auto& value):` over an enum that is not mutable, where
+  `Edit` holds a `mut int&`, used to report `error[GTI-B0001]` (an internal
+  compiler error) for a local declared without `mut`. It now reports
+  `error[GTI-S2067]` ("A mutable payload pattern requires a mutable enum
+  receiver"), as other mutable payload bindings do.
 
 ## 0.458.4 — Borrowed enum parameters stored in fields
 
