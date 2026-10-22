@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.4 — Borrowed fields copied through references
+## 0.459.5 — Borrowed fields copied through references
 
 - A constructor that copies a borrowed payload enum out of a reference
   parameter into a field, such as
@@ -19,6 +19,20 @@ for what minor and patch releases mean.
   `error[GTI-S2045]` at the argument, as the same copy of a class with a
   reference field already does. Taking the enum by value,
   `Shelf(Slot slot) : slot(slot) {}`, works.
+
+## 0.459.4 — Returning borrowed enum parameters
+
+- A function can return a borrowed payload enum that it takes by value. For
+  `enum Slot { ready(int32_t& value), empty }`,
+  `Slot relay(Slot slot) { return std::move(slot); }`, the copy
+  `return slot;` and the `[[borrowed_from(slot)]]` form used to report
+  `error[GTI-B0001]` (an internal compiler error); they now work. So does
+  returning a class whose borrowed state is such an enum, and a concrete
+  generic enum such as `Outcome<int&, std::string>`. The result keeps the
+  caller's owner: relaying a slot of a local reports `error[GTI-S2045]`, and
+  assigning to the owner while the result is live reports `error[GTI-S2017]`.
+- Returning another relay's result, `return relay(std::move(slot));`, still
+  reports `error[GTI-B0001]`.
 
 ## 0.459.3 — Reading fields of assignment results
 
