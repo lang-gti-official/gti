@@ -314,6 +314,10 @@
       "suite": "text"
     },
     {
+      "name": "testPassiveTextViewClassAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedChainReturnConstruction",
       "suite": "text"
     },
