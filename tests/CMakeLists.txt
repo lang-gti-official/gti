@@ -1103,6 +1103,11 @@ add_test(NAME moved_passive_constructor_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/moved_passive_constructor_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(moved_passive_constructor_field_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME deferred_bound_field_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/deferred_bound_field_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(deferred_bound_field_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME passive_text_view_class_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/passive_text_view_class_runtime_test.py"
@@ -1118,6 +1123,11 @@ add_test(NAME text_reference_accessors_runtime
                  "${PROJECT_SOURCE_DIR}/tests/text_reference_accessors_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(text_reference_accessors_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME recursive_text_relays_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/recursive_text_relays_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(recursive_text_relays_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME failure_free_passive_moves_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_moves_runtime_test.py"

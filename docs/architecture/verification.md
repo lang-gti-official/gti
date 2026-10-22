@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Reference relays and generic class contracts (0.461.0)
+## Reference relays and generic class contracts (0.462.0)
 
 `ownerless_text_contracts` covers relays in `testTextReferenceRelays`.
 - On a value over a local owner, `std::println(t.ref())`, a copy
@@ -36,7 +36,7 @@
   `borrow_stored_view_return.gti` as a field relay rather than an ownerless
   return, and checks its three stored-view mutations.
 
-## Text read through returned references (0.461.0)
+## Text read through returned references (0.462.0)
 
 `ownerless_text_contracts` covers the accessors in
 `testTextReferenceAccessors`.
@@ -64,6 +64,123 @@ in `tests/fixtures/`, `tests/coverage/` and `examples/`. 1,345 emit
 byte-identical C++. Only the new `text_reference_accessors` fixture changes
 status: it now builds.
 
+## Borrowed carriers stored after other fields (0.461.1)
+
+Deferred field storage (backend: a passive bound shell after other fields
+lives in an anonymous union and is published at its MIR point) is covered at
+three layers.
+
+`cpp_mir_body_emitter_text`:
+- `testMovedPassiveFieldAfterFallibleSibling` now requires the moved `Cursor`
+  after a fallible ledger to use deferred storage, to be refused by the
+  native owned-field proof, and to be admitted by the failure form.
+- `testDeferredBoundShellFields` moves a carrier, and builds one whose
+  constructor can fail, after a fallible ledger. Both fields are declared
+  `union { unsigned char __gti_deferred_<name>{}; T <name>; }`, stay out of
+  the member-initializer list, and are published after the ledger: the move
+  by `std::construct_at` with no rollback, the fallible constructor in place
+  through its status overload with no `std::destroy_at` of its field. A
+  first-field carrier keeps its native member, and a carrier holding a
+  payload enum is neither deferred nor admitted. A `Stored` dependency that
+  does not name the moved formal, and a carrier whose destructor runs source
+  code, are both refused.
+
+`deferred_bound_field_runtime` runs `deferred_bound_fields.gti` in all eight
+native modes (C++20/C++23 at O0/O1/O3, no-elide, ASan/UBSan) with eight
+observations. The fixture moves, copies and constructs carriers after a
+fallible ledger, including a carrier constructor that checks its input and
+one that prints, a ledger after the published carrier, two carriers around
+a vector, an exclusive carrier, a copy after the formal is mutably borrowed,
+and a copyable holder that is copied and moved. Each failure stage checks the
+exit status, standard output and the `GTI-R0002` site: a ledger failure
+before a carrier never runs the carrier constructor (no `loud cursor`), and
+every ledger already built is closed exactly once.
+
+Two forgery suites now distinguish native publication from the body route.
+For a class with deferred storage, `cpp_mir_body_emitter_lifecycle`'s nested
+argument trees and `user_dual_range_backend`'s mixed prefixes must still fail
+the native proof, and MIR verification must reject each forgery that the
+body route would admit, since that route trusts verified MIR. All of them are
+rejected. The emitter census lists the new test and
+`testMovedBorrowedPayloadAfterFallibleSibling`, which the manifest lacked.
+
+An `--emit-cpp` differential at -O0 and -O3 over the 1,817 programs in
+`tests/fixtures`, `tests/coverage` and `examples`, against main's compiler
+(`c973f7cf2`) with one `GTI_STDLIB_PATH`:
+- Only `deferred_bound_fields.gti` changes status, from `GTI-B0001` to
+  success; the 738 other failing runs report identical diagnostics.
+- Nine programs change text. Eight gain deferred storage for carrier fields
+  that follow other fields, with the stored-loan comment reworded; their
+  constructors still publish those fields natively. In
+  `stored_borrow_aggregates.gti` two constructors (a reference field, then a
+  moved or copied carrier) also pass the failure-form proof now, so callers
+  use their status overloads.
+- Built with both compilers, the six of these that run standalone produce
+  identical exit status and output at -O0 and -O3; the three
+  `user_dual_range_*` fixtures pass their `user_dual_range_lifetime` harness.
+- Main then gained #267, a conditional-join admission change. Against its
+  compiler (`d3a966bbd`), the ten changed programs, #267's fixture and
+  `conditional_carrier_consume.gti` emit exactly as above at -O0 and -O3.
+
+The full local suite passed on that head (`0d860401b`, 808 tests). Main
+then gained #258 and #266 (generic view fields and recursive text relays:
+semantics, MIR and verifier, no backend change). Against main's compiler
+(`c21e3f7fd`), the ten changed programs, `view_fields.gti`,
+`recursive_text_relays.gti` and examples 170 and 171 emit as above, and the
+recorded verify reran the emitter, carrier, view-field, text-relay, census
+and corpus tests.
+
+## Recursive text relays (0.461.0)
+
+`view_fields` covers recursion in `testRecursiveRelays`.
+- Each relay family compiles:
+  - a text formal, through a recursion (`first`), a mutual recursion
+    (`even`/`odd`) and a generic instance (`relay<std::string_view>`);
+  - a formal's text field, through `textOf`;
+  - the receiver's field, through the method `skip`;
+  - compositions through another relay with a computed argument (`outer`,
+    `outerText`).
+
+  Each self-recursive relay names one origin and requires no ownerless text.
+- Two MIR mutations are rejected independently: removing the recursive call's
+  result loan, and clearing the relay contract of a recursion that returns its
+  formal.
+- Source rejections, with no backend error:
+  - storing a recursive relay's result;
+  - mutating the owner while a recursive, mutual, field or receiver relay's
+    result is live;
+  - a recursion that permutes text formals;
+  - a permuting field recursion given a dynamic argument;
+  - returning a local owner's view through a recursion.
+- `recursive_text_relays_runtime` runs the relays in every mode, and example
+  171 runs at O0 and O3.
+- `instance_reuse` and `borrowing_composition_lsp` pass unchanged.
+
+Discrimination:
+- Built from main's compiler sources, `testRecursiveRelays` fails at its first
+  expectation.
+- Main's MIR also rejected two non-recursive compositions with `GTI-B0001`:
+  - `return id(s, n);` was rejected because the return-loan check required a
+    direct transfer of the formal's entry loan.
+  - `return first(t, n - 1);` was rejected because `TextContracts` looked for a
+    `CallInput`'s consumer only in its own block, so the checked `n - 1` hid
+    the call.
+
+The semantic summary is not monotone in its final form: one field source
+proposes a relay, and two propose a requirement. Iterating final summaries
+could therefore oscillate on a permuting field recursion. The fixpoint
+accumulates the sources (`TextRelaySources`) and derives the summary from
+them. A call to a completed ownerless summary outside a recursive set still
+reads as unknown provenance, so no non-recursive contract changes.
+
+An `--emit-cpp` differential at O0 and O3 ran against main's compiler at
+`d2a6ca6b` on the same sources. It covers every `.gti` program in the
+repository outside `stdlib/` and the hanging `namespace-depth-63` stress file:
+1,950 programs, 3,900 runs.
+- Only example 171 and the `recursive_text_relays` fixture change, from
+  `GTI-S2045` on main to building.
+- No other run changes status, emitted C++ or diagnostics.
+- Neither compiler reports `GTI-B0001`.
 ## Conditional joins whose arms take a class by value (0.459.7)
 
 A field read of a conditional temporary whose arms pass a class by value to
