@@ -78,6 +78,7 @@ if(Python3_Interpreter_FOUND)
     mixed_constructor_parameter_runtime
     moved_passive_constructor_field_runtime
     view_fields_runtime
+    recursive_text_relays_runtime
     declaration_owned_defaults_runtime
     base_rollback_record_runtime virtual_expected_owning_return_runtime
     reference_owned_field_replacement_runtime

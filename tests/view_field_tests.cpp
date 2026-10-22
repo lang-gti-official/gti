@@ -820,6 +820,245 @@ int main() { return 0; }
          "a dependent temporary's field is not returned in this phase");
 }
 
+// Recursive calls relay what the recursion's other returns relay: a text
+// formal, a formal's text field or the receiver's.
+const std::string kRecursiveDeclarations = R"gti(
+#include <std/string>
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view skip(int n) {
+    if (n == 0) {
+      return this.text;
+    }
+    return this.skip(n - 1);
+  }
+};
+std::string_view first(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return first(s, n - 1);
+}
+std::string_view even(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return odd(s, n - 1);
+}
+std::string_view odd(std::string_view s, int n) { return even(s, n); }
+T relay<T>(T s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return relay(s, n - 1);
+}
+std::string_view textOf(Token token, int n) {
+  if (n == 0) {
+    return token.text;
+  }
+  return textOf(token, n - 1);
+}
+std::string_view outer(std::string_view s, int n) { return first(s, n - 1); }
+std::string_view outerText(Token token, int n) {
+  return textOf(token, n - 1);
+}
+)gti";
+
+// Whether a body calls the function instance `target`.
+bool calls(const lang::MirBody &body, lang::HirFunctionInstanceId target) {
+  return std::any_of(
+      body.blocks.begin(), body.blocks.end(), [&](const auto &block) {
+        return std::any_of(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.kind ==
+                                        lang::MirInstructionKind::Call &&
+                                    instruction.functionTarget == target;
+                           });
+      });
+}
+
+void testRecursiveRelays() {
+  const auto result = analyzeText(kRecursiveDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  Token token = Token(input.view(), 3);
+  std::string_view a = first(input.view(), 3);
+  std::string_view b = even(input.view(), 3);
+  std::string_view c = relay(input.view(), 2);
+  std::string_view d = textOf(token, 2);
+  std::string_view e = token.skip(2);
+  std::string_view f = outer(input.view(), 2);
+  std::string_view g = outerText(token, 2);
+  kept = first("literal", 2);
+  return a.size() + b.size() + c.size() + d.size() + e.size() + f.size() +
+                     g.size() ==
+                 70 && kept.size() == 7
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "recursive and mutually recursive functions relay a dynamic text "
+         "formal, a formal's text field and the receiver's");
+  if (!result.canGenerateCode())
+    return;
+  // Each self-recursive relay names one origin and requires no ownerless
+  // text: some depth returns the formal or field, and every other depth
+  // relays the same one.
+  std::size_t direct = 0;
+  std::size_t fields = 0;
+  const lang::MirFunctionInstance *relayFunction = nullptr;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (function.returnType.kind != lang::SemanticType::StringView ||
+        !calls(function.body, function.id))
+      continue;
+    expect(function.returnBorrowOrigin != lang::BorrowOriginKind::None &&
+               function.returnBorrowParameter == 0 &&
+               function.ownerlessTextParameters.empty() &&
+               function.ownerlessTextFields.empty(),
+           "a recursive relay names one origin and requires no ownerless text");
+    if (function.returnBorrowFields.empty()) {
+      ++direct;
+      if (relayFunction == nullptr)
+        relayFunction = &function;
+    } else {
+      ++fields;
+    }
+  }
+  expect(direct == 2, "a text formal relays through `first` and `relay`");
+  expect(fields == 2,
+         "a field relays through `textOf` and the receiver's through `skip`");
+  if (relayFunction == nullptr)
+    return;
+  // MIR verifies the relay independently: the recursive call keeps its
+  // result loan, and the function keeps its argument origin.
+  std::size_t removed = 0;
+  for (std::size_t block = 0; block < relayFunction->body.blocks.size();
+       ++block)
+    for (std::size_t index = 0;
+         index < relayFunction->body.blocks[block].instructions.size();
+         ++index) {
+      const auto &instruction =
+          relayFunction->body.blocks[block].instructions[index];
+      if (instruction.kind != lang::MirInstructionKind::Call ||
+          instruction.functionTarget != relayFunction->id || !instruction.loan)
+        continue;
+      auto changed = result.mir;
+      instructionAt(changed, {relayFunction->id, block, index}).loan.reset();
+      ++removed;
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "a recursive relay call keeps its result loan");
+    }
+  expect(removed == 1, "the recursive relay call carries a result loan");
+  auto unrelayed = result.mir;
+  const_cast<lang::MirFunctionInstance *>(
+      unrelayed.findFunctionInstance(relayFunction->id))
+      ->returnBorrowOrigin = lang::BorrowOriginKind::None;
+  expect(!lang::verifyMirProgram(unrelayed).valid(),
+         "a recursion returning its dynamic formal needs its relay contract");
+
+  struct Case {
+    const char *body;
+    const char *code;
+    const char *description;
+  };
+  const Case cases[] = {
+      {"kept = first(owner.view(), 2);", "GTI-S2045",
+       "a recursive relay's result keeps its owner dependency"},
+      {"std::string_view v = first(owner.view(), 3); owner.append(\"!\"); "
+       "uint64_t n = v.size();",
+       "GTI-S2017", "a recursive relay's result keeps its owner borrowed"},
+      {"std::string_view v = even(owner.view(), 3); owner.append(\"!\"); "
+       "uint64_t n = v.size();",
+       "GTI-S2017", "a mutual recursion's result keeps its owner borrowed"},
+      {"Token token = Token(owner.view(), 1); std::string_view v = "
+       "textOf(token, 2); owner.append(\"!\"); uint64_t n = v.size();",
+       "GTI-S2017", "a recursive field relay keeps the field's owner borrowed"},
+      {"Token token = Token(owner.view(), 1); std::string_view v = "
+       "token.skip(2); owner.append(\"!\"); uint64_t n = v.size();",
+       "GTI-S2017",
+       "a recursive receiver relay keeps the field's owner borrowed"},
+  };
+  for (const auto &entry : cases) {
+    const auto rejected = analyzeText(
+        kRecursiveDeclarations +
+        "int run() { mut std::string owner{\"owner\"}; " + entry.body +
+        " return 0; }\nint main() { return run(); }\n");
+    expect(!rejected.canGenerateCode(), entry.description);
+    expect(hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string(entry.description) + " (" + entry.code + ")");
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           std::string(entry.description) + " is diagnosed at source");
+  }
+  // A recursion that permutes its formals may return either one, so it
+  // relays neither: a text formal is rejected at its return, and a field
+  // requires ownerless text in both formals.
+  for (const char *source : {R"gti(
+std::string_view pick(std::string_view s, std::string_view t, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return pick(t, s, n - 1);
+}
+int main() { return pick("ab", "xyz", 1).size() == 3 ? 0 : 1; }
+)gti",
+                             R"gti(
+#include <std/string>
+struct Pair {
+  std::string_view text;
+  int line;
+};
+std::string_view pick(Pair a, Pair b, int n) {
+  if (n == 0) {
+    return a.text;
+  }
+  return pick(b, a, n - 1);
+}
+int main() {
+  std::string owner{"dynamic"};
+  Pair a{.text = "ab", .line = 1};
+  Pair b{.text = owner.view(), .line = 2};
+  return pick(a, b, 1).size() == 7 ? 0 : 1;
+}
+)gti",
+                             R"gti(
+#include <std/string>
+std::string_view first(std::string_view s, int n) {
+  if (n == 0) {
+    return s;
+  }
+  return first(s, n - 1);
+}
+std::string_view leak() {
+  std::string local{"local"};
+  return first(local.view(), 2);
+}
+int main() { return leak().size() == 5 ? 0 : 1; }
+)gti"}) {
+    const auto rejected = analyzeText(source);
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-S2045"),
+           "a permuting recursion relays neither formal, and a relay cannot "
+           "return a local owner's view");
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           "recursive relay rejections are diagnosed at source");
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
@@ -829,6 +1068,7 @@ constexpr NamedTest kTests[] = {
     {"testFieldResults", testFieldResults},
     {"testPayloads", testPayloads},
     {"testTemporaries", testTemporaries},
+    {"testRecursiveRelays", testRecursiveRelays},
 };
 } // namespace
 

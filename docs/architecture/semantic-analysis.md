@@ -2578,6 +2578,27 @@ Receiver and `returnBorrowFields` holds one `BorrowedFieldOrigin` whose
   formal as a read of that formal's field, so sinks, relays and returns
   compose through it.
 
+`dynamicTextReturnBorrowSummary` summarizes recursion as a least fixpoint over
+each set of mutually recursive functions. `TextRelaySources` records what the
+returns read: their direct origins, their contract-formal fields, and whether
+any provenance is unknown. These facts only accumulate.
+- A recursive call (`recursiveRelay`) reads the summary computed so far
+  through its arguments and receiver. It is ownerless while that summary has no
+  dependent return, and otherwise maps as a completed summary does.
+- The first function of a set to be evaluated repeats its returns, with one
+  evaluation of each other member per pass, until no summary of the set grows.
+  A summary that read an unfinished one stays provisional until then. One query
+  caches its complete summaries until it returns, keyed by declaration, so a
+  generic instance's call through its open signature reads the instance.
+- A recursion that relays one origin or one field at every depth relays it. A
+  recursion that permutes formals reaches two origins or fields and relays
+  neither.
+- A call to a function outside the set keeps the existing rules. A completed
+  ownerless summary still reads as unknown provenance there, so a relay beside
+  an ownerless call is not proposed.
+- Body analysis validates every return against the published summary, so a
+  recursive call is checked under the contract it assumes.
+
 A payload construction publishes a dynamic text argument the same way:
 `ResolvedPayloadConstructionInfo` carries `borrowFields` (result field = the
 payload's symbol) and `dependentTextPublication`, and no complete dependency
