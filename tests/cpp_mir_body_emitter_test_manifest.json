@@ -306,6 +306,10 @@
       "suite": "text"
     },
     {
+      "name": "testMovedBorrowedPayloadAfterFallibleSibling",
+      "suite": "text"
+    },
+    {
       "name": "testMovedViewAfterFormalRead",
       "suite": "text"
     },
@@ -487,6 +491,10 @@
     },
     {
       "name": "testClassConditionalJoinConsumers",
+      "suite": "text"
+    },
+    {
+      "name": "testClassConditionalJoinBorrowedInputs",
       "suite": "text"
     },
     {
