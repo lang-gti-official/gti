@@ -9096,7 +9096,7 @@ prerequisite checkpoints as full acceptance.
     enum's payload, nested in a field (`optional`, `expected`), was a storage
     error. A view read through `expected::error()` from an ownerless value
     was a MIR ICE. A dependent value could not return to a caller.
-  - *Implemented in 0.459.0 (2a): published text results.* A function returns
+  - *Implemented in 0.460.0 (2a): published text results.* A function returns
     a construction of its own return type whose constructor stores one of its
     by-value text formals in a direct text field, or returns a call of such a
     function with the formal. The function then relays that formal

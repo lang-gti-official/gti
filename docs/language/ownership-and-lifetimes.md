@@ -1783,7 +1783,13 @@ class, such as a `Holder` storing an `expected<int&, E>`, is not yet supported
 (`GTI-S2067`); classes with unconditional reference fields remain valid
 payloads. A reference selected from a conditional carrier is
 relayed only from a named local, parameter or temporary carrier, not through a
-field, element or dereference of another value (`GTI-S2045`). A free function
+field, element or dereference of another value (`GTI-S2045`). Inside a loop, a
+selection from a carrier declared before the loop requires a carrier the loop
+cannot write: a local or parameter declared without `mut`, including a
+read-only reference parameter. A writable carrier's dependency set is not yet
+carried across iterations (`GTI-S2067`), so a `mut auto&` selection, which
+needs mutable enum storage like any mutable payload borrow, is made before
+the loop. A free function
 whose carrier result could borrow from more than one eligible parameter is
 ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
 reference return. Empty-body constructors
@@ -1791,7 +1797,14 @@ establish the result from their exact field initializers, including a proved
 reference-free alternative. The initializer may construct the enum in place or
 move or copy a by-value enum parameter into the field, as in
 `Shelf(Slot slot) : slot(std::move(slot))`; the object then keeps that
-argument's external owners. A missing proof is not an empty alternative.
+argument's external owners. As for a nested unconditional carrier, copying the
+carrier out of a reference parameter, as in `Shelf(Slot& slot) : slot(slot)`,
+is rejected (`GTI-S2045`) at that argument: the field and the caller's object
+would share one guarded group, which constructor publication does not yet
+represent. Take the carrier by value instead. A function may likewise return a
+by-value carrier parameter whole, moved or copied, as in `Slot relay(Slot slot)
+{ return std::move(slot); }`, and the result keeps the argument's owners. A
+missing proof is not an empty alternative.
 Implicit copying remains conditional on all fields being copyable; copying a
 shared-reference wrapper retains the same external owners, while moving a
 wrapper does not move those owners. A consuming method may return a selected

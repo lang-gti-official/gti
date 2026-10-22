@@ -6245,8 +6245,11 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
               instance.returnBorrowAccess;
+      // An independently proved complete result, a reference or a
+      // conditional aggregate, has matched every result path to its exact
+      // typed source path in this by-value carrier formal.
       const auto completeCarrierInventory =
-          completeReferenceResult
+          completeReferenceResult || completeConditionalResult
               ? findStoredCarrierReferenceInventory(program, parameter)
               : std::nullopt;
       const bool completeCarrier =
@@ -6758,6 +6761,49 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         const auto *producer = definitionFor(body, published.value);
         verifiedValueSource = body.findPlace(producer->operands.front().place);
       }
+    }
+    // A conditional carrier names no single stored reference. When the
+    // complete result is independently proved and this return relays a
+    // by-value formal whole, the transferred group is that formal's guarded
+    // entry group, established from its typed entry contract. Its designated
+    // fields are then the exact source paths of the published fields.
+    if (completeConditionalResult && verifiedValueEntry == nullptr &&
+        instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+        instance.returnBorrowParameters.empty() && !loan->entry &&
+        loan->parent == 0 && block.terminator.value &&
+        block.terminator.value->kind == MirOperandKind::Value) {
+      const auto formal = mir_detail::returnOriginFormal(
+          instance.parameterTypes, instance.parameterBindings,
+          instance.returnBorrowParameter);
+      const auto entry =
+          formal ? completeBorrowParameterEntryFact(program, body, instance.id,
+                                                    formal->binding)
+                 : std::nullopt;
+      const MirLoan *group =
+          entry && entry->group ? body.findLoan(entry->group) : nullptr;
+      const MirInstruction *transfer = nullptr;
+      bool uniqueTransfer = true;
+      for (const MirBlock &candidate : body.blocks)
+        for (const MirInstruction &instruction : candidate.instructions) {
+          if (instruction.loan != loan->id ||
+              instruction.kind == MirInstructionKind::EndBorrow ||
+              instruction.kind == MirInstructionKind::ActivateBorrow)
+            continue;
+          uniqueTransfer = uniqueTransfer && transfer == nullptr;
+          transfer = &instruction;
+        }
+      if (group && uniqueTransfer && transfer &&
+          transfer->kind == MirInstructionKind::Borrow &&
+          transfer->operands.size() == 1 &&
+          transfer->operands.front().kind == MirOperandKind::Loan &&
+          transfer->operands.front().loan == group->id &&
+          transfer->operands.front().value == block.terminator.value->value &&
+          transfer->operands.front().type == instance.returnType &&
+          loan->source == group->source && loan->access == group->access &&
+          loan->designatedFields == group->designatedFields &&
+          loan->conditions == group->conditions &&
+          loan->additionalDependencies == group->additionalDependencies)
+        verifiedValueEntry = group;
     }
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult) {
       std::vector<MirLoanDependency> actual{

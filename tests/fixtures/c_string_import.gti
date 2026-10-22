@@ -5,6 +5,9 @@
 using ErrorCallback = (int32_t, c_string) -> void;
 extern "C" {
   c_string foreign_message();
+  c_string foreign_owned_message();
+  void foreign_release_message(c_string text);
+  int32_t foreign_live_owners();
   c_string foreign_empty();
   c_string foreign_embedded();
   c_string foreign_bytes();
@@ -20,6 +23,21 @@ extern "C" {
   void adoption_check_cleanup();
 }
 
+// Native bytes have an external lifetime contract. This ordinary RAII
+// wrapper retains the native pointer and releases it after copying.
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  NativeText(NativeText&) = delete;
+  NativeText(NativeText&&) = delete;
+  ~NativeText() { foreign_release_message(this.text); }
+  std::string copy() {
+    if (this.text == nullptr) { return std::string(); }
+    unsafe { return std::string(this.text); }
+  }
+};
+
 void receive_error(int32_t code, c_string description) {
   unsafe {
     auto copied = std::string(description);
@@ -31,6 +49,15 @@ void receive_error(int32_t code, c_string description) {
 
 int main() {
   unsafe {
+    {
+      auto owned = NativeText(foreign_owned_message());
+      auto copied_native = owned.copy();
+      if (foreign_live_owners() != 1 || copied_native.view() != "native") { return 16; }
+      auto absent = NativeText(nullptr);
+      auto copied_absent = absent.copy();
+      if (!copied_absent.empty()) { return 17; }
+    }
+    if (foreign_live_owners() != 0) { return 18; }
     c_string no_address = nullptr;
     if (std::c_string_bytes(no_address) != nullptr) { return 14; }
     const uint8_t* address = std::c_string_bytes(foreign_message());

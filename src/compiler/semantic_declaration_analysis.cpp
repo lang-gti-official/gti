@@ -6900,6 +6900,58 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                  "non-nominal carriers cannot be stored as fields.",
                  "GTI-S2045");
       }
+      // As for an unconditional nested carrier, a borrowed field takes its
+      // carrier from an exact by-value parameter (optionally moved) or builds
+      // it in place. Copying the carrier out of a reference parameter would
+      // leave the field and the caller's object sharing one guarded group,
+      // which constructor publication does not represent.
+      for (const ConstructorInfo &constructor : owner.constructors) {
+        if (constructor.declaration == nullptr)
+          continue;
+        const auto &parameters = constructor.declaration->parameters();
+        for (const auto &initializer :
+             constructor.declaration->initializers()) {
+          if (initializer.target.name.segments.size() != 1 ||
+              initializer.arguments.size() != 1)
+            continue;
+          const auto member =
+              owner.members.find(initializer.target.name.last().lexeme);
+          if (member == owner.members.end() ||
+              member->second.symbol.staticMember ||
+              member->second.symbol.bindingKind != SemanticBindingKind::Field)
+            continue;
+          const SemanticType &fieldType = member->second.symbol.type;
+          if (fieldType.kind == SemanticType::Reference ||
+              !typeTraits(fieldType).containsBorrowedState)
+            continue;
+          const ExprPtr *argument = &initializer.arguments.front();
+          if (const Call *call = directCall(*argument)) {
+            const auto intrinsic = intrinsicCandidate(call->callee());
+            if (!intrinsic ||
+                intrinsic->record().intrinsic != IntrinsicKind::Move ||
+                call->arguments().size() != 1)
+              continue;
+            argument = &call->arguments().front();
+          }
+          const Variable *source = movedVariable(*argument);
+          if (source == nullptr)
+            continue;
+          for (std::size_t index = 0; index < parameters.size() &&
+                                      index < constructor.parameterTypes.size();
+               ++index) {
+            const SemanticType &parameter = constructor.parameterTypes[index];
+            if (parameters[index].name.lexeme == source->name().lexeme &&
+                parameter.kind == SemanticType::Reference &&
+                parameter.arguments.size() == 1 &&
+                parameter.arguments.front() == fieldType)
+              report(source->name(),
+                     "A borrowed field cannot copy its carrier out of a "
+                     "reference parameter; take the carrier by value, "
+                     "optionally using std::move.",
+                     "GTI-S2045");
+          }
+        }
+      }
       continue;
     }
     if (dependencies.size() > 1) {
