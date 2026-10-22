@@ -36,14 +36,14 @@ chains `Wrap(build(raw)).outer.inner.id` and `Wrap(make(raw)).outer.inner.id`
 from the value's slot, requires that no intermediate place is spelled, and
 refuses a non-prefix intermediate.
 
-A differential `--emit-cpp` against main `d2873bde`, with the candidate built
-from the task head before it was reconciled with `f0e13a1d` and one
-`GTI_STDLIB_PATH` for both compilers, covered 1810 programs in
+A differential `--emit-cpp` against main `f0e13a1d`, with one
+`GTI_STDLIB_PATH` for both compilers, covered 1811 programs in
 `tests/fixtures`, `tests/coverage` and `examples` at O0 and O3. Only the new
 fixture changed, from `GTI-B0001` to success. Every other program emits
 byte-identical C++, and the 736 pairs that fail with both compilers report
-identical diagnostics. The summed emission time was 1651.7 s before and
-1655.1 s after.
+identical diagnostics. The summed emission time was 1566.1 s before and
+1573.4 s after. An earlier revision compared against `d2873bde` changed the
+same fixture only.
 
 Still `GTI-B0001`, as on main: using a class assignment's whole result
 (`Point r = (p = q);`, `return (p = q);`, a by-value argument or a method
