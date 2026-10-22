@@ -35523,8 +35523,12 @@ private:
             staged.consumerKind ==
                 ClassSsaSlotConsumerKind::FieldInitialization) {
           const auto destination = destinationSpelling(facts, slot->id);
-          output << "std::destroy_at(std::addressof(" << destination << "));\n";
-          writeIndent();
+          // Deferred storage holds no field value to retire first.
+          if (!deferredFieldPlace(program, facts.body, *slot)) {
+            output << "std::destroy_at(std::addressof(" << destination
+                   << "));\n";
+            writeIndent();
+          }
           output << "::gti_internal::backend::construct_representation_at(std::"
                     "addressof("
                  << destination << "), std::move(__gti_mir_v_"
