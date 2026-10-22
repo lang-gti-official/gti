@@ -9,6 +9,31 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.461.0 — Recursive functions that return their caller's text
+
+- A recursive function can now return a view of its caller's text without
+  copying it. `std::string_view first(std::string_view s, int n) { if (n == 0)
+  { return s; } return first(s, n - 1); }` used to report `error[GTI-S2045]`
+  at `return s`. Now `first(line.view(), 3)` gives a view of `line` and keeps
+  `line` borrowed while the view is live. This also works for mutually
+  recursive functions and for a generic `T relay<T>(T s, int n)` with
+  `T = std::string_view`.
+- A recursion can likewise return a text field of a value or of the receiver.
+  `std::string_view textOf(Token t, int n)` returning `t.text` or
+  `textOf(t, n - 1)`, and a method returning `this.text` or
+  `this.skip(n - 1)`, now relay that field. Passing a `Token` that views a
+  local string used to report `error[GTI-S2045]`; the result now views that
+  string.
+- A recursion that swaps its parameters, returning `s` beside
+  `pick(t, s, n - 1)`, may return either one, so it is still rejected with
+  `error[GTI-S2045]`. A field version of it still requires ownerless text in
+  both values.
+- Two non-recursive compositions used to report `error[GTI-B0001]` (an
+  internal compiler error) and now compile: returning another relay's result,
+  as in `std::string_view outer(std::string_view s, int n) { return id(s, n);
+  }`, and relaying a field through a call with a computed argument, as in
+  `return first(t, n - 1);`.
+- New example: [171: recursive text relays](examples/171-recursive-text-relays.gti).
 ## 0.460.0 — Factories that return values over their text
 
 - A function that returns a fresh value over one of its text parameters now

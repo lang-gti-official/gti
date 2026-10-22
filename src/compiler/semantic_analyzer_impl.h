@@ -14,7 +14,11 @@
 
 #include <cassert>
 #include <chrono>
+#include <deque>
+#include <limits>
+#include <set>
 #include <span>
+#include <tuple>
 
 namespace lang {
 
@@ -4363,7 +4367,50 @@ private:
                                         const FunctionInfo &function,
                                         SemanticType ownerType);
 
-  std::unordered_set<const FunctionDecl *> activeTextBorrowSummaries;
+  // What a function's returns read, accumulated over the passes of a
+  // recursive summary: whether some return's provenance is unknown, the
+  // direct origins of its dependent returns, and the contract-formal text
+  // fields they read (L-OWN-02). The facts only grow.
+  struct TextRelaySources {
+    bool unknown = false;
+    std::set<std::pair<BorrowOriginKind, std::size_t>> direct;
+    std::set<std::tuple<BorrowOriginKind, std::size_t, SymbolId>> fields;
+
+    void add(const PredeclaredTextBorrowSource &source);
+    // A summary no further return can change: unknown or two origins.
+    [[nodiscard]] bool settled() const { return unknown || direct.size() > 1; }
+    friend bool operator==(const TextRelaySources &,
+                           const TextRelaySources &) = default;
+  };
+  [[nodiscard]] static std::optional<FunctionReturnBorrowSummary>
+  textRelaySummary(const TextRelaySources &sources);
+
+  // The text summaries of the outermost dynamicTextReturnBorrowSummary query,
+  // per declaration. A summary whose evaluation read one lower on the stack
+  // is provisional until the evaluation that read nothing lower completes.
+  struct TextBorrowSummaryEntry {
+    const FunctionDecl *declaration = nullptr;
+    TextRelaySources sources;
+    // The 1-based position on the evaluation stack while its returns are
+    // being evaluated, and zero otherwise.
+    std::size_t depth = 0;
+    // The lowest stack position a provisional summary depends on.
+    std::size_t lowestRead = 0;
+    bool provisional = false;
+    bool complete = false;
+  };
+  std::deque<TextBorrowSummaryEntry> textBorrowSummaries;
+  // Provisional summaries, in the order they were computed.
+  std::vector<std::size_t> provisionalTextBorrowSummaries;
+  std::size_t textBorrowSummaryDepth = 0;
+  // The lowest stack position the current evaluation has read.
+  std::size_t textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
+  // Whether a provisional summary grew in the current evaluation.
+  bool provisionalTextBorrowGrew = false;
+
+  // Whether `function`'s summary is still being computed: a call to it is
+  // recursive and reads its current approximation.
+  [[nodiscard]] bool textBorrowSummaryInProgress(const FunctionInfo &function);
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
   dynamicTextReturnBorrowSummary(
