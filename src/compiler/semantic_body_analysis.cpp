@@ -5,6 +5,10 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
+  deferredLookup.clear();
+  deferredExpansionDepth = 0;
+  deferredExpandedBodies = 0;
+  deferredActiveBodies.clear();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -2543,6 +2547,14 @@ auto SemanticVisitor::Impl::visitExternCDecl(const ExternCDecl &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
     -> void {
+  if (analyzeDeferredStatement(stmt))
+    return;
+  struct RestoreDeferredStatement {
+    const Call *&slot;
+    const Call *previous;
+    ~RestoreDeferredStatement() { slot = previous; }
+  } restoreDeferredStatement{deferredStatementCall, deferredStatementCall};
+  deferredStatementCall = directCall(stmt.expression());
   semanticModel.recordFullExpression(stmt, stmt.expression());
   const SemanticType resultType = analyze(stmt.expression());
   consumeTextDependentValue(stmt.expression());
@@ -2982,6 +2994,41 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   std::unordered_set<std::string> functionAttributeNames;
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
+    if (attribute.lexeme == "deferred") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute, "Duplicate function attribute 'deferred'.");
+      } else if (contract.argument || functionInfo == nullptr ||
+                 functionInfo->ownerClass != 0 || isEntryPoint ||
+                 functionInfo->returnType != SemanticType::Void ||
+                 stmt.hasCLinkage() || stmt.runtimeBinding() || !stmt.body() ||
+                 stmt.isConstexpr() || stmt.unsafeKeyword() ||
+                 stmt.operatorName() || stmt.hasFunctionAttribute("noreturn") ||
+                 std::any_of(stmt.parameters().begin(), stmt.parameters().end(),
+                             [](const Parameter &parameter) {
+                               return parameter.mutability ==
+                                          Mutability::Mutable ||
+                                      parameter.type.reference;
+                             })) {
+        reportContract(
+            attribute,
+            "A deferred helper requires a defined, safe, non-constexpr "
+            "namespace-scope void function with value parameters.");
+      } else if (!validDeferredBody(*stmt.body())) {
+        reportContract(
+            attribute,
+            "A deferred body supports blocks, ordinary if branches "
+            "and expressions without local binders or direct writes; "
+            "declarations, returns and loops require an ordinary "
+            "helper called from it.");
+      }
+      std::unordered_set<std::string> expressionParameters;
+      for (const auto &parameter : stmt.parameters())
+        if (!parameter.name.lexeme.empty() &&
+            !expressionParameters.insert(parameter.name.lexeme).second)
+          reportContract(parameter.name,
+                         "Deferred expression parameter names must be unique.");
+      continue;
+    }
     if (attribute.lexeme == "test") {
       if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute, "Duplicate function attribute 'test'.");
@@ -3350,7 +3397,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
-  if (!stmt.body() || !requirementsValid) {
+  if (!stmt.body() || !requirementsValid ||
+      stmt.hasFunctionAttribute("deferred")) {
+    // A deferred helper is a typed statement template, not a callable value.
+    // Its signature and body shape are checked here; actual substituted
+    // expressions are checked in caller flow at each concrete invocation.
+    if (stmt.body() && stmt.hasFunctionAttribute("deferred")) {
+      analyzedBodies.insert(&stmt);
+      semanticModel.recordAnalyzedFunctionBody(stmt);
+    }
     endRequirementScope();
     endTypeParameterScope();
     return;
@@ -7676,13 +7731,49 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  if (!validateSelectedFunction(viable.front().function, expr.callee(),
+  const bool resolvingDeferredProbe =
+      deferredProbe && deferredProbeCall == &expr;
+  if (!resolvingDeferredProbe &&
+      viable.front().function.record().deferredEvaluation &&
+      (deferredStatementCall != &expr ||
+       std::none_of(viable.front().function.parameterTypes.begin(),
+                    viable.front().function.parameterTypes.end(),
+                    [&](const SemanticType &type) {
+                      return containsOpenTypeParameter(type);
+                    }))) {
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::DeferredEvaluation, expr.paren(),
+                       {"A deferred helper must be invoked as a complete "
+                        "expression statement."}));
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const bool deferredTarget =
+      viable.front().function.record().deferredEvaluation;
+  if (resolvingDeferredProbe && deferredTarget) {
+    const auto &selected = viable.front();
+    semanticModel.record(
+        expr, ResolvedCallInfo{
+                  .function = selected.function.id,
+                  .declaration = selected.function.declaration,
+                  .returnType = selected.function.returnType,
+                  .parameterTypes = selected.function.parameterTypes,
+                  .typeArguments = selected.typeArguments,
+                  .valueArguments = selected.valueArguments,
+                  .requirements = selected.function.requirements,
+                  .tracksCaller = selected.function.record().tracksCaller});
+    currentType = callExpressionType(selected.function.returnType);
+    return;
+  }
+  if (!(resolvingDeferredProbe && deferredTarget) &&
+      !validateSelectedFunction(viable.front().function, expr.callee(),
                                 expr.paren(), expr.arguments(),
                                 viable.front().receiverMode)) {
     currentType = SemanticType::Unknown;
     return;
   }
-  if (!validateConfinedCallableArguments(
+  if (!(resolvingDeferredProbe && deferredTarget) &&
+      !validateConfinedCallableArguments(
           *viable.front().source, viable.front().function,
           viable.front().argumentAnalysis.types, expr.arguments())) {
     currentType = SemanticType::Unknown;
@@ -13718,6 +13809,8 @@ auto SemanticVisitor::Impl::summarizeFlow(
             .normalReturn = returns ? returned : nullptr};
   }
   if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
+    if (const Stmt *expanded = semanticModel.findDeferredExpansion(*expression))
+      return summarizeFlow(expanded, normalReturns, structural);
     return {.canFallThrough =
                 !expressionNeverReturns(expression->expression().get())};
   }

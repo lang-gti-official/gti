@@ -1,0 +1,101 @@
+#include <std/assert>
+#include <std/string>
+#include <std/source_location>
+
+struct Observations {
+  static mut int conditions = 0;
+  static mut int messages = 0;
+  static mut int recorded = 0;
+  static mut uint32_t source_line = uint32_t(0);
+};
+
+struct Record {
+  std::string text;
+  Record(std::string value) : text(std::move(value)) {}
+};
+
+bool check_state() {
+  Observations::conditions++;
+  return true;
+}
+
+int expensive_message() {
+  Observations::messages++;
+  return 42;
+}
+
+bool consume_condition(std::string value) { return !value.empty(); }
+
+namespace application {
+  void record(int number) { Observations::recorded = number; }
+
+  // This application API uses exactly the same mechanism as std::assert.
+  [[deferred]] void when(bool enabled, int value) {
+    if (enabled) { record(value); }
+  }
+
+  bool has_text(Record& value) { return !value.text.empty(); }
+  void consume_record(Record value) { std::assert(!value.text.empty()); }
+
+  [[deferred]] void inspect(bool enabled, Record value) {
+    if (enabled) { std::assert(has_text(value)); }
+  }
+
+  [[deferred]] void choose(bool first, Record left, Record right) {
+    if (first) { consume_record(left); } else { consume_record(right); }
+  }
+
+  [[deferred]] void invoke_if<F>(bool enabled, F operation) {
+    if (enabled) { operation(); }
+  }
+
+  void record_location(std::source_location location) {
+    Observations::source_line = location.line();
+  }
+
+  [[deferred]] void remember(bool enabled,
+      std::source_location location = std::source_location::current()) {
+    if (enabled) { record_location(location); }
+  }
+}
+
+int main() {
+  int record = 99; // Must not shadow application::record in its helper body.
+  mut int local = 0;
+  std::assert(local++ == 0, "unexpected count {}", expensive_message());
+  std::assert(check_state(), "unexpected state {}", expensive_message());
+  std::debug_assert(check_state(), "debug state {}", expensive_message());
+  application::when(false, expensive_message());
+  application::when(true, 7);
+  auto callback = []() -> void { Observations::recorded = 8; };
+  application::invoke_if(false, callback);
+  if (Observations::recorded != 7) { return 7; }
+  application::invoke_if(true, callback);
+  application::remember(false);
+  application::remember(true);
+  uint32_t next_line = std::source_location::current().line();
+  if (Observations::source_line + uint32_t(1) != next_line) { return 8; }
+  Record inspected(std::string("read, not copied or moved"));
+  application::inspect(true, inspected);
+  if (inspected.text.view() != "read, not copied or moved") { return 6; }
+  Record selected(std::string("consumed once"));
+  application::choose(std::debug_assertions_enabled,
+                      std::move(selected), std::move(selected));
+  std::string owner{"retained"};
+  std::assert(true, "{}", std::move(owner));
+  std::string condition_owner{"owned condition"};
+  std::debug_assert(consume_condition(std::move(condition_owner)));
+#ifdef NDEBUG
+  if (condition_owner.view() != "owned condition") { return 5; }
+#endif
+  if (owner.view() != "retained") { return 1; }
+  if (local != 1 || record != 99 || Observations::messages != 0 || Observations::recorded != 8) {
+    return 2;
+  }
+#ifdef NDEBUG
+  if (Observations::conditions != 1) { return 3; }
+#else
+  if (Observations::conditions != 2) { return 4; }
+#endif
+  return 0;
+}

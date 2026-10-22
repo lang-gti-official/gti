@@ -4801,6 +4801,10 @@
             },
             {
               "type": "STRING",
+              "value": "deferred"
+            },
+            {
+              "type": "STRING",
               "value": "thread_confined_callback"
             },
             {
@@ -4836,6 +4840,10 @@
                   {
                     "type": "STRING",
                     "value": "discardable"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "deferred"
                   },
                   {
                     "type": "STRING",

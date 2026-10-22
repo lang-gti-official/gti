@@ -1048,6 +1048,7 @@ private:
             attribute.name.lexeme == "track_caller" ||
             attribute.name.lexeme == "thread_confined_callback" ||
             attribute.name.lexeme == "discardable" ||
+            attribute.name.lexeme == "deferred" ||
             attribute.name.lexeme == "borrowed_from";
       }
       if (functionAttributeList) {

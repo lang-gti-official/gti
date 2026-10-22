@@ -181,6 +181,8 @@ void testDiscoveryParsingAndResolution() {
                development->executionProfile ==
                    lang::ExecutionProfile::SingleThreaded &&
                !development->keepCpp && !development->debugInfo &&
+               development->defines.empty() && release &&
+               release->defines == lang::ConfigurationFlags({"NDEBUG"}) &&
                development->dependencyWarnings,
            "the built-in dev profile should have stable defaults");
     expect(

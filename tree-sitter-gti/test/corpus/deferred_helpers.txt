@@ -1,0 +1,28 @@
+==================
+Confined deferred statement helpers
+==================
+
+[[deferred]] void ignore(bool condition) {}
+[[deferred, track_caller]] void checked(bool condition) {}
+
+---
+
+(source_file
+  (function_declaration
+    (function_contract_attribute)
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter_declaration
+        (type)
+        (identifier)))
+    (block))
+  (function_declaration
+    (function_contract_attribute)
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter_declaration
+        (type)
+        (identifier)))
+    (block)))
