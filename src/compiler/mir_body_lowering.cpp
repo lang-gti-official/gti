@@ -4121,14 +4121,18 @@ private:
         // A class-valued temporary is an SSA value, not a pre-existing place.
         // Project from that value after emitPlaceDependencies() materializes
         // it. Rooting this place at the member result would make the following
-        // Load read its own result before definition.
+        // Load read its own result before definition. An assignment's value
+        // is the copy of its destination placed after the Assign.
         if (place == 0) {
           const HirValue *receiver = findValue(value->operands.front());
           if (receiver != nullptr &&
               receiver->info.category == ValueCategory::Value &&
               receiver->info.type.kind == SemanticType::Class) {
+            const auto copy = assignmentSnapshots.find(receiver->id);
             place = appendPlace({.root = MirPlaceRootKind::Value,
-                                 .value = mirValueFor(*receiver),
+                                 .value = copy == assignmentSnapshots.end()
+                                              ? mirValueFor(*receiver)
+                                              : copy->second,
                                  .type = value->info.type,
                                  .access = value->info.access,
                                  .traits = value->info.traits,
@@ -4672,12 +4676,11 @@ private:
     return found->second;
   }
 
-  // The Load that assignmentResultSnapshot() requests, and the read-only
-  // place that projections of the assignment result are rooted at.
-  [[nodiscard]] MirPlaceId emitAssignmentResultCopy(const HirValue &value,
-                                                    MirPlaceId destination) {
+  // The Load that assignmentResultSnapshot() requests. Projections of the
+  // assignment result are rooted at its value, as for any class temporary.
+  void emitAssignmentResultCopy(const HirValue &value, MirPlaceId destination) {
     if (destination == 0 || terminated()) {
-      return 0;
+      return;
     }
     ExpressionInfo info = value.info;
     info.category = ValueCategory::Value;
@@ -4696,12 +4699,6 @@ private:
                              .info = info},
                             false);
     assignmentSnapshots.emplace(value.id, snapshot);
-    return appendPlace({.root = MirPlaceRootKind::Value,
-                        .value = snapshot,
-                        .type = value.info.type,
-                        .access = AccessMode::ReadOnly,
-                        .traits = value.info.traits,
-                        .sourceValue = value.id});
   }
 
   // A projected array used as another index's base must finish its checked
@@ -10085,18 +10082,17 @@ private:
             if (instruction.id == preparation)
               instruction.replacementPair = assignment;
       }
-      const MirPlaceId resultCopy =
-          assignmentSnapshotRequests.contains(id)
-              ? emitAssignmentResultCopy(*value, destination)
-              : 0;
+      if (assignmentSnapshotRequests.contains(id)) {
+        emitAssignmentResultCopy(*value, destination);
+      }
       emittedValues.insert(id);
       if (overloadedBorrowStore) {
         endConsumedCallResultLoans({value->id}, *value);
       }
-      // Projections of the result read its copy. Record that place only after
-      // the store's accessor loan has ended through its own place.
-      if (resultCopy != 0) {
-        valuePlaces.insert_or_assign(value->id, resultCopy);
+      // Projections of the result read its copy, never the store's accessor
+      // place, whose loan has now ended.
+      if (assignmentSnapshots.contains(id)) {
+        valuePlaces.erase(id);
       }
       return;
     }
