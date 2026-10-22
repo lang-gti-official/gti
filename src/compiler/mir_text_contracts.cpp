@@ -253,8 +253,9 @@ private:
   // The formal or receiver of a publishable class that `place` names in a
   // field-contract function: its whole value (field 0), or one of its direct
   // text fields. Other paths name neither.
-  std::optional<OwnerlessTextField> contractPlace(const TextBody &context,
-                                                  const MirPlace &place) const {
+  std::optional<OwnerlessTextField>
+  contractPlace(const TextBody &context, const MirPlace &place,
+                bool payloadField = false) const {
     if (!context.fieldContracts)
       return std::nullopt;
     OwnerlessTextField formal;
@@ -293,15 +294,64 @@ private:
       return formal;
     if (place.projections.size() == offset + 1 &&
         place.projections[offset].kind == MirProjectionKind::Field &&
-        directTextField(program, type, place.projections[offset].field)) {
+        (payloadField ? payloadEnumField(type, place.projections[offset].field)
+                      : directTextField(program, type,
+                                        place.projections[offset].field))) {
       formal.field = place.projections[offset].field;
       return formal;
     }
     return std::nullopt;
   }
 
-  // The direct text fields of a formal's or the receiver's class.
-  std::vector<SymbolId>
+  // Whether `field` is a payload-enum field of the class `type`.
+  bool payloadEnumField(const SemanticType &type, SymbolId field) const {
+    const auto instance = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &candidate) { return candidate.type == type; });
+    return instance != program.classInstances().end() &&
+           std::any_of(instance->declaredFields.begin(),
+                       instance->declaredFields.end(), [&](const auto &entry) {
+                         return entry.symbol == field &&
+                                program.findPayloadEnum(entry.type) != nullptr;
+                       });
+  }
+
+  // The payload requirement a payload extraction from a contract formal's
+  // or the receiver's payload-enum field places on its text payload: binding
+  // the payload requires it ownerless at each call.
+  std::optional<OwnerlessTextField>
+  contractPayloadExtraction(const TextBody &context,
+                            const MirInstruction &instruction) const {
+    if (instruction.kind != MirInstructionKind::Compute ||
+        instruction.operation != MirOperation::PayloadExtract ||
+        instruction.operands.size() != 1 || !instruction.enumVariant ||
+        !instruction.payloadIndex)
+      return std::nullopt;
+    const auto &subject = instruction.operands.front();
+    const auto *loan = subject.kind == MirOperandKind::Loan
+                           ? context.body.findLoan(subject.loan)
+                           : nullptr;
+    const auto *place =
+        subject.kind == MirOperandKind::Value
+            ? nullptr
+            : context.body.findPlace(loan ? loan->source : subject.place);
+    auto formal = place ? contractPlace(context, *place, true) : std::nullopt;
+    const auto *enumeration = program.findPayloadEnum(subject.type);
+    if (!formal || formal->field == 0 || enumeration == nullptr ||
+        *instruction.enumVariant >= enumeration->variants.size())
+      return std::nullopt;
+    const auto &variant = enumeration->variants[*instruction.enumVariant];
+    if (*instruction.payloadIndex >= variant.payloadSymbols.size() ||
+        !directTextPayload(program, subject.type,
+                           variant.payloadSymbols[*instruction.payloadIndex]))
+      return std::nullopt;
+    formal->payload = variant.payloadSymbols[*instruction.payloadIndex];
+    return formal;
+  }
+
+  // The direct text fields of a formal's or the receiver's class, and the
+  // text payloads of its payload-enum fields.
+  std::vector<OwnerlessTextField>
   formalTextFields(const TextBody &context,
                    const OwnerlessTextField &formal) const {
     SemanticType type = SemanticType::Unknown;
@@ -316,21 +366,37 @@ private:
       if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
         type = SemanticType(type.arguments.front());
     }
-    std::vector<SymbolId> fields;
+    std::vector<OwnerlessTextField> fields;
     const auto instance = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
         [&](const auto &candidate) { return candidate.type == type; });
-    if (instance != program.classInstances().end())
-      for (const auto &field : instance->declaredFields)
-        if (textType(field.type))
-          fields.push_back(field.symbol);
+    if (instance == program.classInstances().end())
+      return fields;
+    for (const auto &field : instance->declaredFields) {
+      if (textType(field.type))
+        fields.push_back({.receiver = formal.receiver,
+                          .parameter = formal.parameter,
+                          .field = field.symbol});
+      if (instance->traits.containsBorrowedState)
+        continue;
+      if (const auto *enumeration = program.findPayloadEnum(field.type))
+        for (const auto &variant : enumeration->variants)
+          for (const SymbolId payload : variant.payloadSymbols)
+            if (directTextPayload(program, field.type, payload))
+              fields.push_back({.receiver = formal.receiver,
+                                .parameter = formal.parameter,
+                                .field = field.symbol,
+                                .payload = payload});
+    }
     return fields;
   }
 
-  // The text field that a dependent carrier operand's Stored loan designates:
-  // a binding the loan carries, or the construction result it produced.
-  std::optional<SymbolId>
-  dependentDesignation(const MirBody &body, const MirOperand &operand) const {
+  // The text path that a dependent carrier operand's Stored loan designates
+  // within the operand: from a binding the loan carries, or a field of it
+  // that the path goes through, or from the construction result it produced.
+  std::optional<TextFieldPath>
+  dependentDesignationPath(const MirBody &body,
+                           const MirOperand &operand) const {
     const auto *loan = operand.kind == MirOperandKind::Loan
                            ? body.findLoan(operand.loan)
                            : nullptr;
@@ -345,36 +411,67 @@ private:
     const SemanticType *type = value   ? &value->info.type
                                : place ? &place->type
                                        : nullptr;
-    for (const auto &candidate : body.loans)
-      if (type && candidate.kind == MirLoanKind::Stored &&
-          candidate.designatedFields.size() == 1 &&
-          (directTextField(program, *type,
-                           candidate.designatedFields.front()) ||
-           directTextPayload(program, *type,
-                             candidate.designatedFields.front())) &&
-          ((place && place->root == MirPlaceRootKind::Binding &&
-            place->projections.empty() &&
-            std::find(candidate.carriers.begin(), candidate.carriers.end(),
-                      place->binding) != candidate.carriers.end()) ||
-           (value && value->sourceValue == candidate.producedBy)))
-        return candidate.designatedFields.front();
+    const bool fieldPrefix =
+        place && place->root == MirPlaceRootKind::Binding &&
+        std::all_of(place->projections.begin(), place->projections.end(),
+                    [](const auto &projection) {
+                      return projection.kind == MirProjectionKind::Field;
+                    });
+    for (const auto &candidate : body.loans) {
+      if (!type || candidate.kind != MirLoanKind::Stored)
+        continue;
+      std::size_t prefix = 0;
+      if (fieldPrefix &&
+          std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                    place->binding) != candidate.carriers.end() &&
+          place->projections.size() < candidate.designatedFields.size() &&
+          std::equal(place->projections.begin(), place->projections.end(),
+                     candidate.designatedFields.begin(),
+                     [](const auto &projection, SymbolId field) {
+                       return projection.field == field;
+                     }))
+        prefix = place->projections.size();
+      else if (!(value && value->sourceValue == candidate.producedBy) &&
+               !(fieldPrefix && place->projections.empty() &&
+                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                           place->binding) != candidate.carriers.end()))
+        continue;
+      const TextFieldPath tail(candidate.designatedFields.begin() +
+                                   static_cast<std::ptrdiff_t>(prefix),
+                               candidate.designatedFields.end());
+      if ((tail.size() == 1 &&
+           (directTextField(program, *type, tail.front()) ||
+            directTextPayload(program, *type, tail.front()))) ||
+          (tail.size() == 2 && directTextPath(program, *type, tail)))
+        return tail;
+    }
     return std::nullopt;
+  }
+
+  // The direct text field or payload that it designates.
+  std::optional<SymbolId>
+  dependentDesignation(const MirBody &body, const MirOperand &operand) const {
+    const auto path = dependentDesignationPath(body, operand);
+    return path && path->size() == 1 ? std::optional{path->front()}
+                                     : std::nullopt;
   }
 
   // What a call's argument or receiver holds in one of its direct text
   // fields: that field of a formal or the receiver here, unknown text where a
   // dependent carrier designates the field, and ownerless text otherwise.
   TextSources heldFieldSources(const TextBody &context,
-                               const MirOperand &operand,
-                               SymbolId field) const {
+                               const MirOperand &operand, SymbolId field,
+                               SymbolId payload = 0) const {
     const MirOperand *held = &operand;
     if (held->kind == MirOperandKind::Value)
       if (const auto *input = definition(context.body, held->value);
           input != nullptr && input->kind == MirInstructionKind::CallInput &&
           input->operands.size() == 1)
         held = &input->operands.front();
-    if (const auto designated = dependentDesignation(context.body, *held))
-      return *designated == field ? TextSources{} : TextSources{.known = true};
+    const TextFieldPath path =
+        payload == 0 ? TextFieldPath{field} : TextFieldPath{field, payload};
+    if (const auto designated = dependentDesignationPath(context.body, *held))
+      return *designated == path ? TextSources{} : TextSources{.known = true};
     const auto *loan = held->kind == MirOperandKind::Loan
                            ? context.body.findLoan(held->loan)
                            : nullptr;
@@ -388,7 +485,8 @@ private:
       return {.known = true,
               .fields = {{.receiver = formal->receiver,
                           .parameter = formal->parameter,
-                          .field = field}}};
+                          .field = field,
+                          .payload = payload}}};
     return {.known = true};
   }
 
@@ -538,6 +636,12 @@ private:
            *instruction->payloadIndex >= variant->payloadSymbols.size() ||
            variant->payloadSymbols[*instruction->payloadIndex] == *designated);
       answer.known = !dependent;
+      // A contract formal's or the receiver's payload holds what the caller
+      // passed there, under the function's field contract.
+      if (!dependent)
+        if (const auto payload =
+                contractPayloadExtraction(context, *instruction))
+          answer.fields.insert(*payload);
     } else if (instruction && instruction->operands.size() == 1 &&
                (instruction->kind == MirInstructionKind::Load ||
                 instruction->kind == MirInstructionKind::CallInput ||
@@ -603,7 +707,8 @@ private:
         answer.known = false;
         continue;
       }
-      answer.join(heldFieldSources(context, *origin, field.field));
+      answer.join(
+          heldFieldSources(context, *origin, field.field, field.payload));
     }
     return answer;
   }
@@ -822,10 +927,9 @@ private:
   // whole argument, whose stored text that initializer accounts for.
   bool fieldInitializerValue(const TextBody &context,
                              const MirInstruction &instruction) const {
-    const auto *value =
-        context.constructor && instruction.result
-            ? context.body.findValue(*instruction.result)
-            : nullptr;
+    const auto *value = context.constructor && instruction.result
+                            ? context.body.findValue(*instruction.result)
+                            : nullptr;
     return value != nullptr &&
            std::any_of(context.constructor->initializers.begin(),
                        context.constructor->initializers.end(),
@@ -843,10 +947,11 @@ private:
   // of its text payloads. A formal that alone fills one, in a field the
   // constructor never reads back through `this`, may be published at the
   // path to that payload.
-  void payloadInitializerTextInputs(const TextBody &context,
-                                    const MirConstructorInitializer &initializer,
-                                    bool diagnose, InitializerTextInputs &inputs,
-                                    std::map<std::size_t, std::size_t> &uses) {
+  void
+  payloadInitializerTextInputs(const TextBody &context,
+                               const MirConstructorInitializer &initializer,
+                               bool diagnose, InitializerTextInputs &inputs,
+                               std::map<std::size_t, std::size_t> &uses) {
     const auto found = std::find_if(
         context.body.values.begin(), context.body.values.end(),
         [&](const auto &value) {
@@ -966,7 +1071,13 @@ private:
       neededFields.insert(source.fields.begin(), source.fields.end());
     };
     // A whole formal or receiver value: every text field may outlive the call.
-    const auto wholeUse = [&](const MirOperand &operand) {
+    // A reference to text that a call returned is not one: its readers
+    // resolve the text it designates through the callee's returns.
+    const auto wholeUse =
+        [&](const MirOperand &operand) -> std::optional<OwnerlessTextField> {
+      if (operand.kind == MirOperandKind::Loan &&
+          textReferenceCall(context.body, operand.loan))
+        return std::nullopt;
       const auto *loan = operand.kind == MirOperandKind::Loan
                              ? context.body.findLoan(operand.loan)
                              : nullptr;
@@ -976,16 +1087,26 @@ private:
       return formal && formal->field == 0 ? formal : std::nullopt;
     };
     const auto requireAllFields = [&](const OwnerlessTextField &formal) {
-      for (const SymbolId field : formalTextFields(context, formal))
-        neededFields.insert({.receiver = formal.receiver,
-                             .parameter = formal.parameter,
-                             .field = field});
+      for (const auto &field : formalTextFields(context, formal))
+        neededFields.insert(field);
     };
     // The call that consumes a CallInput's result, and the callee formal or
     // receiver it binds. A later checked argument places the call in another
     // block than the input.
     const auto consumer = [&](const MirInstruction &input)
         -> std::pair<const MirInstruction *, OwnerlessTextField> {
+      // A borrow that a call returning a reference to text takes as its
+      // receiver forwards like an input: readers resolve the returned text
+      // through the callee's returns.
+      if (input.kind == MirInstructionKind::Borrow && input.loan)
+        for (const auto &block : context.body.blocks)
+          for (const auto &candidate : block.instructions)
+            if (candidate.kind == MirInstructionKind::Call &&
+                candidate.receiver &&
+                candidate.receiver->kind == MirOperandKind::Loan &&
+                candidate.receiver->loan == *input.loan && candidate.loan &&
+                textReferenceCall(context.body, *candidate.loan) == &candidate)
+              return {&candidate, {.receiver = true}};
       if (input.kind != MirInstructionKind::CallInput || !input.result)
         return {nullptr, {}};
       for (const auto &block : context.body.blocks)
@@ -1049,11 +1170,20 @@ private:
       for (const auto &instruction : block.instructions) {
         // Whole-value uses of a formal or the receiver, and forwarding.
         if (context.fieldContracts) {
-          const auto visit = [&](const MirOperand &operand) {
+          const auto visit = [&](const MirOperand &operand, bool receiver) {
             const auto formal = wholeUse(operand);
             if (!formal)
               return;
-            const auto [call, calleeFormal] = consumer(instruction);
+            // A call returning a reference to text takes its receiver as an
+            // input does: readers resolve the returned text.
+            auto [call, calleeFormal] = consumer(instruction);
+            if (receiver && instruction.kind == MirInstructionKind::Call &&
+                instruction.loan &&
+                textReferenceCall(context.body, *instruction.loan) ==
+                    &instruction) {
+              call = &instruction;
+              calleeFormal = {.receiver = true};
+            }
             const auto *target =
                 forwardTarget(call, calleeFormal, formalType(*formal));
             if (!target) {
@@ -1065,19 +1195,20 @@ private:
                   (field.receiver || field.parameter == calleeFormal.parameter))
                 neededFields.insert({.receiver = formal->receiver,
                                      .parameter = formal->parameter,
-                                     .field = field.field});
+                                     .field = field.field,
+                                     .payload = field.payload});
           };
           for (const auto &operand : instruction.operands)
-            visit(operand);
+            visit(operand, false);
           if (instruction.receiver)
-            visit(*instruction.receiver);
+            visit(*instruction.receiver, true);
         }
         // A dependent value relayed as a formal or receiver: its callee
         // must carry a contract that lets none of its fields outlive the
         // call.
         if (diagnose && instruction.kind == MirInstructionKind::CallInput &&
             instruction.operands.size() == 1)
-          if (const auto designated = dependentDesignation(
+          if (const auto designated = dependentDesignationPath(
                   context.body, instruction.operands.front())) {
             const auto [call, calleeFormal] = consumer(instruction);
             const auto *target =
@@ -1085,9 +1216,11 @@ private:
                         call->functionTarget
                     ? program.findFunctionInstance(*call->functionTarget)
                     : nullptr;
-            const OwnerlessTextField field{.receiver = calleeFormal.receiver,
-                                           .parameter = calleeFormal.parameter,
-                                           .field = *designated};
+            const OwnerlessTextField field{
+                .receiver = calleeFormal.receiver,
+                .parameter = calleeFormal.parameter,
+                .field = designated->front(),
+                .payload = designated->size() == 2 ? designated->back() : 0};
             if (!target || !fieldContractFunction(program, *target) ||
                 !readOnlyContractFormal(*target, calleeFormal) ||
                 std::binary_search(target->ownerlessTextFields.begin(),
@@ -1197,8 +1330,8 @@ private:
             // A constructor's field initializer accounts for the text it
             // stores in its payload (`initializerTextInputs`).
             if (!fieldInitializerValue(context, instruction))
-              for (std::size_t index = 0; index < fields.size() &&
-                                          index < instruction.operands.size();
+              for (std::size_t index = 0;
+                   index < fields.size() && index < instruction.operands.size();
                    ++index)
                 if (textType(fields[index]) && !published(index))
                   require(instruction, instruction.operands[index]);
@@ -1266,7 +1399,17 @@ private:
         if (const auto formal = wholeUse(operand))
           requireAllFields(*formal);
       };
-      if (terminator.value)
+      // A returned reference to text that a call returned designates what
+      // the callee's returns do; callers resolve it through returnSources.
+      const bool returnedTextReference =
+          terminator.kind == MirTerminatorKind::Return && terminator.value &&
+          terminator.value->kind == MirOperandKind::Loan &&
+          (textReferenceCall(context.body, terminator.value->loan) || [&] {
+            const auto *forwarded =
+                forwardedLoan(context.body, terminator.value->loan);
+            return forwarded && textReferenceCall(context.body, *forwarded);
+          }());
+      if (terminator.value && !returnedTextReference)
         edge(*terminator.value);
       for (const auto &operand : terminator.targetArguments)
         edge(operand);

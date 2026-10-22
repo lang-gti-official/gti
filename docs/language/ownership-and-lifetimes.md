@@ -2466,10 +2466,10 @@ case Lexeme::count(value): break;
 Such a value follows the class rules above: it may initialize, copy or move a
 local, and it keeps its owner borrowed while it is live. Only the published
 payload depends on the owner; another text payload of the same construction
-stays ownerless. In this release a dependent payload value is only observed
-by a `switch`: it is not yet passed to functions, consumed by `switch
-(std::move(value))`, or bound by an `auto&` pattern at the dependent payload,
-and the enum must not be generic.
+stays ownerless. A generic enum's instance publishes the same way. In this
+release a dependent payload value is only observed by a `switch`: it is not
+yet passed to functions, consumed by `switch (std::move(value))`, or bound by
+an `auto&` pattern at the dependent payload.
 
 A temporary holds the dependency within its expression. Reading its published
 field, passing it to a function that relays the field, or calling a method
@@ -2542,9 +2542,11 @@ std::string_view copy = token.ref();      // keeps input and token borrowed
 kept = token.ref();                       // GTI-S2045
 ```
 
-A dependent value still cannot call any other reference accessor or be
-passed to a function that calls one on it, `GTI-S2045`. This covers an
-accessor through a payload, and one that returns another call's reference.
+A method that returns another such accessor's reference of its read-only
+receiver, as `std::string_view& alias() { return this.ref(); }` does, relays
+what that accessor relays. A dependent value still cannot call any other
+reference accessor or be passed to a function that calls one on it,
+`GTI-S2045`.
 
 The methods of a generic class follow the same rules in each instance whose
 fields are text. A method whose returns all yield one type-parameter field of
@@ -2570,6 +2572,68 @@ box.save(out);                            // GTI-S2045
 Box<int> number = Box<int>(5);
 number.save(count);                       // valid
 ```
+
+#### Payload-enum fields
+
+A class may hold the text in a payload of one of its payload-enum fields. A
+constructor initializer that stores a by-value text formal as one payload of
+the field's construction, as in `word(Word::text(text))` or
+`state(Slot<T>::full(std::move(value)))`, publishes each call's argument at
+that payload of that field, as it would at a text field:
+
+```gti
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  int column;
+  Line(std::string_view text, int column)
+      : word(Word::text(text)), column(column) {}
+};
+
+Line line = Line(input.view(), 3);        // line.word's payload views input
+switch (line.word) {
+case Word::text(value): std::println(value); break;   // a view of input
+case Word::none: break;
+}
+Word word = line.word;                     // GTI-S2045
+```
+
+A `switch` on the field observes the payload, which binds a dependent view.
+The field cannot yet be copied or moved out of its value. The value may be
+passed to a function or call a method that keeps the payload within the call.
+A function that binds a payload of its formal's or receiver's field in a
+`switch` requires that payload ownerless, unless the binding is a read-only
+reference that the whole arm returns: that relays the payload by reference,
+as an accessor of a text field does. A method returning such an accessor's
+reference composes the relay, and so do overloaded `*` and `->` operators that
+return it. A method that only tests the alternative, without binding the
+payload, requires nothing.
+
+`std::optional<std::string_view>` and `expected<std::string_view, E>` are
+ordinary classes of this shape, so a value over a local owner can test and
+read its success view:
+
+```gti
+std::optional<std::string_view> maybe =
+    std::optional<std::string_view>(input.view());
+if (maybe) {
+  std::println(*maybe);                    // a view of input
+  std::string_view view = maybe.value();   // keeps input borrowed
+}
+kept = maybe.value();                      // GTI-S2045
+maybe.value_or("none");                    // GTI-S2045: value_or binds by value
+expected<std::string_view, int> parsed =
+    expected<std::string_view, int>(input.view());
+if (parsed.has_value()) {
+  std::println(parsed.value());            // a view of input
+}
+```
+
+An optional or expected over literal text is ownerless and may be returned or
+stored. One over a local owner must be built by an explicit construction: an
+implicit conversion such as `std::optional<std::string_view> maybe =
+input.view();` still requires ownerless text, as does `std::move(maybe).value()`.
 
 An adapter that needs to retain dynamic input can instead declare a checked
 `std::string_view&` or `c_string&` field and accept the same reference type in its
