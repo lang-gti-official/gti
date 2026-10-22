@@ -1151,6 +1151,11 @@ bool isOwnerlessTextFieldProjection(const MirProgram &program,
       return false;
     current = root.type;
   }
+  // A temporary's field view may be its value's only place; the value then
+  // names the record type.
+  if (!current && place.root == MirPlaceRootKind::Value)
+    if (const auto *value = body.findValue(place.value))
+      current = value->info.type;
   if (!current)
     return false;
   for (const auto &projection : place.projections) {

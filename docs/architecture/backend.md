@@ -1556,7 +1556,15 @@ does a failure-free `Move` of a whole object out of a place, as in
 spells through its verified field chain. The constructor form also
 requires exact target, owner, result, parameter, and operand metadata; one
 single-field projection; a trivial scalar copy load; and no active cleanup,
-lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
+lifecycle, borrowed-state, or drop obligation. A text view field
+(`std::string_view` or `c_string`) is read the same way: the view is a passive
+descriptor whose text is never the temporary's own storage. A construction that
+publishes a local owner's text (`L-OWN-02`) holds borrowed state only as that
+verified `Stored` loan, so it too may take this one field read, though no
+transfer consumer. A text size or emptiness observer whose borrowed receiver is
+the projected view is the read itself, as a copying `Load` is; the slot retires
+right after it. The owned-result field view below admits the same observer.
+Additional consumers, nested or
 non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject this route rather than falling back to native temporary behavior.
 A cleanup-owning class result keeps MIR's value-rooted slot and its
@@ -1577,8 +1585,9 @@ and a field lent to one member call as in `make_named().text.size()`, in
 function bodies as well as field defaults, member initializers and base
 argument preparations, whose carrier holds the slot. A view is a pure field
 projection of the result's value root with exact field rows. It carries no
-loan or drop and is touched only by copying `Load`s or by read-only borrow
-stages consumed by one call. It declares no local and spells
+loan or drop and is touched only by copying `Load`s, by text size or emptiness
+observers, or by read-only borrow stages consumed by one call. It declares no
+local and spells
 `slot.get().field`, so a field class without a default constructor is never
 default-constructed. MIR's verified initialization bounds every read, and the
 result is destroyed exactly once by MIR's normal-path or failure-cleanup Drop.

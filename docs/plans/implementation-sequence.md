@@ -327,7 +327,7 @@ workflow determine task scope and integration.
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phases 1a, 1b-i and the 1b-ii returns and payloads implemented; temporaries next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums now hold the same dependency in a text payload. Phase 1b-ii ends with temporaries. Later phases cover generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phase 1 implemented; phase 2 (generic types) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Later phases cover generic types, nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
@@ -8957,9 +8957,9 @@ prerequisite checkpoints as full acceptance.
 ### L-OWN-02: Owner-Tracked View Fields
 
 - **State/role:** owner decision 2026-10-21 (option 1 of the caller-owned text
-  question in the 0.449.0 follow-ups). Phases 1a (local class and struct
-  values), 1b-i (relays and receivers) and the returns and payload enums of
-  phase 1b-ii are implemented; temporaries and phases 2–4 are planned.
+  question in the 0.449.0 follow-ups). Phase 1 is implemented: 1a (local class
+  and struct values), 1b-i (relays and receivers) and 1b-ii (returns, payload
+  enums and temporaries). Phases 2–4 are planned.
 - **Problem and client:** no field can hold a view of caller-owned text. A
   `std::string_view` or `c_string` field, a payload-enum alternative of either
   type, and the storage of any constructor that keeps a text parameter accept
@@ -9069,8 +9069,17 @@ prerequisite checkpoints as full acceptance.
       dependency from the subject's designation. Deferred: relays and returns
       of enum values, consuming switches, `auto&` bindings of the dependent
       payload, and generic enums (phase 2).
-    - Text-field reads of class temporaries, which today's C++ backend refuses
-      even for an ownerless temporary.
+    - *Implemented in 0.458.0: temporaries.* A class temporary may be read
+      within its expression. An ownerless temporary's text field is ownerless
+      text, so it may be stored or returned. A dependent one's field, a relay
+      that receives it, or a method relay of its field gives a view of the
+      owner, which may outlive the temporary. Semantics needed only the
+      fresh-receiver admission of a text field relay. MIR lowering takes a
+      temporary argument's loan from its construction, the verifier admits the
+      relay receiver, and `TextContracts` types a temporary's field view by its
+      value. The C++ emitter's cleanup-free field-read slot admits text view
+      fields, published constructions and text observers; before this, even an
+      ownerless temporary's text field was refused.
   - Acceptance: relayed, receiver, payload-enum and returned shapes compile
     and run at O0/O3 with exact semantic, HIR and MIR loan identities, and
     ownerless programs emit identical C++.

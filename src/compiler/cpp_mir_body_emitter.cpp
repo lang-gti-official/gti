@@ -18942,6 +18942,21 @@ virtualFailureCallee(const MirProgram &program,
          definition->kind != MirInstructionKind::CallInput;
 }
 
+// The same observers reading one exact view place in place, with no staged
+// borrow: the read completes inside the instruction, like a copying Load.
+[[nodiscard]] bool textObserverOfPlace(const MirInstruction &call,
+                                       MirPlaceId place) {
+  return call.kind == MirInstructionKind::Call &&
+         (call.intrinsic == IntrinsicKind::StringViewSize ||
+          call.intrinsic == IntrinsicKind::StringViewEmpty) &&
+         call.receiver && call.receiver->kind == MirOperandKind::BorrowRead &&
+         call.receiver->place == place && call.receiver->loan == 0 &&
+         call.receiver->type.kind == SemanticType::StringView && call.result &&
+         !call.loan && !call.destination && call.operands.empty() &&
+         call.lifecycle.empty() && call.localFailureSites.empty() &&
+         call.definedFailure.empty();
+}
+
 // An owned class result read through a field while it is still live. The view
 // is a pure field projection of the result's value root: it owns no storage,
 // carries no loan or drop, and is only copied out by Loads or lent read-only
@@ -18990,6 +19005,8 @@ virtualFailureCallee(const MirProgram &program,
           instruction.lifecycle.empty() &&
           instruction.localFailureSites.empty() &&
           instruction.definedFailure.empty())
+        continue;
+      if (textObserverOfPlace(instruction, place.id))
         continue;
       if (instruction.kind != MirInstructionKind::Load ||
           instruction.destination || instruction.receiver ||
@@ -27265,6 +27282,18 @@ struct ClassSsaLifetimeSlot {
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
 
+// The exact projected place a FieldRead slot's consumer reads: its one copied
+// operand, or the borrowed receiver of a text observer.
+[[nodiscard]] bool fieldReadSlotView(const ClassSsaLifetimeSlot &slot,
+                                     const MirPlace &place) {
+  if (slot.consumerKind != ClassSsaSlotConsumerKind::FieldRead ||
+      slot.consumer == nullptr)
+    return false;
+  return (slot.consumer->operands.size() == 1 &&
+          slot.consumer->operands.front().place == place.id) ||
+         textObserverOfPlace(*slot.consumer, place.id);
+}
+
 // The cleanup-free conditional join whose single Move is this slot's
 // producer. That Move stages the joined object in the slot for its one
 // consumer, whatever the body's form; the join's storage ends right after.
@@ -27542,6 +27571,12 @@ classSsaLifetimeSlot(const MirProgram &program,
                                            *producer));
   const bool directConstructionProducer =
       directConstructionShape && producer->lifecycle.empty();
+  // A construction that publishes its argument's owner at a text field
+  // (L-OWN-02) holds borrowed state only as that verified Stored loan, which
+  // its text views carry; the record itself stays cleanup-free and passive.
+  // Only the exact field read below may observe it.
+  const bool publishedTextConstruction =
+      directConstructionProducer && producer->dependentTextPublication;
   // A construction assigned to an existing binding may also consume owning
   // arguments: its only lifecycle events hand each by-value argument to the
   // constructor, once and unconditionally — an operand's own value drop or
@@ -27621,7 +27656,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       ((directConstructionProducer || directMoveProducer) &&
        (classInstance->requiresActiveDropState ||
         classInstance->traits.containsBorrowedState ||
-        value->info.traits.containsBorrowedState))) {
+        (value->info.traits.containsBorrowedState &&
+         !publishedTextConstruction)))) {
     return {};
   }
 
@@ -27657,6 +27693,10 @@ classSsaLifetimeSlot(const MirProgram &program,
                                  projection->type) &&
         ((!directConstructionProducer && movable) ||
          projection->type.kind == SemanticType::Class ||
+         // A text view is a passive descriptor, copied out like a scalar;
+         // the text it views is never the temporary's own storage.
+         projection->type.kind == SemanticType::StringView ||
+         projection->type.kind == SemanticType::CString ||
          expectedTypeRepresentation(projection->type) ==
              CppMirTypeRepresentationKind::Scalar);
     const MirInstruction *consumer = nullptr;
@@ -27732,6 +27772,14 @@ classSsaLifetimeSlot(const MirProgram &program,
               return {};
             observingCall = call;
           }
+          // A text observer reads the view's descriptor inside the call.
+          if (textObserverOfPlace(instruction, projection->id)) {
+            if (consumer != nullptr || destinationUse ||
+                successDestinationUse || operandUses != 0)
+              return {};
+            consumer = &instruction;
+            continue;
+          }
           if (consumer != nullptr || destinationUse || successDestinationUse ||
               receiverUse || operandUses != 1 ||
               (!fieldCopy && !receiverStage) ||
@@ -27752,11 +27800,15 @@ classSsaLifetimeSlot(const MirProgram &program,
     if (consumer != nullptr) {
       const MirValue *loaded =
           consumer->result ? body.findValue(*consumer->result) : nullptr;
+      // A text observer's result is its scalar answer, not the field.
+      const bool observed = textObserverOfPlace(*consumer, projection->id);
       if (!observingCall && (directConstructionProducer || !movable) &&
-          (loaded == nullptr || loaded->info.type != projection->type ||
+          (loaded == nullptr ||
+           (!observed && loaded->info.type != projection->type) ||
            classInstance->requiresActiveDropState ||
            classInstance->traits.containsBorrowedState ||
-           value->info.traits.containsBorrowedState ||
+           (value->info.traits.containsBorrowedState &&
+            !publishedTextConstruction) ||
            consumer->info.traits.drop != DropKind::Trivial ||
            !consumer->info.traits.copyable ||
            loaded->info.traits.drop != DropKind::Trivial ||
@@ -27773,7 +27825,7 @@ classSsaLifetimeSlot(const MirProgram &program,
 
   // A fresh immovable result can be observed in place above, but none of the
   // transfer consumers below may acquire move permission from that fact.
-  if (!movable)
+  if (!movable || publishedTextConstruction)
     return {};
 
   // A completed cleanup-free source result supplies one exact enum payload
@@ -29861,9 +29913,7 @@ public:
       if (place.root == MirPlaceRootKind::Value) {
         const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
             program, representations, facts.body, place.value);
-        if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
-            slot.consumer != nullptr && slot.consumer->operands.size() == 1 &&
-            slot.consumer->operands.front().place == place.id) {
+        if (fieldReadSlotView(slot, place)) {
           continue;
         }
       }
@@ -39215,6 +39265,17 @@ private:
                      ? ".empty()"
                      : ".size()")
              << ";\n";
+      if (viewPlace != nullptr && viewPlace->root == MirPlaceRootKind::Value) {
+        const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
+            program, representations, facts.body, viewPlace->value);
+        if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
+            slot.consumer == &instruction) {
+          // The observer completed the slot's one field read, as a copying
+          // Load does; retire the cleanup-free representation.
+          writeIndent();
+          output << "__gti_mir_v_" << viewPlace->value << ".destroy();\n";
+        }
+      }
       return;
     }
     if (uniqueOwnerBorrowCall(instruction)) {
@@ -41638,10 +41699,7 @@ private:
     if (place.root == MirPlaceRootKind::Value) {
       const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
           program, representations, facts.body, place.value);
-      if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
-          slot.consumer != nullptr && slot.value != nullptr &&
-          slot.consumer->operands.size() == 1 &&
-          slot.consumer->operands.front().place == place.id) {
+      if (slot.value != nullptr && fieldReadSlotView(slot, place)) {
         output << "__gti_mir_v_" << place.value << ".get()";
         emitFieldProjectionChain(slot.value->info.type, place.projections, 0);
         return;
@@ -50234,9 +50292,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (place.root == MirPlaceRootKind::Value) {
       const ClassSsaLifetimeSlot slot =
           classSsaLifetimeSlot(program_, representations_, body, place.value);
-      if (slot.consumerKind == ClassSsaSlotConsumerKind::FieldRead &&
-          slot.consumer != nullptr && slot.consumer->operands.size() == 1 &&
-          slot.consumer->operands.front().place == place.id) {
+      if (fieldReadSlotView(slot, place)) {
         continue;
       }
     }

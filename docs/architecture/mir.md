@@ -1890,10 +1890,19 @@ dependency the caller's value holds in that field:
   designates the field. A call without one is valid when its origin holds no
   dependency at that field, or is a formal or the receiver of the enclosing
   function.
+- A temporary origin is an SSA argument, not a place, so lowering takes its
+  loan from `loanForValue`: the `Stored` loan its publishing construction
+  produced, the loan `borrowOriginPlace` already selected for the mapping.
+  That loan has no carrier and ends with the full expression; the result's
+  own loan names the owner.
+- A dependent temporary may be the receiver of a text field result. The
+  temporary-receiver check admits that target over a publishing construction
+  in place of an ephemeral-borrow result.
 `isOwnerlessTextFieldProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into
-such a field still requires ownerless text.
+such a field still requires ownerless text. A temporary's field view, whose
+value has no unprojected place, takes its record type from that value.
 
 Plain and fallible reference returns share the exact runtime-alias selection
 for a reference parameter's entry loan. If a local alias stores an accessor's

@@ -3,7 +3,8 @@
 // carries its referent's, so no text is copied or allocated. Such a value can
 // be copied, moved and read, and passed to functions and methods that keep
 // its text within the call or return it. It cannot be returned, captured or
-// stored itself. A payload enum's text payload can hold such a view too.
+// stored itself. A temporary works the same way within its expression, and a
+// payload enum's text payload can hold such a view too.
 #include <std/string>
 
 // A token views its input; it owns no text.
@@ -46,6 +47,10 @@ int main() {
   // The returned view depends on `line`, as the token does.
   std::string_view spelled = name.spelling();
   std::println(spelled);
+  // A temporary token views `line` as well: its field and its returned view
+  // depend on `line` beyond the temporary itself.
+  std::string_view head = Token(line.view(), 2).text;
+  std::println(head.size() + Token(line.view(), 3).spelling().size());
 
   // Matching the payload binds a view of `line` as well.
   Lexeme lexeme = Lexeme::word(line.view());
