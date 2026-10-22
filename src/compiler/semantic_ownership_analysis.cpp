@@ -1520,9 +1520,9 @@ auto SemanticVisitor::Impl::ownerlessTextForwardingField(
   // relay applied to a contract receiver.
   if (const auto *call = exprAs<Call>(current)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-    if (const auto relayed =
-            resolved == nullptr ? std::nullopt
-                                : textReferenceRelay(*call, *resolved))
+    if (const auto relayed = resolved == nullptr
+                                 ? std::nullopt
+                                 : textReferenceRelay(*call, *resolved))
       return fieldSourcedTextFormal(*relayed);
     const auto result = resolved == nullptr
                             ? std::nullopt
