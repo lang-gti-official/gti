@@ -72,6 +72,66 @@ An explicit argument bypasses that parameter's default. Default evaluation is
 caller-side language behavior, remains in the enclosing call full-expression,
 and cannot be delegated to a backend language's default-argument mechanism.
 
+#### Deferred statement helpers
+
+`[[deferred]]` explicitly opts a source-defined namespace-scope `void`
+function into **expression parameters**, instead of ordinary eager parameter
+initialization. It is invoked only as a complete expression statement:
+
+```gti
+[[deferred]] void report_when(bool enabled, std::string_view message) {
+  if (enabled) { std::println(message); }
+}
+report_when(verbose, make_message());
+```
+
+The signature selects and type-checks the written arguments, including ones
+that will not execute. Each parameter use evaluates its supplied expression
+where that use occurs in the helper body. Unused expressions do not evaluate,
+copy, move, establish a runtime borrow, or create cleanup obligations. There
+is no memoization: two uses mean two evaluations, and ordinary ownership
+analysis rejects a repeated consumption of the same named owner. The helper
+controls sequencing; within every evaluated expression the ordinary strict
+left-to-right rule applies. Final packs expand in their original order.
+
+Expansion is hygienic: free body names and omitted defaults resolve at the
+definition; argument expressions resolve at the invocation, with their
+original class access and generic context. Invocations nested in other
+deferred helpers preserve both domains. A body call's caller-location origin
+is its external invocation, or that invocation's tracked caller. Argument
+calls keep their own written source origin. The resulting ordinary branches,
+calls, places and full expressions are checked in caller flow and lowered
+through HIR to verified MIR, including failure edges and deterministic cleanup.
+No closure, heap allocation, runtime helper frame or backend assertion rule is
+introduced by deferred evaluation itself.
+
+The current structural slice accepts blocks, ordinary `if` branches,
+configuration-selected statements and expressions without local binders or
+direct assignment/increment. Conditions and arguments supplied by callers
+may themselves mutate, allocate, borrow, move, or fail under ordinary rules.
+Put loops, local declarations, direct writes and lambdas in an ordinary helper
+called from the selected branch. Deferred signatures have value expression
+parameters (including generic final packs and defaults), no `mut` bindings or
+reference parameters, and no `constexpr`, foreign/runtime binding, unsafe
+caller modifier, member/operator or `noreturn` form. Their bodies are typed
+after concrete substitution, like statement templates; unused templates are
+checked for signature and structural eligibility, not instantiated execution.
+Arguments require exact expression types; write an explicit conversion instead
+of relying on a value-parameter conversion. Fresh callable-valued arguments
+whose type identity would be created only by probing require a prior named
+binding; named callable values and callable invocations with ordinary result
+types retain their existing rules. Admitting fresh callable identities needs
+source-identity-preserving deferred type discovery, not a second closure model.
+They cannot be taken as function items or callbacks, returned as a value, or
+used inside another expression. Expansion has deterministic limits of 64
+nested calls and 4096 expanded bodies in one analysis request; recursive
+helper cycles are rejected without expanding the cycle repeatedly.
+
+These bounds describe a confined first slice, not implicit laziness for
+ordinary functions or a textual preprocessor. Supporting local binders,
+value-producing helpers or escaping deferred values requires a further
+semantic/IR lifetime contract, not a relaxation in the C++ emitter.
+
 Stabilizing an argument includes binding its reference or directly
 initializing its by-value parameter. Parameters are initialized from left to
 right and become cleanup obligations as each initialization completes. A

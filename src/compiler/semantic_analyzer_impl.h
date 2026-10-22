@@ -747,6 +747,7 @@ private:
     bool neverReturns = false;
     bool tracksCaller = false;
     bool discardableResult = false;
+    bool deferredEvaluation = false;
     bool threadConfinedCallback = false;
     bool testFunction = false;
     CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
@@ -4798,6 +4799,43 @@ private:
   std::uint32_t nextExpansion = 0;
   std::vector<StmtPtr> expansionArena;
   std::vector<std::shared_ptr<const Expr>> synthesizedExpressions;
+  // Deferred statement helpers borrow no closure environment. Each expansion
+  // retains definition-site lookup for its body and caller-site lookup for
+  // substituted arguments. Flow/loans remain those of the calling body.
+  struct DeferredLookupContext {
+    std::vector<std::string> namespaceScope;
+    SourceUnitId sourceUnit = 0;
+    std::optional<ClassId> ownerClass;
+    bool staticMember = false;
+    bool definition = false;
+    std::size_t declarationOrder = 0;
+    std::optional<CallerLocationOrigin> caller;
+    std::optional<Token> invocation;
+    std::unordered_map<std::string, SemanticType> types;
+    std::unordered_map<std::string, CompileTimeValue> values;
+  };
+  std::unordered_map<std::uint32_t, DeferredLookupContext> deferredLookup;
+  struct DeferredLookupScope {
+    Impl &owner;
+    std::vector<std::string> namespaceScope;
+    SourceUnitId sourceUnit;
+    std::optional<ClassId> ownerClass;
+    bool staticMember;
+    std::size_t declarationOrder;
+    DeferredLookupScope(Impl &owner, const DeferredLookupContext &context);
+    ~DeferredLookupScope();
+  };
+  bool deferredProbe = false;
+  const Call *deferredProbeCall = nullptr;
+  const Call *deferredStatementCall = nullptr;
+  std::unordered_set<const Expr *> deferredProbeArguments;
+  std::size_t deferredExpansionDepth = 0;
+  std::size_t deferredExpandedBodies = 0;
+  std::vector<const FunctionDecl *> deferredActiveBodies;
+  [[nodiscard]] const DeferredLookupContext *
+  deferredContext(const Token &token) const;
+  [[nodiscard]] bool analyzeDeferredStatement(const ExpressionStmt &statement);
+  [[nodiscard]] bool validDeferredBody(const Stmt &statement) const;
   static constexpr std::size_t kConstexprForElementLimit = 1024;
   static constexpr std::size_t kConstexprForBodyLimit = 4096;
   // Bodies expanded by `constexpr for` inside the declaration being analysed.
@@ -6314,6 +6352,15 @@ private:
     return concreteReanalysis() || symbol.variableDeclaration == nullptr ||
            symbol.declarationOrder == 0 ||
            symbol.declarationOrder < currentDeclarationOrder;
+  }
+  [[nodiscard]] bool symbolVisibleAt(const Symbol &symbol,
+                                     const Token &token) const {
+    const auto *context = deferredContext(token);
+    return !context ? symbolVisibleNow(symbol)
+                    : concreteReanalysis() ||
+                          symbol.variableDeclaration == nullptr ||
+                          symbol.declarationOrder == 0 ||
+                          symbol.declarationOrder < context->declarationOrder;
   }
 
   // The resumable lexical pass over the program's declarations.

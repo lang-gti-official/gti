@@ -1167,6 +1167,25 @@ SemanticModel::findConstexprForExpansion(
   return inherited;
 }
 
+const Stmt *
+SemanticModel::findDeferredExpansion(const ExpressionStmt &statement) const {
+  if (const auto found = deferredExpansions.find(&statement);
+      found != deferredExpansions.end())
+    return found->second.get();
+  const Stmt *inherited =
+      base == nullptr ? nullptr : base->findDeferredExpansion(statement);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&statement));
+  return inherited;
+}
+
+const Token *SemanticModel::findDeferredDefault(const Expr &expression) const {
+  if (const auto found = deferredDefaults.find(&expression);
+      found != deferredDefaults.end())
+    return &found->second;
+  return base == nullptr ? nullptr : base->findDeferredDefault(expression);
+}
+
 [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
 SemanticModel::findDeclarationAttributes(const Stmt &declaration) const {
   const auto found = declarationAttributes.find(&declaration);
@@ -1988,6 +2007,8 @@ void SemanticModel::clear() {
   conditionalLoanEnds.clear();
   constexprBranches.clear();
   constexprForExpansions.clear();
+  deferredExpansions.clear();
+  deferredDefaults.clear();
   declarationAttributes.clear();
   expressionAliases.clear();
   staticAssertResults.clear();
@@ -2149,6 +2170,9 @@ void SemanticModel::markSyntheticSyntaxStable() {
   for (const auto &generated : designatedConstructors)
     stableSyntheticSyntax.insert(generated.get());
   for (const auto &[statement, expansion] : constexprForExpansions)
+    if (expansion)
+      stableSyntheticSyntax.insert(statement);
+  for (const auto &[statement, expansion] : deferredExpansions)
     if (expansion)
       stableSyntheticSyntax.insert(statement);
   for (const auto &[expression, alias] : expressionAliases)
@@ -2578,6 +2602,16 @@ void SemanticModel::recordConstexprForExpansion(
     const ConstexprForStmt &statement,
     std::optional<ConstexprForExpansion> expansion) {
   constexprForExpansions.insert_or_assign(&statement, std::move(expansion));
+}
+
+void SemanticModel::recordDeferredExpansion(const ExpressionStmt &statement,
+                                            StmtPtr body) {
+  deferredExpansions.insert_or_assign(&statement, std::move(body));
+}
+
+void SemanticModel::recordDeferredDefault(const Expr &expression,
+                                          Token caller) {
+  deferredDefaults.insert_or_assign(&expression, std::move(caller));
 }
 
 void SemanticModel::recordDeclarationAttributes(

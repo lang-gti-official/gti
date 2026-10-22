@@ -2,6 +2,26 @@
 
 Status: Current implementation.
 
+## Deferred statement expansion
+
+`semantic_deferred.cpp` owns `[[deferred]]` helpers independently of public
+library names. Signature selection and argument diagnostics use an isolated
+semantic probe; its speculative flow, loans and syntax never enter caller
+execution. The source signature is retained for tooling. The actual body is
+cloned with compiler-owned argument/pack substitutions and separate expansion
+lookup contexts, then analyzed in the caller's ordinary place/ownership/loan
+flow. Definition and invocation namespace/source/class domains stay distinct.
+Concrete generic context and tracked caller origins accompany body tokens;
+argument tokens retain their own origins. `SemanticModel` owns the checked
+statement expansion for the frontend snapshot and its instance deltas.
+
+HIR lowers that expansion as ordinary statements and does not enqueue an eager
+function instance for the template. Existing MIR branches, calls, ownership
+events, failure edges and cleanup are the only executable representation.
+There is no new runtime thunk, backend interpretation or public assertion-name
+recognition. The confined structural profile and resource limits are specified
+in [execution semantics](../language/execution.md#deferred-statement-helpers).
+
 Member visibility is shared by semantic field/call/constructor/type checks and
 completion filtering. `canAccessMember` uses the lexical class context, the
 selected declaration's access and owner, substituted inheritance paths, and an
