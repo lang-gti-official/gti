@@ -9031,12 +9031,21 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
              publicationBlock->parameters.empty() &&
              publicationBlock->failureParameter == 0 &&
              publicationBlock->activeFailure == 0 &&
-             publicationBlock->instructions.size() == 1 &&
-             publicationBlock->instructions.front().id == initialize->id) {
+             !publicationBlock->instructions.empty() &&
+             publicationBlock->instructions.front().id == initialize->id &&
+             std::all_of(publicationBlock->instructions.begin() + 1,
+                         publicationBlock->instructions.end(),
+                         [](const MirInstruction &instruction) {
+                           return instruction.kind ==
+                                  MirInstructionKind::EndBorrow;
+                         })) {
     // The status constructor writes the slot at Invoke, and engages it only
     // on success. Only its unique, work-free success path may separate
-    // construction from publication; failure retains the original cleanup
-    // edge and never reaches the join. Constructor-boundary admission remains
+    // construction from publication. After publication, the arm may end its
+    // input loans before joining; these verified loan endpoints neither
+    // compute another value nor alter the published object. Failure retains
+    // the original cleanup edge and never reaches the join.
+    // Constructor-boundary admission remains
     // responsible for proving the selected status constructor is supported.
     std::size_t incoming = 0;
     for (const MirBlock &candidate : body.blocks) {
