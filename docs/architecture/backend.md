@@ -2612,12 +2612,13 @@ observable cleanup; its initialization and handoff are still mandatory MIR
 events. This proof does not generalize to active-cleanup payloads or arbitrary
 constructor argument expressions.
 Ordinary source constructors may use the same prepared-input schedule for a
-class with generated copy, move, and destruction, scalar/enum fields, no
-state-bearing base, and no active cleanup. Every prepared input has a distinct
-obligation and exactly one matching constructor handoff; scalar sibling inputs
-retain their argument positions. A conservatively failure-capable target is
-eligible only when its complete verified body is accounted for by the exact
-passive parameter-to-field moves, lexical parameter drops, and inert boundaries.
+passive generated class (see below) with generated copy, move, and
+destruction, no state-bearing base, and no active cleanup. Every prepared
+input has a distinct obligation and exactly one matching constructor handoff;
+scalar sibling inputs retain their argument positions. A conservatively
+failure-capable target is eligible only when its complete verified body is
+accounted for by the exact passive parameter-to-field moves, lexical parameter
+drops, and inert boundaries.
 The failure summary remains unchanged; unrelated constructor work cannot be
 hidden behind the native initializer spelling.
 
@@ -2645,8 +2646,8 @@ invoke a source destructor; the backend does not infer this from C++ moves.
 
 When earlier initializer work can fail, a later owned parameter move stays in
 the verified constructor body instead of being pulled into native initializer
-order. The same body-staged publication proof accepts cleanup-free generated
-class moves with passive scalar/enum fields: the exact parameter Move, field
+order. The same body-staged publication proof accepts cleanup-free moves of a
+passive generated class (defined below): the exact parameter Move, field
 Initialize, and full-expression boundary remain mandatory, while value and
 construction-rollback obligations must be absent. Its inert parameter shell
 drop remains recorded. Custom lifecycle, borrowed state, and active cleanup
@@ -2659,6 +2660,29 @@ absence. The field then starts from its passive empty state in the
 member-initializer list, and the exact `Move` and `Initialize` publish it in
 MIR order, as in `Gauge(int32_t tag) : ledger(Ledger(tag, divisor)),
 odd(tag % 2 == 1), tag(std::move(tag))`.
+
+A passive generated class (`passiveGeneratedClass`) has generated
+destruction, plus generated copy construction where a route copies it, no
+active cleanup or drop state, no state-bearing base, and only passive fields.
+A passive field copies bitwise and its destruction runs no source cleanup: a
+scalar, an enum, a raw or null pointer (a `c_string` is a raw pointer), a text
+view, a fixed array of passive fields, or a passive generated class. The rule
+names representations, not library types. A text view's dependency on its
+owner, when it has one, exists only as a MIR loan, which has no
+representation, so it changes neither the copy nor the destruction. A class
+that only holds text views is therefore passive and not a borrowed carrier.
+Semantics keeps ownerless text in such a by-value field of another class, and
+MIR records no loan, value or rollback obligation for moving it. So
+`shelf(Name name) : v(std::vector<int32_t>()), name(std::move(name))`, where
+`Name` holds one `std::string_view`, publishes in body order exactly like a
+class of scalar fields, and `name(name)` uses the native parameter copy below.
+Every route that consults the predicate sees this same representation fact:
+field assignment, conditional class joins, prepared call inputs, closure
+captures, parameter shells and constructor publication. Each route still
+checks borrowed state, traits and its own MIR schedule. A semantically
+dependent value, such as a local `Name` viewing a named owner, reaches only the
+local copy, move and by-value call routes that semantics admits, and those
+copy its bits.
 
 A moved `std::string_view`, `c_string` or function item uses the same
 drop-free route without an `Initialize`. MIR stages none for these types: the
@@ -2719,9 +2743,10 @@ before the body copy ran, and the formal's shell is never declared. That
 constructor publishes in body order in both forms.
 
 An exact by-value parameter copy may also publish one field through the native
-member-initializer list when the copied class has generated copy/destruction,
-only recursively passive scalar, enum, array or generated-record state, no
-state-bearing base, and no active cleanup.
+member-initializer list when the copied class is a passive generated class
+with generated copy/destruction: only recursively passive scalar, enum,
+pointer, text-view, array or generated-record state, no state-bearing base,
+and no active cleanup.
 This MIR shape carries one reachable parameter `Load`, one matching initializer
 metadata row, an exact field `Initialize`, and one full-expression boundary;
 the copied parameter's native scope destruction represents its trivial MIR
@@ -3073,7 +3098,8 @@ field identity. The writer neither default-constructs an SSA class nor invents
 cleanup authority.
 The same resolved mutable-field predicate supports an adjacent parameter
 `Load`/discarded `Assign` copy when the record has generated copy construction,
-assignment and destruction with only passive scalar/enum/pointer fields. Its
+assignment and destruction with only passive scalar, enum, pointer or
+text-view fields. Its
 source must carry an exact available, reachable Read event; borrowed state,
 replacement cleanup and custom special members are not admitted by this route.
 An exact non-failing `Construct` followed by its discarded field assignment
@@ -3508,7 +3534,7 @@ cleanup. Unsafe raw-pointer validity obligations remain distinct from these
 checked fixed-array selections. Forming an address creates no checked loan.
 
 Generated passive record copies may contain positive concrete
-fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
+fixed arrays of passive fields, including C-ABI records. Exact
 generated copy/destruction traits, field drop facts, and the absence of active
 cleanup or state-bearing bases remain required.
 
