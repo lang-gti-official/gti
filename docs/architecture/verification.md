@@ -1,5 +1,146 @@
 # Compiler Verification
 
+## Borrowed enum parameters stored in fields (0.458.4)
+
+`complete_borrow_summaries` covers the new fixture,
+`borrowed_enum_formal_fields`.
+- Eight constructors move or copy a by-value borrowed enum formal into a
+  field: moved, copied and then read again, moved or copied after a fallible
+  sibling, moved after an earlier read, a generic `Outcome<T&, E>` with plain
+  and owning errors, and a `mut` reference enum. All verify.
+- Six MIR mutations per constructor are rejected: a transfer from another
+  place, a publication borrowing from itself, a removed retirement, a guard
+  cleared from the entry group, a publication path cleared, and a group that
+  is no longer an entry. Each except the retirement fails the constructor
+  proof itself.
+- Source rejections, with no backend error: returning a moved or a copied
+  carrier of a local (`GTI-S2045`), writing the owner while the object is live
+  and reading the owner while a `mut` carrier is live (`GTI-S2017`), and
+  copying a `mut` reference enum (`GTI-S2003`).
+
+`cpp_mir_body_emitter_text` adds
+`testMovedBorrowedPayloadAfterFallibleSibling`: the failure form starts the
+field empty and moves the formal after the ledger. A publication from another
+producer, and an entry-group record that is not a comment-only retirement,
+are both refused.
+
+`borrow_origin_runtime` runs the fixture in all eight native modes, including
+the sanitized one, and a second run whose ledger fails before the move
+(`GTI-R0002`, exit 70). `tryable_propagation_runtime` runs example 165,
+which now also stores a by-value slot, in nine modes.
+
+The census changes only for example 165: one more constructor body and
+declaration.
+
+An `--emit-cpp` differential at -O0 and -O3 over all 1,948 corpus programs,
+against main's compiler (f0e13a1de) on the same sources:
+- 1,946 programs emit byte-identical C++ with identical diagnostics.
+- Only example 165 and the `borrowed_enum_formal_fields` fixture change
+  status: they reported `GTI-B0001` on main and now build.
+
+## Nested field reads of cleanup-free temporaries (0.458.3)
+
+A nested read such as `Outer(Token("literal", 1)).token.kind` used to report
+`GTI-B0001`. MIR builds `.token.kind` from `.token` and roots both places at
+the temporary, and the cleanup-free field-read slot accepted one place-root
+use only. The slot now reads the deepest place as the chain and admits any
+shorter one only as an untouched prefix record of it.
+
+- `testCleanupFreeConstructorTemporaryFieldRead` emits the nested read
+  `outer_t().inner.value`. The chain is spelled once through the value slot,
+  the slot retires after the read, and neither the chain nor its prefix
+  declares a place. Two MIR mutations stay refused: the return reads the chain
+  a second time, and an untouched place outside the chain roots at the
+  temporary.
+- `issue_127_constructor_temporary_field_runtime` adds twelve nested reads in
+  every mode:
+  - a scalar, a text view and its `.size()`;
+  - a read-only method on a nested field, and a three-level chain;
+  - a short-circuit operand and a cleanup-free conditional join;
+  - a failure-capable call, an aggregate call, a moved value and a lambda
+    result;
+  - an immovable record read in a loop.
+  It counts all 28 nested constructions. The emitted C++ reads all twelve
+  chains through value slots and none through MIR's owned result slots.
+- Owner-tracked text still cannot reach a nested holder:
+  `Outer(Token(input.view(), 1))` is `GTI-S2045` at the argument, both before
+  and after.
+
+An `--emit-cpp` differential over every `.gti` file under `tests/` and
+`examples/`, against main's compiler on the same sources:
+- Against main at 0.458.0, over all 1,834 files: 1,458 build with both
+  compilers and emit byte-identical C++, and 375 fail with both, with the same
+  error codes. One stress input, `namespace-depth-63.gti`, exceeds the
+  600-second budget with both.
+- Only `issue_127_constructor_temporary_field.gti` changes status: it now
+  builds.
+- The recorded validation repeats the differential against main at 0.458.2,
+  without that stress input, and requires the same outcome.
+
+Still refused, both before and after, even for a single-level read:
+- a conditional join whose arms pass a class by value, as in
+  `(left ? seg_t(pt_t(1)) : seg_t(pt_t(2))).flat`;
+- a conditional join of a class that holds a text field, as in
+  `(left ? word_t("a", 1) : word_t("b", 2)).kind`.
+
+## Recursive text returns (0.458.2)
+
+`ownerless_text_contracts` covers recursion in four tests.
+- `testRecursiveOwnerlessReturns` verifies a `std::string_view` and a
+  `c_string` recursion, a mutual recursion through `?:`, a recursive result
+  stored in a text field, and `id(id("lit"))`. Main's verifier rejected each:
+  `ownerless text return has no independent result proof`, or `ownerless text
+  storage or call lacks exact producer evidence` for the stored result.
+- `testPermutingRecursiveFieldContracts` verifies `pick(Token a, Token b,
+  int n)`, which returns `a.text` or `pick(b, a, n - 1)`, and a caller. Both
+  carry a field requirement on each formal, and MIR rejects a contract that
+  omits either one. A dynamic argument is rejected at source with
+  `GTI-S2045`, not by MIR.
+- `testRecursiveOwnerlessReturnMutations` returns a formal where the
+  recursion permutes formals. MIR rejects the recursion's result proof, and
+  derives that a caller storing its result requires exactly both of the
+  caller's formals: a contract naming one is rejected and one naming both is
+  not. Returning a formal in one function of a mutual recursion fails the
+  other function's result proof too.
+- `testRecursiveTextSummaryScaling` verifies an 18-deep chain whose returns
+  each call the next function twice, and an 8-function set in which every
+  function calls every other.
+
+Discrimination:
+- Against main's verifier, the six positive programs of the first three tests
+  all fail with `GTI-B0001`.
+- A variant that reads a function under evaluation as ownerless text, instead
+  of its current summary, passes every test except the exact-both-formals
+  assertion, which fails in both directions.
+
+Compile time, `--emit-cpp` on a loaded host:
+
+| Program | main | this change |
+| --- | --- | --- |
+| chain, depth 16 | 1.08 s | 0.09 s |
+| chain, depth 20 | 16.54 s | 0.11 s |
+| 8 mutually calling functions | 13.69 s, then `GTI-B0001` | 0.19 s |
+| 16 mutually calling functions | over 60 s | 0.34 s |
+
+Main inlined a callee's returns at every call without memoization, so its
+cost grew with the number of call paths. A first draft of this change
+memoized complete summaries only, which still re-evaluated a provisional
+summary at every call path inside a recursive set; summaries are now
+provisional for one pass of the set's first function.
+
+An `--emit-cpp` differential at O0 and O3, against main's compiler at
+`d2873bde` on the same sources, covers every `.gti` program in the repository
+outside `stdlib/` and the hanging `namespace-depth-63` stress file: 1,946
+programs.
+- No run changes status, emitted C++ or diagnostics. The 796 runs that fail
+  on main fail identically with this change.
+- Neither compiler reports `GTI-B0001` for any of them, so the corpus held no
+  recursive text function.
+- Eleven probes build and run at O0 and O3. Ten report `GTI-B0001` on main:
+  the shapes above, a recursive field relay, a mutual one, and this
+  release's documentation example. A recursive method returning its
+  receiver's field already built.
+
 ## Dependent text payloads (0.457.0)
 
 `view_fields` covers payloads in `testPayloads`.

@@ -1984,6 +1984,141 @@ int main() {
          "a carrier with a payload enum leaf is not deferred");
 }
 
+void testMovedBorrowedPayloadAfterFallibleSibling() {
+  // A borrowed payload enum moved from its formal keeps the caller's owner in
+  // the field: MIR hands the formal's entry group to the field's Stored loan
+  // in one proof-only transfer. Unlike a class with a reference field, the
+  // enum has an empty state, so the failure form moves the formal in MIR
+  // order once the fallible ledger exists.
+  const lang::FrontendResult frontend =
+      analyzeWithStandardLibrary("cpp-mir-moved-borrowed-payload.gti", R"(
+#include <std/utility>
+
+enum Slot { ready(int32_t& value), empty };
+
+class Ledger {
+public:
+  int32_t id;
+  Ledger(int32_t id, int32_t divisor) : id(id + 60 / divisor) {}
+  ~Ledger() {}
+};
+
+class Gauge {
+public:
+  Ledger ledger;
+  Slot slot;
+  Gauge(Slot slot, int32_t divisor)
+      : ledger(Ledger(1, divisor)), slot(std::move(slot)) {}
+};
+
+int main() {
+  int32_t owner = 3;
+  Gauge gauge = Gauge(Slot::ready(owner), 1);
+  return gauge.ledger.id - 61;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the moved-borrowed-payload fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirConstructorInstance *gauge = nullptr;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    if (constructor.completeBorrow && constructor.mayRaiseDefinedFailure) {
+      gauge = &constructor;
+    }
+  }
+  expect(gauge != nullptr, "the gauge constructor may raise and publishes a "
+                           "complete borrowed field");
+  if (gauge == nullptr) {
+    return;
+  }
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                     .owner = gauge->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "the failure form keeps the borrowed payload move in its body");
+
+  std::string text;
+  try {
+    text = gti_test::emitCpp(frontend).contents;
+  } catch (const std::exception &error) {
+    expect(false, std::string("a borrowed payload moved after a fallible "
+                              "sibling should emit: ") +
+                      error.what());
+    return;
+  }
+  const std::size_t start = text.find(
+      "Gauge::Gauge(::gti_internal::backend::mir_failure_constructor_tag_v1<");
+  const std::size_t end =
+      start == std::string::npos ? start : text.find("\n  }\n", start);
+  const std::string body = end == std::string::npos
+                               ? std::string()
+                               : text.substr(start, end - start);
+  const std::size_t ledger = body.find("::__gti_program::Ledger(");
+  const std::size_t move = body.find(" = std::move(__gti_mir_p_");
+  expect(body.find("slot(::gti_internal::backend::mir_empty_state_v1<std::"
+                   "remove_cv_t<decltype(slot)>>())") != std::string::npos &&
+             body.find("std::move(__gti_mir_arg_") == std::string::npos &&
+             ledger != std::string::npos && move != std::string::npos &&
+             ledger < move,
+         "the failure-form constructor moves the borrowed payload in MIR "
+         "order from its empty state");
+
+  const auto refusesForged = [&](const auto &forge) {
+    lang::MirProgram mutated = frontend.mir;
+    bool forged = false;
+    for (const auto &constructor : mutated.constructorInstances()) {
+      if (constructor.id == gauge->id) {
+        forged =
+            forge(const_cast<lang::MirConstructorInstance &>(constructor).body);
+      }
+    }
+    return forged && !lang::CppMirBodyEmitter(mutated, map)
+                          .supportsFailureBodyText(address);
+  };
+  expect(refusesForged([](lang::MirBody &body) {
+           for (lang::MirLoan &loan : body.loans) {
+             if (loan.escapes && loan.storedField != 0) {
+               loan.producedBy = loan.producedBy + 1;
+               return true;
+             }
+           }
+           return false;
+         }),
+         "a field publication not produced by the moved value is not "
+         "body-staged");
+  expect(refusesForged([](lang::MirBody &body) {
+           lang::MirLoanId entry = 0;
+           for (const lang::MirLoan &loan : body.loans) {
+             if (loan.entry && loan.kind == lang::MirLoanKind::Stored) {
+               entry = loan.id;
+             }
+           }
+           for (lang::MirBlock &block : body.blocks) {
+             for (std::size_t index = 0; index < block.instructions.size();
+                  ++index) {
+               lang::MirInstruction &instruction = block.instructions[index];
+               // The failure route's retirement, not the handoff after the
+               // transfer, gains metadata no comment-only record carries.
+               if (entry != 0 &&
+                   instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == entry &&
+                   (index == 0 || block.instructions[index - 1].kind !=
+                                      lang::MirInstructionKind::Borrow)) {
+                 instruction.fullExpressionEnd = 1;
+                 return true;
+               }
+             }
+           }
+           return false;
+         }),
+         "an entry-group record that is not a comment-only retirement is not "
+         "body-staged");
+}
+
 void testMovedViewAfterFormalRead() {
   // Earlier initializers read the view formal, as a receiver and as a call
   // argument, and no record can fail. The native member-initializer list
@@ -8853,6 +8988,8 @@ constexpr NamedTest kTests[] = {
     {"testMovedPassiveFieldAfterFallibleSibling",
      testMovedPassiveFieldAfterFallibleSibling},
     {"testDeferredBoundShellFields", testDeferredBoundShellFields},
+    {"testMovedBorrowedPayloadAfterFallibleSibling",
+     testMovedBorrowedPayloadAfterFallibleSibling},
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},
     {"testMovedChainReturnConstruction", testMovedChainReturnConstruction},
     {"testMovedPassiveFieldInPlainConstructor",

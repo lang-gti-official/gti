@@ -14172,6 +14172,88 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
   return true;
 }
 
+// A borrowed payload enum instead keeps its caller's dependency in the field.
+// MIR moves the formal and hands the formal's entry group to the field's
+// Stored loan in one proof-only transfer (storedFieldValueLoanProducer): the
+// native enum value already carries the reference, and the field starts from
+// its empty state exactly as for an in-place payload construction. Prove that
+// this transfer of the moved value is the field's only publication, that no
+// other loan derives from the entry group, and that every other record naming
+// the group is one of its comment-only retirements.
+[[nodiscard]] bool
+formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
+                            const MirPlace &source, const MirValue &moved,
+                            const MirInstruction &move, SymbolId field) {
+  const MirBody &body = constructor.body;
+  if (moved.info.type.kind != SemanticType::Enum) {
+    return false;
+  }
+  const MirLoan *published = nullptr;
+  for (const MirLoan &loan : body.loans) {
+    if (loan.storedField != field && loan.producedBy != move.hirValue) {
+      continue;
+    }
+    if (published != nullptr || loan.storedField != field ||
+        loan.producedBy != move.hirValue) {
+      return false;
+    }
+    published = &loan;
+  }
+  const MirInstruction *transfer =
+      published != nullptr ? storedFieldValueLoanProducer(body, *published)
+                           : nullptr;
+  const MirLoan *entry = transfer != nullptr
+                             ? body.findLoan(transfer->operands.front().loan)
+                             : nullptr;
+  if (entry == nullptr || !entry->entry || entry->source != source.id ||
+      transfer->operands.front().value != moved.id) {
+    return false;
+  }
+  for (const MirLoan &loan : body.loans) {
+    if ((loan.id != entry->id && loan.id != published->id &&
+         loan.protectsSource(source.id)) ||
+        loan.parent == entry->id || loan.storedDependency == entry->id ||
+        std::any_of(loan.additionalDependencies.begin(),
+                    loan.additionalDependencies.end(),
+                    [&](const MirLoanDependency &dependency) {
+                      return dependency.parent == entry->id;
+                    })) {
+      return false;
+    }
+  }
+  const auto namesEntry = [&](const MirOperand &operand) {
+    return operand.kind == MirOperandKind::Loan && operand.loan == entry->id;
+  };
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const MirInstruction &instruction = block.instructions[index];
+      // The transfer and the retirement it validated directly after it carry
+      // the move's ownership event; every other record is comment-only.
+      const bool handoff =
+          &instruction == transfer ||
+          (index != 0 && &block.instructions[index - 1] == transfer);
+      if (!handoff &&
+          ((instruction.loan && *instruction.loan == entry->id) ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       namesEntry) ||
+           (instruction.receiver && namesEntry(*instruction.receiver))) &&
+          !formalEntryLoanEndInstruction(constructor, instruction)) {
+        return false;
+      }
+    }
+    const MirTerminator &terminator = block.terminator;
+    if ((terminator.returnLoan && *terminator.returnLoan == entry->id) ||
+        (terminator.value && namesEntry(*terminator.value)) ||
+        std::any_of(terminator.targetArguments.begin(),
+                    terminator.targetArguments.end(), namesEntry) ||
+        std::any_of(terminator.elseArguments.begin(),
+                    terminator.elseArguments.end(), namesEntry)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // An owned parameter normally publishes through the native member-initializer
 // list, but that would reorder a later move ahead of earlier MIR work. The
 // failure-form constructor may instead begin with private empty fields and
@@ -14350,9 +14432,16 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
       // The formal, the moved value and the field are all trivially dropped,
       // and no obligation names any place of them: MIR has nothing to
       // transfer, reparent or roll back. Borrowed state may only be the
-      // formal's entry loan, which ends without reaching the field.
+      // formal's entry loan, which either ends without reaching the field or
+      // is a payload enum's group handed to the field by its proof-only
+      // publication.
       const bool borrowed = source->traits.containsBorrowedState ||
                             value->info.traits.containsBorrowedState;
+      const bool retainedPayload =
+          borrowed && destination != nullptr &&
+          destination->traits.containsBorrowedState &&
+          formalEntryGroupPayloadMove(constructor, *source, *value, *move,
+                                      initializer.field);
       const auto namesInitializerState = [&](MirPlaceId id) {
         const MirPlace *place = constructor.body.findPlace(id);
         return place != nullptr &&
@@ -14367,10 +14456,11 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
       };
       if (source->traits.drop != DropKind::Trivial ||
           value->info.traits.drop != DropKind::Trivial ||
-          (borrowed && ((destination != nullptr &&
-                         destination->traits.containsBorrowedState) ||
-                        !formalEntryLoanOnlyMove(constructor, *source, *value,
-                                                 *move, initializer.field))) ||
+          (borrowed && !retainedPayload &&
+           ((destination != nullptr &&
+             destination->traits.containsBorrowedState) ||
+            !formalEntryLoanOnlyMove(constructor, *source, *value, *move,
+                                     initializer.field))) ||
           std::any_of(constructor.body.dropObligations.begin(),
                       constructor.body.dropObligations.end(),
                       [&](const MirDropObligation &drop) {
@@ -21877,8 +21967,11 @@ loanReferentType(const MirProgram &program, const MirBody &body,
       return source->type.arguments.front();
     }
   }
+  // A reference-typed source protects its referent, never the pointer
+  // carrier: a parameter entry, a return transfer, and a Stored dependency
+  // inherited from a reference binding all name what that binding refers to.
   if ((loan.kind == MirLoanKind::Parameter ||
-       loan.kind == MirLoanKind::Return) &&
+       loan.kind == MirLoanKind::Return || loan.kind == MirLoanKind::Stored) &&
       source->type.kind == SemanticType::Reference &&
       source->type.arguments.size() == 1) {
     return source->type.arguments.front();
@@ -27447,12 +27540,94 @@ struct ClassSsaLifetimeSlot {
   const MirBlock *returnBlock = nullptr;
   ClassSsaSlotConsumerKind consumerKind = ClassSsaSlotConsumerKind::None;
   const MirInstruction *observingCall = nullptr;
+  // The field chain a FieldRead consumer reads.
+  const MirPlace *fieldView = nullptr;
 
   [[nodiscard]] explicit operator bool() const { return value != nullptr; }
 };
 
-// The exact projected place a FieldRead slot's consumer reads: its one copied
-// operand, or the borrowed receiver of a text observer.
+// A nested field read `a.b.c` is built from the chain `a.b`, and MIR records
+// that shorter chain as its own place rooted at the same value. Such a prefix
+// record is untouched: no instruction, terminator, loan, or drop names it, so
+// it spells nothing and adds no consumer.
+[[nodiscard]] bool untouchedFieldPrefixRecord(const MirBody &body,
+                                              const MirPlace &view,
+                                              MirPlaceId placeId) {
+  const MirPlace *place = body.findPlace(placeId);
+  if (place == nullptr || view.root != MirPlaceRootKind::Value ||
+      place->root != MirPlaceRootKind::Value || place->value != view.value ||
+      place->projections.empty() ||
+      place->projections.size() >= view.projections.size() ||
+      !std::equal(place->projections.begin(), place->projections.end(),
+                  view.projections.begin()) ||
+      std::any_of(
+          body.loans.begin(), body.loans.end(),
+          [&](const MirLoan &loan) { return loan.protectsSource(placeId); }) ||
+      std::any_of(
+          body.dropObligations.begin(), body.dropObligations.end(),
+          [&](const MirDropObligation &drop) { return drop.place == placeId; }))
+    return false;
+  const auto touches = [&](const MirOperand &operand) {
+    return operand.place == placeId;
+  };
+  for (const MirBlock &block : body.blocks) {
+    const MirTerminator &terminator = block.terminator;
+    if ((terminator.value && touches(*terminator.value)) ||
+        std::any_of(terminator.targetArguments.begin(),
+                    terminator.targetArguments.end(), touches) ||
+        std::any_of(terminator.elseArguments.begin(),
+                    terminator.elseArguments.end(), touches) ||
+        std::any_of(terminator.switchTargets.begin(),
+                    terminator.switchTargets.end(),
+                    [&](const MirSwitchTarget &edge) {
+                      return std::any_of(edge.arguments.begin(),
+                                         edge.arguments.end(), touches);
+                    }))
+      return false;
+    for (const MirInstruction &instruction : block.instructions)
+      if (instruction.destination == placeId ||
+          instruction.successResultDestination == placeId ||
+          instruction.retainedOwnerPlace == placeId ||
+          (instruction.receiver && touches(*instruction.receiver)) ||
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      touches))
+        return false;
+  }
+  return true;
+}
+
+// The one place a value's uses observe when every use roots a place of the
+// same field chain: the deepest root, with every other root an untouched
+// prefix record of it.
+[[nodiscard]] const MirPlace *
+observedFieldChain(const MirBody &body, const std::vector<MirValueUse> &uses) {
+  if (uses.empty() ||
+      !std::all_of(uses.begin(), uses.end(), [](const MirValueUse &use) {
+        return use.kind == MirValueUseKind::PlaceRoot && use.place != 0;
+      }))
+    return nullptr;
+  const MirPlace *view = nullptr;
+  for (const MirValueUse &use : uses) {
+    const MirPlace *root = body.findPlace(use.place);
+    if (root == nullptr)
+      return nullptr;
+    if (view == nullptr || root->projections.size() > view->projections.size())
+      view = root;
+  }
+  return std::all_of(uses.begin(), uses.end(),
+                     [&](const MirValueUse &use) {
+                       return use.place == view->id ||
+                              untouchedFieldPrefixRecord(body, *view,
+                                                         use.place);
+                     })
+             ? view
+             : nullptr;
+}
+
+// The exact projected place a FieldRead slot's consumer reads (its one copied
+// operand, or the borrowed receiver of a text observer), or an untouched
+// prefix record of that chain. The slot proof admits no other place rooted at
+// its value.
 [[nodiscard]] bool fieldReadSlotView(const ClassSsaLifetimeSlot &slot,
                                      const MirPlace &place) {
   if (slot.consumerKind != ClassSsaSlotConsumerKind::FieldRead ||
@@ -27460,7 +27635,12 @@ struct ClassSsaLifetimeSlot {
     return false;
   return (slot.consumer->operands.size() == 1 &&
           slot.consumer->operands.front().place == place.id) ||
-         textObserverOfPlace(*slot.consumer, place.id);
+         textObserverOfPlace(*slot.consumer, place.id) ||
+         (slot.fieldView != nullptr && place.root == MirPlaceRootKind::Value &&
+          place.value == slot.fieldView->value && !place.projections.empty() &&
+          place.projections.size() < slot.fieldView->projections.size() &&
+          std::equal(place.projections.begin(), place.projections.end(),
+                     slot.fieldView->projections.begin()));
 }
 
 // The cleanup-free conditional join whose single Move is this slot's
@@ -27583,7 +27763,7 @@ plainCallStagedClassResult(const ClassSsaLifetimeSlot &slot) {
 // representation storage. It is not a semantic drop: the value is transferred
 // immediately to a Return, one by-value call parameter, or a cleanup-free
 // mutable binding assignment, or observed through
-// one scalar field read, and only a generated cleanup-free representation
+// one read of a field chain, and only a generated cleanup-free representation
 // remains to be ended by the slot. An unused cleanup-free call result retires
 // its representation immediately after successful publication.
 [[nodiscard]] ClassSsaLifetimeSlot
@@ -27622,7 +27802,7 @@ classSsaLifetimeSlot(const MirProgram &program,
           : transformedFailureCallee(program, representations, *producer);
   // Plain source calls need the same uninitialized staging when their result
   // replaces a binding, passes by value to one call, initializes one
-  // constructor field, is observed through one field projection, reaches a
+  // constructor field, is observed through one field chain, reaches a
   // Return that cannot spell the call as its return expression, or is
   // discarded. Default-constructing a C++ local would
   // introduce a source-observable constructor call, and publishing directly
@@ -27634,9 +27814,7 @@ classSsaLifetimeSlot(const MirProgram &program,
                 uses.front().kind == MirValueUseKind::InstructionOperand
             ? findInstruction(body, uses.front().instruction)
             : nullptr;
-    const bool projectedObservation =
-        uses.size() == 1 && uses.front().kind == MirValueUseKind::PlaceRoot &&
-        uses.front().place != 0;
+    const bool projectedObservation = observedFieldChain(body, uses) != nullptr;
     const bool returnedResult =
         uses.size() == 1 && uses.front().kind == MirValueUseKind::Terminator &&
         body.returnType == value->info.type &&
@@ -27834,24 +28012,23 @@ classSsaLifetimeSlot(const MirProgram &program,
       value->info.traits.movable && classInstance->traits.movable;
 
   // A cleanup-free class result may be observed through one exact field
-  // projection before the full expression ends. The transformed callee still
-  // needs uninitialized representation storage; the projected place is only
-  // an lvalue view over that slot and owns no independent lifetime. A value
-  // moved out of a place, as in `std::move(a).x`, is staged the same way: the
-  // Move constructs the slot and leaves its source moved-from.
+  // chain, of any depth, before the full expression ends. The transformed
+  // callee still needs uninitialized representation storage; the projected
+  // place is only an lvalue view over that slot and owns no independent
+  // lifetime. A value moved out of a place, as in `std::move(a).x`, is staged
+  // the same way: the Move constructs the slot and leaves its source
+  // moved-from. The deepest place rooted at the value is the read chain; any
+  // other root must be an untouched prefix record of it.
   const std::vector<MirValueUse> allUses = body.usesOf(valueId);
-  if (allUses.size() == 1 &&
-      allUses.front().kind == MirValueUseKind::PlaceRoot &&
-      allUses.front().place != 0 &&
+  const MirPlace *projection = observedFieldChain(body, allUses);
+  if (projection != nullptr &&
       !std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                    [&](const MirDropObligation &drop) {
                      return drop.generatedValue == valueId;
                    })) {
-    const MirPlace *projection = body.findPlace(allUses.front().place);
     const bool exactProjection =
-        projection != nullptr && projection->root == MirPlaceRootKind::Value &&
+        projection->root == MirPlaceRootKind::Value &&
         projection->value == valueId && !projection->projections.empty() &&
-        (!directConstructionProducer || projection->projections.size() == 1) &&
         std::all_of(projection->projections.begin(),
                     projection->projections.end(),
                     [](const MirPlaceProjection &item) {
@@ -27988,7 +28165,8 @@ classSsaLifetimeSlot(const MirProgram &program,
               .producer = producer,
               .consumer = consumer,
               .consumerKind = ClassSsaSlotConsumerKind::FieldRead,
-              .observingCall = observingCall};
+              .observingCall = observingCall,
+              .fieldView = projection};
     }
   }
 
@@ -28428,17 +28606,18 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
           constructed->hirValue == entry->producedBy;
       // A payload enum is also a complete native value: Initialize stores its
       // selected variant, including any reference payload, before this
-      // proof-only handoff. Preserve the exact producer and full conditional
-      // dependency group; never synthesize an unconditional payload address.
+      // proof-only handoff. Preserve the exact producer, or the moved or
+      // copied formal's entry group, and the full conditional dependency
+      // group; never synthesize an unconditional payload address.
       const bool payloadField =
-          entry && !entry->entry && constructed &&
-          constructed->kind == MirInstructionKind::Compute &&
-          constructed->operation == MirOperation::PayloadConstruct &&
-          constructed->info.type.kind == SemanticType::Enum &&
-          constructed->loan == entry->id &&
-          constructed->result == operand.value &&
-          constructed->info.type == operand.type &&
-          constructed->hirValue == entry->producedBy &&
+          entry && operand.type.kind == SemanticType::Enum &&
+          (entry->entry ||
+           (constructed && constructed->kind == MirInstructionKind::Compute &&
+            constructed->operation == MirOperation::PayloadConstruct &&
+            constructed->loan == entry->id &&
+            constructed->result == operand.value &&
+            constructed->info.type == operand.type &&
+            constructed->hirValue == entry->producedBy)) &&
           !entry->designatedFields.empty() &&
           entry->designatedFields == loan.designatedFields &&
           entry->conditions == loan.conditions &&
@@ -28856,6 +29035,78 @@ loanHasCppPointerCarrier(const MirProgram &program,
          elementBorrowLoanProducer(body, loan) == nullptr;
 }
 
+// A provenance-only place is never evaluated: no instruction, edge, drop or
+// range iteration names it, and every loan it sources obtains its runtime
+// address from one exact producer (a reference-returning call, a
+// PayloadExtract selection or a transferred loan pointer), never from an
+// implicit entry-loan initialization. Stored loans carry no native pointer.
+[[nodiscard]] bool provenanceOnlyLoanSource(const MirProgram &program,
+                                            const MirBody &body,
+                                            const MirPlace &place) {
+  const auto uses = [&](const auto &operand) {
+    return operand.place == place.id;
+  };
+  const auto usesAny = [&](const auto &operands) {
+    return std::any_of(operands.begin(), operands.end(), uses);
+  };
+  for (const auto &block : body.blocks) {
+    const auto &edge = block.terminator;
+    if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
+        usesAny(edge.elseArguments) ||
+        std::any_of(
+            edge.switchTargets.begin(), edge.switchTargets.end(),
+            [&](const auto &target) { return usesAny(target.arguments); }))
+      return false;
+    for (const auto &instruction : block.instructions)
+      if (instruction.destination == place.id ||
+          instruction.successResultDestination == place.id ||
+          instruction.retainedOwnerPlace == place.id ||
+          (instruction.receiver && uses(*instruction.receiver)) ||
+          usesAny(instruction.operands))
+        return false;
+  }
+  for (const auto &drop : body.dropObligations)
+    if (drop.place == place.id)
+      return false;
+  for (const auto &range : body.rangeIterations)
+    if (range.owner == place.id || range.rangeCarrier == place.id ||
+        range.iterator == place.id || range.sentinel == place.id ||
+        range.element == place.id)
+      return false;
+  for (const auto &loan : body.loans) {
+    if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
+      continue;
+    if (loan.entry)
+      return false;
+    std::size_t producers = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.loan == loan.id &&
+            (instruction.kind == MirInstructionKind::Borrow ||
+             instruction.kind == MirInstructionKind::Call)) {
+          const bool returnedAddress =
+              instruction.kind == MirInstructionKind::Call &&
+              loanProducingReferenceCall(program, body, loan) == &instruction;
+          const bool selectedAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.referenceSelection &&
+              borrowedPayloadExtract(body, loan.referenceSelection->value);
+          const bool transferredAddress =
+              instruction.kind == MirInstructionKind::Borrow &&
+              loan.kind == MirLoanKind::Return &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Loan &&
+              instruction.operands.front().place == 0;
+          if (!returnedAddress && !selectedAddress && !transferredAddress)
+            return false;
+          ++producers;
+        }
+    if (producers != 1)
+      return false;
+  }
+  return true;
+}
+
 // Enum reference inventories include guarded abstract referent paths. Those
 // paths are checked provenance, not unconditional native field reads (the
 // field may belong to an inactive alternative). An actual selection obtains
@@ -28925,70 +29176,24 @@ loanHasCppPointerCarrier(const MirProgram &program,
     type = *field;
     enumField = true;
   }
-  if (!enumField || type != place.type)
-    return false;
-  const auto uses = [&](const auto &operand) {
-    return operand.place == place.id;
-  };
-  const auto usesAny = [&](const auto &operands) {
-    return std::any_of(operands.begin(), operands.end(), uses);
-  };
-  for (const auto &block : body.blocks) {
-    const auto &edge = block.terminator;
-    if ((edge.value && uses(*edge.value)) || usesAny(edge.targetArguments) ||
-        usesAny(edge.elseArguments) ||
-        std::any_of(
-            edge.switchTargets.begin(), edge.switchTargets.end(),
-            [&](const auto &target) { return usesAny(target.arguments); }))
-      return false;
-    for (const auto &instruction : block.instructions)
-      if (instruction.destination == place.id ||
-          instruction.successResultDestination == place.id ||
-          instruction.retainedOwnerPlace == place.id ||
-          (instruction.receiver && uses(*instruction.receiver)) ||
-          usesAny(instruction.operands))
-        return false;
-  }
-  for (const auto &drop : body.dropObligations)
-    if (drop.place == place.id)
-      return false;
-  for (const auto &range : body.rangeIterations)
-    if (range.owner == place.id || range.rangeCarrier == place.id ||
-        range.iterator == place.id || range.sentinel == place.id ||
-        range.element == place.id)
-      return false;
-  for (const auto &loan : body.loans) {
-    if (!loan.protectsSource(place.id) || loan.kind == MirLoanKind::Stored)
-      continue;
-    if (loan.entry)
-      return false;
-    std::size_t producers = 0;
-    for (const auto &block : body.blocks)
-      for (const auto &instruction : block.instructions)
-        if (instruction.loan == loan.id &&
-            (instruction.kind == MirInstructionKind::Borrow ||
-             instruction.kind == MirInstructionKind::Call)) {
-          const bool returnedAddress =
-              instruction.kind == MirInstructionKind::Call &&
-              loanProducingReferenceCall(program, body, loan) == &instruction;
-          const bool selectedAddress =
-              instruction.kind == MirInstructionKind::Borrow &&
-              loan.referenceSelection &&
-              borrowedPayloadExtract(body, loan.referenceSelection->value);
-          const bool transferredAddress =
-              instruction.kind == MirInstructionKind::Borrow &&
-              loan.kind == MirLoanKind::Return &&
-              instruction.operands.size() == 1 &&
-              instruction.operands.front().kind == MirOperandKind::Loan &&
-              instruction.operands.front().place == 0;
-          if (!returnedAddress && !selectedAddress && !transferredAddress)
-            return false;
-          ++producers;
-        }
-    if (producers != 1)
-      return false;
-  }
-  return true;
+  return enumField && type == place.type &&
+         provenanceOnlyLoanSource(program, body, place);
+}
+
+// A field-less Stored loan rides a borrow-carrying object value: the object
+// holds its references internally and the loan owns no pointer local. A place
+// rooted at it names the carried external referent as checked provenance, for
+// example the owner of a reference selected from the carrier's payload. It is
+// representable only while nothing evaluates it.
+[[nodiscard]] bool storedCarrierProvenancePlace(const MirProgram &program,
+                                                const MirBody &body,
+                                                const MirPlace &place) {
+  const MirLoan *loan = place.root == MirPlaceRootKind::Loan
+                            ? body.findLoan(place.loan)
+                            : nullptr;
+  return loan != nullptr && loan->kind == MirLoanKind::Stored &&
+         loan->storedField == 0 &&
+         provenanceOnlyLoanSource(program, body, place);
 }
 
 // A selected accessor may name a private nested receiver path solely as
@@ -49652,16 +49857,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // local exists. A field-less stored loan rides a borrow-carrying
       // object value: the object local holds the borrow internally, no
       // pointer ever binds, and its call-result children bind their own
-      // pointers — admissible exactly when nothing roots a place at it.
+      // pointers. A place rooted at it never spells: it is admissible only
+      // as provenance that nothing evaluates, such as the owner of a
+      // reference selected from the carrier's payload.
       if (loan.storedField == 0 && !storedReferenceBindings) {
-        bool rootedPlace = false;
         for (const MirPlace &place : body.places) {
-          if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id) {
-            rootedPlace = true;
+          if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id &&
+              !storedCarrierProvenancePlace(program_, body, place)) {
+            return false;
           }
-        }
-        if (rootedPlace) {
-          return false;
         }
         continue;
       }
