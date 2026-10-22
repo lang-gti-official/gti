@@ -9,15 +9,42 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.459.1 — Field reads of more conditional temporaries
+## 0.459.3 — Field reads of conditionals whose arms take a class by value
 
 - A field of a conditional temporary can now be read when its arms pass a
   class by value to their constructor, as in
-  `(left ? Segment(Point(1)) : Segment(Point(2))).flat`, or build a class
-  that holds a `std::string_view`, as in
-  `(left ? Token("left", 1) : Token("right", 2)).kind`. Both used to report
-  `error[GTI-B0001]` (an internal compiler error); they now work, including
-  nested reads such as `.low.x`, `.text` and `.text.size()`.
+  `(left ? Segment(Point(1)) : Segment(Point(2))).flat`, including nested
+  reads such as `.low.x` and reads inside loops. It used to report
+  `error[GTI-B0001]` (an internal compiler error).
+
+## 0.459.2 — Native C-string ownership and conditional call results
+
+- An untracked `c_string` returned by an external C function can again be
+  retained in an ordinary native-resource wrapper. MIR recognizes the exact
+  native producer instead of reporting `GTI-B0001`; GTI owner-dependent strings
+  retain their existing lifetime checks and native pointer validity remains
+  the binding's obligation.
+- A conditional can bind a class result returned by either of two fallible
+  calls with borrowed text inputs. The backend preserves each arm's input-loan
+  ending after result publication, including cleanup-free records without a
+  default constructor. This repairs the editor's conditional stdout/stderr
+  logging path.
+
+## 0.459.1 — Moving classes that hold text views
+
+- A class with a `std::string_view` field can now be moved into another
+  class's field after an initializer that can fail, when it has no destructor
+  and its other fields are text views, C strings, scalars, enums, pointers,
+  fixed arrays or classes of the same kind. For `class Name { public:
+  std::string_view text; ... }`, `shelf(Name name) :
+  v(std::vector<int32_t>()), name(std::move(name))` used to report
+  `error[GTI-B0001]` (an internal compiler error); it now works. If a later
+  initializer or the constructor body fails, each field already built is
+  dropped exactly once.
+- Such a class can also now be chosen by a conditional, as in `Name chosen =
+  pick ? a : b;` or `pick ? std::move(a) : std::move(b)`, and a copy of one
+  can be assigned into a field, as in `holder.name = other;`. Each used to
+  report `error[GTI-B0001]`.
 
 ## 0.459.0 — Reference bindings from payload enums inside loops
 
