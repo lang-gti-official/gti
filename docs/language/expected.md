@@ -62,7 +62,9 @@ the ownerless storage rule for text fields in
 such as a string literal or a view forwarded from one. A view of a dynamic
 string, even one the caller owns, is rejected (`GTI-S2045`); return an owned
 `std::string` for such text. Owner-tracked view fields do not yet extend to
-generic types such as `expected` (phase 2 of `L-OWN-02`).
+`expected` itself: `unexpected(input.view())` gives an `unexpected_value`
+that views `input`, but converting it to an `expected` is planned work
+(phase 2 of `L-OWN-02`).
 
 `unexpected(error)` checks ownership when it constructs the error payload,
 including in returns, initializers and call arguments. A noncopyable place is

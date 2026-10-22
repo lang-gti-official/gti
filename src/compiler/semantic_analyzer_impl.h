@@ -2083,9 +2083,11 @@ private:
   // result's origin names, with its field: the result reads that field.
   [[nodiscard]] std::optional<OwnerlessTextField>
   fieldSourcedTextFormal(const FieldSourcedTextResult &result) const;
-  // The direct text fields of a class, as tooling symbols.
+  // The direct text fields of a class, as tooling symbols; `conditional`
+  // adds open type-parameter fields, as directTextField does.
   [[nodiscard]] std::vector<SymbolId>
-  directTextFieldSymbols(const SemanticType &type) const;
+  directTextFieldSymbols(const SemanticType &type,
+                         bool conditional = false) const;
   void noteTextFieldFormalUse(const Expr &expression,
                               OwnerlessTextField formal);
   void consumeTextFieldFormalUse(const ExprPtr &expression);
@@ -2108,9 +2110,10 @@ private:
   readsConstructedObject(const Expr &expression, const ClassInfo &owner,
                          const std::vector<Parameter> *formals) const;
 
-  // Whether `field` names a direct text field of the class `type`.
-  [[nodiscard]] bool directTextField(const SemanticType &type,
-                                     SymbolId field) const;
+  // Whether `field` names a direct text field of the class `type`, or with
+  // `conditional` an open type-parameter field an instance may make text.
+  [[nodiscard]] bool directTextField(const SemanticType &type, SymbolId field,
+                                     bool conditional = false) const;
 
   // The sole named owner of a dynamic text argument, designating `field`.
   // Empty when the argument is ownerless or its owner is not a named place.
@@ -2131,6 +2134,19 @@ private:
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
   [[nodiscard]] bool requireOwnerlessTextParameter(const ExprPtr &expression);
+  // Whether `result`, this function's returned value of type `type`, relays
+  // the formal `argument` names at its text field `field` (L-OWN-02),
+  // recording it in publishedTextFields instead of an ownerless requirement.
+  // `constructor` is the selected constructor of a returned construction.
+  [[nodiscard]] bool relayReturnedTextFormal(const Expr &result,
+                                             const SemanticType &type,
+                                             const ConstructorDecl *constructor,
+                                             const ExprPtr &argument,
+                                             SymbolId field);
+  // A callee that returns an argument in a text field of its fresh result
+  // makes `call` publish that argument's owner there, as a constructor does.
+  void publishTextCallResult(const Call &call, ResolvedCallInfo &resolved,
+                             const FunctionInfo &callee);
   void recordOwnerlessTextCall(const Call &call,
                                const CallableCandidate &target);
   void finalizeOwnerlessTextContracts();
