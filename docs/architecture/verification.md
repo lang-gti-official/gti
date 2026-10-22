@@ -1,5 +1,63 @@
 # Compiler Verification
 
+## Recursive text returns (0.458.2)
+
+`ownerless_text_contracts` covers recursion in four tests.
+- `testRecursiveOwnerlessReturns` verifies a `std::string_view` and a
+  `c_string` recursion, a mutual recursion through `?:`, a recursive result
+  stored in a text field, and `id(id("lit"))`. Main's verifier rejected each:
+  `ownerless text return has no independent result proof`, or `ownerless text
+  storage or call lacks exact producer evidence` for the stored result.
+- `testPermutingRecursiveFieldContracts` verifies `pick(Token a, Token b,
+  int n)`, which returns `a.text` or `pick(b, a, n - 1)`, and a caller. Both
+  carry a field requirement on each formal, and MIR rejects a contract that
+  omits either one. A dynamic argument is rejected at source with
+  `GTI-S2045`, not by MIR.
+- `testRecursiveOwnerlessReturnMutations` returns a formal where the
+  recursion permutes formals. MIR rejects the recursion's result proof, and
+  derives that a caller storing its result requires exactly both of the
+  caller's formals: a contract naming one is rejected and one naming both is
+  not. Returning a formal in one function of a mutual recursion fails the
+  other function's result proof too.
+- `testRecursiveTextSummaryScaling` verifies an 18-deep chain whose returns
+  each call the next function twice, and an 8-function set in which every
+  function calls every other.
+
+Discrimination:
+- Against main's verifier, the six positive programs of the first three tests
+  all fail with `GTI-B0001`.
+- A variant that reads a function under evaluation as ownerless text, instead
+  of its current summary, passes every test except the exact-both-formals
+  assertion, which fails in both directions.
+
+Compile time, `--emit-cpp` on a loaded host:
+
+| Program | main | this change |
+| --- | --- | --- |
+| chain, depth 16 | 1.08 s | 0.09 s |
+| chain, depth 20 | 16.54 s | 0.11 s |
+| 8 mutually calling functions | 13.69 s, then `GTI-B0001` | 0.19 s |
+| 16 mutually calling functions | over 60 s | 0.34 s |
+
+Main inlined a callee's returns at every call without memoization, so its
+cost grew with the number of call paths. A first draft of this change
+memoized complete summaries only, which still re-evaluated a provisional
+summary at every call path inside a recursive set; summaries are now
+provisional for one pass of the set's first function.
+
+An `--emit-cpp` differential at O0 and O3, against main's compiler at
+`d2873bde` on the same sources, covers every `.gti` program in the repository
+outside `stdlib/` and the hanging `namespace-depth-63` stress file: 1,946
+programs.
+- No run changes status, emitted C++ or diagnostics. The 796 runs that fail
+  on main fail identically with this change.
+- Neither compiler reports `GTI-B0001` for any of them, so the corpus held no
+  recursive text function.
+- Eleven probes build and run at O0 and O3. Ten report `GTI-B0001` on main:
+  the shapes above, a recursive field relay, a mutual one, and this
+  release's documentation example. A recursive method returning its
+  receiver's field already built.
+
 ## Dependent text payloads (0.457.0)
 
 `view_fields` covers payloads in `testPayloads`.
