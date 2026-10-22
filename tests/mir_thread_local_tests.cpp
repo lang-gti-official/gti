@@ -159,6 +159,38 @@ int main() {
       },
       "thread-local guard has no exact");
   reject(
+      program, "missing unattached-lifetime outcome rejected",
+      [](auto &forged) {
+        for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+          auto *body = lang::findMirBody(forged, address);
+          for (auto &block : body->blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind ==
+                  lang::MirInstructionKind::EnsureThreadLocal)
+                for (auto &origin : instruction.definedFailure.localOrigins)
+                  std::erase_if(origin.outcomes, [](const auto &outcome) {
+                    return outcome.detail == lang::DefinedFailureDetail::
+                                                 ThreadLocalOutsideAttachedLifetime;
+                  });
+        }
+      },
+      "thread-local guard omits initialization-state failure outcomes");
+  reject(
+      program, "missing hosted attachment rejected",
+      [](auto &forged) {
+        auto *body = lang::findMirBody(
+            forged, {.kind = lang::MirBodyKind::HostedStartup,
+                     .owner = forged.hostedStartupPlan()->entry});
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind ==
+                lang::MirInstructionKind::BeginThreadLocals) {
+              const auto id = instruction.id;
+              instruction = lang::MirInstruction{.id = id, .tombstone = true};
+            }
+      },
+      "hosted-startup");
+  reject(
       program, "missing shutdown drain rejected",
       [](auto &forged) {
         auto *body = lang::findMirBody(
@@ -173,5 +205,87 @@ int main() {
             }
       },
       "hosted-startup");
+
+  // Matching literal tokens alone do not prove data-only initialization:
+  // changing an intermediate precision can round before the final widening.
+  const auto precise = lang::Frontend().analyze(
+      "/tmp/gti-mir-thread-local/precision.gti", R"(
+thread_local double exact = 16777217;
+int main() { return 0; }
+)");
+  for (const auto &diagnostic : precise.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(precise.semanticValid && precise.hirValid,
+         "precision fixture passes frontend");
+  if (precise.semanticValid && precise.hirValid) {
+    const auto preciseMir =
+        lang::MirLowerer().lower(precise.hir, precise.failureMetadata);
+    expect(preciseMir.valid(), "precision fixture lowers and verifies");
+    if (preciseMir.valid())
+      reject(
+          preciseMir.program, "rounding intermediate data conversion rejected",
+          [](auto &forged) {
+            auto &body = storage(forged).front().initializer;
+            lang::MirValueId literalValue = 0;
+            for (auto &block : body.blocks)
+              for (auto &instruction : block.instructions)
+                if (instruction.operation == lang::MirOperation::Literal &&
+                    instruction.result) {
+                  literalValue = *instruction.result;
+                  instruction.info.type = lang::SemanticType::Float;
+                  body.values[literalValue - 1].info.type =
+                      lang::SemanticType::Float;
+                }
+            expect(literalValue != 0, "precision mutation has a literal");
+            for (auto &block : body.blocks)
+              for (auto &instruction : block.instructions)
+                for (auto &operand : instruction.operands)
+                  if (operand.kind == lang::MirOperandKind::Value &&
+                      operand.value == literalValue)
+                    operand.type = lang::SemanticType::Float;
+            for (auto &block : body.blocks)
+              if (block.terminator.value &&
+                  block.terminator.value->kind == lang::MirOperandKind::Value &&
+                  block.terminator.value->value == literalValue)
+                block.terminator.value->type = lang::SemanticType::Float;
+          },
+          "thread-local data initializer");
+  }
+  const auto pointer = lang::Frontend().analyze(
+      "/tmp/gti-mir-thread-local/null-pointer.gti", R"(
+thread_local mut int32_t* address = nullptr;
+int main() { return address == nullptr ? 0 : 1; }
+)");
+  for (const auto &diagnostic : pointer.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(pointer.canGenerateCode(),
+         "null pointer publication is proved through its typed result");
+  const auto localDynamic = lang::Frontend().analyze(
+      "/tmp/gti-mir-thread-local/local-dynamic.gti", R"(
+int seed() { return 7; }
+int& current() { thread_local int value = seed(); return value; }
+int main() { int& value = current(); return value - 7; }
+)");
+  for (const auto &diagnostic : localDynamic.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(localDynamic.canGenerateCode(),
+         "dynamic local first-use declaration has an exact failure site");
+  if (localDynamic.canGenerateCode())
+    reject(
+        localDynamic.mir, "caller witness cannot hide an unguarded callee return",
+        [](auto &forged) {
+          for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+            auto *body = lang::findMirBody(forged, address);
+            if (body->returnType.kind != lang::SemanticType::Reference)
+              continue;
+            for (auto &block : body->blocks)
+              for (auto &instruction : block.instructions)
+                if (instruction.kind == lang::MirInstructionKind::EnsureThreadLocal) {
+                  const auto id = instruction.id;
+                  instruction = lang::MirInstruction{.id = id, .tombstone = true};
+                }
+          }
+        },
+        "thread-local access is not dominated");
   return passed ? 0 : 1;
 }

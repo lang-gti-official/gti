@@ -10355,6 +10355,21 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
       }
     }
   }
+  // Scope cleanup can be recorded after statement traversal has restored its
+  // enclosing source position. A loan carried entirely by that exiting scope
+  // is nevertheless finished there if the same structured proof above found
+  // an ordinary earlier endpoint. Cleanup-bound/outer-carried loans remain.
+  for (const auto index : loanFlow.programScopeExitChecks) {
+    auto &checks = requestSession.programStorageBorrowChecks;
+    if (index >= checks.size())
+      continue;
+    std::erase_if(checks[index].protections, [&](const auto &protection) {
+      if (!protection.scopeExit || protection.loan == 0)
+        return false;
+      const auto flow = loanFlow.records.find(protection.loan);
+      return flow != loanFlow.records.end() && canEndLoanEarly(flow->second);
+    });
+  }
   // Endpoint decisions above see mandatory conflicts only. Append optional
   // observations afterward solely to reuse diagnostic liveness filtering.
   const auto mandatoryConflicts = loanFlow.conflicts.size();
@@ -12600,9 +12615,15 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
   }
   if (place.root != nullptr &&
       (place.root->bindingKind == SemanticBindingKind::GlobalVariable ||
-       place.root->bindingKind == SemanticBindingKind::StaticField)) {
+       place.root->bindingKind == SemanticBindingKind::StaticField ||
+       (place.root->variableDeclaration != nullptr &&
+        place.root->variableDeclaration->isThreadLocal()))) {
     report(expressionToken(argument),
-           place.root->bindingKind == SemanticBindingKind::GlobalVariable
+           place.root->variableDeclaration != nullptr &&
+                   place.root->variableDeclaration->isThreadLocal()
+               ? "std::move cannot consume thread-local storage because its "
+                 "availability must remain valid across calls."
+           : place.root->bindingKind == SemanticBindingKind::GlobalVariable
                ? "std::move cannot consume global binding '" +
                      place.root->declaration.lexeme +
                      "' because its move state is not locally provable."
@@ -12707,7 +12728,10 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
   const Variable *variable = movedVariable(argument);
   if (variable == nullptr) {
     const std::optional<Symbol> symbol = resolveExpressionSymbol(argument);
-    if (symbol && symbol->bindingKind == SemanticBindingKind::GlobalVariable) {
+    if (symbol &&
+        (symbol->bindingKind == SemanticBindingKind::GlobalVariable ||
+         (symbol->variableDeclaration != nullptr &&
+          symbol->variableDeclaration->isThreadLocal()))) {
       report(expressionToken(argument),
              "std::move cannot consume a global binding because its move "
              "state is not locally provable.",
@@ -12769,9 +12793,16 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (symbol->bindingKind == SemanticBindingKind::GlobalVariable) {
+  if (symbol->bindingKind == SemanticBindingKind::GlobalVariable ||
+      (symbol->variableDeclaration != nullptr &&
+       symbol->variableDeclaration->isThreadLocal())) {
     report(variable->name(),
-           "std::move cannot consume global binding '" +
+           std::string("std::move cannot consume ") +
+               (symbol->variableDeclaration != nullptr &&
+                        symbol->variableDeclaration->isThreadLocal()
+                    ? "thread-local"
+                    : "global") +
+               " binding '" +
                variable->name().lexeme +
                "' because its move state is not locally provable.",
            "GTI-S2018");
@@ -12868,6 +12899,14 @@ auto SemanticVisitor::Impl::analyzeImplicitReturnMove(
        symbol->bindingKind != SemanticBindingKind::Parameter) ||
       symbol->type.kind == SemanticType::Reference) {
     return ImplicitReturnMoveStatus::NotEligible;
+  }
+  if (symbol->variableDeclaration != nullptr &&
+      symbol->variableDeclaration->isThreadLocal()) {
+    report(variable->name(),
+           "An implicit return move cannot consume thread-local storage "
+           "because its availability must remain valid across calls.",
+           "GTI-S2018");
+    return ImplicitReturnMoveStatus::Invalid;
   }
   if (symbol->variableDeclaration != nullptr &&
       structuredBindingElements.contains(symbol->variableDeclaration)) {

@@ -1251,6 +1251,18 @@ ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
 diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
 without exact selected generic arguments remain conservatively unknown.
 
+Persistent-storage loan checks reuse that exact effect graph and the ordinary
+structured loan endpoint scheduler. A request-local full-expression frame is
+selected by the existing `SemanticFullExpression` roots, including a shared
+frame for a constructor initializer's arguments. Typed fresh-value producers and
+selected input/destination transfers determine which temporaries remain for
+cleanup; the analysis does not execute an alternate cleanup interpreter or
+derive object lifetime from generated C++. Builtin replacement checks its old
+object's cleanup immediately, while the common root endpoint checks remaining
+temporaries and protects a published reference or borrowed result. Body cleanup
+summaries retain conservative rollback effects until the closed execution/failure
+proof can establish a narrower path.
+
 Value-generic arithmetic needed before complete program HIR/MIR is retained as
 an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
 Substitution reuses the checked constant-operation kernel and exact-specialization

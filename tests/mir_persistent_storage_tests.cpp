@@ -264,6 +264,21 @@ int main() { return value; }
          "independent storage proof rejects an unrepresented destructive "
          "transfer");
 }
+void stagedBorrowMayPublishItsOriginalLifetime() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/staged-return.gti", R"(
+thread_local mut int32_t value = 1;
+int32_t& retain(int32_t& input, int32_t copied) { return input; }
+int main() { int32_t& result = retain(value, 0); return result; }
+)");
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "an ordered persistent input may publish its actual storage lifetime");
+  if (frontend.canGenerateCode())
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "input protection does not invent a shorter-lived result parent");
+}
 } // namespace
 
 int main() {
@@ -277,5 +292,6 @@ int main() {
     for (const bool branch : {false, true})
       stagedInputBoundaries(storage, branch);
   persistentTransferIsIndependentlyRejected();
+  stagedBorrowMayPublishItsOriginalLifetime();
   return passed ? 0 : 1;
 }

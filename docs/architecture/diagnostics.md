@@ -877,7 +877,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   Retained checked borrowed state uses `GTI-S2045`, as do transitive hidden
   persistent-storage accesses that conflict with an ordinary live loan. Relate
   both the protected origin and the exact conflicting source access; unresolved
-  GTI targets relate the open effect boundary instead.
+  GTI targets relate the open effect boundary instead. A staged-input conflict
+  points at the later evaluated input and explains that earlier inputs are
+  already bound. Scope, full-expression, replacement and failure cleanup checks
+  identify their scheduling boundary in related information; they are not
+  reported as if the user's destructor ran at its declaration.
 - `GTI-S2123` owns concepts with a body, conformance blocks, and their uses.
   The block owns written header diagnostics, including generic parameter
   constraints. Generated operations reuse those parameter identities and do

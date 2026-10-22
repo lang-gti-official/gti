@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import re
 import statistics
 import subprocess
 import sys
@@ -30,14 +31,17 @@ extern "C" {
 """
 PASSIVE = "thread_local mut uint64_t counter = 0;\n"
 DYNAMIC = """\
+void* acquire_resource() {
+  unsafe { return gti_tls_bench_acquire(); }
+}
 class Resource {
-  void* handle;
+  void* handle = nullptr;
   mut uint64_t value = uint64_t(0);
 public:
-  Resource() : handle(gti_tls_bench_acquire()) {}
+  Resource() : handle(acquire_resource()) {}
   void add(uint64_t amount) mut { this.value += amount; }
   uint64_t read() { return this.value; }
-  ~Resource() { gti_tls_bench_release(this.handle); }
+  ~Resource() { unsafe { gti_tls_bench_release(this.handle); } }
 };
 thread_local mut Resource resource{};
 """
@@ -64,6 +68,22 @@ def execute(command: list[str]) -> subprocess.CompletedProcess[str]:
         raise AssertionError(f"{command!r}: {result.returncode}\n"
                              f"stdout={result.stdout!r}\nstderr={result.stderr!r}")
     return result
+
+
+def measured(command: list[str], statistics_path: pathlib.Path) -> tuple[subprocess.CompletedProcess[str], int | None]:
+    timer = pathlib.Path("/usr/bin/time")
+    if not timer.exists():
+        return execute(command), None
+    option = "-l" if sys.platform == "darwin" else "-v"
+    result = execute([str(timer), option, "-o", str(statistics_path), *command])
+    statistics_text = statistics_path.read_text()
+    if sys.platform == "darwin":
+        match = re.search(r"(\d+)\s+maximum resident set size", statistics_text)
+        rss = int(match.group(1)) if match else None
+    else:
+        match = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", statistics_text)
+        rss = int(match.group(1)) * 1024 if match else None
+    return result, rss
 
 
 def main() -> None:
@@ -103,14 +123,18 @@ def main() -> None:
             data = {}
             for language, command in commands.items():
                 started = time.monotonic()
-                execute(command)
+                _, peak_rss = measured(command, root / f"{kind}-{language}-compile.time")
                 data[language] = {"compile_seconds": time.monotonic() - started,
+                                  "compile_peak_rss_bytes": peak_rss,
                                   "executable_bytes": binaries[language].stat().st_size,
-                                  "warm_ns": [], "cold_ns": [], "resource_allocations": []}
+                                  "warm_ns": [], "cold_ns": [], "resource_allocations": [],
+                                  "runtime_peak_rss_bytes": []}
             for sample in range(9):
                 order = ("gti", "cpp") if sample % 2 == 0 else ("cpp", "gti")
                 for language in order:
-                    fields = list(map(int, execute([str(binaries[language])]).stdout.split()))
+                    observed, peak_rss = measured([str(binaries[language])],
+                                                  root / f"{kind}-{language}-{sample}.time")
+                    fields = list(map(int, observed.stdout.split()))
                     warm, cold, value, allocations, releases = fields
                     if value != 30000000 or allocations != (kind == "dynamic"):
                         raise AssertionError(f"{kind}/{language}: invalid complete state {fields}")
@@ -123,12 +147,14 @@ def main() -> None:
                     data[language]["warm_ns"].append(warm)
                     data[language]["cold_ns"].append(cold)
                     data[language]["resource_allocations"].append(allocations)
+                    data[language]["runtime_peak_rss_bytes"].append(peak_rss)
             for language in data:
                 data[language]["median_warm_ns"] = statistics.median(data[language]["warm_ns"])
                 data[language]["median_cold_ns"] = statistics.median(data[language]["cold_ns"])
             data["warm_gti_over_cpp"] = data["gti"]["median_warm_ns"] / data["cpp"]["median_warm_ns"]
             data["cold_gti_over_cpp"] = data["gti"]["median_cold_ns"] / data["cpp"]["median_cold_ns"]
             report["variants"][kind] = data
+            destination.write_text(json.dumps(report, indent=2) + "\n")
     destination.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({kind: {key: value for key, value in data.items() if key.endswith("over_cpp")}
                       for kind, data in report["variants"].items()}))

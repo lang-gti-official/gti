@@ -1,5 +1,6 @@
 #include "mir_thread_local.h"
 
+#include "gti/constant_evaluator.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
 
@@ -9,6 +10,23 @@
 
 namespace lang {
 namespace {
+
+std::optional<ConstantValue> dataConstantInType(const ConstantValue &value,
+                                               const SemanticType &type) {
+  if (std::holds_alternative<NullConstant>(value) && type.acceptsNullInitialization())
+    return value;
+  if (std::holds_alternative<std::string>(value) &&
+      (type.kind == SemanticType::StringView || type.kind == SemanticType::CString))
+    return value;
+  const auto converted = convertConstantToType(value, type);
+  return converted.value;
+}
+
+std::optional<ConstantValue> dataLiteralInType(const Literal &literal,
+                                             const SemanticType &type) {
+  const auto evaluated = evaluateConstantLiteral(literal, constantIntegerDomain(type));
+  return evaluated.value ? dataConstantInType(*evaluated.value, type) : std::nullopt;
+}
 
 bool exactDataInitializer(const MirThreadLocalStorage &storage) {
   if (!storage.dataInitializer || storage.requiresActiveCleanup ||
@@ -43,21 +61,38 @@ bool exactDataInitializer(const MirThreadLocalStorage &storage) {
     }
   }
   if (!returned || !returned->value ||
-      returned->value->kind != MirOperandKind::Value ||
-      returned->value->type != storage.type)
+      returned->value->kind != MirOperandKind::Value)
     return false;
   MirValueId value = returned->value->value;
   std::unordered_set<MirValueId> seen;
+  std::vector<const MirInstruction *> conversions;
   while (seen.insert(value).second) {
     const auto found = definitions.find(value);
     if (found == definitions.end())
       return false;
     const auto &instruction = *found->second;
-    if (instruction.operation == MirOperation::Literal)
-      return instruction.literal == storage.dataInitializer;
+    if (instruction.operation == MirOperation::Literal) {
+      if (!instruction.literal)
+        return false;
+      auto actual = dataLiteralInType(*instruction.literal, instruction.info.type);
+      for (auto it = conversions.rbegin(); actual && it != conversions.rend(); ++it) {
+        if ((*it)->operation == MirOperation::Identity &&
+            (*it)->operands.front().type != (*it)->info.type)
+          return false;
+        actual = dataConstantInType(*actual, (*it)->info.type);
+      }
+      // The typed Return publishes into the initializer body's result type.
+      // As with an ordinary Initialize, that final conversion is represented
+      // by the typed destination, not necessarily a separate Compute node.
+      if (actual)
+        actual = dataConstantInType(*actual, storage.type);
+      const auto expected = dataLiteralInType(*storage.dataInitializer, storage.type);
+      return actual && expected && *actual == *expected;
+    }
     if (instruction.operands.size() != 1 ||
         instruction.operands.front().kind != MirOperandKind::Value)
       return false;
+    conversions.push_back(&instruction);
     value = instruction.operands.front().value;
   }
   return false;
@@ -120,6 +155,26 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (!body)
+      continue;
+    const bool usesStorage = std::any_of(body->places.begin(), body->places.end(),
+                                         [&](const MirPlace &place) {
+      return place.root == MirPlaceRootKind::Symbol && place.capture == 0 &&
+             inventory.contains(place.symbol);
+    });
+    const bool hasProtocol = std::any_of(body->blocks.begin(), body->blocks.end(),
+                                        [](const MirBlock &block) {
+      return std::any_of(block.instructions.begin(), block.instructions.end(),
+                         [](const MirInstruction &instruction) {
+        return !instruction.tombstone &&
+               (instruction.kind == MirInstructionKind::EnsureThreadLocal ||
+                instruction.kind == MirInstructionKind::BeginThreadLocals ||
+                instruction.kind == MirInstructionKind::DrainThreadLocals);
+      });
+    });
+    // No TLS place or protocol means there is no proof obligation here. In
+    // particular ordinary programs must not rebuild every body's dominators
+    // merely because the verifier supports an unused language facility.
+    if (!usesStorage && !hasProtocol)
       continue;
     const auto dominance = computeMirDominance(*body);
     if (!dominance)
@@ -203,6 +258,46 @@ MirVerificationResult verifyMirThreadLocalStorage(const MirProgram &program) {
             {.block = data ? block.id : block.terminator.target,
              .position = data ? index : 0,
              .invokes = !data});
+      }
+    }
+    // A successful checked source call can publish an already initialized
+    // reference. Its exact global-origin contract and result loan are proved
+    // independently by program verification; this pass also checks every
+    // source callee's guarded Return below. The provenance is not a second
+    // ambient lookup that must initialize the object again in the caller.
+    for (const auto &block : body->blocks) {
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const auto &instruction = block.instructions[index];
+        if (instruction.tombstone || instruction.neverReturns ||
+            instruction.kind != MirInstructionKind::Call ||
+            !instruction.functionTarget || !instruction.loan ||
+            instruction.dispatch != CallDispatch::Static ||
+            instruction.borrowOrigin != BorrowOriginKind::Global ||
+            !instruction.borrowPlace)
+          continue;
+        const auto *callee = program.findFunctionInstance(*instruction.functionTarget);
+        const auto *loan = body->findLoan(*instruction.loan);
+        const auto *source = loan ? body->findPlace(loan->source) : nullptr;
+        if (!callee || callee->definitionKind != MirDefinitionKind::Source ||
+            callee->linkage != LanguageLinkage::Gti ||
+            callee->returnType.kind != SemanticType::Reference ||
+            callee->returnBorrowOrigin != BorrowOriginKind::Global ||
+            callee->returnBorrowPlace != instruction.borrowPlace || !loan ||
+            loan->kind != MirLoanKind::CallResult || loan->entry ||
+            loan->producedBy != instruction.hirValue || !source ||
+            source->root != MirPlaceRootKind::Symbol || source->capture != 0 ||
+            source->symbol != instruction.borrowPlace->root ||
+            !inventory.contains(source->symbol))
+          continue;
+        const bool invoked = block.terminator.kind == MirTerminatorKind::Invoke &&
+                             block.terminator.invokeInstruction == instruction.id;
+        if (callee->mayRaiseDefinedFailure ? !invoked
+                                         : !instruction.definedFailure.empty())
+          continue;
+        guards[source->symbol].push_back(
+            {.block = invoked ? block.terminator.target : block.id,
+             .position = invoked ? 0 : index,
+             .invokes = invoked});
       }
     }
     const auto check = [&](MirPlaceId id, MirBlockId block,

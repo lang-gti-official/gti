@@ -2867,7 +2867,9 @@ private:
                               RecursiveThreadLocalInitialization ||
                       outcome.detail ==
                           DefinedFailureDetail::
-                              ThreadLocalInitializationDuringShutdown);
+                              ThreadLocalInitializationDuringShutdown ||
+                      outcome.detail ==
+                          DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
             });
         movedThreadLocalDetector |= removed != 0;
       }
@@ -4094,7 +4096,9 @@ private:
                                           RecursiveThreadLocalInitialization &&
                     outcome.detail !=
                         DefinedFailureDetail::
-                            ThreadLocalInitializationDuringShutdown);
+                            ThreadLocalInitializationDuringShutdown &&
+                    outcome.detail !=
+                        DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
           });
         std::erase_if(failure.localOrigins, [](const auto &origin) {
           return origin.outcomes.empty();

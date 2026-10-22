@@ -7788,7 +7788,7 @@ public:
     for (const auto &storage : mir.threadLocalStorage()) {
       const std::string id = std::to_string(storage.symbol);
       const std::string type =
-          cppNativeTypeSpelling(loweredProgram, standard, storage.type);
+          cppSemanticTypeSpelling(loweredProgram, standard, storage.type);
       const MirBodyAddress address{.kind = MirBodyKind::ThreadLocalInitializer,
                                    .owner = storage.symbol};
       const auto body = generalMirBodyEmitter().emitFailureBodyText(
@@ -7873,12 +7873,12 @@ public:
              "    *record = "
              "::gti_failure_record_v2{GTI_FAILURE_ABI_VERSION_V2,\n"
              "      GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1,\n"
-             "      slot.state == 1 ? "
+             "      static_cast<::gti_failure_detail_v1>(slot.state == 1 ? "
              "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1\n"
              "        : ::gti_runtime_detail::thread_local_cleanup_active() ? "
              "GTI_FAILURE_DETAIL_THREAD_LOCAL_INITIALIZATION_DURING_"
              "SHUTDOWN_V2 : "
-             "GTI_FAILURE_DETAIL_THREAD_LOCAL_OUTSIDE_ATTACHED_LIFETIME_V2,\n"
+             "GTI_FAILURE_DETAIL_THREAD_LOCAL_OUTSIDE_ATTACHED_LIFETIME_V2),\n"
              "      site, 0, {";
       const auto &identity = mir.failureMetadata().artifactIdentity().bytes;
       for (std::size_t index = 0; index < identity.size(); ++index) {

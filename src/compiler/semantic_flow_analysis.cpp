@@ -309,33 +309,44 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           // Local callable/initializer owners share this selected body. Flatten
           // those exact records, never mix in the primary generic's open arms.
           std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> local;
+          std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
+              cleanupLocal;
           const auto collect = [&](const auto &collectSelf,
-                                   ProgramEffectOwner source) -> void {
-            if (!local.insert(source).second)
+                                   ProgramEffectOwner source,
+                                   bool cleanup = false) -> void {
+            auto &visited = cleanup ? cleanupLocal : local;
+            if (!visited.insert(source).second)
               return;
             const auto found = worker->programEffects.find(source);
             if (found == worker->programEffects.end()) {
               programEffects[owner].edges.push_back(
-                  {.target = source, .span = query.site});
+                  {.target = source, .span = query.site, .cleanup = cleanup});
               return;
             }
             const auto &summary = found->second;
             auto &destination = programEffects[owner];
+            destination.directFailure |= !cleanup && summary.directFailure;
             destination.uses.insert(destination.uses.end(),
                                     summary.uses.begin(), summary.uses.end());
-            destination.borrowUses.insert(destination.borrowUses.end(),
-                                          summary.borrowUses.begin(),
-                                          summary.borrowUses.end());
-            destination.unknown.insert(destination.unknown.end(),
-                                       summary.unknown.begin(),
-                                       summary.unknown.end());
+            for (auto use : summary.borrowUses) {
+              use.cleanup |= cleanup;
+              destination.borrowUses.push_back(std::move(use));
+            }
+            for (auto unknown : summary.unknown) {
+              unknown.cleanup |= cleanup;
+              destination.unknown.push_back(std::move(unknown));
+            }
             for (const auto &edge : summary.edges) {
               if (edge.target.kind ==
                       ProgramEffectOwnerKind::ConcreteInstance ||
                   edge.target.kind == ProgramEffectOwnerKind::Initializer)
-                destination.edges.push_back(edge);
+              {
+                auto retained = edge;
+                retained.cleanup |= cleanup;
+                destination.edges.push_back(std::move(retained));
+              }
               else
-                collectSelf(collectSelf, edge.target);
+                collectSelf(collectSelf, edge.target, cleanup || edge.cleanup);
             }
           };
           // An empty selected body has no effects; an absent local record is
@@ -811,6 +822,9 @@ auto SemanticVisitor::Impl::appendProgramStorageBorrowInput(
   if (directAccess)
     for (const auto &origin : loanPlaces(input, true))
       append(origin, *directAccess);
+  const auto *info = semanticModel.findExpression(*input);
+  if (info == nullptr || !info->traits.containsBorrowedState)
+    return;
   // Complete dependency sets cover source classes, enums, closures and checked
   // erased references uniformly, including several external origins.
   for (const auto &dependency : storedBorrowDependencies(input))
@@ -849,6 +863,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     return;
   auto check =
       captureProgramStorageBorrows(tokenSpan(expressionToken(expression)));
+  const SourceSpan callSite = check.site;
   const auto appendArgument = [&](const ExprPtr &argument,
                                   const SemanticType &parameter) {
     appendProgramStorageBorrowInput(
@@ -856,17 +871,32 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         parameter.kind == SemanticType::Reference
             ? std::optional(parameter.referenceAccess)
             : std::nullopt);
+    if (parameter.kind != SemanticType::Reference)
+      consumeProgramTemporary(argument);
   };
   const auto appendArguments = [&](const auto &arguments,
-                                   const auto &parameters) {
+                                   const auto &parameters,
+                                   const ProgramStorageBorrowCheck *receiver =
+                                       nullptr) {
+    ProgramStorageBorrowCheck earlier{.site = callSite};
+    if (receiver)
+      earlier.protections = receiver->protections;
     for (std::size_t index = 0;
-         index < std::min(arguments.size(), parameters.size()); ++index)
+         index < std::min(arguments.size(), parameters.size()); ++index) {
+      recordProgramOrderedInputEffects(earlier, arguments[index]);
       appendArgument(arguments[index], parameters[index]);
+      appendProgramStorageBorrowInput(
+          earlier, arguments[index],
+          parameters[index].kind == SemanticType::Reference
+              ? std::optional(parameters[index].referenceAccess)
+              : std::nullopt);
+    }
   };
   const auto appendReceiver = [&](const ExprPtr &receiver,
                                   CallReceiverMode mode) {
+    ProgramStorageBorrowCheck receiverBorrow{.site = callSite};
     if (!receiver || mode == CallReceiverMode::None)
-      return;
+      return receiverBorrow;
     const AccessMode access =
         mode == CallReceiverMode::MutablePlace ||
                 mode == CallReceiverMode::FreshTemporaryMutable ||
@@ -874,6 +904,10 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
             ? AccessMode::Mutable
             : AccessMode::ReadOnly;
     appendProgramStorageBorrowInput(check, receiver, access);
+    appendProgramStorageBorrowInput(receiverBorrow, receiver, access);
+    if (mode == CallReceiverMode::Consuming)
+      consumeProgramTemporary(receiver);
+    return receiverBorrow;
   };
   // Reference inputs are call-scoped loans even without a named binding.
   // Apply the same rule to ordinary calls, constructors, overloaded operators
@@ -883,26 +917,41 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       appendArguments(call->arguments(), construction->parameterTypes);
     else if (const auto *initializer = exprAs<DirectInitializer>(&expression))
       appendArguments(initializer->arguments(), construction->parameterTypes);
+    if (construction->kind == ConstructorKind::Move ||
+        construction->directInitialization) {
+      if (const auto *call = exprAs<Call>(&expression))
+        for (const auto &argument : call->arguments())
+          consumeProgramTemporary(argument);
+      else if (const auto *initializer = exprAs<DirectInitializer>(&expression))
+        for (const auto &argument : initializer->arguments())
+          consumeProgramTemporary(argument);
+    }
   }
   if (const auto *operation = semanticModel.findOperator(expression)) {
     if (const auto *receiver =
             explicitConversionReceiver(expression, *operation))
       appendReceiver(*receiver, operation->receiverMode);
     else if (const auto *call = exprAs<Call>(&expression)) {
-      appendReceiver(call->callee(), operation->receiverMode);
-      appendArguments(call->arguments(), operation->parameterTypes);
+      const auto receiver = appendReceiver(call->callee(), operation->receiverMode);
+      appendArguments(call->arguments(), operation->parameterTypes, &receiver);
     } else if (const auto *binary = exprAs<Binary>(&expression)) {
-      appendReceiver(binary->left(), operation->receiverMode);
-      if (!operation->parameterTypes.empty())
+      const auto receiver = appendReceiver(binary->left(), operation->receiverMode);
+      if (!operation->parameterTypes.empty()) {
+        recordProgramOrderedInputEffects(receiver, binary->right());
         appendArgument(binary->right(), operation->parameterTypes.front());
+      }
     } else if (const auto *index = exprAs<Index>(&expression)) {
-      appendReceiver(index->object(), operation->receiverMode);
-      if (!operation->parameterTypes.empty())
+      const auto receiver = appendReceiver(index->object(), operation->receiverMode);
+      if (!operation->parameterTypes.empty()) {
+        recordProgramOrderedInputEffects(receiver, index->index());
         appendArgument(index->index(), operation->parameterTypes.front());
+      }
     } else if (const auto *index = exprAs<IndexSet>(&expression)) {
-      appendReceiver(index->object(), operation->receiverMode);
-      if (!operation->parameterTypes.empty())
+      const auto receiver = appendReceiver(index->object(), operation->receiverMode);
+      if (!operation->parameterTypes.empty()) {
+        recordProgramOrderedInputEffects(receiver, index->index());
         appendArgument(index->index(), operation->parameterTypes.front());
+      }
     } else if (const auto *set = exprAs<DereferenceSet>(&expression)) {
       appendReceiver(set->object(), operation->receiverMode);
     } else if (const auto *unary = exprAs<Unary>(&expression))
@@ -913,19 +962,46 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       appendReceiver(member->object(), operation->receiverMode);
   }
   if (const auto *call = exprAs<Call>(&expression)) {
+    if (const auto *payload = semanticModel.findPayloadConstruction(*call))
+      appendArguments(call->arguments(), payload->parameterTypes);
     const auto *resolved = semanticModel.findCall(*call);
     if (resolved != nullptr) {
-      appendArguments(ResolvedCallArguments(*call, resolved),
-                      resolved->parameterTypes);
+      ProgramStorageBorrowCheck receiver{.site = callSite};
+      appendProgramStorageBorrowInput(receiver, call->callee());
+      appendProgramStorageBorrowInput(check, call->callee());
       if (resolved->receiverMode != CallReceiverMode::None)
-        if (const auto *member = exprAs<Get>(call->callee().get()))
-          appendReceiver(member->object(), resolved->receiverMode);
+        if (const auto *member = exprAs<Get>(call->callee().get())) {
+          auto explicitReceiver =
+              appendReceiver(member->object(), resolved->receiverMode);
+          receiver.protections.insert(receiver.protections.end(),
+                                       explicitReceiver.protections.begin(),
+                                       explicitReceiver.protections.end());
+        }
+      appendArguments(ResolvedCallArguments(*call, resolved),
+                      resolved->parameterTypes, &receiver);
     }
+    ProgramStorageBorrowCheck callable{.site = callSite};
+    appendProgramStorageBorrowInput(callable, call->callee());
     if (const auto *lambda = semanticModel.findLambdaCall(*call))
-      appendArguments(call->arguments(), lambda->parameterTypes);
+      appendArguments(call->arguments(), lambda->parameterTypes, &callable);
     if (const auto *deferred = semanticModel.findDeferredCallableCall(*call))
-      appendArguments(call->arguments(), deferred->parameterTypes);
+      appendArguments(call->arguments(), deferred->parameterTypes, &callable);
+    if (resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+      for (const auto &argument : call->arguments())
+        consumeProgramTemporary(argument);
     appendProgramStorageBorrowInput(check, call->callee());
+  }
+  if (const auto *initializer = exprAs<ArrayInitializer>(&expression)) {
+    if (const auto *collection = semanticModel.findCollection(*initializer)) {
+      if (const auto *insert = semanticModel.findFunction(collection->insert);
+          insert != nullptr && !insert->parameterTypes.empty() &&
+          insert->parameterTypes.back().kind != SemanticType::Reference)
+        for (const auto &element : initializer->elements())
+          consumeProgramTemporary(element);
+    } else {
+      for (const auto &element : initializer->elements())
+        consumeProgramTemporary(element);
+    }
   }
   const ProgramEffectOwner owner = currentProgramEffectOwner;
   const std::size_t edges = programEffects[owner].edges.size();
@@ -946,14 +1022,19 @@ auto SemanticVisitor::Impl::publishProgramStorageBorrowCheck(
                        summary.unknown.begin() +
                            static_cast<std::ptrdiff_t>(unknown),
                        summary.unknown.end());
-  if (!check.targets.empty() || !check.unknown.empty()) {
+  if (!check.uses.empty() || !check.targets.empty() || !check.unknown.empty()) {
     const std::size_t checkIndex =
         requestSession.programStorageBorrowChecks.size();
     std::vector<SemanticLoanId> namedLoans;
+    bool scopeExit = false;
     for (const auto &protection : check.protections)
-      if (protection.loan != 0)
+      if (protection.loan != 0) {
         appendUniqueLoan(namedLoans, protection.loan);
+        scopeExit |= protection.scopeExit;
+      }
     requestSession.programStorageBorrowChecks.push_back(std::move(check));
+    if (scopeExit)
+      loanFlow.programScopeExitChecks.push_back(checkIndex);
     if (!namedLoans.empty() && loanFlow.currentStatement != nullptr &&
         loanFlow.currentRegion != 0)
       loanFlow.conflicts.push_back({.loans = std::move(namedLoans),
@@ -968,6 +1049,36 @@ auto SemanticVisitor::Impl::publishProgramStorageBorrowCheck(
   }
 }
 
+auto SemanticVisitor::Impl::recordProgramOrderedInputEffects(
+    const ProgramStorageBorrowCheck &earlier, const ExprPtr &input) -> void {
+  if (earlier.protections.empty() || !input)
+    return;
+  const auto found = requestSession.programExpressionEffects.find(input.get());
+  if (found == requestSession.programExpressionEffects.end() ||
+      found->second.owner != currentProgramEffectOwner)
+    return;
+  const auto &slice = found->second;
+  const auto &summary = programEffects[slice.owner];
+  auto check = earlier;
+  check.site = tokenSpan(expressionToken(input));
+  check.siteKind = ProgramStorageBorrowSite::OrderedInput;
+  check.targets.clear();
+  check.unknown.clear();
+  check.uses.assign(summary.borrowUses.begin() + slice.useStart,
+                    summary.borrowUses.begin() + slice.useEnd);
+  for (std::size_t edge = slice.edgeStart; edge < slice.edgeEnd; ++edge)
+    if (!summary.edges[edge].cleanup)
+      check.targets.push_back(summary.edges[edge].target);
+  for (std::size_t unknown = slice.unknownStart; unknown < slice.unknownEnd;
+       ++unknown)
+    if (!summary.unknown[unknown].cleanup)
+      check.unknown.push_back(summary.unknown[unknown]);
+  // These are the exact earlier stabilized inputs, not lexical bindings.
+  // Their loans end at this invocation and cannot be shortened by NLL.
+  publishProgramStorageBorrowCheck(std::move(check), slice.owner,
+                                   summary.edges.size(), summary.unknown.size());
+}
+
 auto SemanticVisitor::Impl::recordStorageBorrowCleanup(const Symbol &symbol)
     -> void {
   if (!currentProgramEffectOwner.valid() ||
@@ -979,20 +1090,30 @@ auto SemanticVisitor::Impl::recordStorageBorrowCleanup(const Symbol &symbol)
       !requiresActiveCleanupFor(symbol.type))
     return;
   auto check = captureProgramStorageBorrows(tokenSpan(symbol.declaration));
-  if (check.protections.empty())
-    return;
+  check.siteKind = ProgramStorageBorrowSite::ScopeCleanup;
+  std::unordered_set<SymbolId> retiringCarriers;
+  for (const auto &[_, carrier] : scopes.back())
+    retiringCarriers.insert(toolingSymbolFor(carrier));
+  for (auto &protection : check.protections) {
+    const auto flow = loanFlow.records.find(protection.loan);
+    if (flow != loanFlow.records.end() && !flow->second.carriers.empty() &&
+        std::all_of(flow->second.carriers.begin(), flow->second.carriers.end(),
+                    [&](SymbolId carrier) {
+                      return retiringCarriers.contains(carrier);
+                    }))
+      protection.scopeExit = true;
+  }
   const auto owner = currentProgramEffectOwner;
   const auto edgeStart = programEffects[owner].edges.size();
   const auto unknownStart = programEffects[owner].unknown.size();
-  recordProgramCleanupEffects(symbol.type, check.site);
+  recordProgramExecutedCleanupEffects(symbol.type, check.site);
   publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
                                    unknownStart);
 }
 
 auto SemanticVisitor::Impl::recordProgramScopeBorrowCleanup() -> void {
   if (scopes.empty() || loanFlow.finalized ||
-      !currentProgramEffectOwner.valid() ||
-      captureProgramStorageBorrows({}).protections.empty())
+      !currentProgramEffectOwner.valid())
     return;
   std::vector<const Symbol *> order;
   for (const auto &[_, symbol] : scopes.back())
@@ -1022,8 +1143,7 @@ auto SemanticVisitor::Impl::recordProgramScopeBorrowCleanup() -> void {
 }
 
 auto SemanticVisitor::Impl::recordReturnedStorageBorrowCleanup(
-    const ReturnStmt &statement, std::size_t temporaryEdgeStart,
-    std::size_t temporaryUnknownStart) -> void {
+    const ReturnStmt &statement) -> void {
   if (!currentProgramEffectOwner.valid() || !statement.value() ||
       (currentReturnType.kind != SemanticType::Reference &&
        !typeTraits(currentReturnType).containsBorrowedState))
@@ -1038,16 +1158,6 @@ auto SemanticVisitor::Impl::recordReturnedStorageBorrowCleanup(
     return;
   const auto owner = currentProgramEffectOwner;
   const auto &summary = programEffects[owner];
-  // Only temporaries evaluated by this return can be cleaned after publishing
-  // its result. Earlier completed temporary cleanup cannot invalidate it.
-  for (std::size_t index = temporaryEdgeStart; index < summary.edges.size();
-       ++index)
-    if (summary.edges[index].cleanup)
-      check.targets.push_back(summary.edges[index].target);
-  for (std::size_t index = temporaryUnknownStart;
-       index < summary.unknown.size(); ++index)
-    if (summary.unknown[index].cleanup)
-      check.unknown.push_back(summary.unknown[index]);
   const auto edgeStart = summary.edges.size();
   const auto unknownStart = summary.unknown.size();
   for (const auto &scope : scopes)
@@ -1057,30 +1167,222 @@ auto SemanticVisitor::Impl::recordReturnedStorageBorrowCleanup(
           !(symbol.variableDeclaration &&
             symbol.variableDeclaration->isThreadLocal()) &&
           symbol.valueState != ValueState::Moved)
-        recordProgramCleanupEffects(symbol.type, tokenSpan(symbol.declaration));
+        recordProgramExecutedCleanupEffects(symbol.type,
+                                             tokenSpan(symbol.declaration));
   publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
                                    unknownStart);
 }
 
-auto SemanticVisitor::Impl::recordFullExpressionStorageBorrowCleanup(
-    const SourceSpan &site, std::size_t edgeStart, std::size_t unknownStart)
-    -> void {
+auto SemanticVisitor::Impl::beginProgramFullExpression(const Expr &root)
+    -> std::optional<std::size_t> {
   if (!currentProgramEffectOwner.valid())
+    return std::nullopt;
+  auto &session = requestSession;
+  const auto &expressions = semanticModel.fullExpressions();
+  while (session.indexedFullExpressions < expressions.size()) {
+    const auto &expression = expressions[session.indexedFullExpressions++];
+    for (const auto *value : expression.roots)
+      session.fullExpressionRoots.insert_or_assign(value, expression);
+  }
+  const auto found = session.fullExpressionRoots.find(&root);
+  if (found == session.fullExpressionRoots.end() ||
+      found->second.constructorInitializer != nullptr)
+    return std::nullopt;
+  if (!session.fullExpressionStates.empty()) {
+    const auto &current = session.fullExpressionStates.back();
+    if (current.owner == currentProgramEffectOwner &&
+        std::find(current.source.roots.begin(), current.source.roots.end(),
+                  &root) != current.source.roots.end())
+      return std::nullopt;
+  }
+  const auto index = session.fullExpressionStates.size();
+  session.fullExpressionStates.push_back(
+      {.source = found->second, .owner = currentProgramEffectOwner});
+  return index;
+}
+
+auto SemanticVisitor::Impl::beginProgramFullExpression(
+    const ConstructorInitializer &initializer) -> std::size_t {
+  const auto index = requestSession.fullExpressionStates.size();
+  const auto &sources = semanticModel.fullExpressionsFor(initializer);
+  requestSession.fullExpressionStates.push_back(
+      {.source = sources.empty() ? SemanticFullExpression{} : sources.back(),
+       .owner = currentProgramEffectOwner});
+  return index;
+}
+
+auto SemanticVisitor::Impl::consumeProgramTemporary(const ExprPtr &value)
+    -> void {
+  if (!value || requestSession.fullExpressionStates.empty())
     return;
-  auto check = captureProgramStorageBorrows(site);
+  auto &frame = requestSession.fullExpressionStates.back();
+  if (frame.owner != currentProgramEffectOwner)
+    return;
+  const Expr *producer = value.get();
+  while (true) {
+    if (const auto *group = exprAs<Grouping>(producer))
+      producer = group->expression().get();
+    else if (const auto *comma = exprAs<Binary>(producer);
+             comma && comma->oper().kind == TokenKind::COMMA)
+      producer = comma->right().get();
+    else
+      break;
+  }
+  for (auto &temporary : frame.temporaries)
+    if (temporary.producer == producer)
+      temporary.consumed = true;
+}
+
+auto SemanticVisitor::Impl::recordProgramTemporary(
+    const Expr &producer, const ExpressionInfo &info) -> void {
+  if (requestSession.fullExpressionStates.empty() ||
+      info.category != ValueCategory::Value ||
+      !requiresActiveCleanupFor(info.type) || exprAs<Grouping>(&producer))
+    return;
+  if (const auto *comma = exprAs<Binary>(&producer);
+      comma && comma->oper().kind == TokenKind::COMMA)
+    return;
+  auto &frame = requestSession.fullExpressionStates.back();
+  if (frame.owner != currentProgramEffectOwner)
+    return;
+  if (std::none_of(frame.temporaries.begin(), frame.temporaries.end(),
+                   [&](const auto &entry) { return entry.producer == &producer; }))
+    frame.temporaries.push_back({.producer = &producer, .type = info.type});
+}
+
+auto SemanticVisitor::Impl::recordProgramTemporaryFailureCleanup(
+    const Expr &operation,
+    const std::vector<ProgramTemporaryCleanup> &temporaries) -> void {
+  const auto failure = requestSession.programOperationFailures.find(&operation);
+  if (temporaries.empty() || failure == requestSession.programOperationFailures.end())
+    return;
+  auto check = captureProgramStorageBorrows(tokenSpan(expressionToken(operation)));
+  check.siteKind = ProgramStorageBorrowSite::FailureCleanup;
+  check.failureCondition = failure->second;
   if (check.protections.empty())
     return;
   const auto owner = currentProgramEffectOwner;
-  const auto &summary = programEffects[owner];
-  for (std::size_t index = edgeStart; index < summary.edges.size(); ++index)
-    if (summary.edges[index].cleanup)
-      check.targets.push_back(summary.edges[index].target);
-  for (std::size_t index = unknownStart; index < summary.unknown.size();
-       ++index)
-    if (summary.unknown[index].cleanup)
-      check.unknown.push_back(summary.unknown[index]);
-  publishProgramStorageBorrowCheck(
-      std::move(check), owner, summary.edges.size(), summary.unknown.size());
+  const auto edgeStart = programEffects[owner].edges.size();
+  const auto unknownStart = programEffects[owner].unknown.size();
+  for (const auto &temporary : temporaries)
+    if (!temporary.consumed)
+      recordProgramCleanupEffects(temporary.type,
+                                  tokenSpan(expressionToken(*temporary.producer)));
+  publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
+                                   unknownStart);
+}
+
+auto SemanticVisitor::Impl::recordProgramExecutedCleanupEffects(
+    const SemanticType &type, const SourceSpan &span, bool includeDirect) -> void {
+  if (!currentProgramEffectOwner.valid())
+    return;
+  const auto owner = currentProgramEffectOwner;
+  const auto edgeStart = programEffects[owner].edges.size();
+  const auto unknownStart = programEffects[owner].unknown.size();
+  recordProgramCleanupEffects(type, span, includeDirect);
+  for (std::size_t edge = edgeStart; edge < programEffects[owner].edges.size();
+       ++edge)
+    programEffects[owner].edges[edge].cleanup = false;
+  for (std::size_t unknown = unknownStart;
+       unknown < programEffects[owner].unknown.size(); ++unknown)
+    programEffects[owner].unknown[unknown].cleanup = false;
+}
+
+auto SemanticVisitor::Impl::recordProgramReplacementCleanup(
+    const Expr &operation, const SemanticType &type) -> void {
+  if (!currentProgramEffectOwner.valid() || !requiresActiveCleanupFor(type))
+    return;
+  const ExprPtr *input = nullptr;
+  if (const auto *assignment = exprAs<Assign>(&operation))
+    input = &assignment->value();
+  else if (const auto *assignment = exprAs<Set>(&operation))
+    input = &assignment->value();
+  else if (const auto *assignment = exprAs<IndexSet>(&operation))
+    input = &assignment->value();
+  else if (const auto *assignment = exprAs<PlaceSet>(&operation))
+    input = &assignment->value();
+  else if (const auto *assignment = exprAs<DereferenceSet>(&operation))
+    input = &assignment->value();
+  if (input != nullptr)
+    consumeProgramTemporary(*input);
+  const auto *event = semanticModel.findOwnershipEvent(operation);
+  if (event && event->kind == OwnershipEventKind::Reinitialize &&
+      event->before == ValueState::Moved)
+    return;
+  auto check = captureProgramStorageBorrows(tokenSpan(expressionToken(operation)));
+  check.siteKind = ProgramStorageBorrowSite::ReplacementCleanup;
+  const auto owner = currentProgramEffectOwner;
+  const auto edgeStart = programEffects[owner].edges.size();
+  const auto unknownStart = programEffects[owner].unknown.size();
+  recordProgramExecutedCleanupEffects(type, tokenSpan(expressionToken(operation)));
+  publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
+                                   unknownStart);
+}
+
+auto SemanticVisitor::Impl::finishProgramFullExpression(std::size_t index)
+    -> void {
+  auto &states = requestSession.fullExpressionStates;
+  if (index >= states.size() || index + 1 != states.size())
+    return;
+  const auto source = states.back().source;
+  auto check = captureProgramStorageBorrows(
+      source.roots.empty() ? SourceSpan{}
+                           : tokenSpan(expressionToken(*source.roots.front())));
+  check.siteKind = ProgramStorageBorrowSite::FullExpressionCleanup;
+  const auto destination = [&](const ExprPtr &value, const SemanticType &type) {
+    const auto *info = value ? semanticModel.findExpression(*value) : nullptr;
+    if (info && info->category == ValueCategory::Value &&
+        (type == SemanticType::Unknown || type == info->type))
+      consumeProgramTemporary(value);
+    appendProgramStorageBorrowInput(
+        check, value, type.kind == SemanticType::Reference
+                          ? std::optional(type.referenceAccess)
+                          : std::nullopt);
+  };
+  if (const auto *binding = stmtAs<VariableDecl>(source.statement)) {
+    const auto *info = semanticModel.findBinding(*binding);
+    const auto &initializer =
+        binding->initializer()
+            ? binding->initializer()
+            : semanticModel.implicitFieldInitializer(*binding);
+    destination(initializer,
+                info ? info->type
+                : binding->type().name.last().kind == TokenKind::AUTO
+                    ? SemanticType::Unknown
+                    : typeOf(binding->type()));
+  } else if (const auto *returned = stmtAs<ReturnStmt>(source.statement)) {
+    destination(returned->value(), currentReturnType);
+  } else if (const auto *selection = stmtAs<SwitchStmt>(source.statement)) {
+    const auto *info = semanticModel.findExpression(*selection->expression());
+    destination(selection->expression(), info ? info->type : SemanticType::Unknown);
+  } else if (const auto *initializer = source.constructorInitializer) {
+    if (const auto *info = semanticModel.findConstructorInitializer(*initializer)) {
+      if (info->kind == ConstructorInitializerTargetKind::Field &&
+          initializer->arguments.size() == 1)
+        destination(initializer->arguments.front(), info->targetType);
+      else
+        for (std::size_t argument = 0;
+             argument < std::min(initializer->arguments.size(),
+                                 info->parameterTypes.size()); ++argument) {
+          if (info->parameterTypes[argument].kind != SemanticType::Reference)
+            consumeProgramTemporary(initializer->arguments[argument]);
+          appendProgramStorageBorrowInput(check, initializer->arguments[argument]);
+        }
+    }
+  }
+  auto frame = std::move(states.back());
+  states.pop_back();
+  if (!frame.owner.valid() || frame.owner != currentProgramEffectOwner)
+    return;
+  const auto owner = currentProgramEffectOwner;
+  const auto edgeStart = programEffects[owner].edges.size();
+  const auto unknownStart = programEffects[owner].unknown.size();
+  for (const auto &temporary : frame.temporaries)
+    if (!temporary.consumed)
+      recordProgramExecutedCleanupEffects(temporary.type,
+                                  tokenSpan(expressionToken(*temporary.producer)));
+  publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
+                                   unknownStart);
 }
 
 auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
@@ -1348,9 +1650,43 @@ auto SemanticVisitor::Impl::recordProgramBorrowStorageEffect(
            .span = tokenSpan(expressionToken(expression))});
 }
 
+auto SemanticVisitor::Impl::closeProgramFailureEffects() -> void {
+  auto &failing = requestSession.programFailingEffects;
+  failing.clear();
+  for (const auto &[owner, summary] : programEffects)
+    if (summary.directFailure ||
+        std::any_of(summary.unknown.begin(), summary.unknown.end(),
+                    [](const auto &effect) { return !effect.cleanup; }))
+      failing.insert(owner);
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (const auto &[owner, summary] : programEffects) {
+      if (failing.contains(owner))
+        continue;
+      if (std::any_of(summary.edges.begin(), summary.edges.end(),
+                      [&](const auto &edge) {
+                        return !edge.cleanup && failing.contains(edge.target);
+                      }))
+        changed |= failing.insert(owner).second;
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::programFailureMayHappen(
+    const ProgramFailureCondition &condition) const -> bool {
+  return condition.direct || condition.unknown ||
+         std::any_of(condition.targets.begin(), condition.targets.end(),
+                     [&](const auto target) {
+                       return requestSession.programFailingEffects.contains(target);
+                     });
+}
+
 auto SemanticVisitor::Impl::validateProgramStorageBorrowEffects() -> void {
+  closeProgramFailureEffects();
   for (const auto &check : requestSession.programStorageBorrowChecks) {
-    if (check.protections.empty())
+    if (check.protections.empty() ||
+        (check.failureCondition && !programFailureMayHappen(*check.failureCondition)))
       continue;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visiting;
     std::optional<ProgramBorrowStorageUse> conflict;
@@ -1358,6 +1694,26 @@ auto SemanticVisitor::Impl::validateProgramStorageBorrowEffects() -> void {
     std::optional<ProgramUnknownEffect> unknown;
     if (!check.unknown.empty())
       unknown = check.unknown.front();
+    const auto inspectUses = [&](const auto &uses, bool rollback = true) {
+      for (const auto &use : uses) {
+        if (use.cleanup && !rollback)
+          continue;
+        for (const auto &loan : check.protections) {
+          if (loan.place.root != use.place.root ||
+              (loan.access == AccessMode::ReadOnly &&
+               use.access == AccessMode::ReadOnly))
+            continue;
+          auto accessed = loan.place;
+          accessed.projections = use.place.projections;
+          if (loanPlacesOverlap(loan.place, accessed)) {
+            conflict = use;
+            protection = loan;
+            return;
+          }
+        }
+      }
+    };
+    inspectUses(check.uses);
     const auto visit = [&](const auto &self, ProgramEffectOwner owner) -> void {
       // An existing checked loan of this thread's slot proves its successful
       // initialization already completed. Its Ensure cannot reexecute the
@@ -1374,26 +1730,20 @@ auto SemanticVisitor::Impl::validateProgramStorageBorrowEffects() -> void {
       if (found == programEffects.end())
         return;
       const auto &summary = found->second;
-      if (!summary.unknown.empty()) {
-        unknown = summary.unknown.front();
+      const bool rollback = requestSession.programFailingEffects.contains(owner);
+      const auto open = std::find_if(
+          summary.unknown.begin(), summary.unknown.end(),
+          [&](const auto &effect) { return !effect.cleanup || rollback; });
+      if (open != summary.unknown.end()) {
+        unknown = *open;
         return;
       }
-      for (const auto &use : summary.borrowUses)
-        for (const auto &loan : check.protections) {
-          if (loan.place.root != use.place.root ||
-              (loan.access == AccessMode::ReadOnly &&
-               use.access == AccessMode::ReadOnly))
-            continue;
-          auto accessed = loan.place;
-          accessed.projections = use.place.projections;
-          if (loanPlacesOverlap(loan.place, accessed)) {
-            conflict = use;
-            protection = loan;
-            return;
-          }
-        }
+      inspectUses(summary.borrowUses, rollback);
+      if (conflict)
+        return;
       for (const auto &edge : summary.edges)
-        self(self, edge.target);
+        if (!edge.cleanup || rollback)
+          self(self, edge.target);
     };
     for (const auto target : check.targets)
       visit(visit, target);
@@ -1405,6 +1755,31 @@ auto SemanticVisitor::Impl::validateProgramStorageBorrowEffects() -> void {
                    "overlapping path while a conflicting borrow is live."
                  : "This call has unresolved GTI storage effects while a "
                    "borrow of persistent storage is live.");
+    const char *context = nullptr;
+    switch (check.siteKind) {
+    case ProgramStorageBorrowSite::Invocation:
+      break;
+    case ProgramStorageBorrowSite::OrderedInput:
+      context = "Earlier reference or borrowed-state inputs are already bound "
+                "while this later input is evaluated.";
+      break;
+    case ProgramStorageBorrowSite::ScopeCleanup:
+      context = "This automatic object's cleanup runs at scope exit.";
+      break;
+    case ProgramStorageBorrowSite::FullExpressionCleanup:
+      context = "Remaining temporaries are cleaned at this full-expression "
+                "boundary.";
+      break;
+    case ProgramStorageBorrowSite::FailureCleanup:
+      context = "Earlier untransferred temporaries are cleaned if this "
+                "operation propagates a failure.";
+      break;
+    case ProgramStorageBorrowSite::ReplacementCleanup:
+      context = "Replacing this live object runs its previous value's cleanup.";
+      break;
+    }
+    if (context)
+      diagnostic.related.push_back({check.site, context});
     if (conflict) {
       diagnostic.related.push_back(
           {conflict->span,
@@ -3110,6 +3485,14 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr) -> SemanticType {
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
                                     OccurrenceRole requestedRoles)
     -> SemanticType {
+  ProgramExpressionEffects evaluation{.owner = currentProgramEffectOwner};
+  if (evaluation.owner.valid()) {
+    const auto &summary = programEffects[evaluation.owner];
+    evaluation.edgeStart = summary.edges.size();
+    evaluation.unknownStart = summary.unknown.size();
+    evaluation.useStart = summary.borrowUses.size();
+  }
+  const auto fullExpression = beginProgramFullExpression(expr);
   if (instanceAnalysisActive) {
     semanticModel.suppressInheritedOperator(expr);
   }
@@ -3426,12 +3809,54 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       recordMutableBindingUse(symbolId);
     }
   }
+  std::vector<ProgramTemporaryCleanup> rollback;
+  const auto *failure = semanticModel.findDefinedFailure(expr);
+  if (failure && failure->mayUnwind() &&
+      !requestSession.fullExpressionStates.empty() &&
+      requestSession.fullExpressionStates.back().owner == currentProgramEffectOwner)
+    rollback = requestSession.fullExpressionStates.back().temporaries;
+  const auto operationOwner = currentProgramEffectOwner;
+  const auto operationEdges =
+      operationOwner.valid() ? programEffects[operationOwner].edges.size() : 0;
+  const auto operationUnknown =
+      operationOwner.valid() ? programEffects[operationOwner].unknown.size() : 0;
   recordProgramCallEffects(expr);
+  if (operationOwner.valid() && failure && failure->mayUnwind()) {
+    auto condition = std::make_shared<ProgramFailureCondition>();
+    auto local = *failure;
+    local.propagation = FailurePropagationKind::None;
+    condition->direct = local.mayUnwind();
+    auto &summary = programEffects[operationOwner];
+    for (std::size_t edge = operationEdges; edge < summary.edges.size(); ++edge)
+      if (!summary.edges[edge].cleanup)
+        condition->targets.push_back(summary.edges[edge].target);
+    for (std::size_t unknown = operationUnknown;
+         unknown < summary.unknown.size(); ++unknown)
+      condition->unknown |= !summary.unknown[unknown].cleanup;
+    if (failure->propagation != FailurePropagationKind::None &&
+        condition->targets.empty())
+      condition->unknown = true;
+    summary.directFailure |= condition->direct || condition->unknown;
+    requestSession.programOperationFailures.insert_or_assign(&expr, condition);
+    // Failure cleanup observes the pre-transfer temporary inventory, but its
+    // exact selected call targets are now available. The condition closes only
+    // after all source bodies and concrete effect queries have completed.
+    recordProgramTemporaryFailureCleanup(expr, rollback);
+  }
   if (info.category == ValueCategory::Value &&
       requiresActiveCleanupFor(info.type)) {
     recordProgramCleanupEffects(info.type, tokenSpan(expressionToken(expr)));
     applyRawCleanupWrites(info.type, tokenSpan(expressionToken(expr)),
                           rawPointerFields(&expr));
+    const bool replacement =
+        semanticModel.findOperator(expr) == nullptr &&
+        (exprAs<Assign>(&expr) || exprAs<Set>(&expr) ||
+         exprAs<IndexSet>(&expr) || exprAs<PlaceSet>(&expr) ||
+         exprAs<DereferenceSet>(&expr));
+    if (replacement)
+      recordProgramReplacementCleanup(expr, info.type);
+    else
+      recordProgramTemporary(expr, info);
   }
   recordSemanticLoanUse(symbolId);
   if (!token.generated) {
@@ -3452,6 +3877,15 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
          .bindingKind = bindingKind,
          .function = functionItemDeclaration,
          .staticMember = staticMember});
+  }
+  if (fullExpression)
+    finishProgramFullExpression(*fullExpression);
+  if (evaluation.owner.valid() && evaluation.owner == currentProgramEffectOwner) {
+    const auto &summary = programEffects[evaluation.owner];
+    evaluation.edgeEnd = summary.edges.size();
+    evaluation.unknownEnd = summary.unknown.size();
+    evaluation.useEnd = summary.borrowUses.size();
+    requestSession.programExpressionEffects.insert_or_assign(&expr, evaluation);
   }
   currentType = result;
   return result;
@@ -3576,6 +4010,8 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     const ExprPtr &expr, const SemanticType &expectedType,
     bool allowExactNullConstruction, bool allowDeclarationConstruction)
     -> SemanticType {
+  const auto fullExpression =
+      expr ? beginProgramFullExpression(*expr) : std::nullopt;
   const std::optional<SemanticType> enclosingType = contextualInitializerType;
   const Expr *enclosingExpression = contextualInitializerExpression;
   contextualInitializerType = expectedType;
@@ -3623,6 +4059,8 @@ auto SemanticVisitor::Impl::analyzeInitializer(
   }
   contextualInitializerType = enclosingType;
   contextualInitializerExpression = enclosingExpression;
+  if (fullExpression)
+    finishProgramFullExpression(*fullExpression);
   return result;
 }
 
@@ -3686,6 +4124,11 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
   }
   const ResolvedConstructionInfo &construction =
       *semanticModel.findContextualConstruction(*expr);
+  if (construction.kind == ConstructorKind::Move ||
+      construction.directInitialization ||
+      (!construction.parameterTypes.empty() &&
+       construction.parameterTypes.front().kind != SemanticType::Reference))
+    consumeProgramTemporary(expr);
   if (currentProgramEffectOwner.valid()) {
     auto check = captureProgramStorageBorrows(site);
     if (!construction.parameterTypes.empty())
