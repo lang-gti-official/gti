@@ -2022,6 +2022,11 @@ private:
   // Whether `info` describes a value whose class type has no borrowed state
   // but whose direct text field holds dynamic text.
   [[nodiscard]] bool isTextDependentValue(const ExpressionInfo &info) const;
+  // Whether `expression` is a contextual construction of `type` that
+  // publishes its argument's owner: a dependent value of that type, although
+  // the expression's own facts describe the argument.
+  [[nodiscard]] bool contextualTextValue(const Expr &expression,
+                                         const SemanticType &type) const;
   // The field paths that hold dynamic text in a dependent value that
   // `expression` names: a carrier binding, a publishing construction, a
   // grouping or move of one, or a field of one that the paths go through.
@@ -2180,6 +2185,9 @@ private:
   // Empty when the argument is ownerless or its owner is not a named place.
   [[nodiscard]] std::vector<SemanticLoanDependency>
   textFieldOwnerDependency(const ExprPtr &argument, SymbolId field);
+  // Re-roots an argument's sole owner dependency at a published text path.
+  void publishTextDependency(SemanticLoanDependency &dependency,
+                             std::vector<SymbolId> path) const;
 
   // The owner dependencies that `argument` contributes when a constructor
   // stores it directly in the text field `initializer` names, or in that
@@ -4488,6 +4496,9 @@ private:
   std::size_t textBorrowSummaryDepth = 0;
   // Reference relay summaries being composed, outermost first.
   std::vector<const FunctionDecl *> textReferenceSummaryStack;
+  // The contextual construction whose own argument storedBorrowDependencies
+  // is reading, rather than its converted value.
+  const Expr *contextualTextArgument = nullptr;
   // The lowest stack position the current evaluation has read.
   std::size_t textBorrowReadDepth = std::numeric_limits<std::size_t>::max();
   // Whether a provisional summary grew in the current evaluation.

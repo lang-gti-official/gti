@@ -2443,8 +2443,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       // A class whose fields other code reads keeps the ownerless rule.
       bool restrictedOwner = false;
       bool readingConstructor = false;
-      if (!potentialPackView && !contextualConstruction &&
-          index < arguments.size()) {
+      if (!potentialPackView && index < arguments.size()) {
         auto dependencies = textFieldInitializerDependencies(
             constructedType, *initializer, *argument, input.payload);
         restrictedOwner =
@@ -2625,8 +2624,13 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             selected.constructor->requiresUnsafe);
   } else if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
+    // A converted value that holds its argument's owner is a dependent value
+    // that only its consumer may keep (L-OWN-02).
+    const bool dependent = resolved.dependentTextPublication;
     semanticModel.recordContextualConstruction(*construction,
                                                std::move(resolved), paren);
+    if (dependent)
+      noteTextDependentValue(*construction);
   } else {
     semanticModel.record(*construction, std::move(resolved));
     recordSelectedConstructionOccurrence(*construction);
@@ -4503,7 +4507,9 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
       initializer ? semanticModel.findExpression(*initializer) : nullptr;
   const bool textDependentValue =
       (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
-      initializerInfo != nullptr && isTextDependentValue(*initializerInfo);
+      initializerInfo != nullptr &&
+      (isTextDependentValue(*initializerInfo) ||
+       contextualTextValue(*initializer, type));
   if (!isDirectStoredReferenceType(type) &&
       type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !textDependentValue) {
